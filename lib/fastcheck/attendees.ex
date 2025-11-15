@@ -20,6 +20,8 @@ defmodule FastCheck.Attendees do
   @ticket_code_max 100
   @ticket_code_pattern ~r/^[A-Za-z0-9\-\._]+$/
   @entrance_name_pattern ~r/^[A-Za-z0-9\s\-\._]+$/
+  @cache_name :fastcheck_cache
+  @default_occupancy_cache_ttl :timer.seconds(2)
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -281,6 +283,28 @@ defmodule FastCheck.Attendees do
   """
   @spec get_occupancy_breakdown(integer()) :: %{optional(atom()) => integer() | float()}
   def get_occupancy_breakdown(event_id) when is_integer(event_id) do
+    cache_key = occupancy_cache_key(event_id)
+
+    with {:ok, cached} <- fetch_cached_occupancy_breakdown(cache_key) do
+      cached
+    else
+      _ ->
+        breakdown = compute_occupancy_breakdown(event_id)
+        persist_occupancy_cache(cache_key, breakdown)
+        breakdown
+    end
+  rescue
+    exception ->
+      Logger.error(
+        "Failed to compute occupancy breakdown for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      default_occupancy_breakdown()
+  end
+
+  def get_occupancy_breakdown(_), do: default_occupancy_breakdown()
+
+  defp compute_occupancy_breakdown(event_id) do
     query =
       from(a in Attendee,
         where: a.event_id == ^event_id,
@@ -295,7 +319,7 @@ defmodule FastCheck.Attendees do
 
     case Repo.one(query) do
       nil ->
-        %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0}
+        default_occupancy_breakdown()
 
       %{total: total, checked_in: checked_in, checked_out: checked_out, currently_inside: inside} ->
         total_int = normalize_count(total)
@@ -319,14 +343,51 @@ defmodule FastCheck.Attendees do
           pending: max(total_int - checked_in_int, 0)
         }
     end
-  rescue
-    exception ->
-      Logger.error("Failed to compute occupancy breakdown for event #{event_id}: #{Exception.message(exception)}")
-      %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
   end
 
-  def get_occupancy_breakdown(_),
-    do: %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
+  defp fetch_cached_occupancy_breakdown(cache_key) do
+    if occupancy_cache_available?() do
+      case Cachex.get(@cache_name, cache_key) do
+        {:ok, %{} = cached} -> {:ok, cached}
+        {:ok, nil} -> :miss
+        {:error, reason} ->
+          Logger.warn("Occupancy cache lookup failed for #{cache_key}: #{inspect(reason)}")
+          :miss
+      end
+    else
+      :miss
+    end
+  rescue
+    exception ->
+      Logger.warn("Occupancy cache lookup failed for #{cache_key}: #{Exception.message(exception)}")
+      :miss
+  end
+
+  defp persist_occupancy_cache(_cache_key, _value) when not occupancy_cache_available?(), do: :ok
+
+  defp persist_occupancy_cache(cache_key, value) do
+    ttl = occupancy_cache_ttl()
+    :ok = Cachex.put(@cache_name, cache_key, value, ttl: ttl)
+  rescue
+    exception ->
+      Logger.warn("Unable to persist occupancy cache #{cache_key}: #{Exception.message(exception)}")
+      :ok
+  end
+
+  defp occupancy_cache_key(event_id), do: "occupancy:event:#{event_id}:breakdown"
+
+  defp occupancy_cache_ttl do
+    Application.get_env(:fastcheck, :occupancy_breakdown_cache_ttl, @default_occupancy_cache_ttl)
+  end
+
+  defp occupancy_cache_available? do
+    Application.get_env(:fastcheck, :cache_enabled, true) and
+      match?(pid when is_pid(pid), Process.whereis(@cache_name))
+  end
+
+  defp default_occupancy_breakdown do
+    %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
+  end
 
   @doc """
   Fetches a single attendee by ticket code within an event.
