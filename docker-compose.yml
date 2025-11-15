@@ -1,0 +1,91 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fastcheck-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fastcheck_prod
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fastcheck_prod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fastcheck_network
+
+  pgbouncer:
+    image: pgbouncer:1.18-alpine
+    container_name: fastcheck-pgbouncer
+    restart: unless-stopped
+    environment:
+      # Reuse backend connections after each transaction to maximize scanner throughput.
+      PGBOUNCER_POOL_MODE: transaction
+      # Allow up to 500 concurrent client sockets from FastCheck instances.
+      PGBOUNCER_MAX_CLIENT_CONN: 500
+      # Maintain 10 upstream PostgreSQL connections that are reused from the pool.
+      PGBOUNCER_DEFAULT_POOL_SIZE: 10
+      # Keep 5 upstream connections warm for immediate use.
+      PGBOUNCER_MIN_POOL_SIZE: 5
+      # Reserve 5 extra connections for bursty or priority queries.
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      # Only borrow from the reserve pool if a client waits longer than 3 seconds.
+      PGBOUNCER_RESERVE_POOL_TIMEOUT: 3
+      # Recycle server connections every hour to avoid long-lived transactions.
+      PGBOUNCER_SERVER_LIFETIME: 3600
+      # Close idle server connections that sit unused for 10 minutes.
+      PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
+      # Point pgBouncer at the FastCheck PostgreSQL container.
+      PGBOUNCER_DATABASES_HOST: postgres
+      # Listen to the upstream PostgreSQL port inside the bridge network.
+      PGBOUNCER_DATABASES_PORT: 5432
+      # Database user used for pooled connections.
+      PGBOUNCER_DATABASES_USER: postgres
+      # Password for the pooled database user. Keep this value in DB_PASSWORD.
+      PGBOUNCER_DATABASES_PASSWORD: ${DB_PASSWORD}
+      # Database name served by pgBouncer.
+      PGBOUNCER_DATABASES_DBNAME: fastcheck_prod
+      # Enable connection logging for observability.
+      PGBOUNCER_LOG_CONNECTIONS: 1
+      # Log disconnects to correlate churn.
+      PGBOUNCER_LOG_DISCONNECTIONS: 1
+      # Surface pool errors immediately in the logs.
+      PGBOUNCER_LOG_POOLERROR: 1
+    ports:
+      - "6432:6432"
+    depends_on:
+      - postgres
+    networks:
+      - fastcheck_network
+    healthcheck:
+      test: ["CMD", "psql", "-h", "localhost", "-U", "postgres", "-d", "fastcheck_prod", "-c", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fastcheck-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - fastcheck_network
+
+networks:
+  fastcheck_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

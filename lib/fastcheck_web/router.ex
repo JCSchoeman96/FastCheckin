@@ -21,4 +21,10 @@ defmodule FastCheckWeb.Router do
     live "/scan/:event_id", ScannerLive, :index
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
   end
+
+  scope "/", FastCheckWeb do
+    pipe_through :api
+
+    get "/health", HealthController, :check
+  end
 end

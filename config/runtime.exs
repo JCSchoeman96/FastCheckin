@@ -10,6 +10,14 @@ if System.get_env("PHX_SERVER") do
 end
 
 if config_env() == :prod do
+  # Route all production database traffic through pgBouncer so the scanners can
+  # share a compact pool of upstream PostgreSQL connections.
+  database_url =
+    System.get_env("DATABASE_URL") ||
+      "ecto://postgres:password@pgbouncer:6432/fastcheck_prod"
+
+  config :petal_blueprint, PetalBlueprint.Repo, url: database_url
+
   # The secret key base signs/encrypts cookies and tokens. Generate it with
   # `mix phx.gen.secret` and keep it outside of version control.
   secret_key_base =
