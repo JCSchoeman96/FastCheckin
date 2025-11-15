@@ -338,6 +338,44 @@ defmodule FastCheck.Events do
   end
 
   @doc """
+  Broadcasts a sanitized occupancy update for the given event.
+
+  The payload contains the `event_id`, current `inside_count`, resolved
+  `capacity`, and calculated occupancy `percentage`.
+  """
+  @spec broadcast_occupancy_update(integer(), integer()) :: :ok | {:error, atom()}
+  def broadcast_occupancy_update(event_id, inside_count)
+      when is_integer(event_id) and is_integer(inside_count) and event_id > 0 do
+    case Repo.get(Event, event_id) do
+      %Event{} = event ->
+        payload = build_occupancy_payload(event, inside_count)
+
+        try do
+          Phoenix.PubSub.broadcast!(
+            PetalBlueprint.PubSub,
+            occupancy_topic(event_id),
+            {:occupancy_update, payload}
+          )
+
+          :ok
+        rescue
+          exception ->
+            Logger.error(
+              "Failed to broadcast occupancy update for event #{event_id}: #{Exception.message(exception)}"
+            )
+
+            {:error, :broadcast_failed}
+        end
+
+      nil ->
+        Logger.error("Unable to broadcast occupancy update: event #{event_id} not found")
+        {:error, :event_not_found}
+    end
+  end
+
+  def broadcast_occupancy_update(_event_id, _inside_count), do: {:error, :invalid_event}
+
+  @doc """
   Fetches Tickera ticket configurations for an event and upserts them locally.
 
   Returns the count of configurations inserted/updated or an error tuple when
@@ -484,6 +522,41 @@ defmodule FastCheck.Events do
       {:occupancy_changed, current_occupancy, "live_update"}
     )
   end
+
+  defp build_occupancy_payload(%Event{} = event, inside_count) do
+    sanitized_inside = normalize_non_neg_integer(inside_count)
+    capacity = resolve_event_capacity(event)
+    percentage = compute_percentage(sanitized_inside, capacity)
+
+    %{
+      event_id: event.id,
+      inside_count: sanitized_inside,
+      capacity: capacity,
+      percentage: percentage
+    }
+  end
+
+  defp resolve_event_capacity(%Event{total_tickets: total_tickets}) do
+    normalize_non_neg_integer(total_tickets)
+  end
+
+  defp normalize_non_neg_integer(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_non_neg_integer(value) when is_integer(value) and value < 0, do: 0
+  defp normalize_non_neg_integer(value) when is_float(value) and value >= 0, do: trunc(value)
+  defp normalize_non_neg_integer(value) when is_float(value), do: 0
+  defp normalize_non_neg_integer(_value), do: 0
+
+  defp compute_percentage(_count, capacity) when capacity <= 0, do: 0.0
+
+  defp compute_percentage(count, capacity) do
+    count
+    |> min(capacity)
+    |> Kernel./(capacity)
+    |> Kernel.*(100.0)
+    |> Float.round(1)
+  end
+
+  defp occupancy_topic(event_id), do: "event:#{event_id}:occupancy"
 
   defp normalize_occupancy_integer(value) when is_integer(value), do: value
   defp normalize_occupancy_integer(value) when is_float(value), do: trunc(value)

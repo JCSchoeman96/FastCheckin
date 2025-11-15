@@ -166,6 +166,15 @@ defmodule FastCheckWeb.ScannerLive do
     end
   end
 
+  def handle_info({:occupancy_update, %{event_id: event_id} = payload}, socket)
+      when event_id == socket.assigns.event_id do
+    {:noreply,
+     assign_occupancy(socket, payload.inside_count,
+       capacity: payload.capacity,
+       percentage: payload.percentage
+     )}
+  end
+
   def handle_info({:occupancy_changed, count, _type}, socket) do
     {:noreply, assign_occupancy(socket, count)}
   end
@@ -825,27 +834,43 @@ defmodule FastCheckWeb.ScannerLive do
   defp event_topic(event_id), do: "event:#{event_id}:stats"
   defp occupancy_topic(event_id), do: "event:#{event_id}:occupancy"
 
-  defp assign_occupancy(socket, count) do
+  defp assign_occupancy(socket, count, opts \\ []) do
     sanitized_count = sanitize_non_neg_integer(count)
 
     capacity =
-      socket.assigns
-      |> Map.get(:stats)
+      opts
+      |> Keyword.get(:capacity)
       |> case do
-        %{total: total} -> total
-        _ -> nil
-      end
-      |> case do
-        nil -> Map.get(socket.assigns.event, :total_tickets)
-        value -> value
+        nil -> derive_capacity_from_socket(socket)
+        value -> normalize_capacity(value)
       end
 
-    percentage = calculate_occupancy_percentage(sanitized_count, capacity)
+    percentage =
+      opts
+      |> Keyword.get(:percentage)
+      |> normalize_percentage_override()
+      |> case do
+        nil -> calculate_occupancy_percentage(sanitized_count, capacity)
+        override -> override
+      end
 
     assign(socket,
       current_occupancy: sanitized_count,
       occupancy_percentage: percentage
     )
+  end
+
+  defp derive_capacity_from_socket(socket) do
+    socket.assigns
+    |> Map.get(:stats)
+    |> case do
+      %{total: total} -> total
+      _ -> nil
+    end
+    |> case do
+      nil -> Map.get(socket.assigns.event, :total_tickets)
+      value -> value
+    end
   end
 
   defp sanitize_non_neg_integer(value) when is_integer(value) and value >= 0, do: value
@@ -862,6 +887,10 @@ defmodule FastCheckWeb.ScannerLive do
         Float.round(count_clamped / capacity_value * 100, 1)
     end
   end
+
+  defp normalize_percentage_override(value) when is_float(value), do: Float.round(max(value, 0.0), 1)
+  defp normalize_percentage_override(value) when is_integer(value), do: normalize_percentage_override(value / 1)
+  defp normalize_percentage_override(_), do: nil
 
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value
   defp normalize_capacity(value) when is_float(value) and value > 0, do: trunc(value)

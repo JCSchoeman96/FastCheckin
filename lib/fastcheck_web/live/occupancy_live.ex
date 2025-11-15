@@ -49,6 +49,22 @@ defmodule FastCheckWeb.OccupancyLive do
     {:noreply, assign_dashboard(socket, event, stats)}
   end
 
+  def handle_info({:occupancy_update, %{event_id: event_id} = payload}, socket)
+      when event_id == socket.assigns.event_id do
+    percentage = payload.percentage |> normalize_percentage()
+    counts = Map.put(socket.assigns.counts, :currently_inside, payload.inside_count || 0)
+
+    socket =
+      socket
+      |> assign(:counts, counts)
+      |> assign(:capacity, payload.capacity || socket.assigns.capacity)
+      |> assign(:percentage, percentage)
+      |> assign(:alerts, generate_alerts(percentage))
+      |> assign(:last_updated, DateTime.utc_now())
+
+    {:noreply, socket}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
