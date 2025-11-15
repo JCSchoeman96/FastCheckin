@@ -8,7 +8,10 @@ config :petal_blueprint, PetalBlueprint.Repo,
   database: "petal_blueprint_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
-  pool_size: 10
+  pool_size: 20,
+  queue_target: 50,
+  queue_interval: 1_000,
+  preallocate: true
 
 # For development, we disable any cache and enable
 # debugging and code reloading.
