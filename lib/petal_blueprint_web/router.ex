@@ -20,6 +20,12 @@ defmodule PetalBlueprintWeb.Router do
     get "/", PageController, :home
   end
 
+  scope "/", FastCheckWeb do
+    pipe_through :api
+
+    post "/check-in", CheckInController, :create
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", PetalBlueprintWeb do
   #   pipe_through :api
