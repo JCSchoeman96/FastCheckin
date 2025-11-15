@@ -80,6 +80,6 @@ defmodule FastCheck.Attendees.Attendee do
       :event_id
     ])
     |> validate_required([:ticket_code, :event_id])
-    |> unique_constraint(:ticket_code, name: :unique_ticket_per_event)
+    |> unique_constraint(:ticket_code, name: :idx_attendees_event_code)
   end
 end
