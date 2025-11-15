@@ -61,6 +61,34 @@ defmodule FastCheck.TickeraClient do
   @date_fields [:event_start_date, :event_end_date, :first_checkin_at, :last_checkin_at]
   @boolean_fields [:is_valid_now, :can_enter]
 
+  @occupancy_key_mapping %{
+    "event_id" => :event_id,
+    "event_name" => :event_name,
+    "event_date_time" => :event_date_time,
+    "total_capacity" => :total_capacity,
+    "checked_in" => :checked_in,
+    "remaining" => :remaining,
+    "occupancy_percentage" => :occupancy_percentage,
+    "capacity_status" => :capacity_status,
+    "alerts" => :alerts,
+    "per_entrance" => :per_entrance
+  }
+
+  @per_entrance_key_mapping %{
+    "capacity" => :capacity,
+    "checked_in" => :checked_in,
+    "remaining" => :remaining,
+    "occupancy_percentage" => :occupancy_percentage,
+    "capacity_status" => :capacity_status,
+    "alerts" => :alerts
+  }
+
+  @occupancy_integer_fields [:total_capacity, :checked_in, :remaining]
+  @occupancy_float_fields [:occupancy_percentage]
+  @per_entrance_integer_fields [:capacity, :checked_in, :remaining]
+  @per_entrance_float_fields [:occupancy_percentage]
+  @occupancy_default_capacity_status "unknown"
+
   @doc """
   Validates the provided API credentials against the Tickera API.
 
@@ -97,6 +125,66 @@ defmodule FastCheck.TickeraClient do
     with {:ok, data} <- fetch_json(url) do
       normalized = Map.update(data, "event_date_time", nil, &parse_datetime/1)
       {:ok, normalized}
+    end
+  end
+
+  @doc """
+  Retrieves live event occupancy statistics from Tickera.
+
+  Performs the authenticated request against `/tc-api/{api_key}/event_occupancy`,
+  normalizes the response keys into atoms, and coerces the numeric fields into the
+  expected integer/float representations.
+
+  ## Returns
+    * `{:ok, occupancy_map}` when Tickera responds successfully.
+    * `{:error, code, message}` when HTTP or business errors occur.
+  """
+  @spec get_event_occupancy(String.t(), String.t()) ::
+          {:ok, map()} | {:error, String.t(), String.t()}
+  def get_event_occupancy(site_url, api_key) do
+    Logger.debug("TickeraClient: get_event_occupancy – START")
+    :timer.sleep(@rate_limit_delay)
+
+    url = build_url(site_url, api_key, "event_occupancy")
+
+    headers = [
+      {"authorization", "Bearer #{api_key}"},
+      {"accept", "application/json"}
+    ]
+
+    options = [timeout: @status_timeout, recv_timeout: @status_timeout]
+
+    case HTTPoison.get(url, headers, options) do
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+        with {:ok, payload} <- decode_json_map(body),
+             {:ok, normalized} <- normalize_event_occupancy(payload) do
+          Logger.info("TickeraClient: get_event_occupancy – SUCCESS")
+          {:ok, normalized}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: 401}} ->
+        Logger.warn("TickeraClient: get_event_occupancy – AUTH_ERROR")
+        {:error, "AUTH_ERROR", "Authentication failed"}
+
+      {:ok, %HTTPoison.Response{status_code: 404}} ->
+        Logger.warn("TickeraClient: get_event_occupancy – NOT_FOUND")
+        {:error, "NOT_FOUND", "Event occupancy not found"}
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        Logger.warn("TickeraClient: get_event_occupancy – RATE_LIMITED")
+        {:error, "RATE_LIMITED", "Tickera rate limit reached"}
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+        Logger.warn("TickeraClient: get_event_occupancy – SERVER_ERROR")
+        {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+        Logger.error("Tickera event occupancy unexpected response (#{code}): #{body}")
+        {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
+
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        Logger.error("Tickera event occupancy request failed: #{inspect(reason)}")
+        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
     end
   end
 
@@ -336,6 +424,21 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
+  defp decode_json_map(body) do
+    case Jason.decode(body) do
+      {:ok, %{} = payload} ->
+        {:ok, payload}
+
+      {:ok, _other} ->
+        Logger.error("Tickera event occupancy response was not a JSON object")
+        {:error, "JSON_ERROR", "Response not valid JSON"}
+
+      {:error, _error} ->
+        Logger.error("Tickera event occupancy response was not valid JSON")
+        {:error, "JSON_ERROR", "Response not valid JSON"}
+    end
+  end
+
   defp normalize_ticket_payload(%{} = payload) do
     case extract_business_error(payload) do
       {:error, code, message} ->
@@ -368,6 +471,33 @@ defmodule FastCheck.TickeraClient do
 
   defp normalize_ticket_payload(_payload) do
     Logger.error("Tickera ticket status payload missing")
+    {:error, "JSON_ERROR", "Response not valid JSON"}
+  end
+
+  defp normalize_event_occupancy(%{} = payload) do
+    case extract_business_error(payload) do
+      {:error, code, message} ->
+        Logger.warn("TickeraClient: get_event_occupancy – #{code}")
+        {:error, code, message}
+
+      :ok ->
+        data_map = Map.get(payload, "data")
+        source = if is_map(data_map), do: data_map, else: payload
+
+        normalized =
+          Enum.reduce(source, %{}, fn {key, value}, acc ->
+            maybe_put_occupancy_field(acc, key, value)
+          end)
+          |> ensure_capacity_status_default()
+          |> ensure_alerts_default()
+          |> Map.put_new(:per_entrance, %{})
+
+        {:ok, normalized}
+    end
+  end
+
+  defp normalize_event_occupancy(_payload) do
+    Logger.error("Tickera event occupancy payload missing")
     {:error, "JSON_ERROR", "Response not valid JSON"}
   end
 
@@ -413,11 +543,57 @@ defmodule FastCheck.TickeraClient do
 
   defp maybe_put_ticket_field(acc, _key, _value), do: acc
 
+  defp maybe_put_occupancy_field(acc, key, value) when is_binary(key) do
+    case Map.get(@occupancy_key_mapping, key) do
+      nil -> acc
+      :per_entrance -> Map.put(acc, :per_entrance, normalize_per_entrance(value))
+      atom_key -> Map.put(acc, atom_key, normalize_occupancy_value(atom_key, value))
+    end
+  end
+
+  defp maybe_put_occupancy_field(acc, key, value) when is_atom(key) do
+    maybe_put_occupancy_field(acc, Atom.to_string(key), value)
+  end
+
+  defp maybe_put_occupancy_field(acc, _key, _value), do: acc
+
+  defp maybe_put_per_entrance_field(acc, key, value) when is_binary(key) do
+    case Map.get(@per_entrance_key_mapping, key) do
+      nil -> acc
+      atom_key -> Map.put(acc, atom_key, normalize_per_entrance_value(atom_key, value))
+    end
+  end
+
+  defp maybe_put_per_entrance_field(acc, key, value) when is_atom(key) do
+    maybe_put_per_entrance_field(acc, Atom.to_string(key), value)
+  end
+
+  defp maybe_put_per_entrance_field(acc, _key, _value), do: acc
+
   defp normalize_value(key, value) when key in @integer_fields, do: coerce_integer(value)
   defp normalize_value(key, value) when key in @float_fields, do: coerce_float(value)
   defp normalize_value(key, value) when key in @date_fields, do: coerce_date(value)
   defp normalize_value(key, value) when key in @boolean_fields, do: coerce_boolean(value)
   defp normalize_value(_key, value), do: value
+
+  defp normalize_occupancy_value(key, value) when key in @occupancy_integer_fields,
+    do: coerce_integer(value)
+
+  defp normalize_occupancy_value(key, value) when key in @occupancy_float_fields,
+    do: coerce_float(value)
+
+  defp normalize_occupancy_value(:event_date_time, value), do: parse_datetime(value)
+  defp normalize_occupancy_value(:alerts, value), do: coerce_alerts(value)
+  defp normalize_occupancy_value(_key, value), do: value
+
+  defp normalize_per_entrance_value(key, value) when key in @per_entrance_integer_fields,
+    do: coerce_integer(value)
+
+  defp normalize_per_entrance_value(key, value) when key in @per_entrance_float_fields,
+    do: coerce_float(value)
+
+  defp normalize_per_entrance_value(:alerts, value), do: coerce_alerts(value)
+  defp normalize_per_entrance_value(_key, value), do: value
 
   defp coerce_integer(value) when is_integer(value), do: value
   defp coerce_integer(value) when is_float(value), do: trunc(value)
@@ -474,6 +650,14 @@ defmodule FastCheck.TickeraClient do
 
   defp coerce_boolean(_value), do: false
 
+  defp coerce_alerts(value) when is_list(value) do
+    Enum.map(value, &to_string/1)
+  end
+
+  defp coerce_alerts(value) when is_binary(value), do: [value]
+  defp coerce_alerts(nil), do: []
+  defp coerce_alerts(value), do: List.wrap(value)
+
   defp ensure_purchaser_fields(map) do
     name =
       [Map.get(map, :buyer_first), Map.get(map, :buyer_last)]
@@ -506,6 +690,34 @@ defmodule FastCheck.TickeraClient do
     |> Map.put(:used_checkins, used)
     |> Map.put(:remaining_checkins, remaining)
   end
+
+  defp ensure_capacity_status_default(map) do
+    Map.put_new(map, :capacity_status, @occupancy_default_capacity_status)
+  end
+
+  defp ensure_alerts_default(map) do
+    Map.put_new(map, :alerts, [])
+  end
+
+  defp normalize_per_entrance(per_entrance) when is_map(per_entrance) do
+    Enum.reduce(per_entrance, %{}, fn {entrance, stats}, acc ->
+      normalized =
+        stats
+        |> ensure_map()
+        |> Enum.reduce(%{}, fn {key, value}, inner ->
+          maybe_put_per_entrance_field(inner, key, value)
+        end)
+        |> ensure_capacity_status_default()
+        |> ensure_alerts_default()
+
+      Map.put(acc, to_string(entrance), normalized)
+    end)
+  end
+
+  defp normalize_per_entrance(_per_entrance), do: %{}
+
+  defp ensure_map(value) when is_map(value), do: value
+  defp ensure_map(_value), do: %{}
 
   defp build_url(site_url, api_key, endpoint) do
     trimmed = site_url |> to_string() |> String.trim_trailing("/")
