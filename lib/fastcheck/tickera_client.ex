@@ -213,30 +213,29 @@ defmodule FastCheck.TickeraClient do
   defp fetch_json(url) do
     Logger.debug("TickeraClient GET #{url}")
 
-    try do
-      headers = [{"accept", "application/json"}]
-      options = [timeout: @timeout, recv_timeout: @timeout]
+    options = [
+      url: url,
+      headers: [{"accept", "application/json"}],
+      connect_options: [timeout: @timeout],
+      receive_timeout: @timeout,
+      decode_body: false
+    ]
 
-      case HTTPoison.get(url, headers, options) do
-        {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
-          case Jason.decode(body) do
-            {:ok, data} -> {:ok, data}
-            {:error, error} ->
-              Logger.error("Failed to decode Tickera response: #{inspect(error)}")
-              {:error, "HTTP error: invalid JSON response"}
-          end
+    case Req.get(options) do
+      {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
+        case Jason.decode(body) do
+          {:ok, data} -> {:ok, data}
+          {:error, error} ->
+            Logger.error("Failed to decode Tickera response: #{inspect(error)}")
+            {:error, "HTTP error: invalid JSON response"}
+        end
 
-        {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
-          Logger.error("Tickera request failed (status #{code}): #{body}")
-          {:error, "HTTP error: status #{code}"}
+      {:ok, %Req.Response{status: status, body: body}} ->
+        Logger.error("Tickera request failed (status #{status}): #{body}")
+        {:error, "HTTP error: status #{status}"}
 
-        {:error, %HTTPoison.Error{reason: reason}} ->
-          Logger.error("Tickera request error: #{inspect(reason)}")
-          {:error, "HTTP error: #{inspect(reason)}"}
-      end
-    rescue
-      exception ->
-        Logger.error("Tickera request exception: #{Exception.message(exception)}")
+      {:error, exception} ->
+        Logger.error("Tickera request error: #{Exception.message(exception)}")
         {:error, "HTTP error: #{Exception.message(exception)}"}
     end
   end
