@@ -16,6 +16,11 @@ defmodule FastCheck.Attendees do
     TickeraClient
   }
 
+  @ticket_code_min 3
+  @ticket_code_max 100
+  @ticket_code_pattern ~r/^[A-Za-z0-9\-\._]+$/
+  @entrance_name_pattern ~r/^[A-Za-z0-9\s\-\._]+$/
+
   @doc """
   Bulk inserts attendees for the provided event.
 
@@ -77,71 +82,82 @@ defmodule FastCheck.Attendees do
   @spec check_in(integer(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def check_in(event_id, ticket_code, entrance_name \\ "Main", operator_name \\ nil)
-      when is_integer(event_id) and is_binary(ticket_code) do
-    query =
-      from(a in Attendee,
-        where: a.event_id == ^event_id and a.ticket_code == ^ticket_code,
-        lock: "FOR UPDATE"
-      )
+      when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+    with {:ok, sanitized_code} <- validate_ticket_code(ticket_code),
+         {:ok, sanitized_entrance} <- validate_entrance_name(entrance_name) do
+      query =
+        from(a in Attendee,
+          where: a.event_id == ^event_id and a.ticket_code == ^sanitized_code,
+          lock: "FOR UPDATE"
+        )
 
-    try do
-      Repo.transaction(fn ->
-        case Repo.one(query) do
-          nil ->
-            Logger.warn("Invalid ticket #{ticket_code} for event #{event_id}")
-            record_check_in(%{ticket_code: ticket_code}, event_id, "invalid", entrance_name, operator_name)
-            broadcast_event_stats_async(event_id)
-            {:error, "INVALID", "Ticket not found"}
+      try do
+        Repo.transaction(fn ->
+          case Repo.one(query) do
+            nil ->
+              Logger.warn("Invalid ticket #{sanitized_code} for event #{event_id}")
+              record_check_in(%{ticket_code: sanitized_code}, event_id, "invalid", sanitized_entrance, operator_name)
+              broadcast_event_stats_async(event_id)
+              {:error, "INVALID", "Ticket not found"}
 
-          %Attendee{} = attendee ->
-            remaining = attendee.checkins_remaining || attendee.allowed_checkins || 0
+            %Attendee{} = attendee ->
+              remaining = attendee.checkins_remaining || attendee.allowed_checkins || 0
 
-            cond do
-              attendee.checked_in_at && remaining <= 0 ->
-                Logger.warn("Duplicate ticket #{ticket_code} for event #{event_id}")
-                record_check_in(attendee, event_id, "duplicate", entrance_name, operator_name)
-                broadcast_event_stats_async(event_id)
-                {:error, "DUPLICATE", "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
+              cond do
+                attendee.checked_in_at && remaining <= 0 ->
+                  Logger.warn("Duplicate ticket #{sanitized_code} for event #{event_id}")
+                  record_check_in(attendee, event_id, "duplicate", sanitized_entrance, operator_name)
+                  broadcast_event_stats_async(event_id)
+                  {:error, "DUPLICATE", "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
 
-              true ->
-                now = DateTime.utc_now() |> DateTime.truncate(:second)
-                new_remaining = max(remaining - 1, 0)
+                true ->
+                  now = DateTime.utc_now() |> DateTime.truncate(:second)
+                  new_remaining = max(remaining - 1, 0)
 
-                attrs = %{
-                  checked_in_at: now,
-                  last_checked_in_at: now,
-                  checkins_remaining: new_remaining
-                }
+                  attrs = %{
+                    checked_in_at: now,
+                    last_checked_in_at: now,
+                    checkins_remaining: new_remaining
+                  }
 
-                case Attendee.changeset(attendee, attrs) |> Repo.update() do
-                  {:ok, updated} ->
-                    record_check_in(updated, event_id, "success", entrance_name, operator_name)
-                    broadcast_event_stats_async(event_id)
-                    Logger.info("Ticket #{ticket_code} checked in for event #{event_id}")
-                    {:ok, updated, "SUCCESS"}
+                  case Attendee.changeset(attendee, attrs) |> Repo.update() do
+                    {:ok, updated} ->
+                      record_check_in(updated, event_id, "success", sanitized_entrance, operator_name)
+                      broadcast_event_stats_async(event_id)
+                      Logger.info("Ticket #{sanitized_code} checked in for event #{event_id}")
+                      {:ok, updated, "SUCCESS"}
 
-                  {:error, changeset} ->
-                    Logger.error("Failed to update attendee #{attendee.id}: #{inspect(changeset.errors)}")
-                    Repo.rollback({:changeset, "Failed to update attendee"})
-                end
-            end
+                    {:error, changeset} ->
+                      Logger.error("Failed to update attendee #{attendee.id}: #{inspect(changeset.errors)}")
+                      Repo.rollback({:changeset, "Failed to update attendee"})
+                  end
+              end
+          end
+        end)
+        |> case do
+          {:ok, result} -> result
+          {:error, {:changeset, message}} -> {:error, "ERROR", message}
+          {:error, reason} ->
+            Logger.error("Check-in transaction failed for #{sanitized_code}: #{inspect(reason)}")
+            {:error, "ERROR", "Unable to process check-in"}
         end
-      end)
-      |> case do
-        {:ok, result} -> result
-        {:error, {:changeset, message}} -> {:error, "ERROR", message}
-        {:error, reason} ->
-          Logger.error("Check-in transaction failed for #{ticket_code}: #{inspect(reason)}")
-          {:error, "ERROR", "Unable to process check-in"}
+      rescue
+        exception ->
+          Logger.error("Check-in crashed for #{sanitized_code}: #{Exception.message(exception)}")
+          {:error, "ERROR", "Unexpected error"}
       end
-    rescue
-      exception ->
-        Logger.error("Check-in crashed for #{ticket_code}: #{Exception.message(exception)}")
-        {:error, "ERROR", "Unexpected error"}
+    else
+      {:error, {:invalid_ticket_code, message}} ->
+        Logger.warn("Check-in rejected: #{message}")
+        {:error, "INVALID_CODE", message}
+
+      {:error, {:invalid_entrance_name, message}} ->
+        Logger.warn("Check-in rejected: #{message}")
+        {:error, "INVALID_CODE", message}
     end
   end
 
-  def check_in(_, _, _, _), do: {:error, "INVALID", "Ticket not found"}
+  def check_in(_, _, _, _), do: {:error, "INVALID_CODE", "Invalid ticket code"}
 
   @doc """
   Performs an advanced check-in that tracks the richer scan metadata and
@@ -873,4 +889,44 @@ defmodule FastCheck.Attendees do
   rescue
     _ -> "unknown time"
   end
+
+  defp validate_ticket_code(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> validate_trimmed_value(@ticket_code_min, @ticket_code_max, @ticket_code_pattern, :ticket_code)
+  end
+
+  defp validate_ticket_code(_), do: invalid_error(:ticket_code, "is invalid")
+
+  defp validate_entrance_name(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> validate_trimmed_value(@ticket_code_min, @ticket_code_max, @entrance_name_pattern, :entrance_name)
+  end
+
+  defp validate_entrance_name(_), do: invalid_error(:entrance_name, "is invalid")
+
+  defp validate_trimmed_value("", _min, _max, _pattern, field), do: invalid_error(field, "is required")
+
+  defp validate_trimmed_value(value, min, _max, _pattern, field) when String.length(value) < min do
+    invalid_error(field, "must be at least #{min} characters")
+  end
+
+  defp validate_trimmed_value(value, _min, max, _pattern, field) when String.length(value) > max do
+    invalid_error(field, "must be #{max} characters or fewer")
+  end
+
+  defp validate_trimmed_value(value, _min, _max, pattern, field) do
+    if String.match?(value, pattern) do
+      {:ok, value}
+    else
+      invalid_error(field, "contains invalid characters")
+    end
+  end
+
+  defp invalid_error(:ticket_code, message),
+    do: {:error, {:invalid_ticket_code, "Ticket code #{message}"}}
+
+  defp invalid_error(:entrance_name, message),
+    do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
 end
