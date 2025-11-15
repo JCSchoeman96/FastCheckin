@@ -1,13 +1,20 @@
 #!/bin/bash
 set -e
 
-echo "🔧 [Codex] Installing Hex and Rebar via direct .ez fallback..."
+echo "🔧 [Codex] Installing Hex and Rebar via local archives..."
 
 mkdir -p ~/.mix/archives
 
-# Must be named hex.ez and rebar3.ez for mix to detect them
-curl -sSL https://repo.hex.pm/installs/1.12.0/hex.ez -o ~/.mix/archives/hex.ez
-curl -sSL https://repo.hex.pm/installs/1.20.0/rebar3.ez -o ~/.mix/archives/rebar3.ez
+# Download .ez files
+curl -sSL https://repo.hex.pm/installs/1.12.0/hex.ez -o hex.ez
+curl -sSL https://repo.hex.pm/installs/1.20.0/rebar3.ez -o rebar3.ez
+
+# Install from local .ez without contacting Hex.pm
+mix archive.install ./hex.ez --force
+mix archive.install ./rebar3.ez --force
+
+# Cleanup temp files
+rm hex.ez rebar3.ez
 
 echo "📦 Fetching and compiling dependencies..."
 mix deps.get
@@ -17,4 +24,4 @@ echo "🎨 Building assets..."
 mix assets.setup || true
 mix assets.build || true
 
-echo "✅ [Codex] Offline-safe setup complete."
+echo "✅ [Codex] Setup completed fully offline."
