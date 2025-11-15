@@ -1251,8 +1251,14 @@ defmodule FastCheck.TickeraClient do
     "#{trimmed}/tc-api/#{api_key}/#{endpoint}"
   end
 
+  defp safe_log_url(url) when is_binary(url) do
+    Regex.replace(~r{/tc-api/[^/?#]+}, url, "/tc-api/[REDACTED]")
+  end
+
+  defp safe_log_url(url), do: url
+
   defp fetch_json(url) do
-    Logger.debug("TickeraClient GET #{url}")
+    Logger.debug("TickeraClient GET #{safe_log_url(url)}")
 
     try do
       headers = [{"accept", "application/json"}]
