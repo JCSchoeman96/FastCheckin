@@ -16,8 +16,9 @@ defmodule PetalBlueprint.Repo.Migrations.CreateIndexesOptimization do
   end
 
   defp ensure_index(table, columns, name) do
-    table_sql = Atom.to_string(table)
+    table_sql = qualified_table(table)
     index_sql = Atom.to_string(name)
+    index_identifier = qualified_index(name)
     columns_sql =
       columns
       |> Enum.map(&"\"#{Atom.to_string(&1)}\"")
@@ -27,10 +28,15 @@ defmodule PetalBlueprint.Repo.Migrations.CreateIndexesOptimization do
     DO $$
     BEGIN
       IF NOT EXISTS (
-        SELECT 1 FROM pg_class WHERE relname = '#{index_sql}' AND relkind = 'i'
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = '#{index_sql}'
+          AND n.nspname = #{schema_condition_sql()}
+          AND c.relkind = 'i'
       ) THEN
-        EXECUTE 'CREATE INDEX #{index_sql} ON #{table_sql} (#{columns_sql})';
-        EXECUTE 'COMMENT ON INDEX #{index_sql} IS ''#{@managed_comment}''';
+        EXECUTE 'CREATE INDEX #{index_identifier} ON #{table_sql} (#{columns_sql})';
+        EXECUTE 'COMMENT ON INDEX #{index_identifier} IS ''#{@managed_comment}''';
       END IF;
     END;
     $$;
@@ -39,6 +45,7 @@ defmodule PetalBlueprint.Repo.Migrations.CreateIndexesOptimization do
 
   defp drop_managed_index(name) do
     index_sql = Atom.to_string(name)
+    index_identifier = qualified_index(name)
 
     execute("""
     DO $$
@@ -49,14 +56,51 @@ defmodule PetalBlueprint.Repo.Migrations.CreateIndexesOptimization do
       SELECT c.oid, d.description
       INTO idx_oid, idx_comment
       FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
       LEFT JOIN pg_description d ON d.objoid = c.oid AND d.classoid = 'pg_class'::regclass
-      WHERE c.relname = '#{index_sql}' AND c.relkind = 'i';
+      WHERE c.relname = '#{index_sql}'
+        AND n.nspname = #{schema_condition_sql()}
+        AND c.relkind = 'i';
 
       IF idx_oid IS NOT NULL AND idx_comment = '#{@managed_comment}' THEN
-        EXECUTE 'DROP INDEX IF EXISTS #{index_sql}';
+        EXECUTE 'DROP INDEX IF EXISTS #{index_identifier}';
       END IF;
     END;
     $$;
     """)
+  end
+
+  defp qualified_table(table) do
+    table_name = Atom.to_string(table)
+
+    case prefix() do
+      nil -> "\"#{table_name}\""
+      schema -> "#{quote_ident(schema)}.\"#{table_name}\""
+    end
+  end
+
+  defp qualified_index(name) do
+    index_name = Atom.to_string(name)
+
+    case prefix() do
+      nil -> "\"#{index_name}\""
+      schema -> "#{quote_ident(schema)}.\"#{index_name}\""
+    end
+  end
+
+  defp schema_condition_sql do
+    case prefix() do
+      nil -> "current_schema()"
+      schema -> "'#{escape_literal(schema)}'"
+    end
+  end
+
+  defp quote_ident(identifier) do
+    escaped = String.replace(identifier, "\"", "\"\"")
+    "\"#{escaped}\""
+  end
+
+  defp escape_literal(value) do
+    String.replace(value, "'", "''")
   end
 end
