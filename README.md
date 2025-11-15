@@ -5,15 +5,15 @@ A production-ready Phoenix 1.8.1 template for building modern web applications.
 ## Stack Included
 
 - ✅ **Phoenix 1.8.1** - Web framework
-- ✅ **Elixir 1.19.0** - Language
-- ✅ **Erlang/OTP 28** - VM
+- ✅ **Elixir 1.19.2** - Language
+- ✅ **Erlang/OTP 28.1.1** - VM
 - ✅ **Alpine.js 3.x** - Lightweight interactivity
-- ✅ **TailwindCSS 4.1.7** - Utility-first CSS
+- ✅ **TailwindCSS 4.1.17** - Utility-first CSS
 - ✅ **DaisyUI 5.0.35** - Component library
 - ✅ **Mishka Chelekom 0.0.8** - 90+ pre-built components
-- ✅ **PostgreSQL 18.0** - Database
+- ✅ **PostgreSQL 18.1** - Database
 - ✅ **Bandit 1.8.0** - HTTP server
-- ✅ **LiveView 1.1.16** - Real-time UI
+- ✅ **LiveView 1.1.17** - Real-time UI
 - ✅ **PubSub** - Real-time messaging
 
 ## Quick Start
@@ -125,9 +125,9 @@ mix deps.update # Update dependencies
 
 ## Requirements
 
-- Erlang/OTP 27+
-- Elixir 1.17+
-- PostgreSQL 16+
+- Erlang/OTP 28.1+
+- Elixir 1.19.2+
+- PostgreSQL 18.1+
 - Node.js 20+
 
 ## License
