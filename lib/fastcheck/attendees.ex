@@ -668,7 +668,11 @@ defmodule FastCheck.Attendees do
   end
 
   defp handle_session_transaction({:ok, %{attendee: attendee, message: message}}, event_id, broadcast?) do
-    if broadcast?, do: broadcast_occupancy_breakdown(event_id)
+    if broadcast? do
+      broadcast_occupancy_breakdown(event_id)
+      broadcast_event_stats_async(event_id)
+    end
+
     {:ok, attendee, message}
   end
 
