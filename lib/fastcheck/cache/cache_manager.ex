@@ -182,11 +182,13 @@ defmodule FastCheck.Cache.CacheManager do
     end
   end
 
-  defp persist_config_cache(_cache_key, _config) when not cache_available?, do: :ok
-
   defp persist_config_cache(cache_key, config) do
-    ttl = ttl_for(:ticket_config)
-    :ok = Cachex.put(@cache_name, cache_key, config, ttl: ttl)
+    if cache_available?() do
+      ttl = ttl_for(:ticket_config)
+      :ok = Cachex.put(@cache_name, cache_key, config, ttl: ttl)
+    else
+      :ok
+    end
   rescue
     exception ->
       Logger.warn(
@@ -252,23 +254,24 @@ defmodule FastCheck.Cache.CacheManager do
     end
   end
 
-  defp adjust_redis_occupancy(_keys, _change_type, _delta) when not redis_available?(),
-    do: {:error, :redis_disabled}
-
   defp adjust_redis_occupancy(keys, change_type, delta) do
-    with {:ok, count} <- redis_command(["INCRBY", keys.current, delta]) do
-      sanitized = max(count, 0)
-      if sanitized != count, do: redis_command(["SET", keys.current, sanitized])
-      redis_command(["EXPIRE", keys.current, @occupancy_counter_ttl])
+    if redis_available?() do
+      with {:ok, count} <- redis_command(["INCRBY", keys.current, delta]) do
+        sanitized = max(count, 0)
+        if sanitized != count, do: redis_command(["SET", keys.current, sanitized])
+        redis_command(["EXPIRE", keys.current, @occupancy_counter_ttl])
 
-      counter_key = if(change_type == "entry", do: keys.entries, else: keys.exits)
-      redis_command(["INCR", counter_key])
-      redis_command(["EXPIRE", counter_key, @occupancy_counter_ttl])
+        counter_key = if(change_type == "entry", do: keys.entries, else: keys.exits)
+        redis_command(["INCR", counter_key])
+        redis_command(["EXPIRE", counter_key, @occupancy_counter_ttl])
 
-      redis_command(["SET", keys.updated_at, iso_now()])
-      redis_command(["EXPIRE", keys.updated_at, @occupancy_counter_ttl])
+        redis_command(["SET", keys.updated_at, iso_now()])
+        redis_command(["EXPIRE", keys.updated_at, @occupancy_counter_ttl])
 
-      {:ok, sanitized}
+        {:ok, sanitized}
+      end
+    else
+      {:error, :redis_disabled}
     end
   end
 
@@ -322,23 +325,25 @@ defmodule FastCheck.Cache.CacheManager do
       {:error, "OCCUPANCY_UNAVAILABLE"}
   end
 
-  defp persist_occupancy_snapshot(_keys, _snapshot) when not redis_available?, do: :ok
-
   defp persist_occupancy_snapshot(keys, snapshot) do
-    ttl = occupancy_ttl_seconds()
+    if redis_available?() do
+      ttl = occupancy_ttl_seconds()
 
-    Enum.each(
-      [
-        {keys.current, snapshot.inside},
-        {keys.entries, snapshot.total_entries},
-        {keys.exits, snapshot.total_exits},
-        {keys.total, snapshot.total_attendees},
-        {keys.updated_at, DateTime.to_iso8601(snapshot.updated_at)}
-      ],
-      fn {key, value} ->
-        redis_command(["SETEX", key, ttl, to_string(value)])
-      end
-    )
+      Enum.each(
+        [
+          {keys.current, snapshot.inside},
+          {keys.entries, snapshot.total_entries},
+          {keys.exits, snapshot.total_exits},
+          {keys.total, snapshot.total_attendees},
+          {keys.updated_at, DateTime.to_iso8601(snapshot.updated_at)}
+        ],
+        fn {key, value} ->
+          redis_command(["SETEX", key, ttl, to_string(value)])
+        end
+      )
+    else
+      :ok
+    end
   end
 
   defp broadcast_occupancy(event_id, count, change_type) do
@@ -346,17 +351,19 @@ defmodule FastCheck.Cache.CacheManager do
     :ok
   end
 
-  defp clear_config_cache(_event_id) when not cache_available?, do: :ok
-
   defp clear_config_cache(event_id) do
-    case Cachex.keys(@cache_name) do
-      {:ok, keys} ->
-        keys
-        |> Enum.filter(&String.starts_with?(&1, "config:event:#{event_id}:"))
-        |> Enum.each(&Cachex.del(@cache_name, &1))
+    if cache_available?() do
+      case Cachex.keys(@cache_name) do
+        {:ok, keys} ->
+          keys
+          |> Enum.filter(&String.starts_with?(&1, "config:event:#{event_id}:"))
+          |> Enum.each(&Cachex.del(@cache_name, &1))
 
-      {:error, reason} ->
-        Logger.warn("Unable to enumerate Cachex keys for invalidation: #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.warn("Unable to enumerate Cachex keys for invalidation: #{inspect(reason)}")
+      end
+    else
+      :ok
     end
   end
 
