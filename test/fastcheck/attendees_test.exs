@@ -74,6 +74,24 @@ defmodule FastCheck.AttendeesTest do
       assert stats.checked_in == 1
       assert stats.total == 1
     end
+
+    test "rejects invalid ticket codes" do
+      event = insert_event!("Conference")
+
+      assert {:error, "INVALID_CODE", message} =
+               Attendees.check_in(event.id, "  x ", "Main", "Operator")
+
+      assert message =~ "Ticket code"
+    end
+
+    test "rejects invalid entrance names" do
+      event = insert_event!("Conference")
+
+      assert {:error, "INVALID_CODE", message} =
+               Attendees.check_in(event.id, "VALID-CODE", "<invalid>", "Operator")
+
+      assert message =~ "Entrance name"
+    end
   end
 
   defp ids_for_search(event_id, query) do
