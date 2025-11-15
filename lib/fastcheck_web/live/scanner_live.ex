@@ -124,7 +124,7 @@ defmodule FastCheckWeb.ScannerLive do
     current_query = socket.assigns.search_query |> to_string() |> String.trim()
 
     if current_query == query do
-      results = Attendees.search_event_attendees(socket.assigns.event_id, query, limit: 10)
+      results = Attendees.search_event_attendees(socket.assigns.event_id, query, 10)
 
       {:noreply,
        socket

@@ -194,14 +194,14 @@ defmodule FastCheck.Attendees do
   Supports case-insensitive matches across first/last name, email, and
   ticket code fields.
   """
-  @spec search_event_attendees(integer(), String.t(), keyword()) :: [Attendee.t()]
-  def search_event_attendees(event_id, query, opts \\ []) when is_integer(event_id) do
-    trimmed = query |> to_string() |> String.trim()
-    limit = opts |> Keyword.get(:limit, 10) |> max(1)
+  @spec search_event_attendees(integer(), String.t() | nil, pos_integer()) :: [Attendee.t()]
+  def search_event_attendees(event_id, query, limit \\ 20) when is_integer(event_id) do
+    trimmed = sanitize_query(query)
 
     if trimmed == "" do
       []
     else
+      safe_limit = normalize_limit(limit)
       pattern = "%#{escape_like(trimmed)}%"
 
       from(a in Attendee,
@@ -211,8 +211,8 @@ defmodule FastCheck.Attendees do
             ilike(a.last_name, ^pattern) or
             ilike(a.email, ^pattern) or
             ilike(a.ticket_code, ^pattern),
-        order_by: [asc: a.last_name, asc: a.first_name, desc: a.inserted_at],
-        limit: ^limit
+        order_by: [asc: a.last_name, asc: a.first_name, asc: a.id],
+        limit: ^safe_limit
       )
       |> Repo.all()
     end
@@ -223,6 +223,13 @@ defmodule FastCheck.Attendees do
   end
 
   def search_event_attendees(_, _, _), do: []
+
+  defp sanitize_query(nil), do: ""
+  defp sanitize_query(query) when is_binary(query), do: String.trim(query)
+  defp sanitize_query(query), do: query |> to_string() |> String.trim()
+
+  defp normalize_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 50)
+  defp normalize_limit(_limit), do: 20
 
   defp escape_like(term) when is_binary(term) do
     term
