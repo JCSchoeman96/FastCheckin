@@ -64,14 +64,20 @@ defmodule FastCheck.Events do
   def create_event(_), do: {:error, "Invalid attributes"}
 
   @doc """
-  Lists every event stored in the database.
+  Lists every event stored in the database along with aggregated statistics
+  such as the number of attendees linked to the event.
 
   ## Returns
-    * list of `%Event{}` structs.
+    * list of `%Event{}` structs with the virtual `attendee_count` field
+      populated.
   """
   @spec list_events() :: [Event.t()]
   def list_events do
-    Repo.all(Event)
+    Event
+    |> join(:left, [e], a in Attendee, on: a.event_id == e.id)
+    |> group_by([e, _a], e)
+    |> select_merge([_e, a], %{attendee_count: count(a.id)})
+    |> Repo.all()
   end
 
   @doc """

@@ -239,7 +239,7 @@ defmodule FastCheckWeb.DashboardLive do
                 </span>
               </div>
 
-              <div class="mt-6 grid grid-cols-2 gap-4 text-center">
+              <div class="mt-6 grid grid-cols-2 gap-4 text-center md:grid-cols-3">
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Total tickets</p>
                   <p class="text-2xl font-semibold text-slate-900">{event.total_tickets || 0}</p>
@@ -247,6 +247,10 @@ defmodule FastCheckWeb.DashboardLive do
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Checked in</p>
                   <p class="text-2xl font-semibold text-green-600">{event.checked_in_count || 0}</p>
+                </div>
+                <div class="rounded-xl bg-slate-50 p-4">
+                  <p class="text-xs uppercase tracking-wide text-slate-500">Total attendees</p>
+                  <p class="text-2xl font-semibold text-slate-900">{event.attendee_count || 0}</p>
                 </div>
               </div>
 

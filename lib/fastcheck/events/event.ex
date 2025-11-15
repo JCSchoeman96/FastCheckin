@@ -15,6 +15,7 @@ defmodule FastCheck.Events.Event do
           status: String.t() | nil,
           total_tickets: integer() | nil,
           checked_in_count: integer() | nil,
+          attendee_count: integer() | nil,
           event_date: Date.t() | nil,
           event_time: Time.t() | nil,
           location: String.t() | nil,
@@ -39,6 +40,8 @@ defmodule FastCheck.Events.Event do
     field :total_tickets, :integer
     # Number of tickets already checked in at the entrance
     field :checked_in_count, :integer
+    # Virtual count of attendees loaded via aggregate queries
+    field :attendee_count, :integer, virtual: true
     # Calendar date when the event takes place
     field :event_date, :date
     # Local time that gates open or the show starts
