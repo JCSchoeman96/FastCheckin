@@ -819,15 +819,35 @@ defmodule FastCheck.Attendees do
 
   defp maybe_increment_occupancy(event_id, change_type)
        when is_integer(event_id) and change_type in ["entry", "exit"] do
-    Task.start(fn -> CacheManager.increment_occupancy(event_id, change_type) end)
-    :ok
-  rescue
-    exception ->
-      Logger.warn(
-        "Failed to enqueue occupancy increment for event #{event_id}: #{Exception.message(exception)}"
-      )
+    case Task.start(fn ->
+           try do
+             CacheManager.increment_occupancy(event_id, change_type)
+           rescue
+             exception ->
+               Logger.error(
+                 "Failed to increment occupancy for event #{event_id} (#{change_type}): #{Exception.message(exception)}"
+               )
 
-      :ok
+               reraise(exception, __STACKTRACE__)
+           catch
+             kind, reason ->
+               Logger.error(
+                 "Occupancy increment task crashed for event #{event_id} (#{change_type}): #{inspect({kind, reason})}"
+               )
+
+               :erlang.raise(kind, reason, __STACKTRACE__)
+           end
+         end) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to start occupancy increment task for event #{event_id} (#{change_type}): #{inspect(reason)}"
+        )
+
+        :ok
+    end
   end
 
   defp maybe_increment_occupancy(_, _), do: :ok
