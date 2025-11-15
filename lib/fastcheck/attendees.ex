@@ -49,6 +49,8 @@ defmodule FastCheck.Attendees do
 
   defp normalize_attendee(event_id, attrs) when is_map(attrs) do
     with ticket_code when is_binary(ticket_code) <- fetch(attrs, :ticket_code) do
+      now = DateTime.utc_now()
+
       allowed_checkins = parse_integer(fetch(attrs, :allowed_checkins), 1)
 
       checkins_remaining =
@@ -67,7 +69,9 @@ defmodule FastCheck.Attendees do
         payment_status: fetch(attrs, :payment_status) || fetch(attrs, :status),
         custom_fields: fetch(attrs, :custom_fields) |> ensure_map(),
         checked_in_at: fetch(attrs, :checked_in_at) |> parse_datetime(),
-        last_checked_in_at: fetch(attrs, :last_checked_in_at) |> parse_datetime()
+        last_checked_in_at: fetch(attrs, :last_checked_in_at) |> parse_datetime(),
+        inserted_at: fetch(attrs, :inserted_at) |> parse_datetime() || now,
+        updated_at: fetch(attrs, :updated_at) |> parse_datetime() || now
       }
     else
       _ ->
