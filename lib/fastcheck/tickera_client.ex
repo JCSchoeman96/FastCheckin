@@ -10,6 +10,67 @@ defmodule FastCheck.TickeraClient do
   @status_timeout 5_000
   @rate_limit_delay 100
 
+  @doc """
+  Fetches the historical check-in events for a ticket checksum.
+
+  Performs a Bearer authenticated GET request against
+  `/tc-api/{api_key}/ticket_check_in_history/{checksum}?limit={limit}` with a
+  5-second timeout and 100 ms safety delay before issuing the request.
+
+  Returns each record normalized with parsed `Date`/`Time` entries when
+  possible, defaulting to `nil` when values are missing or malformed.
+  """
+  @spec fetch_check_in_history(String.t(), String.t(), String.t(), pos_integer()) ::
+          {:ok, list()} | {:error, String.t(), String.t()}
+  def fetch_check_in_history(site_url, api_key, checksum, limit \\ 100) do
+    Logger.debug("TickeraClient: fetch_check_in_history – START")
+    :timer.sleep(@rate_limit_delay)
+
+    limit = max(1, limit)
+
+    endpoint = "ticket_check_in_history/#{checksum}?limit=#{limit}"
+    url = build_url(site_url, api_key, endpoint)
+
+    headers = [
+      {"authorization", "Bearer #{api_key}"},
+      {"accept", "application/json"}
+    ]
+
+    options = [timeout: 5_000, recv_timeout: 5_000]
+
+    case HTTPoison.get(url, headers, options) do
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+        with {:ok, records} <- decode_check_in_history(body) do
+          Logger.info("TickeraClient: fetch_check_in_history – SUCCESS")
+          {:ok, records}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: 401}} ->
+        Logger.warn("TickeraClient: fetch_check_in_history – AUTH_ERROR")
+        {:error, "AUTH_ERROR", "Authentication failed"}
+
+      {:ok, %HTTPoison.Response{status_code: 404}} ->
+        Logger.warn("TickeraClient: fetch_check_in_history – NOT_FOUND")
+        {:error, "NOT_FOUND", "Check-in history not found"}
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        Logger.warn("TickeraClient: fetch_check_in_history – RATE_LIMITED")
+        {:error, "RATE_LIMITED", "Tickera rate limit reached"}
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+        Logger.warn("TickeraClient: fetch_check_in_history – SERVER_ERROR")
+        {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+        Logger.error("Tickera check-in history unexpected response (#{code}): #{body}")
+        {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
+
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        Logger.error("Tickera check-in history request failed: #{inspect(reason)}")
+        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
+    end
+  end
+
   @ticket_defaults %{
     checksum: nil,
     ticket_code: nil,
@@ -614,6 +675,38 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
+  defp decode_check_in_history(body) do
+    case Jason.decode(body) do
+      {:ok, list} when is_list(list) ->
+        {:ok, Enum.map(list, &normalize_check_in_record/1)}
+
+      {:ok, %{} = payload} ->
+        case extract_business_error(payload) do
+          {:error, code, message} ->
+            Logger.warn("TickeraClient: fetch_check_in_history – #{code}")
+            {:error, code, message}
+
+          :ok ->
+            history =
+              cond do
+                is_list(Map.get(payload, "history")) -> Map.get(payload, "history")
+                is_list(Map.get(payload, "data")) -> Map.get(payload, "data")
+                true -> []
+              end
+
+            {:ok, Enum.map(history, &normalize_check_in_record/1)}
+        end
+
+      {:ok, _other} ->
+        Logger.error("Tickera check-in history response was not a JSON array")
+        {:error, "JSON_ERROR", "Response not valid JSON"}
+
+      {:error, _error} ->
+        Logger.error("Tickera check-in history response was not valid JSON")
+        {:error, "JSON_ERROR", "Response not valid JSON"}
+    end
+  end
+
   defp normalize_ticket_payload(%{} = payload) do
     case extract_business_error(payload) do
       {:error, code, message} ->
@@ -846,6 +939,22 @@ defmodule FastCheck.TickeraClient do
   defp coerce_date(%Date{} = date), do: date
   defp coerce_date(_value), do: nil
 
+  defp coerce_time(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> nil
+      trimmed ->
+        case Time.from_iso8601(trimmed) do
+          {:ok, time} -> time
+          {:error, _} -> nil
+        end
+    end
+  end
+
+  defp coerce_time(%Time{} = time), do: time
+  defp coerce_time(_value), do: nil
+
   defp coerce_boolean(value) when is_boolean(value), do: value
   defp coerce_boolean(value) when is_integer(value), do: value != 0
 
@@ -1009,4 +1118,26 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp parse_datetime(other), do: other
+
+  defp normalize_check_in_record(%{} = record) do
+    %{
+      date: record |> Map.get("date") |> coerce_date(),
+      time: record |> Map.get("time") |> coerce_time(),
+      entrance: Map.get(record, "entrance") || Map.get(record, "entrance_name"),
+      check_in_type: Map.get(record, "check_in_type") || Map.get(record, "checkin_type"),
+      status: Map.get(record, "status"),
+      operator: Map.get(record, "operator") || Map.get(record, "operator_name")
+    }
+  end
+
+  defp normalize_check_in_record(_record) do
+    %{
+      date: nil,
+      time: nil,
+      entrance: nil,
+      check_in_type: nil,
+      status: nil,
+      operator: nil
+    }
+  end
 end
