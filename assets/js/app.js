@@ -27,6 +27,112 @@ import { LiveSocket } from "phoenix_live_view";
 import { hooks as colocatedHooks } from "phoenix-colocated/petal_blueprint";
 import topbar from "../vendor/topbar";
 import MishkaComponents from "../vendor/mishka_components.js";
+
+const CameraPermission = {
+  mounted() {
+    this.storageKey = this.el.dataset.storageKey || "fastcheck:camera-permission";
+    this.handleCameraRequest = this.handleCameraRequest.bind(this);
+    this.el.addEventListener("click", this.handleCameraRequest);
+    this.syncStoredPreference();
+  },
+
+  destroyed() {
+    this.el.removeEventListener("click", this.handleCameraRequest);
+  },
+
+  syncStoredPreference() {
+    const storedStatus = this.readStoredStatus();
+
+    if (storedStatus) {
+      this.pushStatus(storedStatus, this.defaultMessage(storedStatus), true);
+    } else {
+      this.pushStatus("unknown", null, false);
+    }
+  },
+
+  handleCameraRequest(event) {
+    const trigger = event.target.closest("[data-camera-request]");
+
+    if (!trigger) {
+      return;
+    }
+
+    event.preventDefault();
+    this.requestCameraPermission();
+  },
+
+  requestCameraPermission() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      this.reportStatus(
+        "unsupported",
+        "This browser doesn't support the camera features required for scanning.",
+      );
+      return;
+    }
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "environment" } })
+      .then((stream) => {
+        stream.getTracks().forEach((track) => track.stop());
+        this.reportStatus("granted", "Camera access granted. You can start scanning.");
+      })
+      .catch((error) => {
+        const deniedErrors = ["NotAllowedError", "PermissionDeniedError"];
+        const status = deniedErrors.includes(error?.name) ? "denied" : "error";
+        const fallback =
+          status === "denied"
+            ? "Camera access was denied. Enable it in your browser settings."
+            : "Something went wrong while attempting to access the camera.";
+
+        this.reportStatus(status, error?.message || fallback);
+      });
+  },
+
+  reportStatus(status, message) {
+    const remembered = this.writeStoredStatus(status);
+    this.pushStatus(status, message, remembered);
+  },
+
+  pushStatus(status, message, remembered) {
+    this.pushEvent("camera_permission_sync", {
+      status,
+      message: message || this.defaultMessage(status),
+      remembered: !!remembered,
+    });
+  },
+
+  readStoredStatus() {
+    try {
+      return window.localStorage?.getItem(this.storageKey);
+    } catch (_error) {
+      return null;
+    }
+  },
+
+  writeStoredStatus(status) {
+    try {
+      window.localStorage?.setItem(this.storageKey, status);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  },
+
+  defaultMessage(status) {
+    switch (status) {
+      case "granted":
+        return "Camera access granted. You can start scanning.";
+      case "denied":
+        return "Camera access was denied. Enable it in your browser settings.";
+      case "error":
+        return "Something went wrong while attempting to access the camera.";
+      case "unsupported":
+        return "This browser doesn't support the camera features required for scanning.";
+      default:
+        return "Enable your device camera to speed up QR scanning.";
+    }
+  },
+};
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
   .getAttribute("content");
@@ -38,6 +144,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   hooks: {
     ...colocatedHooks,
     ...MishkaComponents,
+    CameraPermission,
   },
 });
 // Show progress bar on live navigation and form submits

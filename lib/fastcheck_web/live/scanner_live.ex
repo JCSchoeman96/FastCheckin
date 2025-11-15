@@ -11,6 +11,8 @@ defmodule FastCheckWeb.ScannerLive do
   alias Phoenix.PubSub
   require Logger
 
+  @default_camera_permission %{status: :unknown, remembered: false, message: nil}
+
   @impl true
   def mount(%{"event_id" => event_id_param}, _session, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
@@ -29,7 +31,8 @@ defmodule FastCheckWeb.ScannerLive do
           search_query: "",
           search_results: [],
           search_loading: false,
-          search_error: nil
+          search_error: nil,
+          camera_permission: default_camera_permission()
         )
 
       if connected?(socket) do
@@ -108,6 +111,28 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   def handle_event("manual_check_in", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("camera_permission_sync", params, socket) when is_map(params) do
+    status = normalize_camera_permission_status(Map.get(params, "status"))
+    remembered = truthy?(Map.get(params, "remembered"))
+
+    message =
+      params
+      |> Map.get("message")
+      |> normalize_camera_permission_message()
+      |> case do
+        nil -> camera_permission_default_message(status)
+        value -> value
+      end
+
+    {:noreply,
+     assign(socket, :camera_permission, %{status: status, remembered: remembered, message: message})}
+  end
+
+  def handle_event("camera_permission_sync", _params, socket) do
     {:noreply, socket}
   end
 
@@ -209,6 +234,54 @@ defmodule FastCheckWeb.ScannerLive do
             <p class="mt-2 text-sm text-slate-200/80">
               Ready for the next guest – the input is armed for the next scan.
             </p>
+          </section>
+
+          <section
+            phx-hook="CameraPermission"
+            data-storage-key={"fastcheck:camera-permission:event-#{@event_id}"}
+            class="rounded-3xl bg-slate-900/85 px-6 py-8 text-white shadow-2xl backdrop-blur"
+          >
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Camera status</p>
+                <h2 class="mt-1 text-2xl font-semibold">Ready the QR scanner</h2>
+                <p class="mt-2 text-sm text-slate-300">
+                  We'll remember your choice for this device so future scans start instantly.
+                </p>
+              </div>
+              <span class="rounded-full border border-white/20 px-4 py-1 text-xs uppercase tracking-wide text-slate-100">
+                {camera_permission_status_label(@camera_permission.status)}
+              </span>
+            </div>
+
+            <div class={camera_permission_state_classes(@camera_permission.status)}>
+              <p class="text-base font-semibold">
+                {camera_permission_status_label(@camera_permission.status)}
+              </p>
+              <p class="mt-1 text-sm text-slate-100/80">
+                {@camera_permission.message || camera_permission_default_message(@camera_permission.status)}
+              </p>
+            </div>
+
+            <div class="mt-6 flex flex-wrap items-center gap-4">
+              <button
+                :if={@camera_permission.status != :granted}
+                type="button"
+                data-camera-request
+                class="rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+                disabled={@camera_permission.status == :unsupported}
+              >
+                Enable camera
+              </button>
+
+              <p class="text-xs text-slate-400">
+                {if @camera_permission.remembered do
+                  "Preference synced from this device."
+                else
+                  "Your decision will be remembered for future check-ins."
+                end}
+              </p>
+            </div>
           </section>
 
           <section class="rounded-3xl bg-slate-900/90 px-6 py-10 text-white shadow-2xl backdrop-blur">
@@ -470,4 +543,65 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_status_icon(:invalid), do: "✕"
   defp scan_status_icon(:error), do: "✕"
   defp scan_status_icon(_), do: "ℹ"
+
+  defp default_camera_permission, do: @default_camera_permission
+
+  defp normalize_camera_permission_status(value) when is_binary(value) do
+    case String.downcase(value) do
+      "granted" -> :granted
+      "denied" -> :denied
+      "error" -> :error
+      "unsupported" -> :unsupported
+      _ -> :unknown
+    end
+  end
+
+  defp normalize_camera_permission_status(value) when value in [:granted, :denied, :error, :unsupported], do: value
+  defp normalize_camera_permission_status(_), do: :unknown
+
+  defp normalize_camera_permission_message(value) when value in [nil, ""], do: nil
+  defp normalize_camera_permission_message(value) when is_binary(value), do: value
+  defp normalize_camera_permission_message(_), do: nil
+
+  defp truthy?(value) when value in [true, 1, "1"], do: true
+
+  defp truthy?(value) when is_binary(value) do
+    value_downcased = String.downcase(value)
+    value_downcased in ["true", "yes", "on"]
+  end
+
+  defp truthy?(_), do: false
+
+  defp camera_permission_default_message(:granted),
+    do: "Camera access granted. You're ready to scan codes."
+
+  defp camera_permission_default_message(:denied),
+    do: "Camera access was denied. Update your browser permissions to scan QR codes."
+
+  defp camera_permission_default_message(:error),
+    do: "Something went wrong while trying to access the camera."
+
+  defp camera_permission_default_message(:unsupported),
+    do: "This device doesn't expose the camera features required for scanning."
+
+  defp camera_permission_default_message(_),
+    do: "Enable the device camera so the QR scanner can stay ready."
+
+  defp camera_permission_status_label(:granted), do: "Camera access granted"
+  defp camera_permission_status_label(:denied), do: "Camera access denied"
+  defp camera_permission_status_label(:error), do: "Camera error"
+  defp camera_permission_status_label(:unsupported), do: "Camera unsupported"
+  defp camera_permission_status_label(_), do: "Awaiting camera choice"
+
+  defp camera_permission_state_classes(:granted),
+    do: "mt-6 rounded-2xl border border-emerald-400/60 bg-emerald-500/10 px-5 py-4 text-emerald-100"
+
+  defp camera_permission_state_classes(status) when status in [:denied, :error],
+    do: "mt-6 rounded-2xl border border-red-400/60 bg-red-500/10 px-5 py-4 text-red-100"
+
+  defp camera_permission_state_classes(:unsupported),
+    do: "mt-6 rounded-2xl border border-yellow-400/60 bg-yellow-500/10 px-5 py-4 text-yellow-100"
+
+  defp camera_permission_state_classes(_),
+    do: "mt-6 rounded-2xl border border-slate-700 bg-slate-800/80 px-5 py-4 text-slate-100"
 end
