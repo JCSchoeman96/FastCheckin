@@ -6,7 +6,7 @@ import Config
 # database name (ecto://USER:PASS@HOST/DATABASE).
 database_url =
   System.get_env("DATABASE_URL") ||
-    "ecto://fastcheck:password@localhost:5432/fastcheck_prod"
+    "ecto://postgres:password@pgbouncer:6432/fastcheck_prod"
 
 # Enforce IPv6 sockets only when explicitly requested because some hosts (such
 # as containers) only expose IPv4 networking.

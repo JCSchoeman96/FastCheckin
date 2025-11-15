@@ -88,6 +88,76 @@ fastcheck/
 4. Terminate TLS using OpenLiteSpeed or Nginx with Let’s Encrypt certificates.
 5. Enable database backups and monitoring dashboards (Prometheus/Grafana optional).
 
+## 🧊 pgBouncer Connection Pooling
+FastCheck now relies on pgBouncer to collapse hundreds of scanner connections into a
+small number of PostgreSQL sessions. The new `docker-compose.yml` ships
+three infrastructure services:
+
+- `postgres` – canonical datastore for attendees and check-ins
+- `pgbouncer` – transaction-level pooler listening on `6432`
+- `redis` – caching layer introduced during extended tasks 6–11
+
+Bring the infrastructure online with:
+
+```
+docker compose up -d postgres pgbouncer redis
+```
+
+Point the Phoenix release at `DATABASE_URL=ecto://postgres:password@pgbouncer:6432/fastcheck_prod`
+so every Ecto connection flows through pgBouncer. The `/health` endpoint calls
+`Ecto.Adapters.SQL.query/3` via pgBouncer to give load balancers a simple
+readiness probe.
+
+### Monitoring pgBouncer
+Run the following commands from the host or via `docker exec fastcheck-pgbouncer`:
+
+```
+# Inspect pooled databases
+psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW DATABASES"
+
+# Active client sockets (FastCheck instances)
+psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW CLIENTS"
+
+# Pool utilization and wait times
+psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW POOLS"
+
+# Server connections to PostgreSQL
+psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW SERVERS"
+
+# Per-database throughput stats
+psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW STATS"
+
+# Effective configuration values
+psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW CONFIG"
+```
+
+### Tuning cheatsheet
+- `PGBOUNCER_DEFAULT_POOL_SIZE` – raise above 10 if scanners routinely wait for
+  server slots (`avg_wait_time > 100ms` in `SHOW STATS`).
+- `PGBOUNCER_RESERVE_POOL_SIZE` – bump when priority scans should always skip
+  the queue.
+- `PGBOUNCER_SERVER_LIFETIME` – lower for extremely busy systems to recycle
+  long-lived transactions; raise when bulk imports hold transactions open.
+- `PGBOUNCER_SERVER_IDLE_TIMEOUT` – trim to close idle upstream sessions
+  aggressively if PostgreSQL resources are constrained.
+
+Watch `SHOW POOLS` and `SHOW STATS` to validate the tweaks before deploying to
+production.
+
+### Troubleshooting connection issues
+1. Run `curl -f http://localhost:4000/health` (or hit the load balancer health
+   URL) to verify pgBouncer + PostgreSQL are reachable.
+2. Check container health: `docker ps` should report both `postgres` and
+   `fastcheck-pgbouncer` as `healthy`; inspect logs with
+   `docker logs fastcheck-pgbouncer` if unhealthy.
+3. Validate credentials with
+   `psql -h localhost -p 6432 -U postgres -d fastcheck_prod -c "SELECT 1"`.
+4. If pgBouncer is down, restart it via `docker compose up -d pgbouncer` or
+   temporarily point `DATABASE_URL` back to `postgres:5432` until it recovers.
+5. Persistent pooling errors usually stem from exhausting
+   `PGBOUNCER_MAX_CLIENT_CONN`; scale the FastCheck app instances or raise the
+   limit while keeping PostgreSQL’s `max_connections` under control.
+
 ## 📚 Implementation Guides
 - [codex-project-plan.md](codex-project-plan.md) – All 13 task prompts.
 - [codex-start-here.md](codex-start-here.md) – First three tasks to execute immediately.
