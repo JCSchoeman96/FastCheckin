@@ -9,6 +9,7 @@ defmodule FastCheckWeb.ScannerLive do
 
   alias FastCheck.{Attendees, Events}
   alias Phoenix.PubSub
+  require Logger
 
   @impl true
   def mount(%{"event_id" => event_id_param}, _session, socket) do
@@ -24,7 +25,11 @@ defmodule FastCheckWeb.ScannerLive do
           ticket_code: "",
           last_scan_status: nil,
           last_scan_result: nil,
-          stats: stats
+          stats: stats,
+          search_query: "",
+          search_results: [],
+          search_loading: false,
+          search_error: nil
         )
 
       if connected?(socket) do
@@ -70,6 +75,43 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   @impl true
+  def handle_event("search_attendees", %{"query" => query_param}, socket) do
+    query = query_param |> to_string()
+    trimmed = String.trim(query)
+
+    socket =
+      socket
+      |> assign(:search_query, query)
+      |> assign(:search_error, nil)
+
+    cond do
+      trimmed == "" ->
+        {:noreply,
+         socket
+         |> assign(:search_results, [])
+         |> assign(:search_loading, false)}
+
+      true ->
+        send(self(), {:perform_attendee_search, trimmed})
+
+        {:noreply, assign(socket, :search_loading, true)}
+    end
+  end
+
+  def handle_event("search_attendees", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("manual_check_in", %{"ticket_code" => ticket_code}, socket) do
+    process_scan(ticket_code, socket)
+  end
+
+  def handle_event("manual_check_in", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:event_stats_updated, event_id, stats}, socket) do
     if socket.assigns.event_id == event_id do
       {:noreply, assign(socket, :stats, stats)}
@@ -78,13 +120,40 @@ defmodule FastCheckWeb.ScannerLive do
     end
   end
 
+  def handle_info({:perform_attendee_search, query}, socket) do
+    current_query = socket.assigns.search_query |> to_string() |> String.trim()
+
+    if current_query == query do
+      results = Attendees.search_event_attendees(socket.assigns.event_id, query, limit: 10)
+
+      {:noreply,
+       socket
+       |> assign(:search_results, results)
+       |> assign(:search_loading, false)}
+    else
+      {:noreply, socket}
+    end
+  rescue
+    exception ->
+      Logger.error("Failed to search attendees: #{Exception.message(exception)}")
+
+      {:noreply,
+       socket
+       |> assign(:search_results, [])
+       |> assign(:search_loading, false)
+       |> assign(:search_error, "Unable to search attendees right now.")}
+  end
+
   def handle_info(_message, socket) do
     {:noreply, socket}
   end
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :scan_form, to_form(%{"ticket_code" => assigns.ticket_code}))
+    assigns =
+      assigns
+      |> assign(:scan_form, to_form(%{"ticket_code" => assigns.ticket_code}))
+      |> assign(:search_form, to_form(%{"query" => assigns.search_query}))
 
     ~H"""
     <Layouts.app flash={@flash}>
@@ -128,7 +197,11 @@ defmodule FastCheckWeb.ScannerLive do
             </div>
           </section>
 
-          <section :if={@last_scan_status} class={scan_status_classes(@last_scan_status)}>
+          <section
+            :if={@last_scan_status}
+            class={scan_status_classes(@last_scan_status)}
+            data-test="scan-status"
+          >
             <div class="flex items-center gap-4">
               <div class="text-4xl font-bold">{scan_status_icon(@last_scan_status)}</div>
               <p class="text-lg font-semibold leading-tight">{@last_scan_result}</p>
@@ -179,6 +252,92 @@ defmodule FastCheckWeb.ScannerLive do
             </p>
           </section>
 
+          <section class="rounded-3xl bg-slate-900/80 px-6 py-8 shadow-2xl backdrop-blur">
+            <div class="space-y-2 text-center">
+              <h2 class="text-2xl font-semibold">Find attendee</h2>
+              <p class="text-sm text-slate-300">
+                Search by name, email, or ticket code to handle manual check-ins.
+              </p>
+            </div>
+
+            <.form
+              id="attendee-search-form"
+              for={@search_form}
+              phx-change="search_attendees"
+              class="mx-auto mt-6 max-w-3xl"
+            >
+              <.input
+                field={@search_form[:query]}
+                type="search"
+                placeholder="Start typing to search attendees..."
+                autocomplete="off"
+                phx-debounce="400"
+                data-test="attendee-search-input"
+                class="w-full rounded-2xl border-2 border-transparent bg-slate-800/70 px-6 py-4 text-base text-white shadow-inner shadow-slate-950 focus:border-emerald-400 focus:bg-slate-900/70 focus:outline-none focus:ring-4 focus:ring-emerald-500"
+              />
+            </.form>
+
+            <p :if={@search_error} class="mt-4 text-center text-sm text-red-300">
+              {@search_error}
+            </p>
+
+            <p :if={@search_loading} class="mt-4 text-center text-sm text-slate-300">
+              Searching attendees...
+            </p>
+
+            <ul
+              :if={@search_results != []}
+              class="mt-6 divide-y divide-slate-800/80 rounded-2xl border border-slate-800/60 bg-slate-900/60"
+            >
+              <li
+                :for={attendee <- @search_results}
+                data-test={"search-result-#{attendee.ticket_code}"}
+                class="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <p data-test="attendee-name" class="text-lg font-semibold">
+                    {attendee_display_name(attendee)}
+                  </p>
+                  <p class="text-sm text-slate-300">{attendee.email || "No email provided"}</p>
+                  <p :if={attendee.checked_in_at} class="text-xs text-emerald-300">
+                    Already checked in
+                  </p>
+                </div>
+
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <span class="rounded-full bg-slate-800/80 px-3 py-1 text-xs uppercase tracking-wide text-slate-100">
+                    {attendee.ticket_type || "Ticket"}
+                  </span>
+                  <button
+                    type="button"
+                    class="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-200"
+                    phx-click="manual_check_in"
+                    phx-value-ticket-code={attendee.ticket_code}
+                    phx-disable-with="Checking..."
+                    disabled={not is_nil(attendee.checked_in_at)}
+                    data-test={"manual-check-in-#{attendee.ticket_code}"}
+                  >
+                    Check in
+                  </button>
+                </div>
+              </li>
+            </ul>
+
+            <p
+              :if={@search_results == [] and @search_query != "" and not @search_loading and is_nil(@search_error)}
+              class="mt-6 text-center text-sm text-slate-300"
+            >
+              No attendees found. Double-check the spelling and try again.
+            </p>
+
+            <p
+              :if={@search_query == "" and not @search_loading and is_nil(@search_error)}
+              class="mt-6 text-center text-sm text-slate-400"
+            >
+              Lookup results will appear here as you type.
+            </p>
+          </section>
+
           <footer class="mt-auto rounded-3xl bg-slate-800/80 px-6 py-4 text-sm text-slate-300 shadow-2xl">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <a
@@ -209,13 +368,15 @@ defmodule FastCheckWeb.ScannerLive do
     case Attendees.check_in(event_id, code, entrance_name) do
       {:ok, attendee, _message} ->
         stats = Attendees.get_event_stats(event_id)
+        updated_results = update_search_results(socket.assigns.search_results, attendee)
 
         {:noreply,
          socket
          |> assign(:last_scan_status, :success)
          |> assign(:last_scan_result, "✓ Welcome, #{attendee.first_name} #{attendee.last_name}!")
          |> assign(:stats, stats)
-         |> assign(:ticket_code, "")}
+         |> assign(:ticket_code, "")
+         |> assign(:search_results, updated_results)}
 
       {:error, "DUPLICATE", message} ->
         {:noreply,
@@ -237,6 +398,24 @@ defmodule FastCheckWeb.ScannerLive do
          |> assign(:last_scan_status, :error)
          |> assign(:last_scan_result, message)
          |> assign(:ticket_code, "")}
+    end
+  end
+  
+  defp update_search_results(search_results, %{} = updated) when is_list(search_results) do
+    Enum.map(search_results, fn existing ->
+      if Map.get(existing, :ticket_code) == Map.get(updated, :ticket_code), do: updated, else: existing
+    end)
+  end
+
+  defp update_search_results(search_results, _), do: search_results
+
+  defp attendee_display_name(%{} = attendee) do
+    [Map.get(attendee, :first_name), Map.get(attendee, :last_name)]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
+    |> case do
+      "" -> attendee.email || attendee.ticket_code || "Guest"
+      value -> value
     end
   end
 
