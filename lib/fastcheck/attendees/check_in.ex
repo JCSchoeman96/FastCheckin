@@ -19,7 +19,7 @@ defmodule FastCheck.Attendees.CheckIn do
     field :status, :string
     field :notes, :string
 
-    timestamps()
+    timestamps(updated_at: false)
   end
 
   @doc """
