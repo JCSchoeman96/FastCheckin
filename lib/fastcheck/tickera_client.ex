@@ -191,6 +191,52 @@ defmodule FastCheck.TickeraClient do
     :check_in_timestamp
   ]
 
+  @ticket_config_key_mapping %{
+    "allowed_checkins" => :allowed_checkins,
+    "allow_reentry" => :allow_reentry,
+    "allowed_entrances" => :allowed_entrances,
+    "check_in_window_buffer_minutes" => :check_in_window_buffer_minutes,
+    "check_in_window_days" => :check_in_window_days,
+    "check_in_window_end" => :check_in_window_end,
+    "check_in_window_start" => :check_in_window_start,
+    "check_in_window_timezone" => :check_in_window_timezone,
+    "check_in_window_type" => :check_in_window_type,
+    "currency" => :currency,
+    "daily_check_in_limit" => :daily_check_in_limit,
+    "description" => :description,
+    "entrance_limit" => :entrance_limit,
+    "event_id" => :event_id,
+    "event_name" => :event_name,
+    "limit_per_order" => :limit_per_order,
+    "max_per_order" => :max_per_order,
+    "message" => :message,
+    "min_per_order" => :min_per_order,
+    "pass" => :pass,
+    "price" => :price,
+    "status" => :status,
+    "ticket_name" => :ticket_name,
+    "ticket_title" => :ticket_title,
+    "ticket_type" => :ticket_type,
+    "ticket_type_id" => :ticket_type_id
+  }
+
+  @ticket_config_integer_fields [
+    :allowed_checkins,
+    :check_in_window_buffer_minutes,
+    :check_in_window_days,
+    :daily_check_in_limit,
+    :entrance_limit,
+    :event_id,
+    :limit_per_order,
+    :max_per_order,
+    :min_per_order,
+    :ticket_type_id
+  ]
+
+  @ticket_config_float_fields [:price]
+  @ticket_config_boolean_fields [:allow_reentry, :pass]
+  @ticket_config_date_fields [:check_in_window_start, :check_in_window_end]
+
   @doc """
   Validates the provided API credentials against the Tickera API.
 
@@ -367,6 +413,86 @@ defmodule FastCheck.TickeraClient do
         Logger.error("Tickera ticket status request failed: #{inspect(reason)}")
         {:error, "HTTP_ERROR", "#{inspect(reason)}"}
     end
+  end
+
+  @doc """
+  Retrieves the configuration for a Tickera ticket type.
+
+  Adds a 100 ms safety delay, authenticates via Bearer header, and performs a
+  GET request against `/tc-api/{api_key}/ticket_type_config/{ticket_type_id}`.
+  The JSON body is decoded with snake_case keys converted to atoms, numeric
+  fields coerced to integers/floats, and `check_in_window_start`/`end` parsed as
+  `Date` structs when provided. Missing `allowed_checkins` defaults to `1`.
+
+  ## Returns
+    * `{:ok, config_map}` when Tickera responds successfully.
+    * `{:error, code, message}` when HTTP or business errors are reported.
+  """
+  @spec get_ticket_config(String.t(), String.t(), pos_integer()) ::
+          {:ok, map()} | {:error, String.t(), String.t()}
+  def get_ticket_config(site_url, api_key, ticket_type_id)
+      when is_integer(ticket_type_id) and ticket_type_id > 0 do
+    Logger.debug("TickeraClient: get_ticket_config – START")
+    :timer.sleep(@rate_limit_delay)
+
+    url = build_url(site_url, api_key, "ticket_type_config/#{ticket_type_id}")
+
+    headers = [
+      {"authorization", "Bearer #{api_key}"},
+      {"accept", "application/json"}
+    ]
+
+    options = [timeout: @status_timeout, recv_timeout: @status_timeout]
+
+    case HTTPoison.get(url, headers, options) do
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+        with {:ok, payload} <- decode_json_map(body),
+             {:ok, config} <- normalize_ticket_config(payload) do
+          Logger.info("TickeraClient: get_ticket_config – SUCCESS")
+          {:ok, config}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: 401}} ->
+        Logger.warn("TickeraClient: get_ticket_config – AUTH_ERROR")
+        {:error, "AUTH_ERROR", "Authentication failed"}
+
+      {:ok, %HTTPoison.Response{status_code: 404}} ->
+        Logger.warn("TickeraClient: get_ticket_config – NOT_FOUND")
+        {:error, "NOT_FOUND", "Ticket type config not found"}
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        Logger.warn("TickeraClient: get_ticket_config – RATE_LIMITED")
+        {:error, "RATE_LIMITED", "Tickera rate limit reached"}
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+        Logger.warn("TickeraClient: get_ticket_config – SERVER_ERROR")
+        {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+        Logger.error("Tickera ticket config unexpected response (#{code}): #{body}")
+        {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
+
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        Logger.error("Tickera ticket config request failed: #{inspect(reason)}")
+        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
+    end
+  end
+
+  def get_ticket_config(site_url, api_key, ticket_type_id) when is_binary(ticket_type_id) do
+    case Integer.parse(ticket_type_id) do
+      {value, _rest} when value > 0 -> get_ticket_config(site_url, api_key, value)
+      _ ->
+        Logger.warn(
+          "TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}"
+        )
+
+        {:error, "INVALID_TICKET_TYPE_ID", "Ticket type id must be positive"}
+    end
+  end
+
+  def get_ticket_config(_site_url, _api_key, ticket_type_id) do
+    Logger.warn("TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}")
+    {:error, "INVALID_TICKET_TYPE_ID", "Ticket type id must be positive"}
   end
 
   @doc """
@@ -707,6 +833,41 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
+  defp normalize_ticket_config(%{} = payload) do
+    case extract_business_error(payload) do
+      {:error, code, message} ->
+        Logger.warn("TickeraClient: get_ticket_config – #{code}")
+        {:error, code, message}
+
+      :ok ->
+        data_map =
+          payload
+          |> Map.get("data")
+          |> case do
+            %{} = inner -> inner
+            _ -> payload
+          end
+
+        if is_map(data_map) do
+          normalized =
+            Enum.reduce(data_map, %{}, fn {key, value}, acc ->
+              maybe_put_ticket_config_field(acc, key, value)
+            end)
+            |> Map.put_new(:allowed_checkins, 1)
+
+          {:ok, normalized}
+        else
+          Logger.error("Tickera ticket config payload missing data")
+          {:error, "JSON_ERROR", "Response not valid JSON"}
+        end
+    end
+  end
+
+  defp normalize_ticket_config(_payload) do
+    Logger.error("Tickera ticket config payload missing")
+    {:error, "JSON_ERROR", "Response not valid JSON"}
+  end
+
   defp normalize_ticket_payload(%{} = payload) do
     case extract_business_error(payload) do
       {:error, code, message} ->
@@ -835,6 +996,19 @@ defmodule FastCheck.TickeraClient do
 
   defp maybe_put_ticket_field(acc, _key, _value), do: acc
 
+  defp maybe_put_ticket_config_field(acc, key, value) when is_binary(key) do
+    case Map.get(@ticket_config_key_mapping, key) do
+      nil -> acc
+      atom_key -> Map.put(acc, atom_key, normalize_ticket_config_value(atom_key, value))
+    end
+  end
+
+  defp maybe_put_ticket_config_field(acc, key, value) when is_atom(key) do
+    maybe_put_ticket_config_field(acc, Atom.to_string(key), value)
+  end
+
+  defp maybe_put_ticket_config_field(acc, _key, _value), do: acc
+
   defp maybe_put_occupancy_field(acc, key, value) when is_binary(key) do
     case Map.get(@occupancy_key_mapping, key) do
       nil -> acc
@@ -867,6 +1041,20 @@ defmodule FastCheck.TickeraClient do
   defp normalize_value(key, value) when key in @date_fields, do: coerce_date(value)
   defp normalize_value(key, value) when key in @boolean_fields, do: coerce_boolean(value)
   defp normalize_value(_key, value), do: value
+
+  defp normalize_ticket_config_value(key, value) when key in @ticket_config_integer_fields,
+    do: coerce_integer(value)
+
+  defp normalize_ticket_config_value(key, value) when key in @ticket_config_float_fields,
+    do: coerce_float(value)
+
+  defp normalize_ticket_config_value(key, value) when key in @ticket_config_boolean_fields,
+    do: coerce_boolean(value)
+
+  defp normalize_ticket_config_value(key, value) when key in @ticket_config_date_fields,
+    do: coerce_date(value)
+
+  defp normalize_ticket_config_value(_key, value), do: value
 
   defp normalize_occupancy_value(key, value) when key in @occupancy_integer_fields,
     do: coerce_integer(value)
