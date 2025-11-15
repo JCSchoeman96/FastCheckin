@@ -90,7 +90,7 @@ defmodule FastCheck.Attendees do
       query =
         from(a in Attendee,
           where: a.event_id == ^event_id and a.ticket_code == ^sanitized_code,
-          lock: "FOR UPDATE"
+          lock: "FOR UPDATE NOWAIT"
         )
 
       try do
@@ -139,6 +139,8 @@ defmodule FastCheck.Attendees do
         |> case do
           {:ok, result} -> result
           {:error, {:changeset, message}} -> {:error, "ERROR", message}
+          {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} ->
+            {:error, "TICKET_IN_USE_ELSEWHERE"}
           {:error, reason} ->
             Logger.error("Check-in transaction failed for #{sanitized_code}: #{inspect(reason)}")
             {:error, "ERROR", "Unable to process check-in"}
