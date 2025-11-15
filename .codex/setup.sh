@@ -5,11 +5,9 @@ echo "🔧 [Codex] Installing Hex and Rebar via direct .ez fallback..."
 
 mkdir -p ~/.mix/archives
 
-# Bypass metadata, install Hex directly
-curl -sSL https://repo.hex.pm/installs/1.12.0/hex.ez -o ~/.mix/archives/hex-1.12.0.ez
-
-# Bypass metadata, install Rebar directly
-curl -sSL https://repo.hex.pm/installs/1.20.0/rebar3.ez -o ~/.mix/archives/rebar3-1.20.0.ez
+# Must be named hex.ez and rebar3.ez for mix to detect them
+curl -sSL https://repo.hex.pm/installs/1.12.0/hex.ez -o ~/.mix/archives/hex.ez
+curl -sSL https://repo.hex.pm/installs/1.20.0/rebar3.ez -o ~/.mix/archives/rebar3.ez
 
 echo "📦 Fetching and compiling dependencies..."
 mix deps.get
