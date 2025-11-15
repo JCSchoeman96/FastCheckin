@@ -4,12 +4,18 @@ defmodule PetalBlueprintWeb.Endpoint do
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.
-  @session_options [
+  @session_overrides
+  Application.compile_env(:petal_blueprint, __MODULE__, [])
+  |> Keyword.get(:session_options, [])
+
+  @session_options
+  [
     store: :cookie,
     key: "_petal_blueprint_key",
     signing_salt: "TZ10yE5o",
     same_site: "Lax"
   ]
+  |> Keyword.merge(@session_overrides)
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
