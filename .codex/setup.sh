@@ -1,10 +1,12 @@
 #!/bin/bash
 set -e
 
-echo "🔧 [Codex] Installing Hex from GitHub (bypassing Hex.pm)..."
+echo "🔧 [Codex] Installing Hex directly via .ez fallback..."
 
-# Install Hex via GitHub to avoid 503s from Hex CDN
-mix archive.install github hexpm/hex --branch latest --force
+mkdir -p ~/.mix/archives
+
+# Download specific Hex version directly — skips metadata fetch
+curl -sSL https://repo.hex.pm/installs/1.12.0/hex.ez -o ~/.mix/archives/hex-1.12.0.ez
 
 echo "🛠️ Installing Rebar..."
 mix local.rebar --force
