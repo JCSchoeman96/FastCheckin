@@ -24,6 +24,12 @@ defmodule FastCheck.Attendees.Attendee do
           checked_in_at: DateTime.t() | nil,
           checked_out_at: DateTime.t() | nil,
           last_checked_in_at: DateTime.t() | nil,
+          last_checked_in_date: Date.t() | nil,
+          daily_scan_count: integer() | nil,
+          weekly_scan_count: integer() | nil,
+          monthly_scan_count: integer() | nil,
+          is_currently_inside: boolean() | nil,
+          last_entrance: String.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil,
           event: Event.t() | Ecto.Association.NotLoaded.t()
@@ -56,6 +62,16 @@ defmodule FastCheck.Attendees.Attendee do
     field :checked_out_at, :utc_datetime
     # Timestamp of the most recent check-in attempt
     field :last_checked_in_at, :utc_datetime
+    # Date of the most recent check-in for rate limiting logic
+    field :last_checked_in_date, :date
+    # Running counters for rate limiting windows
+    field :daily_scan_count, :integer, default: 0
+    field :weekly_scan_count, :integer, default: 0
+    field :monthly_scan_count, :integer, default: 0
+    # Tracks if the attendee is currently inside the venue
+    field :is_currently_inside, :boolean, default: false
+    # Stores the last entrance used during check-in
+    field :last_entrance, :string
 
     # inserted_at/updated_at timestamps for auditing changes
     timestamps()
@@ -81,6 +97,12 @@ defmodule FastCheck.Attendees.Attendee do
       :checked_in_at,
       :checked_out_at,
       :last_checked_in_at,
+      :last_checked_in_date,
+      :daily_scan_count,
+      :weekly_scan_count,
+      :monthly_scan_count,
+      :is_currently_inside,
+      :last_entrance,
       :event_id
     ])
     |> validate_required([:ticket_code, :event_id])
