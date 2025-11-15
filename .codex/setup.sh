@@ -4,27 +4,36 @@ set -e
 
 echo "🧰 [Codex] Starting offline-safe setup..."
 
-# Skip Hex install in network-restricted environment
 if ping -c1 repo.hex.pm &>/dev/null; then
+  ONLINE=1
   echo "🌐 Internet access detected, installing Hex and Rebar..."
   mix local.hex --force || echo "⚠️ Hex install failed but continuing"
   mix local.rebar --force
 else
+  ONLINE=0
   echo "🚫 No internet access - skipping Hex and Rebar installs"
 fi
 
-echo "📦 Skipping deps.get due to offline mode"
-echo "✅ Continuing setup with pre-installed dependencies (assumed cached)"
+if [ "${ONLINE:-0}" -eq 1 ]; then
+  echo "📦 Fetching and compiling dependencies..."
+  mix deps.get
+  mix deps.compile
 
-# Skip any deps-related tasks that require fetching
-# Instead just try compiling if deps exist
-mix compile || echo "⚠️ Compile failed (likely no deps); that's OK in read-only mode"
+  echo "🎨 Setting up assets..."
+  mix assets.setup
+  mix assets.build
 
-echo "🧪 Skipping mix precommit due to no network"
-
-if [ -d deps ]; then
-  echo "🔁 Deps present — attempting mix precommit..."
+  echo "🧪 Running mix precommit..."
   mix precommit || echo "⚠️ mix precommit failed (expected in Codex)"
 else
-  echo "⏩ Skipping mix precommit (deps not available)"
+  echo "📦 Skipping deps.get due to offline mode"
+  echo "✅ Continuing setup with pre-installed dependencies (assumed cached)"
+
+  if [ -d deps ]; then
+    echo "🔁 Deps present — attempting compile and precommit..."
+    mix compile || echo "⚠️ Compile failed (likely no deps); that's OK in read-only mode"
+    mix precommit || echo "⚠️ mix precommit failed (expected in Codex)"
+  else
+    echo "⏩ Skipping compile/precommit (deps not available)"
+  fi
 fi
