@@ -661,7 +661,7 @@ defmodule FastCheck.Attendees do
       checked_in_at: attendee.checked_in_at || now,
       last_checked_in_at: now,
       last_checked_in_date: today,
-      daily_scan_count: increment_counter(attendee.daily_scan_count),
+      daily_scan_count: increment_daily_counter(attendee, today),
       weekly_scan_count: increment_counter(attendee.weekly_scan_count),
       monthly_scan_count: increment_counter(attendee.monthly_scan_count),
       checkins_remaining: max(remaining_checkins(attendee) - 1, 0),
@@ -669,6 +669,13 @@ defmodule FastCheck.Attendees do
       checked_out_at: nil,
       last_entrance: entrance_name
     }
+  end
+
+  defp increment_daily_counter(%Attendee{} = attendee, today) do
+    case attendee.last_checked_in_date do
+      ^today -> increment_counter(attendee.daily_scan_count)
+      _ -> 1
+    end
   end
 
   defp increment_counter(nil), do: 1
@@ -835,34 +842,38 @@ defmodule FastCheck.Attendees do
 
   defp maybe_increment_occupancy(event_id, change_type)
        when is_integer(event_id) and change_type in ["entry", "exit"] do
-    case Task.start(fn ->
-           try do
-             CacheManager.increment_occupancy(event_id, change_type)
-           rescue
-             exception ->
-               Logger.error(
-                 "Failed to increment occupancy for event #{event_id} (#{change_type}): #{Exception.message(exception)}"
-               )
+    if occupancy_tasks_disabled?() do
+      :ok
+    else
+      case Task.start(fn ->
+             try do
+               CacheManager.increment_occupancy(event_id, change_type)
+             rescue
+               exception ->
+                 Logger.error(
+                   "Failed to increment occupancy for event #{event_id} (#{change_type}): #{Exception.message(exception)}"
+                 )
 
-               reraise(exception, __STACKTRACE__)
-           catch
-             kind, reason ->
-               Logger.error(
-                 "Occupancy increment task crashed for event #{event_id} (#{change_type}): #{inspect({kind, reason})}"
-               )
+                 reraise(exception, __STACKTRACE__)
+             catch
+               kind, reason ->
+                 Logger.error(
+                   "Occupancy increment task crashed for event #{event_id} (#{change_type}): #{inspect({kind, reason})}"
+                 )
 
-               :erlang.raise(kind, reason, __STACKTRACE__)
-           end
-         end) do
-      {:ok, _pid} ->
-        :ok
+                 :erlang.raise(kind, reason, __STACKTRACE__)
+             end
+           end) do
+        {:ok, _pid} ->
+          :ok
 
-      {:error, reason} ->
-        Logger.error(
-          "Failed to start occupancy increment task for event #{event_id} (#{change_type}): #{inspect(reason)}"
-        )
+        {:error, reason} ->
+          Logger.error(
+            "Failed to start occupancy increment task for event #{event_id} (#{change_type}): #{inspect(reason)}"
+          )
 
-        :ok
+          :ok
+      end
     end
   end
 
@@ -929,4 +940,8 @@ defmodule FastCheck.Attendees do
 
   defp invalid_error(:entrance_name, message),
     do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
+
+  defp occupancy_tasks_disabled? do
+    Application.get_env(:fastcheck, :disable_occupancy_tasks, false)
+  end
 end

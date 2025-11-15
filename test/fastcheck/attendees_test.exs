@@ -6,6 +6,9 @@ defmodule FastCheck.AttendeesTest do
   alias FastCheck.Events.Event
   alias PetalBlueprint.Repo
   alias Phoenix.PubSub
+  alias Ecto.Adapters.SQL.Sandbox
+
+  setup :disable_occupancy_tasks
 
   describe "search_event_attendees/3" do
     setup do
@@ -94,6 +97,105 @@ defmodule FastCheck.AttendeesTest do
     end
   end
 
+  describe "check_in_advanced/5" do
+    test "prevents concurrent check-ins on the same ticket" do
+      event = insert_event!("Concurrent")
+      attendee =
+        create_attendee(event, %{
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          ticket_type: "VIP"
+        })
+
+      parent = self()
+
+      attempts =
+        1..2
+        |> Enum.map(fn _ ->
+          Task.async(fn ->
+            Sandbox.allow(PetalBlueprint.Repo, parent, self())
+            Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "North Gate", "Scanner")
+          end)
+        end)
+        |> Enum.map(&Task.await(&1, 1_500))
+
+      assert Enum.count(attempts, &match?({:ok, %Attendee{}, "SUCCESS"}, &1)) == 1
+      assert Enum.count(attempts, &match?({:error, "ALREADY_INSIDE", _}, &1)) == 1
+    end
+
+    test "respects allowed_checkins limit across reentries" do
+      event = insert_event!("Limited")
+      attendee =
+        create_attendee(event, %{
+          allowed_checkins: 2,
+          checkins_remaining: 2
+        })
+
+      assert {:ok, %Attendee{} = first_pass, "SUCCESS"} =
+               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "Main Gate", "Ops")
+
+      assert first_pass.checkins_remaining == 1
+
+      assert {:ok, _checked_out, "CHECKED_OUT"} =
+               Attendees.check_out(event.id, attendee.ticket_code, "Main Gate", "Ops")
+
+      assert {:ok, %Attendee{} = second_pass, "SUCCESS"} =
+               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "Main Gate", "Ops")
+
+      assert second_pass.checkins_remaining == 0
+
+      assert {:ok, _checked_out_again, "CHECKED_OUT"} =
+               Attendees.check_out(event.id, attendee.ticket_code, "Main Gate", "Ops")
+
+      assert {:error, "LIMIT_EXCEEDED", _} =
+               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "Main Gate", "Ops")
+    end
+
+    test "resets daily scan counters when a new day starts" do
+      event = insert_event!("Daily Window")
+      yesterday = Date.add(Date.utc_today(), -1)
+
+      attendee =
+        create_attendee(event, %{
+          allowed_checkins: 3,
+          checkins_remaining: 3,
+          daily_scan_count: 5,
+          last_checked_in_date: yesterday
+        })
+
+      assert {:ok, updated, "SUCCESS"} =
+               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "South Gate", "Ops")
+
+      assert updated.daily_scan_count == 1
+      assert updated.last_checked_in_date == Date.utc_today()
+    end
+
+    test "computes occupancy after entry and exit scans" do
+      event = insert_event!("Occupancy")
+      stay_inside = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
+      come_and_go = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
+      _pending_attendee = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
+
+      assert {:ok, _inside, "SUCCESS"} =
+               Attendees.check_in_advanced(event.id, stay_inside.ticket_code, "entry", "West Gate", "Ops")
+
+      assert {:ok, _entered, "SUCCESS"} =
+               Attendees.check_in_advanced(event.id, come_and_go.ticket_code, "entry", "West Gate", "Ops")
+
+      assert {:ok, _exited, "CHECKED_OUT"} =
+               Attendees.check_out(event.id, come_and_go.ticket_code, "West Gate", "Ops")
+
+      breakdown = Attendees.get_occupancy_breakdown(event.id)
+
+      assert breakdown.total == 3
+      assert breakdown.checked_in == 2
+      assert breakdown.checked_out == 1
+      assert breakdown.currently_inside == 1
+      assert breakdown.pending == 1
+      assert_in_delta breakdown.occupancy_percentage, 33.33, 0.1
+    end
+  end
+
   defp ids_for_search(event_id, query) do
     event_id
     |> Attendees.search_event_attendees(query)
@@ -128,5 +230,16 @@ defmodule FastCheck.AttendeesTest do
 
   defp unique_ticket_code do
     "CODE-#{System.unique_integer([:positive])}"
+  end
+
+  defp disable_occupancy_tasks(_) do
+    original = Application.get_env(:fastcheck, :disable_occupancy_tasks, false)
+    Application.put_env(:fastcheck, :disable_occupancy_tasks, true)
+
+    on_exit(fn ->
+      Application.put_env(:fastcheck, :disable_occupancy_tasks, original)
+    end)
+
+    :ok
   end
 end
