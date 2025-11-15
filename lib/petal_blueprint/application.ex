@@ -19,16 +19,18 @@ defmodule PetalBlueprint.Application do
         []
       end
 
-    children = [
-      PetalBlueprintWeb.Telemetry,
-      PetalBlueprint.Repo,
-      {DNSCluster, query: Application.get_env(:petal_blueprint, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: PetalBlueprint.PubSub},
-      # Start a worker by calling: PetalBlueprint.Worker.start_link(arg)
-      # {PetalBlueprint.Worker, arg},
-      # Start to serve requests, typically the last entry
-      PetalBlueprintWeb.Endpoint
-    ] ++ cache_children
+    children =
+      [
+        PetalBlueprintWeb.Telemetry,
+        PetalBlueprint.Repo,
+        FastCheck.TickeraCircuitBreaker,
+        {DNSCluster, query: Application.get_env(:petal_blueprint, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: PetalBlueprint.PubSub},
+        # Start a worker by calling: PetalBlueprint.Worker.start_link(arg)
+        # {PetalBlueprint.Worker, arg},
+        # Start to serve requests, typically the last entry
+        PetalBlueprintWeb.Endpoint
+      ] ++ cache_children
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
