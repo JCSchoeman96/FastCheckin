@@ -462,7 +462,7 @@ defmodule FastCheck.Events do
 
   defp broadcast_live_occupancy(event_id, current_occupancy) do
     Phoenix.PubSub.broadcast!(
-      FastCheck.PubSub,
+      PetalBlueprint.PubSub,
       "event:#{event_id}:occupancy",
       {:occupancy_changed, current_occupancy, "live_update"}
     )
