@@ -70,6 +70,6 @@ defmodule FastCheck.Events.Event do
     event
     |> cast(attrs, [:name, :api_key, :site_url, :status, :entrance_name, :event_date, :event_time, :location])
     |> validate_required([:name, :api_key, :site_url])
-    |> unique_constraint(:api_key)
+    |> unique_constraint(:api_key, name: :idx_events_api_key)
   end
 end
