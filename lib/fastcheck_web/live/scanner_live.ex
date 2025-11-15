@@ -8,6 +8,7 @@ defmodule FastCheckWeb.ScannerLive do
   import Phoenix.Component, only: [to_form: 1]
 
   alias FastCheck.{Attendees, Events}
+  alias Phoenix.LiveView.JS
   alias Phoenix.PubSub
   require Logger
 
@@ -18,6 +19,9 @@ defmodule FastCheckWeb.ScannerLive do
     with {:ok, event_id} <- parse_event_id(event_id_param),
          {:ok, event} <- fetch_event(event_id) do
       stats = Attendees.get_event_stats(event_id)
+      occupancy = Attendees.get_occupancy_breakdown(event_id)
+      current_occupancy = Map.get(occupancy, :currently_inside, 0)
+      occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
 
       socket =
         socket
@@ -27,7 +31,13 @@ defmodule FastCheckWeb.ScannerLive do
           ticket_code: "",
           last_scan_status: nil,
           last_scan_result: nil,
+          last_scan_reason: nil,
+          last_scan_checkins_used: 0,
+          last_scan_checkins_allowed: 0,
           stats: stats,
+          check_in_type: "entry",
+          current_occupancy: current_occupancy,
+          occupancy_percentage: occupancy_percentage,
           search_query: "",
           search_results: [],
           search_loading: false,
@@ -37,6 +47,7 @@ defmodule FastCheckWeb.ScannerLive do
 
       if connected?(socket) do
         PubSub.subscribe(PetalBlueprint.PubSub, event_topic(event_id))
+        PubSub.subscribe(PetalBlueprint.PubSub, occupancy_topic(event_id))
       end
 
       {:ok, socket}
@@ -67,6 +78,16 @@ defmodule FastCheckWeb.ScannerLive do
   def handle_event("scan", _params, socket) do
     {:noreply, socket}
   end
+
+  @impl true
+  def handle_event("set_check_in_type", %{"type" => type}, socket) do
+    case normalize_check_in_type(type) do
+      nil -> {:noreply, socket}
+      normalized -> {:noreply, assign(socket, :check_in_type, normalized)}
+    end
+  end
+
+  def handle_event("set_check_in_type", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("update_code", %{"ticket_code" => code}, socket) do
@@ -145,6 +166,27 @@ defmodule FastCheckWeb.ScannerLive do
     end
   end
 
+  def handle_info({:occupancy_changed, count, _type}, socket) do
+    {:noreply, assign_occupancy(socket, count)}
+  end
+
+  def handle_info({:occupancy_breakdown_updated, event_id, breakdown}, socket) do
+    if socket.assigns.event_id == event_id do
+      count =
+        breakdown
+        |> Map.get(:currently_inside)
+        |> case do
+          nil -> Map.get(breakdown, "currently_inside")
+          value -> value
+        end
+        |> Kernel.||(0)
+
+      {:noreply, assign_occupancy(socket, count)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:perform_attendee_search, query}, socket) do
     current_query = socket.assigns.search_query |> to_string() |> String.trim()
 
@@ -193,6 +235,66 @@ defmodule FastCheckWeb.ScannerLive do
             </p>
           </header>
 
+          <section class="rounded-3xl bg-slate-900/85 px-6 py-6 shadow-2xl backdrop-blur">
+            <div class="flex flex-col gap-4">
+              <div>
+                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Scanner mode</p>
+                <h2 class="mt-1 text-2xl font-semibold text-white">Entry & exit controls</h2>
+                <p class="text-sm text-slate-300">
+                  Switch the scanner direction instantly while keeping the field focused for rapid-fire processing.
+                </p>
+              </div>
+
+              <div class="flex flex-wrap gap-4 mt-4 mb-6">
+                <button
+                  phx-click="set_check_in_type"
+                  phx-value-type="entry"
+                  class={[
+                    "px-6 py-3 rounded-lg font-bold text-lg transition-all",
+                    @check_in_type == "entry" ? "bg-green-600 text-white shadow-lg" : "bg-slate-700 text-slate-300"
+                  ]}
+                >
+                  ➡️ ENTRY
+                </button>
+                <button
+                  phx-click="set_check_in_type"
+                  phx-value-type="exit"
+                  class={[
+                    "px-6 py-3 rounded-lg font-bold text-lg transition-all",
+                    @check_in_type == "exit" ? "bg-orange-600 text-white shadow-lg" : "bg-slate-700 text-slate-300"
+                  ]}
+                >
+                  ⤴️ EXIT
+                </button>
+              </div>
+
+              <div class="mt-2 bg-blue-900 rounded-lg p-6 border-4 border-blue-500">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p class="text-blue-300 text-sm font-semibold">CURRENT OCCUPANCY</p>
+                    <p class="text-6xl font-bold text-blue-200 mt-2"><%= @current_occupancy %></p>
+                    <p class="text-blue-200 text-sm mt-2">Guests inside right now</p>
+                  </div>
+                  <div class="text-right">
+                    <p class="text-blue-300 text-sm">CAPACITY</p>
+                    <p class="text-4xl font-bold text-blue-200"><%= format_percentage(@occupancy_percentage) %>%</p>
+                    <span
+                      class={[
+                        "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold text-white mt-3",
+                        occupancy_status_color(@occupancy_percentage)
+                      ]}
+                    >
+                      Crowd load
+                    </span>
+                  </div>
+                </div>
+                <div class="mt-4 w-full bg-blue-800 rounded-full h-4 overflow-hidden">
+                  <div class="bg-blue-400 h-4 transition-all" style={"width: #{@occupancy_percentage}%"}></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section class="rounded-3xl bg-slate-800/80 px-6 py-6 shadow-2xl backdrop-blur">
             <div class="grid gap-4 sm:grid-cols-3">
               <div class="rounded-2xl bg-slate-700/70 p-4">
@@ -222,19 +324,85 @@ defmodule FastCheckWeb.ScannerLive do
             </div>
           </section>
 
-          <section
+          <div
             :if={@last_scan_status}
-            class={scan_status_classes(@last_scan_status)}
-            data-test="scan-status"
+            id="scan-result"
+            phx-remove={JS.add_class("opacity-0", transition: "transition-opacity duration-300")}
           >
-            <div class="flex items-center gap-4">
-              <div class="text-4xl font-bold">{scan_status_icon(@last_scan_status)}</div>
-              <p class="text-lg font-semibold leading-tight">{@last_scan_result}</p>
-            </div>
-            <p class="mt-2 text-sm text-slate-200/80">
-              Ready for the next guest – the input is armed for the next scan.
-            </p>
-          </section>
+            <%= case {status: @last_scan_status, mode: @check_in_type} do %>
+              <% {status: :success, mode: "entry"} -> %>
+                <div class="mt-6 p-8 bg-green-900 border-4 border-green-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-green-300">➡️ ENTERED</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  <% if @last_scan_checkins_allowed > 1 do %>
+                    <p class="text-green-200 text-lg mt-3">
+                      Check-in:
+                      <span class="font-bold"><%= @last_scan_checkins_used %></span>
+                      of
+                      <span class="font-bold"><%= @last_scan_checkins_allowed %></span>
+                      used
+                    </p>
+                    <div class="mt-3 w-full bg-green-800 rounded-full h-3">
+                      <% percentage = div(@last_scan_checkins_used * 100, max(@last_scan_checkins_allowed, 1)) %>
+                      <div class="bg-green-400 h-3 rounded-full" style={"width: #{percentage}%"}></div>
+                    </div>
+                  <% end %>
+                  <p class="text-green-200 text-sm mt-2">Occupancy: <%= @current_occupancy %> inside</p>
+                </div>
+
+              <% {status: :success, mode: "exit"} -> %>
+                <div class="mt-6 p-8 bg-orange-900 border-4 border-orange-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-orange-300">⤴️ EXITED</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  <p class="text-orange-200 text-sm mt-2">Occupancy: <%= @current_occupancy %> inside</p>
+                </div>
+
+              <% {status: :duplicate_today} -> %>
+                <div class="mt-6 p-8 bg-yellow-900 border-4 border-yellow-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-yellow-300">⚠️ DUPLICATE</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  <p class="text-yellow-200 text-sm mt-2">Next check-in: Tomorrow</p>
+                  <p :if={@last_scan_reason} class="text-yellow-100 text-xs mt-1">
+                    <%= @last_scan_reason %>
+                  </p>
+                </div>
+
+              <% {status: :limit_exceeded} -> %>
+                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-red-300">✖️ LIMIT EXCEEDED</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                </div>
+
+              <% {status: :not_yet_valid} -> %>
+                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-red-300">✖️ NOT YET VALID</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                </div>
+
+              <% {status: :expired} -> %>
+                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-red-300">✖️ EXPIRED</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                </div>
+
+              <% {status: :invalid} -> %>
+                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-red-300">✖️ INVALID</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                </div>
+
+              <% {status: :error} -> %>
+                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
+                  <p class="text-6xl font-bold text-red-300">✖️ ERROR</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                </div>
+
+              <% _ -> %>
+                <div class="mt-6 p-8 bg-slate-900 border-4 border-slate-600 rounded-lg text-center shadow-2xl">
+                  <p class="text-2xl font-semibold text-white">Ready for the next scan</p>
+                </div>
+            <% end %>
+          </div>
 
           <section
             phx-hook="CameraPermission"
@@ -437,40 +605,96 @@ defmodule FastCheckWeb.ScannerLive do
   defp process_scan(code, socket) do
     event_id = socket.assigns.event_id
     entrance_name = socket.assigns.event.entrance_name || "Main Entrance"
+    check_in_type = socket.assigns.check_in_type || "entry"
+    operator = operator_name(socket)
 
-    case Attendees.check_in(event_id, code, entrance_name) do
+    case Attendees.check_in_advanced(event_id, code, check_in_type, entrance_name, operator) do
       {:ok, attendee, _message} ->
         stats = Attendees.get_event_stats(event_id)
         updated_results = update_search_results(socket.assigns.search_results, attendee)
+        {allowed, used} = check_in_usage(attendee)
 
         {:noreply,
          socket
-         |> assign(:last_scan_status, :success)
-         |> assign(:last_scan_result, "✓ Welcome, #{attendee.first_name} #{attendee.last_name}!")
-         |> assign(:stats, stats)
-         |> assign(:ticket_code, "")
-         |> assign(:search_results, updated_results)}
+         |> assign(
+           last_scan_status: :success,
+           last_scan_result: success_message(attendee, check_in_type),
+           last_scan_checkins_used: used,
+           last_scan_checkins_allowed: allowed,
+           last_scan_reason: nil,
+           stats: stats,
+           ticket_code: "",
+           search_results: updated_results
+         )}
 
-      {:error, "DUPLICATE", message} ->
+      {:error, code, message} when code in ["DUPLICATE_TODAY", "DUPLICATE", "ALREADY_INSIDE"] ->
         {:noreply,
          socket
-         |> assign(:last_scan_status, :duplicate)
-         |> assign(:last_scan_result, message)
-         |> assign(:ticket_code, "")}
+         |> assign(
+           last_scan_status: :duplicate_today,
+           last_scan_result: message,
+           last_scan_reason: "Already scanned today",
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0,
+           ticket_code: ""
+         )}
 
-      {:error, "INVALID", message} ->
+      {:error, "LIMIT_EXCEEDED", message} ->
         {:noreply,
          socket
-         |> assign(:last_scan_status, :invalid)
-         |> assign(:last_scan_result, message)
-         |> assign(:ticket_code, "")}
+         |> assign(
+           last_scan_status: :limit_exceeded,
+           last_scan_result: message,
+           last_scan_reason: nil,
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0,
+           ticket_code: ""
+         )}
+
+      {:error, "NOT_YET_VALID", message} ->
+        {:noreply,
+         socket
+         |> assign(
+           last_scan_status: :not_yet_valid,
+           last_scan_result: message,
+           last_scan_reason: nil,
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0
+         )}
+
+      {:error, "EXPIRED", message} ->
+        {:noreply,
+         socket
+         |> assign(
+           last_scan_status: :expired,
+           last_scan_result: message,
+           last_scan_reason: nil,
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0
+         )}
+
+      {:error, code, message} when code in ["INVALID", "INVALID_TICKET"] ->
+        {:noreply,
+         socket
+         |> assign(
+           last_scan_status: :invalid,
+           last_scan_result: message,
+           last_scan_reason: nil,
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0,
+           ticket_code: ""
+         )}
 
       {:error, _code, message} ->
         {:noreply,
          socket
-         |> assign(:last_scan_status, :error)
-         |> assign(:last_scan_result, message)
-         |> assign(:ticket_code, "")}
+         |> assign(
+           last_scan_status: :error,
+           last_scan_result: message,
+           last_scan_reason: nil,
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0
+         )}
     end
   end
   
@@ -481,6 +705,95 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   defp update_search_results(search_results, _), do: search_results
+
+  defp check_in_usage(%{} = attendee) do
+    allowed = attendee |> Map.get(:allowed_checkins) |> sanitize_allowed_checkins()
+    remaining = attendee |> Map.get(:checkins_remaining) |> sanitize_remaining_checkins()
+    used = allowed - min(remaining, allowed)
+    {allowed, max(used, 0)}
+  end
+
+  defp check_in_usage(_), do: {1, 1}
+
+  defp sanitize_allowed_checkins(value) when is_integer(value) and value > 0, do: value
+  defp sanitize_allowed_checkins(_), do: 1
+
+  defp sanitize_remaining_checkins(value) when is_integer(value) and value >= 0, do: value
+  defp sanitize_remaining_checkins(_), do: 0
+
+  defp operator_name(socket) do
+    socket.assigns
+    |> Map.get(:operator_name)
+    |> extract_operator_name()
+    |> case do
+      nil ->
+        socket.assigns
+        |> Map.get(:current_operator)
+        |> extract_operator_name()
+        |> case do
+          nil ->
+            socket.assigns
+            |> Map.get(:current_user)
+            |> extract_operator_name()
+
+          value ->
+            value
+        end
+
+      value ->
+        value
+    end
+  end
+
+  defp extract_operator_name(%{} = value) do
+    cond do
+      is_binary(Map.get(value, :name)) -> normalize_name(Map.get(value, :name))
+      is_binary(Map.get(value, :full_name)) -> normalize_name(Map.get(value, :full_name))
+      is_binary(Map.get(value, :first_name)) ->
+        parts =
+          [
+            Map.get(value, :first_name),
+            Map.get(value, :last_name) || Map.get(value, :last)
+          ]
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+
+        case parts do
+          [] -> nil
+          list -> Enum.join(list, " ")
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp extract_operator_name(value) when is_binary(value), do: normalize_name(value)
+  defp extract_operator_name(_), do: nil
+
+  defp normalize_name(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp success_message(attendee, "exit"), do: "👋 See you soon, #{attendee_first_name(attendee)}!"
+  defp success_message(attendee, _), do: "✓ Welcome, #{attendee_first_name(attendee)}!"
+
+  defp attendee_first_name(%{} = attendee) do
+    attendee
+    |> Map.get(:first_name)
+    |> case do
+      value when is_binary(value) and String.trim(value) != "" -> String.trim(value)
+      _ -> attendee_display_name(attendee)
+    end
+  end
+
+  defp attendee_first_name(_), do: "Guest"
 
   defp attendee_display_name(%{} = attendee) do
     [Map.get(attendee, :first_name), Map.get(attendee, :last_name)]
@@ -510,6 +823,49 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   defp event_topic(event_id), do: "event:#{event_id}:stats"
+  defp occupancy_topic(event_id), do: "event:#{event_id}:occupancy"
+
+  defp assign_occupancy(socket, count) do
+    sanitized_count = sanitize_non_neg_integer(count)
+
+    capacity =
+      socket.assigns
+      |> Map.get(:stats)
+      |> case do
+        %{total: total} -> total
+        _ -> nil
+      end
+      |> case do
+        nil -> Map.get(socket.assigns.event, :total_tickets)
+        value -> value
+      end
+
+    percentage = calculate_occupancy_percentage(sanitized_count, capacity)
+
+    assign(socket,
+      current_occupancy: sanitized_count,
+      occupancy_percentage: percentage
+    )
+  end
+
+  defp sanitize_non_neg_integer(value) when is_integer(value) and value >= 0, do: value
+  defp sanitize_non_neg_integer(value) when is_float(value) and value >= 0, do: trunc(value)
+  defp sanitize_non_neg_integer(_), do: 0
+
+  defp calculate_occupancy_percentage(count, capacity) do
+    capacity_value = normalize_capacity(capacity)
+
+    cond do
+      capacity_value <= 0 -> 0.0
+      true ->
+        count_clamped = min(count, capacity_value)
+        Float.round(count_clamped / capacity_value * 100, 1)
+    end
+  end
+
+  defp normalize_capacity(value) when is_integer(value) and value > 0, do: value
+  defp normalize_capacity(value) when is_float(value) and value > 0, do: trunc(value)
+  defp normalize_capacity(_), do: 0
 
   defp format_percentage(value) when is_number(value) do
     value
@@ -519,9 +875,29 @@ defmodule FastCheckWeb.ScannerLive do
 
   defp format_percentage(_), do: "0.0"
 
+  defp normalize_check_in_type(value) when value in ["entry", "exit"], do: value
+
+  defp normalize_check_in_type(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "entry" -> "entry"
+      "exit" -> "exit"
+      _ -> nil
+    end
+  end
+
+  defp normalize_check_in_type(_), do: nil
+
   defp entrance_label(nil), do: "General Admission"
   defp entrance_label(""), do: "General Admission"
   defp entrance_label(name), do: name
+
+  defp occupancy_status_color(percentage) when percentage >= 100, do: "bg-red-600"
+  defp occupancy_status_color(percentage) when percentage > 90, do: "bg-red-500"
+  defp occupancy_status_color(percentage) when percentage > 75, do: "bg-yellow-500"
+  defp occupancy_status_color(_), do: "bg-green-500"
 
   defp scan_status_classes(:success),
     do:
