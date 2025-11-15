@@ -8,7 +8,7 @@ defmodule FastCheck.Attendees do
 
   alias PetalBlueprint.Repo
   alias Phoenix.PubSub
-  alias FastCheck.{Attendees.Attendee, Attendees.CheckIn, TickeraClient}
+  alias FastCheck.{Attendees.Attendee, Attendees.CheckIn, Attendees.CheckInSession, TickeraClient}
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -415,16 +415,19 @@ defmodule FastCheck.Attendees do
 
         case Attendee.changeset(attendee, attrs) |> Repo.update() do
           {:ok, updated} ->
-            record_check_in(updated, event_id, String.downcase(check_in_type), entrance_name, operator)
-            insert_check_in_session(updated, %{
-              event_id: event_id,
-              action: "check_in",
-              entrance_name: entrance_name,
-              operator_name: operator,
-              notes: "advanced: #{check_in_type}"
-            })
+            with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
+              record_check_in(
+                updated,
+                event_id,
+                String.downcase(check_in_type),
+                entrance_name,
+                operator
+              )
 
-            %{attendee: updated, message: "SUCCESS"}
+              %{attendee: updated, message: "SUCCESS"}
+            else
+              {:error, session_reason} -> Repo.rollback(session_reason)
+            end
 
           {:error, changeset} ->
             Logger.error("Advanced check-in update failed for #{ticket_code}: #{inspect(changeset.errors)}")
@@ -458,16 +461,12 @@ defmodule FastCheck.Attendees do
 
         case Attendee.changeset(attendee, attrs) |> Repo.update() do
           {:ok, updated} ->
-            record_check_in(updated, event_id, "checked_out", entrance_name, operator)
-            insert_check_in_session(updated, %{
-              event_id: event_id,
-              action: "check_out",
-              entrance_name: entrance_name,
-              operator_name: operator,
-              notes: "manual checkout"
-            })
-
-            %{attendee: updated, message: "CHECKED_OUT"}
+            with {:ok, _session} <- close_active_session(updated, entrance_name, now) do
+              record_check_in(updated, event_id, "checked_out", entrance_name, operator)
+              %{attendee: updated, message: "CHECKED_OUT"}
+            else
+              {:error, session_reason} -> Repo.rollback(session_reason)
+            end
 
           {:error, changeset} ->
             Logger.error("Check-out update failed for #{ticket_code}: #{inspect(changeset.errors)}")
@@ -494,12 +493,6 @@ defmodule FastCheck.Attendees do
 
         case Attendee.changeset(attendee, attrs) |> Repo.update() do
           {:ok, updated} ->
-            insert_check_in_session(updated, %{
-              event_id: event_id,
-              action: "reset_counters",
-              notes: "manual reset"
-            })
-
             %{attendee: updated, message: "SCAN_COUNTERS_RESET"}
 
           {:error, changeset} ->
@@ -521,6 +514,7 @@ defmodule FastCheck.Attendees do
     )
 
     operator = maybe_trim(operator_name)
+    _notes = maybe_trim(notes)
 
     Repo.transaction(fn ->
       with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
@@ -529,16 +523,12 @@ defmodule FastCheck.Attendees do
 
         case Attendee.changeset(attendee, attrs) |> Repo.update() do
           {:ok, updated} ->
-            record_check_in(updated, event_id, "manual", entrance_name, operator)
-            insert_check_in_session(updated, %{
-              event_id: event_id,
-              action: "manual_entry",
-              entrance_name: entrance_name,
-              operator_name: operator,
-              notes: maybe_trim(notes)
-            })
-
-            %{attendee: updated, message: "MANUAL_ENTRY_RECORDED"}
+            with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
+              record_check_in(updated, event_id, "manual", entrance_name, operator)
+              %{attendee: updated, message: "MANUAL_ENTRY_RECORDED"}
+            else
+              {:error, session_reason} -> Repo.rollback(session_reason)
+            end
 
           {:error, changeset} ->
             Logger.error("Manual entry update failed for #{ticket_code}: #{inspect(changeset.errors)}")
@@ -640,31 +630,86 @@ defmodule FastCheck.Attendees do
     attendee.checkins_remaining || attendee.allowed_checkins || 0
   end
 
-  defp insert_check_in_session(attendee, attrs) do
+  defp upsert_active_session(%Attendee{} = attendee, entrance_name) do
     now = current_timestamp()
+    query = active_session_query(attendee)
 
-    entry =
-      %{
-        event_id: Map.get(attrs, :event_id),
-        attendee_id: attendee && Map.get(attendee, :id),
-        ticket_code: attendee && Map.get(attendee, :ticket_code),
-        action: Map.get(attrs, :action),
-        entrance_name: Map.get(attrs, :entrance_name),
-        operator_name: Map.get(attrs, :operator_name),
-        notes: Map.get(attrs, :notes),
-        occurred_at: now,
-        inserted_at: now,
-        updated_at: now
-      }
-      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-      |> Map.new()
+    result =
+      case Repo.one(query) do
+        nil ->
+          %CheckInSession{}
+          |> CheckInSession.changeset(%{
+            attendee_id: attendee.id,
+            event_id: attendee.event_id,
+            entry_time: now,
+            entrance_name: entrance_name
+          })
+          |> Repo.insert()
 
-    Repo.insert_all("check_in_sessions", [entry])
-    :ok
+        %CheckInSession{} = session ->
+          session
+          |> CheckInSession.changeset(%{entry_time: now, entrance_name: entrance_name})
+          |> Repo.update()
+      end
+
+    case result do
+      {:ok, session} ->
+        {:ok, session}
+
+      {:error, changeset} ->
+        Logger.error(
+          "Failed to store active session for attendee #{attendee.id}: #{inspect(changeset.errors)}"
+        )
+
+        {:error, {"SESSION_FAILED", "Unable to record check-in session"}}
+    end
   rescue
     exception ->
-      Logger.error("Failed to record check_in_session for #{attendee && attendee.ticket_code}: #{Exception.message(exception)}")
-      :error
+      Logger.error(
+        "Unexpected session error for attendee #{attendee.id}: #{Exception.message(exception)}"
+      )
+
+      {:error, {"SESSION_FAILED", "Unable to record check-in session"}}
+  end
+
+  defp close_active_session(%Attendee{} = attendee, entrance_name, exit_time) do
+    query = active_session_query(attendee)
+
+    case Repo.one(query) do
+      nil ->
+        Logger.error("No active session found for attendee #{attendee.id} to close")
+        {:error, {"SESSION_NOT_FOUND", "No active session to complete"}}
+
+      %CheckInSession{} = session ->
+        session
+        |> CheckInSession.changeset(%{exit_time: exit_time, entrance_name: entrance_name})
+        |> Repo.update()
+        |> case do
+          {:ok, updated_session} ->
+            {:ok, updated_session}
+
+          {:error, changeset} ->
+            Logger.error(
+              "Failed to close session for attendee #{attendee.id}: #{inspect(changeset.errors)}"
+            )
+
+            {:error, {"SESSION_FAILED", "Unable to complete check-out session"}}
+        end
+    end
+  rescue
+    exception ->
+      Logger.error(
+        "Unexpected close session error for attendee #{attendee.id}: #{Exception.message(exception)}"
+      )
+
+      {:error, {"SESSION_FAILED", "Unable to complete check-out session"}}
+  end
+
+  defp active_session_query(%Attendee{} = attendee) do
+    from(s in CheckInSession,
+      where: s.attendee_id == ^attendee.id and s.event_id == ^attendee.event_id and is_nil(s.exit_time),
+      lock: "FOR UPDATE"
+    )
   end
 
   defp handle_session_transaction({:ok, %{attendee: attendee, message: message}}, event_id, broadcast?) do
