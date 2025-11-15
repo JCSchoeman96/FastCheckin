@@ -23,6 +23,7 @@ defmodule FastCheck.Events.Event do
           sync_started_at: DateTime.t() | nil,
           sync_completed_at: DateTime.t() | nil,
           last_checked_at: DateTime.t() | nil,
+          last_config_sync: DateTime.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }
@@ -56,6 +57,7 @@ defmodule FastCheck.Events.Event do
     field :sync_completed_at, :utc_datetime
     # Timestamp of the last attendee check-in action
     field :last_checked_at, :utc_datetime
+    field :last_config_sync, :utc_datetime
 
     # Relationship to all attendees belonging to the event
     has_many :attendees, FastCheck.Attendees.Attendee
