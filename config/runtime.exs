@@ -33,7 +33,11 @@ if config_env() == :prod do
     System.get_env("DATABASE_URL") ||
       "ecto://postgres:password@pgbouncer:6432/fastcheck_prod"
 
-  config :petal_blueprint, PetalBlueprint.Repo, url: database_url
+  config :petal_blueprint, PetalBlueprint.Repo,
+    url: database_url,
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "50"),
+    queue_target: 5_000,
+    queue_interval: 1_000
 
   # The secret key base signs/encrypts cookies and tokens. Generate it with
   # `mix phx.gen.secret` and keep it outside of version control.
