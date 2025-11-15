@@ -1,6 +1,7 @@
 defmodule FastCheck.EventsTest do
   use PetalBlueprint.DataCase, async: true
 
+  alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.{Event, CheckInConfiguration}
   alias FastCheck.Attendees.{Attendee, CheckIn}
@@ -94,6 +95,32 @@ defmodule FastCheck.EventsTest do
       assert south.entries == 1
       assert south.exits == 0
       assert south.inside == 1
+    end
+  end
+
+  describe "broadcast_occupancy_update/2" do
+    test "broadcasts sanitized payload" do
+      event = insert_event!("Arena")
+
+      event =
+        event
+        |> Changeset.change(total_tickets: 200)
+        |> Repo.update!()
+
+      Phoenix.PubSub.subscribe(PetalBlueprint.PubSub, "event:#{event.id}:occupancy")
+
+      assert :ok = Events.broadcast_occupancy_update(event.id, 42)
+
+      assert_receive {:occupancy_update, payload}
+      assert payload.event_id == event.id
+      assert payload.inside_count == 42
+      assert payload.capacity == 200
+      assert payload.percentage == 21.0
+    end
+
+    test "returns error when event is missing" do
+      assert {:error, :event_not_found} = Events.broadcast_occupancy_update(123_456, 10)
+      refute_receive {:occupancy_update, _payload}
     end
   end
 
