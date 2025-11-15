@@ -373,7 +373,7 @@ defmodule FastCheck.TickeraClient do
 
   defp extract_business_error(payload) when is_map(payload) do
     cond do
-      is_binary(Map.get(payload, "error_code")) ->
+      present_error_code?(Map.get(payload, "error_code")) ->
         code = Map.get(payload, "error_code")
 
         message =
@@ -381,7 +381,7 @@ defmodule FastCheck.TickeraClient do
 
         {:error, code, message}
 
-      is_binary(Map.get(payload, "error")) ->
+      present_error_code?(Map.get(payload, "error")) ->
         code = Map.get(payload, "error")
 
         message =
@@ -401,6 +401,10 @@ defmodule FastCheck.TickeraClient do
         :ok
     end
   end
+
+  defp present_error_code?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present_error_code?(value) when is_integer(value), do: true
+  defp present_error_code?(_value), do: false
 
   defp extract_business_error(_payload), do: :ok
 
