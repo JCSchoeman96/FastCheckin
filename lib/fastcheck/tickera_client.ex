@@ -88,6 +88,47 @@ defmodule FastCheck.TickeraClient do
   @per_entrance_integer_fields [:capacity, :checked_in, :remaining]
   @per_entrance_float_fields [:occupancy_percentage]
   @occupancy_default_capacity_status "unknown"
+  @advanced_business_errors [
+    "INVALID_TICKET",
+    "ALREADY_SCANNED_TODAY",
+    "LIMIT_EXCEEDED",
+    "OUTSIDE_WINDOW",
+    "VENUE_FULL",
+    "NOT_INSIDE"
+  ]
+
+  @advanced_key_mapping %{
+    "ticket_code" => :ticket_code,
+    "check_in_type" => :check_in_type,
+    "entrance_name" => :entrance_name,
+    "operator_name" => :operator_name,
+    "used_checkins" => :used_checkins,
+    "used_check_ins" => :used_checkins,
+    "remaining_checkins" => :remaining_checkins,
+    "remaining_check_ins" => :remaining_checkins,
+    "allowed_checkins" => :allowed_checkins,
+    "allowed_check_ins" => :allowed_checkins,
+    "can_reenter" => :can_reenter,
+    "message" => :message,
+    "description" => :description,
+    "status" => :status,
+    "check_in_timestamp" => :check_in_timestamp,
+    "timestamp" => :timestamp
+  }
+
+  @advanced_integer_fields [:allowed_checkins, :used_checkins, :remaining_checkins]
+  @advanced_boolean_fields [:can_reenter]
+  @advanced_string_fields [
+    :ticket_code,
+    :check_in_type,
+    :entrance_name,
+    :operator_name,
+    :message,
+    :description,
+    :status,
+    :timestamp,
+    :check_in_timestamp
+  ]
 
   @doc """
   Validates the provided API credentials against the Tickera API.
@@ -268,6 +309,80 @@ defmodule FastCheck.TickeraClient do
   end
 
   @doc """
+  Submits an advanced Tickera check-in using the scanner metadata.
+
+  Sends a POST request to `/tc-api/{api_key}/check_in_advanced`, including the
+  ticket code, check-in type, entrance/operator names, and a UTC timestamp.
+
+  ## Parameters
+    * `site_url` - Base URL of the Tickera site.
+    * `api_key` - Tickera API key used for authentication.
+    * `ticket_code` - Unique ticket identifier to check in.
+    * `check_in_type` - The check-in type (scan/manual/etc).
+    * `entrance_name` - Entrance/door name performing the check-in.
+    * `operator_name` - Optional operator handling the scan.
+
+  ## Returns
+    * `{:ok, response_map}` when the request succeeds.
+    * `{:error, code, message}` for business, HTTP, or network failures.
+  """
+  @spec submit_advanced_check_in(
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t() | nil
+        ) :: {:ok, map()} | {:error, String.t(), String.t()}
+  def submit_advanced_check_in(
+        site_url,
+        api_key,
+        ticket_code,
+        check_in_type,
+        entrance_name,
+        operator_name
+      ) do
+    :timer.sleep(100)
+
+    url = build_url(site_url, api_key, "check_in_advanced")
+
+    payload = %{
+      ticket_code: ticket_code,
+      check_in_type: check_in_type,
+      entrance_name: entrance_name,
+      operator_name: operator_name,
+      timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    headers = [
+      {"authorization", "Bearer #{api_key}"},
+      {"content-type", "application/json"},
+      {"accept", "application/json"}
+    ]
+
+    options = [timeout: 5_000, recv_timeout: 5_000]
+
+    case HTTPoison.post(url, Jason.encode!(payload), headers, options) do
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+        with {:ok, decoded} <- decode_json_map(body),
+             {:ok, normalized} <- normalize_advanced_check_in(decoded) do
+          Logger.info("TickeraClient: submit_advanced_check_in – SUCCESS")
+          {:ok, normalized}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+        Logger.error(
+          "TickeraClient: submit_advanced_check_in HTTP #{code} – #{String.slice(body || "", 0, 200)}"
+        )
+
+        {:error, "HTTP_#{code}", "Tickera returned status #{code}"}
+
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        handle_advanced_network_error(reason)
+    end
+  end
+
+  @doc """
   Fetches all attendees by iterating through every results page.
 
   An optional `callback` function can be provided. It is invoked for each page with
@@ -397,6 +512,66 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
+  defp handle_advanced_network_error(reason) do
+    case reason do
+      :timeout ->
+        Logger.error("TickeraClient: submit_advanced_check_in – NETWORK_TIMEOUT")
+        {:error, "NETWORK_TIMEOUT", "Tickera advanced check-in request timed out"}
+
+      :connect_timeout ->
+        Logger.error("TickeraClient: submit_advanced_check_in – NETWORK_TIMEOUT")
+        {:error, "NETWORK_TIMEOUT", "Tickera advanced check-in request timed out"}
+
+      {:timeout, _} ->
+        Logger.error("TickeraClient: submit_advanced_check_in – NETWORK_TIMEOUT")
+        {:error, "NETWORK_TIMEOUT", "Tickera advanced check-in request timed out"}
+
+      _ ->
+        Logger.error("TickeraClient: submit_advanced_check_in – NETWORK_ERROR #{inspect(reason)}")
+        {:error, "NETWORK_ERROR", "Tickera advanced check-in failed"}
+    end
+  end
+
+  defp normalize_advanced_check_in(%{} = payload) do
+    case extract_business_error(payload) do
+      {:error, code, message} = error ->
+        if code in @advanced_business_errors do
+          Logger.warn("TickeraClient: submit_advanced_check_in – #{code}")
+        else
+          Logger.warn("TickeraClient: submit_advanced_check_in – BUSINESS_ERROR")
+        end
+
+        error
+
+      :ok ->
+        payload
+        |> Map.get("data")
+        |> case do
+          %{} = data -> data
+          _ -> payload
+        end
+        |> normalize_advanced_payload()
+    end
+  end
+
+  defp normalize_advanced_check_in(_payload) do
+    Logger.error("Tickera advanced check-in payload missing")
+    {:error, "JSON_ERROR", "Response not valid JSON"}
+  end
+
+  defp normalize_advanced_payload(%{} = data) do
+    normalized =
+      Enum.reduce(data, %{}, fn {key, value}, acc ->
+        maybe_put_advanced_field(acc, key, value)
+      end)
+
+    {:ok, normalized}
+  end
+
+  defp normalize_advanced_payload(_data) do
+    {:ok, %{}}
+  end
+
   defp maybe_callback(nil, _page, _total_pages, _count), do: :ok
 
   defp maybe_callback(callback, page, total_pages, count) when is_function(callback, 3) do
@@ -473,6 +648,30 @@ defmodule FastCheck.TickeraClient do
     Logger.error("Tickera ticket status payload missing")
     {:error, "JSON_ERROR", "Response not valid JSON"}
   end
+
+  defp maybe_put_advanced_field(acc, key, value) when is_binary(key) do
+    case Map.get(@advanced_key_mapping, key) do
+      nil -> acc
+      field -> Map.put(acc, field, normalize_advanced_value(field, value))
+    end
+  end
+
+  defp maybe_put_advanced_field(acc, key, value) when is_atom(key) do
+    maybe_put_advanced_field(acc, Atom.to_string(key), value)
+  end
+
+  defp maybe_put_advanced_field(acc, _key, _value), do: acc
+
+  defp normalize_advanced_value(key, value) when key in @advanced_integer_fields,
+    do: coerce_integer(value)
+
+  defp normalize_advanced_value(key, value) when key in @advanced_boolean_fields,
+    do: coerce_boolean(value)
+
+  defp normalize_advanced_value(key, value) when key in @advanced_string_fields,
+    do: coerce_string(value)
+
+  defp normalize_advanced_value(_key, value), do: value
 
   defp normalize_event_occupancy(%{} = payload) do
     case extract_business_error(payload) do
@@ -594,6 +793,19 @@ defmodule FastCheck.TickeraClient do
 
   defp normalize_per_entrance_value(:alerts, value), do: coerce_alerts(value)
   defp normalize_per_entrance_value(_key, value), do: value
+
+  defp coerce_string(nil), do: nil
+
+  defp coerce_string(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> ""
+      trimmed -> trimmed
+    end
+  end
+
+  defp coerce_string(value), do: to_string(value)
 
   defp coerce_integer(value) when is_integer(value), do: value
   defp coerce_integer(value) when is_float(value), do: trunc(value)
