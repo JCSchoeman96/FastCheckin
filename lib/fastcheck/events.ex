@@ -50,6 +50,8 @@ defmodule FastCheck.Events do
 
   @config_replace_fields (@config_fields ++ [:check_in_window, :updated_at])
 
+  @occupancy_task_timeout 15_000
+
   @doc """
   Creates a new event by validating Tickera credentials, fetching event
   essentials, and persisting the event record.
@@ -189,6 +191,42 @@ defmodule FastCheck.Events do
   end
 
   @doc """
+  Fetches live occupancy information for an event using the Tickera API,
+  persists the latest statistics, and broadcasts the updated totals over PubSub.
+
+  The API call is executed inside a supervised task so the caller is not blocked
+  while the HTTP request completes.
+  """
+  @spec update_event_occupancy_live(integer()) :: {:ok, map()} | {:error, String.t()}
+  def update_event_occupancy_live(event_id) when is_integer(event_id) do
+    with %Event{} = event <- Repo.get(Event, event_id),
+         {:ok, site_url, api_key} <- ensure_event_credentials(event),
+         {:ok, payload} <- fetch_live_occupancy(site_url, api_key),
+         {:ok, {occupancy_map, missing_fields}} <- extract_live_occupancy(payload),
+         :ok <- persist_live_occupancy(event_id, occupancy_map) do
+      log_live_occupancy(event_id, occupancy_map, missing_fields)
+      broadcast_live_occupancy(event_id, occupancy_map.current_occupancy)
+      {:ok, occupancy_map}
+    else
+      nil ->
+        Logger.error("Live occupancy update failed for event #{event_id}: missing credentials")
+        {:error, "MISSING_CREDENTIALS"}
+
+      {:error, "MISSING_CREDENTIALS"} ->
+        Logger.error("Live occupancy update failed for event #{event_id}: missing credentials")
+        {:error, "MISSING_CREDENTIALS"}
+
+      {:error, code, message} ->
+        Logger.error("Live occupancy update failed for event #{event_id}: #{code} – #{message}")
+        {:error, "OCCUPANCY_FETCH_FAILED"}
+
+      {:error, reason} ->
+        Logger.error("Live occupancy update failed for event #{event_id}: #{inspect(reason)}")
+        {:error, "OCCUPANCY_FETCH_FAILED"}
+    end
+  end
+
+  @doc """
   Fetches Tickera ticket configurations for an event and upserts them locally.
 
   Returns the count of configurations inserted/updated or an error tuple when
@@ -247,6 +285,105 @@ defmodule FastCheck.Events do
   end
 
   defp ensure_credentials(_site_url, _api_key), do: {:error, :invalid_credentials}
+
+  defp ensure_event_credentials(%Event{site_url: site_url, api_key: api_key}) do
+    if present?(site_url) and present?(api_key) do
+      {:ok, site_url, api_key}
+    else
+      {:error, "MISSING_CREDENTIALS"}
+    end
+  end
+
+  defp ensure_event_credentials(_), do: {:error, "MISSING_CREDENTIALS"}
+
+  defp fetch_live_occupancy(site_url, api_key) do
+    task = Task.async(fn -> TickeraClient.get_event_occupancy(site_url, api_key) end)
+
+    try do
+      Task.await(task, @occupancy_task_timeout)
+    rescue
+      e in Task.TimeoutError ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, "TASK_TIMEOUT", Exception.message(e)}
+    catch
+      :exit, reason ->
+        {:error, "TASK_EXIT", inspect(reason)}
+    end
+  end
+
+  defp extract_live_occupancy(%{} = payload) do
+    per_entrance = payload |> Map.get(:per_entrance) |> ensure_map()
+
+    base = %{
+      current_occupancy: Map.get(payload, :checked_in),
+      total_entries: Map.get(payload, :total_capacity),
+      total_exits: Map.get(payload, :remaining),
+      percentage: Map.get(payload, :occupancy_percentage),
+      per_entrance: per_entrance
+    }
+
+    sanitized = %{
+      current_occupancy: normalize_occupancy_integer(base.current_occupancy),
+      total_entries: normalize_occupancy_integer(base.total_entries),
+      total_exits: normalize_occupancy_integer(base.total_exits),
+      percentage: normalize_occupancy_float(base.percentage),
+      per_entrance: per_entrance
+    }
+
+    missing_fields =
+      [:current_occupancy, :total_entries, :total_exits, :percentage]
+      |> Enum.filter(fn key -> is_nil(Map.get(base, key)) end)
+
+    {:ok, {sanitized, missing_fields}}
+  end
+
+  defp extract_live_occupancy(_payload), do: {:error, :invalid_payload}
+
+  defp persist_live_occupancy(event_id, %{current_occupancy: current, per_entrance: per_gate}) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    updates = [
+      checked_in_count: current,
+      last_occupancy_sync: now,
+      occupancy_per_gate: per_gate
+    ]
+
+    case Event |> where([e], e.id == ^event_id) |> Repo.update_all(set: updates) do
+      {count, _} when count > 0 -> :ok
+      _ -> {:error, :not_updated}
+    end
+  end
+
+  defp log_live_occupancy(event_id, occupancy_map, []) do
+    Logger.info(
+      "Live occupancy update for event #{event_id}: #{occupancy_map.current_occupancy}/#{occupancy_map.total_entries} (#{occupancy_map.percentage}%)"
+    )
+  end
+
+  defp log_live_occupancy(event_id, occupancy_map, missing_fields) do
+    Logger.warn(
+      "Live occupancy update for event #{event_id} missing #{Enum.join(missing_fields, ", ")}: #{inspect(occupancy_map)}"
+    )
+  end
+
+  defp broadcast_live_occupancy(event_id, current_occupancy) do
+    Phoenix.PubSub.broadcast!(
+      FastCheck.PubSub,
+      "event:#{event_id}:occupancy",
+      {:occupancy_changed, current_occupancy, "live_update"}
+    )
+  end
+
+  defp normalize_occupancy_integer(value) when is_integer(value), do: value
+  defp normalize_occupancy_integer(value) when is_float(value), do: trunc(value)
+  defp normalize_occupancy_integer(_value), do: 0
+
+  defp normalize_occupancy_float(value) when is_float(value), do: value
+  defp normalize_occupancy_float(value) when is_integer(value), do: value / 1
+  defp normalize_occupancy_float(_value), do: 0.0
+
+  defp ensure_map(%{} = value), do: value
+  defp ensure_map(_), do: %{}
 
   defp ensure_event_credentials_present(%Event{site_url: site_url, api_key: api_key}) do
     if present?(site_url) and present?(api_key) do
