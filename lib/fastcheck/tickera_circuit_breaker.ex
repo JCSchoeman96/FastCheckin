@@ -44,7 +44,13 @@ defmodule FastCheck.TickeraCircuitBreaker do
   @spec call(module(), atom(), list()) :: term()
   def call(module, function, args \\ [])
       when is_atom(module) and is_atom(function) and is_list(args) do
-    GenServer.call(__MODULE__, {:execute, module, function, args}, :infinity)
+    case GenServer.call(__MODULE__, :request_execution, :infinity) do
+      :allow ->
+        execute_request(module, function, args)
+
+      {:error, :circuit_open} = error ->
+        error
+    end
   end
 
   ## GenServer callbacks
@@ -64,22 +70,12 @@ defmodule FastCheck.TickeraCircuitBreaker do
   end
 
   @impl true
-  def handle_call({:execute, module, function, args}, _from, %{status: :open} = state) do
+  def handle_call(:request_execution, _from, %{status: :open} = state) do
     {:reply, {:error, :circuit_open}, state}
   end
 
-  def handle_call({:execute, module, function, args}, _from, state) do
-    case safe_apply(module, function, args) do
-      {:ok, result} ->
-        if failure_response?(result) do
-          {:reply, result, register_failure(state)}
-        else
-          {:reply, result, register_success(state)}
-        end
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, register_failure(state)}
-    end
+  def handle_call(:request_execution, _from, state) do
+    {:reply, :allow, state}
   end
 
   @impl true
@@ -92,7 +88,37 @@ defmodule FastCheck.TickeraCircuitBreaker do
     {:noreply, state}
   end
 
+  @impl true
+  def handle_cast({:after_execute, :success}, state) do
+    {:noreply, register_success(state)}
+  end
+
+  def handle_cast({:after_execute, :failure}, state) do
+    {:noreply, register_failure(state)}
+  end
+
   ## Helpers
+
+  defp execute_request(module, function, args) do
+    case safe_apply(module, function, args) do
+      {:ok, result} ->
+        if failure_response?(result) do
+          notify_after_execute(:failure)
+          result
+        else
+          notify_after_execute(:success)
+          result
+        end
+
+      {:error, reason} ->
+        notify_after_execute(:failure)
+        {:error, reason}
+    end
+  end
+
+  defp notify_after_execute(outcome) when outcome in [:success, :failure] do
+    GenServer.cast(__MODULE__, {:after_execute, outcome})
+  end
 
   defp safe_apply(module, function, args) do
     {:ok, apply(module, function, args)}
