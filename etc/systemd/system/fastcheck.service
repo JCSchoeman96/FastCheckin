@@ -1,0 +1,26 @@
+# /etc/systemd/system/fastcheck.service
+# Manages the FastCheck Phoenix release under systemd.
+[Unit]
+Description=FastCheck Phoenix Application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fastcheck
+Group=fastcheck
+WorkingDirectory=/opt/fastcheck
+# Load environment variables such as SECRET_KEY_BASE, DATABASE_URL, etc.
+EnvironmentFile=/etc/fastcheck.env
+# Start the release in the foreground so systemd can manage restarts.
+ExecStart=/opt/fastcheck/_build/prod/rel/fastcheck/bin/fastcheck start
+ExecStop=/opt/fastcheck/_build/prod/rel/fastcheck/bin/fastcheck stop
+Restart=on-failure
+RestartSec=5s
+# Raise the open file limit for busy venues.
+LimitNOFILE=65535
+# Send logs to the journal with a recognizable tag.
+SyslogIdentifier=fastcheck
+
+[Install]
+WantedBy=multi-user.target
