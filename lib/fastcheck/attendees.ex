@@ -85,6 +85,8 @@ defmodule FastCheck.Attendees do
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def check_in(event_id, ticket_code, entrance_name \\ "Main", operator_name \\ nil)
       when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+    started_at = System.monotonic_time(:millisecond)
+
     with {:ok, sanitized_code} <- validate_ticket_code(ticket_code),
          {:ok, sanitized_entrance} <- validate_entrance_name(entrance_name) do
       query =
@@ -126,11 +128,26 @@ defmodule FastCheck.Attendees do
                     {:ok, updated} ->
                       record_check_in(updated, event_id, "success", sanitized_entrance, operator_name)
                       broadcast_event_stats_async(event_id)
-                      Logger.info("Ticket #{sanitized_code} checked in for event #{event_id}")
+                      log_check_in(:success, %{
+                        event_id: event_id,
+                        attendee_id: updated.id,
+                        entrance_name: sanitized_entrance,
+                        response_time_ms: elapsed_time_ms(started_at),
+                        ticket_code: sanitized_code,
+                        remaining_checkins: new_remaining,
+                        operator_name: operator_name
+                      })
                       {:ok, updated, "SUCCESS"}
 
                     {:error, changeset} ->
-                      Logger.error("Failed to update attendee #{attendee.id}: #{inspect(changeset.errors)}")
+                      log_check_in(:update_failed, %{
+                        event_id: event_id,
+                        attendee_id: attendee.id,
+                        entrance_name: sanitized_entrance,
+                        response_time_ms: elapsed_time_ms(started_at),
+                        ticket_code: sanitized_code,
+                        error: inspect(changeset.errors)
+                      })
                       Repo.rollback({:changeset, "Failed to update attendee"})
                   end
               end
@@ -142,12 +159,26 @@ defmodule FastCheck.Attendees do
           {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} ->
             {:error, "TICKET_IN_USE_ELSEWHERE"}
           {:error, reason} ->
-            Logger.error("Check-in transaction failed for #{sanitized_code}: #{inspect(reason)}")
+            log_check_in(:transaction_failed, %{
+              event_id: event_id,
+              attendee_id: nil,
+              entrance_name: sanitized_entrance,
+              response_time_ms: elapsed_time_ms(started_at),
+              ticket_code: sanitized_code,
+              error: inspect(reason)
+            })
             {:error, "ERROR", "Unable to process check-in"}
         end
       rescue
         exception ->
-          Logger.error("Check-in crashed for #{sanitized_code}: #{Exception.message(exception)}")
+          log_check_in(:exception, %{
+            event_id: event_id,
+            attendee_id: nil,
+            entrance_name: sanitized_entrance,
+            response_time_ms: elapsed_time_ms(started_at),
+            ticket_code: sanitized_code,
+            error: Exception.message(exception)
+          })
           {:error, "ERROR", "Unexpected error"}
       end
     else
@@ -856,6 +887,45 @@ defmodule FastCheck.Attendees do
     end)
 
     :ok
+  end
+
+  defp elapsed_time_ms(started_at) when is_integer(started_at) do
+    System.monotonic_time(:millisecond) - started_at
+  end
+
+  defp log_check_in(result, metadata) when is_map(metadata) do
+    event_name = "check_in_#{result}"
+    level = log_level_for_check_in(result)
+
+    payload =
+      metadata
+      |> Map.put_new(:event_id, nil)
+      |> Map.put_new(:attendee_id, nil)
+      |> Map.put_new(:entrance_name, nil)
+      |> Map.put_new(:response_time_ms, nil)
+      |> Map.put(:result, result)
+
+    json_payload = Jason.encode!(payload)
+
+    Logger.log(level, event_name, [
+      event_id: payload[:event_id],
+      attendee_id: payload[:attendee_id],
+      entrance_name: payload[:entrance_name],
+      response_time_ms: payload[:response_time_ms],
+      payload: json_payload
+    ])
+  end
+
+  defp log_level_for_check_in(result) do
+    case result do
+      :success -> :info
+      :duplicate -> :info
+      :invalid -> :info
+      :update_failed -> :error
+      :transaction_failed -> :error
+      :exception -> :error
+      _ -> :info
+    end
   end
 
   defp current_timestamp do
