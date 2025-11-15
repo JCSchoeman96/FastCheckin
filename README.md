@@ -1,145 +1,119 @@
-# PETAL Blueprint
+# FastCheck - PETAL Event Check-in System
 
-A production-ready Phoenix 1.8.1 template for building modern web applications.
+**Replace Checkinera with a faster, self-hosted alternative**
 
-## Stack Included
+FastCheck is a Phoenix-powered PETAL stack application that enables lightning-fast ticket validation, on-site attendee insights, and total control over the event check-in experience.
 
-- ✅ **Phoenix 1.8.1** - Web framework
-- ✅ **Elixir 1.19.2** - Language
-- ✅ **Erlang/OTP 28.1.1** - VM
-- ✅ **Alpine.js 3.x** - Lightweight interactivity
-- ✅ **TailwindCSS 4.1.17** - Utility-first CSS
-- ✅ **DaisyUI 5.0.35** - Component library
-- ✅ **Mishka Chelekom 0.0.8** - 90+ pre-built components
-- ✅ **PostgreSQL 18.1** - Database
-- ✅ **Bandit 1.8.0** - HTTP server
-- ✅ **LiveView 1.1.17** - Real-time UI
-- ✅ **PubSub** - Real-time messaging
+## 🚀 Motivation: Why Build FastCheck?
+- **Problem:** Checkinera runs on hosted WordPress and often takes 500–1500 ms per scan while charging a recurring subscription fee.
+- **Solution:** FastCheck delivers a self-hosted system that processes QR scans in just 10–50 ms, eliminating vendor lock-in and recurring costs.
+- **Benefits:** Exceptional speed, customizable workflows, offline-capable after syncing, and complete ownership of the source code and infrastructure.
 
-## Quick Start
+## ✨ Key Features
+- ✓ 10–50 ms QR code scanning (≈40× faster than Checkinera)
+- ✓ Offline-capable once attendee data is synced locally
+- ✓ Support for multiple simultaneous events and venues
+- ✓ Real-time statistics, throughput charts, and live progress bars
+- ✓ 100% source-code ownership with no vendor dependencies
+- ✓ PostgreSQL database with tuned indexes for high-volume reads/writes
+- ✓ Immutable audit trail for every check-in attempt
+- ✓ Integration bridge for WordPress Tickera plugin data
+- ✓ Multi-entrance support (Main, VIP, Staff, Vendors, etc.)
+- ✓ Zero subscription fees—host it on your own VPS
 
-Use this template
-git clone https://github.com/JCSchoeman96/PETAL_Blueprint.git my-app
-cd my-app
+## 🧱 Tech Stack
+- **Backend:** Phoenix 1.7, Elixir/OTP, PubSub
+- **Frontend:** LiveView, TailwindCSS, optional Svelte 5 widgets
+- **Database:** PostgreSQL 12+ with replication-ready schema
+- **Deployment:** systemd service on your VPS (Ubuntu/Debian), OpenLiteSpeed proxy, Let’s Encrypt SSL
 
-Setup
+## ⚡ Quick Start
+```bash
+# Prerequisites
+elixir --version  # 1.14+
+mix archive.install hex phx_new
+psql --version    # 12+
+
+# Create project skeleton
+mix phx.new fastcheck --database postgres
+cd fastcheck
 mix ecto.create
-mix phx.server
+```
 
-text
+## 🏗️ Architecture Overview
+- **Data Flow:** Tickera API → FastCheck Tickera client → PostgreSQL → LiveView scanner interface.
+- **Core Tables:** `events`, `attendees`, and `check_ins` with supporting indexes on ticket code, status, and entrance.
+- **Real-time Updates:** LiveView WebSockets broadcast stats to every connected scanner in <50 ms.
+- **Optimized Queries:** Query plans target single-digit millisecond response times even with 10k+ attendees.
 
-Visit: http://localhost:4000
+## 📁 Project Structure
+```
+fastcheck/
+├── lib/fastcheck/          # Application logic & contexts
+├── lib/fastcheck_web/      # LiveView, controllers, components
+├── priv/repo/              # Database migrations & seeds
+├── config/                 # Runtime + environment config
+├── test/                   # ExUnit + LiveView tests
+└── assets/                 # Tailwind, JS, optional Svelte widgets
+```
 
-## Key Features
+## 🛣️ Development Roadmap (13 Tasks)
+1. **Days 1–2:** Phoenix foundation, Repo config, base schemas.
+2. **Day 3:** Build Tickera API client (Req-based) + credential validation.
+3. **Days 4–5:** Implement Events & Attendees contexts with syncing logic.
+4. **Day 6:** Introduce check-in workflows, duplicate prevention, audit trail.
+5. **Day 7:** Real-time PubSub instrumentation & stats aggregation.
+6. **Day 8:** LiveView scanner + dashboard surfaces.
+7. **Day 9:** Router wiring, auth gates, role-based entrances.
+8. **Day 10:** Offline cache + sync reconciliation.
+9. **Day 11:** Production config (systemd, env vars, SSL).
+10. **Day 12:** Performance tuning, query optimization, indexes.
+11. **Day 13:** QA, smoke tests, deployment automation.
+12. **Bonus:** Multi-tenant event management & branding.
+13. **Post-launch:** Observability, alerting, backup rotation.
 
-- ✅ Hot reload (instant feedback)
-- ✅ Real-time capabilities (LiveView + PubSub)
-- ✅ Beautiful UI (TailwindCSS + DaisyUI)
-- ✅ Component-ready (Mishka 90+ components)
-- ✅ Alpine.js for interactivity
-- ✅ Production-tested
-- ✅ Fully configured
+## 🔍 Comparison
+| Feature          | Checkinera        | FastCheck             |
+|------------------|------------------|-----------------------|
+| Scan Speed       | 500–1500 ms       | 10–50 ms              |
+| Offline          | Limited cache     | Full after sync       |
+| Cost             | Premium subscription | VPS hosting only   |
+| Customization    | Restricted        | Complete control      |
+| Data Ownership   | Tickera-hosted    | Your VPS / servers    |
 
-## What You Get
+## ☁️ Deployment Checklist
+1. Provision Ubuntu/Debian VPS with PostgreSQL 12+.
+2. Configure environment variables via `.env` and `systemd` unit.
+3. Build release (`MIX_ENV=prod mix release`) and run under systemd for auto-restart.
+4. Terminate TLS using OpenLiteSpeed or Nginx with Let’s Encrypt certificates.
+5. Enable database backups and monitoring dashboards (Prometheus/Grafana optional).
 
-- Ready-to-use Phoenix application
-- Database configured
-- Frontend tooling setup
-- Component library installed
-- Hot reload enabled
-- Development environment ready
+## 📚 Implementation Guides
+- [codex-project-plan.md](codex-project-plan.md) – All 13 task prompts.
+- [codex-start-here.md](codex-start-here.md) – First three tasks to execute immediately.
+- [AGENTS.md](AGENTS.md) – Project context & guardrails for AI contributors.
+- [fastcheck-petal-guide.md](fastcheck-petal-guide.md) – Architecture & design patterns.
 
-## Documentation
+## 📈 Performance Targets
+- **Scan latency:** <50 ms end-to-end, <20 ms DB writes.
+- **Scalability:** 10,000+ attendees per event, 50+ concurrent scanners.
+- **Events:** Unlimited simultaneous events with isolated stats.
+- **Sync Cadence:** <2 minutes for 10k attendee pulls from Tickera.
 
-- [Setup Guide](./PETAL_COMPLETE_SETUP_WITH_CHECKS.md)
-- [Phoenix Docs](https://www.phoenixframework.org/)
-- [Alpine.js](https://alpinejs.dev/)
-- [TailwindCSS](https://tailwindcss.com/)
+## 🔐 Security Features
+- API key validation and per-event credentials.
+- SSL/TLS enforced for all endpoints.
+- Immutable audit trail via the `check_ins` table and row-level locking.
+- Database constraints prevent duplicate scans and orphaned attendees.
+- Role-based LiveView guards to restrict entrances and admin actions.
 
-## Creating New Projects from Blueprint
+## 📋 Status & Next Steps
+- **Status:** Pre-development (scaffold + planning only).
+- **Next Step:** Run **TASK 0B – Project Scaffold** to create the folder hierarchy and placeholder modules.
+- **Then:** Follow **TASK 1** in `codex-start-here.md` to configure `mix.exs` and base dependencies.
 
-### Option 1: GitHub UI (Easiest)
-1. Click "Use this template"
-2. Create new repository
-3. Clone locally
-4. Start coding!
+## 🤝 Contributing & License
+- Contributions welcome from the South African events community and beyond.
+- Released under the MIT License — fork, extend, and deploy your own FastCheck instance!
 
-### Option 2: Command Line
-git clone https://github.com/YOUR_USERNAME/PETAL_Blueprint.git my-new-app
-cd my-new-app
-mix ecto.create
-mix phx.server
-
-text
-
-## Project Structure
-
-lib/
-├── petal_blueprint/ # Business logic
-│ ├── application.ex
-│ └── repo.ex
-└── petal_blueprint_web/ # Web layer
-├── components/ # 90+ Mishka components
-├── controllers/
-├── live/
-├── router.ex
-└── endpoint.ex
-
-assets/
-├── js/
-│ └── app.js # Alpine.js imported
-├── css/
-│ └── app.css # TailwindCSS configured
-└── package.json # Node dependencies
-
-config/
-├── config.exs # Base config
-├── dev.exs # Development
-├── prod.exs # Production
-└── test.exs # Testing
-
-priv/
-├── repo/
-│ ├── migrations/ # Database migrations
-│ └── seeds.exs # Seed data
-└── static/ # Static assets
-
-
-## Common Commands
-
-Development
-mix phx.server # Start server
-mix format # Format code
-mix test # Run tests
-
-Database
-mix ecto.create # Create database
-mix ecto.migrate # Run migrations
-mix ecto.reset # Reset (drop/create/migrate)
-mix ecto.gen.migration # Generate new migration
-
-Dependencies
-mix deps.get # Install dependencies
-mix deps.update # Update dependencies
-
-
-## Requirements
-
-- Erlang/OTP 28.1+
-- Elixir 1.19.2+
-- PostgreSQL 18.1+
-- Node.js 20+
-
-## License
-MIT
-
-## Support
-
-For questions or issues:
-1. Check [Phoenix documentation](https://www.phoenixframework.org/)
-2. Read [Alpine.js docs](https://alpinejs.dev/)
-3. Review [TailwindCSS guide](https://tailwindcss.com/)
-
----
-
-**Built with ❤️ using Phoenix, Elixir, and modern web technologies.**
+Built with ❤️ for high-velocity event teams who need speed, reliability, and full control.
