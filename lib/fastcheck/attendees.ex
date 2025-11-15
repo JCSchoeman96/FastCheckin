@@ -7,6 +7,7 @@ defmodule FastCheck.Attendees do
   require Logger
 
   alias PetalBlueprint.Repo
+  alias Phoenix.PubSub
   alias FastCheck.{Attendees.Attendee, Attendees.CheckIn, TickeraClient}
 
   @doc """
@@ -79,6 +80,7 @@ defmodule FastCheck.Attendees do
           nil ->
             Logger.warn("Invalid ticket #{ticket_code} for event #{event_id}")
             record_check_in(%{ticket_code: ticket_code}, event_id, "invalid", entrance_name, operator_name)
+            broadcast_event_stats_async(event_id)
             {:error, "INVALID", "Ticket not found"}
 
           %Attendee{} = attendee ->
@@ -88,6 +90,7 @@ defmodule FastCheck.Attendees do
               attendee.checked_in_at && remaining <= 0 ->
                 Logger.warn("Duplicate ticket #{ticket_code} for event #{event_id}")
                 record_check_in(attendee, event_id, "duplicate", entrance_name, operator_name)
+                broadcast_event_stats_async(event_id)
                 {:error, "DUPLICATE", "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
 
               true ->
@@ -103,6 +106,7 @@ defmodule FastCheck.Attendees do
                 case Attendee.changeset(attendee, attrs) |> Repo.update() do
                   {:ok, updated} ->
                     record_check_in(updated, event_id, "success", entrance_name, operator_name)
+                    broadcast_event_stats_async(event_id)
                     Logger.info("Ticket #{ticket_code} checked in for event #{event_id}")
                     {:ok, updated, "SUCCESS"}
 
@@ -262,6 +266,16 @@ defmodule FastCheck.Attendees do
         {:error, changeset}
     end
   end
+
+  defp broadcast_event_stats_async(event_id) when is_integer(event_id) do
+    Task.start(fn ->
+      stats = get_event_stats(event_id)
+      PubSub.broadcast(PetalBlueprint.PubSub, "event:#{event_id}:stats", {:event_stats_updated, event_id, stats})
+    end)
+    :ok
+  end
+
+  defp broadcast_event_stats_async(_event_id), do: :ok
 
   defp normalize_allowed_checkins(value) when is_integer(value) and value >= 0, do: value
   defp normalize_allowed_checkins(_), do: 1

@@ -5,6 +5,7 @@ defmodule FastCheck.AttendeesTest do
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
   alias PetalBlueprint.Repo
+  alias Phoenix.PubSub
 
   describe "search_event_attendees/3" do
     setup do
@@ -50,6 +51,28 @@ defmodule FastCheck.AttendeesTest do
       assert Attendees.search_event_attendees(event.id, nil) == []
       assert Attendees.search_event_attendees(event.id, "   ") == []
       assert length(ids_for_search(event.id, "  code-9  ")) == 1
+    end
+  end
+
+  describe "check_in/4" do
+    test "broadcasts stats updates when a scan completes" do
+      event = insert_event!("Conference")
+      attendee =
+        create_attendee(event, %{
+          ticket_code: "VIP-999",
+          allowed_checkins: 1,
+          checkins_remaining: 1
+        })
+
+      topic = "event:#{event.id}:stats"
+      :ok = PubSub.subscribe(PetalBlueprint.PubSub, topic)
+
+      assert {:ok, %Attendee{}, "SUCCESS"} =
+               Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
+
+      assert_receive {:event_stats_updated, ^event.id, stats}, 250
+      assert stats.checked_in == 1
+      assert stats.total == 1
     end
   end
 
