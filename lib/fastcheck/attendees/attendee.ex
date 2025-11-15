@@ -16,6 +16,7 @@ defmodule FastCheck.Attendees.Attendee do
           first_name: String.t() | nil,
           last_name: String.t() | nil,
           email: String.t() | nil,
+          ticket_type_id: pos_integer() | nil,
           ticket_type: String.t() | nil,
           allowed_checkins: integer() | nil,
           checkins_remaining: integer() | nil,
@@ -46,6 +47,8 @@ defmodule FastCheck.Attendees.Attendee do
     field :last_name, :string
     # Contact email used for confirmations or receipts
     field :email, :string
+    # Numeric Tickera ticket type identifier for config lookups
+    field :ticket_type_id, :integer
     # Ticket category (General Admission, VIP, etc.) for filtering and rules
     field :ticket_type, :string
     # Total number of times the attendee is allowed to check in
@@ -89,6 +92,7 @@ defmodule FastCheck.Attendees.Attendee do
       :first_name,
       :last_name,
       :email,
+      :ticket_type_id,
       :ticket_type,
       :allowed_checkins,
       :checkins_remaining,
