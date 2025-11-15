@@ -339,13 +339,13 @@ defmodule FastCheck.Events do
 
   defp extract_live_occupancy(_payload), do: {:error, :invalid_payload}
 
-  defp persist_live_occupancy(event_id, %{current_occupancy: current, per_entrance: per_gate}) do
+  defp persist_live_occupancy(event_id, %{current_occupancy: current}) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     updates = [
       checked_in_count: current,
-      last_occupancy_sync: now,
-      occupancy_per_gate: per_gate
+      last_checked_at: now,
+      updated_at: now
     ]
 
     case Event |> where([e], e.id == ^event_id) |> Repo.update_all(set: updates) do
