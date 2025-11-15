@@ -268,10 +268,11 @@ defmodule FastCheck.Attendees do
   end
 
   defp broadcast_event_stats_async(event_id) when is_integer(event_id) do
-    Task.start(fn ->
+    Repo.after_commit(fn ->
       stats = get_event_stats(event_id)
       PubSub.broadcast(PetalBlueprint.PubSub, "event:#{event_id}:stats", {:event_stats_updated, event_id, stats})
     end)
+
     :ok
   end
 
