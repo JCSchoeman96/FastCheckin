@@ -84,10 +84,16 @@ defmodule FastCheck.Attendees do
             remaining = attendee.checkins_remaining || attendee.allowed_checkins || 0
 
             cond do
-              attendee.checked_in_at && remaining <= 0 ->
-                Logger.warn("Duplicate ticket #{ticket_code} for event #{event_id}")
-                record_check_in(attendee, event_id, "duplicate", entrance_name, operator_name)
-                {:error, "DUPLICATE", "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
+              remaining <= 0 ->
+                if attendee.checked_in_at do
+                  Logger.warn("Duplicate ticket #{ticket_code} for event #{event_id}")
+                  record_check_in(attendee, event_id, "duplicate", entrance_name, operator_name)
+                  {:error, "DUPLICATE", "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
+                else
+                  Logger.warn("Ticket #{ticket_code} has no remaining check-ins for event #{event_id}")
+                  record_check_in(attendee, event_id, "limit", entrance_name, operator_name)
+                  {:error, "LIMIT", "Ticket has no remaining check-ins"}
+                end
 
               true ->
                 now = DateTime.utc_now() |> DateTime.truncate(:second)
