@@ -259,8 +259,8 @@ defmodule FastCheck.Events do
 
   defp load_ticket_type_ids(event_id) do
     from(a in Attendee,
-      where: a.event_id == ^event_id and not is_nil(a.ticket_type),
-      select: a.ticket_type,
+      where: a.event_id == ^event_id and not is_nil(a.ticket_type_id),
+      select: a.ticket_type_id,
       distinct: true
     )
     |> Repo.all()

@@ -647,6 +647,14 @@ defmodule FastCheck.TickeraClient do
       first_name: Map.get(ticket_data, "first_name"),
       last_name: Map.get(ticket_data, "last_name"),
       email: email,
+      ticket_type_id:
+        ticket_data
+        |> Map.get("ticket_type_id")
+        |> case do
+          nil -> Map.get(ticket_data, :ticket_type_id)
+          id -> id
+        end
+        |> normalize_ticket_type_id_field(),
       ticket_type: ticket_type || Map.get(ticket_data, "ticket_type"),
       allowed_checkins:
         Map.get(ticket_data, "allowed_checkins") || Map.get(ticket_data, "checkin_limit"),
@@ -657,6 +665,15 @@ defmodule FastCheck.TickeraClient do
   def parse_attendee(ticket_data), do: %{}
 
   defp email_from_field(nil, _value), do: nil
+
+  defp normalize_ticket_type_id_field(value) do
+    value
+    |> coerce_integer()
+    |> case do
+      number when number > 0 -> number
+      _ -> nil
+    end
+  end
 
   defp email_from_field(name, value) do
     if String.match?(String.downcase(to_string(name)), ~r/email/) do
