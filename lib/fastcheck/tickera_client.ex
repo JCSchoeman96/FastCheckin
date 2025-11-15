@@ -4,6 +4,7 @@ defmodule FastCheck.TickeraClient do
   """
 
   require Logger
+  alias FastCheck.TickeraClient.Fallback
 
   @timeout 30_000
   @pagination_delay 100
@@ -607,11 +608,15 @@ defmodule FastCheck.TickeraClient do
 
         case do_fetch_attendees(site_url, api_key, per_page, 2, total_pages, callback, acc) do
           {:ok, attendees} -> {:ok, attendees, total_count}
+          {:fallback, cached, count} -> {:ok, cached, count}
           {:error, reason, partial} -> {:error, reason, partial}
         end
 
       {:error, reason} ->
-        {:error, reason, []}
+        case handle_attendee_fallback(site_url, api_key, reason) do
+          {:fallback, cached, count} -> {:ok, cached, count}
+          other -> other
+        end
 
       other ->
         {:error, "HTTP error: unexpected response #{inspect(other)}", []}
@@ -709,10 +714,24 @@ defmodule FastCheck.TickeraClient do
         do_fetch_attendees(site_url, api_key, per_page, page + 1, total_pages, callback, new_acc)
 
       {:error, reason} ->
-        {:error, reason, Enum.reverse(acc)}
+        handle_attendee_fallback(site_url, api_key, reason, Enum.reverse(acc))
 
       other ->
         {:error, "HTTP error: unexpected response #{inspect(other)}", Enum.reverse(acc)}
+    end
+  end
+
+  defp handle_attendee_fallback(site_url, api_key, reason, partial \\ []) do
+    case Fallback.maybe_use_cached(site_url, api_key, reason) do
+      {:ok, cached} ->
+        parsed = Enum.map(cached, &parse_attendee/1)
+        {:fallback, parsed, length(parsed)}
+
+      {:error, "NO_CACHED_DATA"} ->
+        {:error, reason, partial}
+
+      {:error, fallback_reason} ->
+        {:error, {:fallback_error, fallback_reason}, partial}
     end
   end
 
@@ -1272,23 +1291,36 @@ defmodule FastCheck.TickeraClient do
 
             {:error, error} ->
               Logger.error("Failed to decode Tickera response: #{inspect(error)}")
-              {:error, "HTTP error: invalid JSON response"}
+              {:error, {:http_error, :invalid_json, error}}
           end
 
         {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+          reason = classify_http_status(code, body)
           Logger.error("Tickera request failed (status #{code}): #{body}")
-          {:error, "HTTP error: status #{code}"}
+          {:error, reason}
 
         {:error, %HTTPoison.Error{reason: reason}} ->
+          classified = classify_network_reason(reason)
           Logger.error("Tickera request error: #{inspect(reason)}")
-          {:error, "HTTP error: #{inspect(reason)}"}
+          {:error, classified}
       end
     rescue
       exception ->
         Logger.error("Tickera request exception: #{Exception.message(exception)}")
-        {:error, "HTTP error: #{Exception.message(exception)}"}
+        {:error, {:exception, Exception.message(exception)}}
     end
   end
+
+  defp classify_http_status(code, body) when is_integer(code) and code >= 500,
+    do: {:server_error, code, body}
+
+  defp classify_http_status(code, body), do: {:http_error, code, body}
+
+  defp classify_network_reason(reason) when reason in [:timeout, :connect_timeout],
+    do: {:network_timeout, reason}
+
+  defp classify_network_reason({:timeout, _} = reason), do: {:network_timeout, reason}
+  defp classify_network_reason(reason), do: {:network_error, reason}
 
   defp parse_datetime(nil), do: nil
   defp parse_datetime(<<>>), do: nil
