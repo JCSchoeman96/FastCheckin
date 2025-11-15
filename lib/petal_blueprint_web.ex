@@ -100,7 +100,7 @@ defmodule PetalBlueprintWeb do
     quote do
       use Phoenix.VerifiedRoutes,
         endpoint: PetalBlueprintWeb.Endpoint,
-        router: PetalBlueprintWeb.Router,
+        router: FastCheckWeb.Router,
         statics: PetalBlueprintWeb.static_paths()
     end
   end
