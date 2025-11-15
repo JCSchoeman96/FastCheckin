@@ -316,7 +316,7 @@ defmodule FastCheckWeb.DashboardLive do
   defp start_sync_task(event_id) do
     parent = self()
 
-    Task.start_link(fn ->
+    Task.Supervisor.start_child(FastCheck.AttendeeSyncSupervisor, fn ->
       result =
         Events.sync_event(event_id, fn page, total, count ->
           send(parent, {:sync_progress, page, total, count})
