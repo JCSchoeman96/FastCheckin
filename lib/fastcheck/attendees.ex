@@ -138,6 +138,175 @@ defmodule FastCheck.Attendees do
   def check_in(_, _, _, _), do: {:error, "INVALID", "Ticket not found"}
 
   @doc """
+  Performs an advanced check-in that tracks the richer scan metadata and
+  updates the attendee counters atomically.
+
+  Returns `{:ok, attendee, "SUCCESS"}` on success or
+  `{:error, code, message}` on validation/database failures.
+  """
+  @spec check_in_advanced(integer(), String.t(), String.t(), String.t(), String.t() | nil) ::
+          {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
+  def check_in_advanced(event_id, ticket_code, check_in_type, entrance_name, operator_name \\
+        nil)
+      when is_integer(event_id) and is_binary(ticket_code) and is_binary(check_in_type) and
+             is_binary(entrance_name) do
+    sanitized_code = ticket_code |> String.trim()
+    sanitized_type = check_in_type |> String.trim()
+    sanitized_entrance = entrance_name |> String.trim()
+
+    cond do
+      sanitized_code == "" ->
+        Logger.warn("Advanced check-in rejected: blank ticket code")
+        {:error, "INVALID_TICKET", "Ticket code is required"}
+
+      sanitized_type == "" ->
+        Logger.warn("Advanced check-in rejected: blank check-in type")
+        {:error, "INVALID_TYPE", "Check-in type is required"}
+
+      sanitized_entrance == "" ->
+        Logger.warn("Advanced check-in rejected: blank entrance name")
+        {:error, "INVALID_ENTRANCE", "Entrance name is required"}
+
+      true ->
+        do_advanced_check_in(
+          event_id,
+          sanitized_code,
+          sanitized_type,
+          sanitized_entrance,
+          operator_name
+        )
+    end
+  end
+
+  def check_in_advanced(_, _, _, _, _),
+    do: {:error, "INVALID_TICKET", "Unable to process advanced check-in"}
+
+  @doc """
+  Checks an attendee out of the venue and records the session history.
+  """
+  @spec check_out(integer(), String.t(), String.t(), String.t() | nil) ::
+          {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
+  def check_out(event_id, ticket_code, entrance_name, operator_name \\ nil)
+      when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+    sanitized_code = String.trim(ticket_code)
+    sanitized_entrance = String.trim(entrance_name)
+
+    cond do
+      sanitized_code == "" ->
+        Logger.warn("Check-out rejected: blank ticket code")
+        {:error, "INVALID_TICKET", "Ticket code is required"}
+
+      sanitized_entrance == "" ->
+        Logger.warn("Check-out rejected: blank entrance name")
+        {:error, "INVALID_ENTRANCE", "Entrance name is required"}
+
+      true ->
+        do_check_out(event_id, sanitized_code, sanitized_entrance, operator_name)
+    end
+  end
+
+  def check_out(_, _, _, _), do: {:error, "INVALID_TICKET", "Unable to process check-out"}
+
+  @doc """
+  Resets the scan counters for a specific attendee.
+  """
+  @spec reset_scan_counters(integer(), String.t()) ::
+          {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
+  def reset_scan_counters(event_id, ticket_code)
+      when is_integer(event_id) and is_binary(ticket_code) do
+    sanitized_code = String.trim(ticket_code)
+
+    if sanitized_code == "" do
+      Logger.warn("Reset scan counters rejected: blank ticket code")
+      {:error, "INVALID_TICKET", "Ticket code is required"}
+    else
+      do_reset_scan_counters(event_id, sanitized_code)
+    end
+  end
+
+  def reset_scan_counters(_, _),
+    do: {:error, "INVALID_TICKET", "Unable to reset scan counters"}
+
+  @doc """
+  Marks a manual entry after validating the ticket and increments counters.
+  """
+  @spec mark_manual_entry(integer(), String.t(), String.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
+  def mark_manual_entry(event_id, ticket_code, entrance_name, operator_name \\ nil, notes \\ nil)
+      when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+    sanitized_code = String.trim(ticket_code)
+    sanitized_entrance = String.trim(entrance_name)
+
+    cond do
+      sanitized_code == "" ->
+        Logger.warn("Manual entry rejected: blank ticket code")
+        {:error, "INVALID_TICKET", "Ticket code is required"}
+
+      sanitized_entrance == "" ->
+        Logger.warn("Manual entry rejected: blank entrance name")
+        {:error, "INVALID_ENTRANCE", "Entrance name is required"}
+
+      true ->
+        do_manual_entry(event_id, sanitized_code, sanitized_entrance, operator_name, notes)
+    end
+  end
+
+  def mark_manual_entry(_, _, _, _, _),
+    do: {:error, "INVALID_TICKET", "Unable to mark manual entry"}
+
+  @doc """
+  Computes the real-time occupancy breakdown for a given event.
+  """
+  @spec get_occupancy_breakdown(integer()) :: %{optional(atom()) => integer() | float()}
+  def get_occupancy_breakdown(event_id) when is_integer(event_id) do
+    query =
+      from(a in Attendee,
+        where: a.event_id == ^event_id,
+        select: %{
+          total: count(a.id),
+          checked_in: fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_in_at),
+          checked_out: fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_out_at),
+          currently_inside:
+            fragment("sum(case when ? = true then 1 else 0 end)", a.is_currently_inside)
+        }
+      )
+
+    case Repo.one(query) do
+      nil ->
+        %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0}
+
+      %{total: total, checked_in: checked_in, checked_out: checked_out, currently_inside: inside} ->
+        total_int = normalize_count(total)
+        checked_in_int = normalize_count(checked_in)
+        checked_out_int = normalize_count(checked_out)
+        inside_int = normalize_count(inside)
+
+        percentage =
+          if total_int > 0 do
+            Float.round(inside_int / total_int * 100, 2)
+          else
+            0.0
+          end
+
+        %{
+          total: total_int,
+          checked_in: checked_in_int,
+          checked_out: checked_out_int,
+          currently_inside: inside_int,
+          occupancy_percentage: percentage,
+          pending: max(total_int - checked_in_int, 0)
+        }
+    end
+  rescue
+    exception ->
+      Logger.error("Failed to compute occupancy breakdown for event #{event_id}: #{Exception.message(exception)}")
+      %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
+  end
+
+  def get_occupancy_breakdown(_),
+    do: %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
+
+  @doc """
   Fetches a single attendee by ticket code within an event.
   """
   @spec get_attendee(integer(), String.t()) :: Attendee.t() | nil
@@ -232,6 +401,158 @@ defmodule FastCheck.Attendees do
 
   def search_event_attendees(_, _, _), do: []
 
+  defp do_advanced_check_in(event_id, ticket_code, check_in_type, entrance_name, operator_name) do
+    Logger.info(
+      "Advanced check-in start event=#{event_id} ticket=#{ticket_code} type=#{check_in_type} entrance=#{entrance_name}"
+    )
+
+    operator = maybe_trim(operator_name)
+
+    Repo.transaction(fn ->
+      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
+           :ok <- ensure_can_check_in(attendee) do
+        attrs = build_check_in_attributes(attendee, entrance_name)
+
+        case Attendee.changeset(attendee, attrs) |> Repo.update() do
+          {:ok, updated} ->
+            record_check_in(updated, event_id, String.downcase(check_in_type), entrance_name, operator)
+            insert_check_in_session(updated, %{
+              event_id: event_id,
+              action: "check_in",
+              entrance_name: entrance_name,
+              operator_name: operator,
+              notes: "advanced: #{check_in_type}"
+            })
+
+            %{attendee: updated, message: "SUCCESS"}
+
+          {:error, changeset} ->
+            Logger.error("Advanced check-in update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+            Repo.rollback({"UPDATE_FAILED", "Unable to process advanced check-in"})
+        end
+      else
+        {:error, code, message} ->
+          Logger.warn("Advanced check-in aborted for #{ticket_code}: #{code}")
+          Repo.rollback({code, message})
+      end
+    end)
+    |> handle_session_transaction(event_id, true)
+  end
+
+  defp do_check_out(event_id, ticket_code, entrance_name, operator_name) do
+    Logger.info(
+      "Check-out start event=#{event_id} ticket=#{ticket_code} entrance=#{entrance_name} operator=#{operator_name || "n/a"}"
+    )
+
+    operator = maybe_trim(operator_name)
+
+    Repo.transaction(fn ->
+      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
+           :ok <- ensure_can_check_out(attendee) do
+        now = current_timestamp()
+
+        attrs = %{
+          checked_out_at: now,
+          is_currently_inside: false
+        }
+
+        case Attendee.changeset(attendee, attrs) |> Repo.update() do
+          {:ok, updated} ->
+            record_check_in(updated, event_id, "checked_out", entrance_name, operator)
+            insert_check_in_session(updated, %{
+              event_id: event_id,
+              action: "check_out",
+              entrance_name: entrance_name,
+              operator_name: operator,
+              notes: "manual checkout"
+            })
+
+            %{attendee: updated, message: "CHECKED_OUT"}
+
+          {:error, changeset} ->
+            Logger.error("Check-out update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+            Repo.rollback({"UPDATE_FAILED", "Unable to complete check-out"})
+        end
+      else
+        {:error, code, message} ->
+          Logger.warn("Check-out aborted for #{ticket_code}: #{code}")
+          Repo.rollback({code, message})
+      end
+    end)
+    |> handle_session_transaction(event_id, true)
+  end
+
+  defp do_reset_scan_counters(event_id, ticket_code) do
+    Repo.transaction(fn ->
+      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code) do
+        attrs = %{
+          daily_scan_count: 0,
+          weekly_scan_count: 0,
+          monthly_scan_count: 0,
+          last_checked_in_date: nil
+        }
+
+        case Attendee.changeset(attendee, attrs) |> Repo.update() do
+          {:ok, updated} ->
+            insert_check_in_session(updated, %{
+              event_id: event_id,
+              action: "reset_counters",
+              notes: "manual reset"
+            })
+
+            %{attendee: updated, message: "SCAN_COUNTERS_RESET"}
+
+          {:error, changeset} ->
+            Logger.error("Reset scan counters failed for #{ticket_code}: #{inspect(changeset.errors)}")
+            Repo.rollback({"UPDATE_FAILED", "Unable to reset scan counters"})
+        end
+      else
+        {:error, code, message} ->
+          Logger.warn("Reset scan counters aborted for #{ticket_code}: #{code}")
+          Repo.rollback({code, message})
+      end
+    end)
+    |> handle_session_transaction(event_id, false)
+  end
+
+  defp do_manual_entry(event_id, ticket_code, entrance_name, operator_name, notes) do
+    Logger.info(
+      "Manual entry start event=#{event_id} ticket=#{ticket_code} entrance=#{entrance_name} operator=#{operator_name || "n/a"}"
+    )
+
+    operator = maybe_trim(operator_name)
+
+    Repo.transaction(fn ->
+      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
+           :ok <- ensure_can_check_in(attendee) do
+        attrs = build_check_in_attributes(attendee, entrance_name)
+
+        case Attendee.changeset(attendee, attrs) |> Repo.update() do
+          {:ok, updated} ->
+            record_check_in(updated, event_id, "manual", entrance_name, operator)
+            insert_check_in_session(updated, %{
+              event_id: event_id,
+              action: "manual_entry",
+              entrance_name: entrance_name,
+              operator_name: operator,
+              notes: maybe_trim(notes)
+            })
+
+            %{attendee: updated, message: "MANUAL_ENTRY_RECORDED"}
+
+          {:error, changeset} ->
+            Logger.error("Manual entry update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+            Repo.rollback({"UPDATE_FAILED", "Unable to mark manual entry"})
+        end
+      else
+        {:error, code, message} ->
+          Logger.warn("Manual entry aborted for #{ticket_code}: #{code}")
+          Repo.rollback({code, message})
+      end
+    end)
+    |> handle_session_transaction(event_id, true)
+  end
+
   defp sanitize_query(nil), do: ""
   defp sanitize_query(query) when is_binary(query), do: String.trim(query)
   defp sanitize_query(query), do: query |> to_string() |> String.trim()
@@ -246,6 +567,153 @@ defmodule FastCheck.Attendees do
   end
 
   defp escape_like(term), do: term
+
+  defp fetch_attendee_for_update(event_id, ticket_code) do
+    query =
+      from(a in Attendee,
+        where: a.event_id == ^event_id and a.ticket_code == ^ticket_code,
+        lock: "FOR UPDATE"
+      )
+
+    case Repo.one(query) do
+      nil ->
+        Logger.warn("Attendee not found for event #{event_id} ticket #{ticket_code}")
+        {:error, "NOT_FOUND", "Ticket not found"}
+
+      %Attendee{} = attendee ->
+        {:ok, attendee}
+    end
+  end
+
+  defp ensure_can_check_in(%Attendee{} = attendee) do
+    cond do
+      attendee.is_currently_inside ->
+        Logger.warn("Attendee #{attendee.id} already inside")
+        {:error, "ALREADY_INSIDE", "Attendee already inside"}
+
+      remaining_checkins(attendee) <= 0 ->
+        Logger.warn("Attendee #{attendee.id} exhausted check-ins")
+        {:error, "LIMIT_EXCEEDED", "No check-ins remaining"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp ensure_can_check_out(%Attendee{} = attendee) do
+    cond do
+      attendee.is_currently_inside ->
+        :ok
+
+      attendee.checked_in_at ->
+        :ok
+
+      true ->
+        Logger.warn("Attendee #{attendee.id} cannot be checked out because no check-in exists")
+        {:error, "NOT_CHECKED_IN", "Attendee has not checked in"}
+    end
+  end
+
+  defp build_check_in_attributes(%Attendee{} = attendee, entrance_name) do
+    now = current_timestamp()
+    today = Date.utc_today()
+
+    %{
+      checked_in_at: attendee.checked_in_at || now,
+      last_checked_in_at: now,
+      last_checked_in_date: today,
+      daily_scan_count: increment_counter(attendee.daily_scan_count),
+      weekly_scan_count: increment_counter(attendee.weekly_scan_count),
+      monthly_scan_count: increment_counter(attendee.monthly_scan_count),
+      checkins_remaining: max(remaining_checkins(attendee) - 1, 0),
+      is_currently_inside: true,
+      checked_out_at: nil,
+      last_entrance: entrance_name
+    }
+  end
+
+  defp increment_counter(nil), do: 1
+  defp increment_counter(value) when is_integer(value), do: value + 1
+  defp increment_counter(_value), do: 1
+
+  defp remaining_checkins(%Attendee{} = attendee) do
+    attendee.checkins_remaining || attendee.allowed_checkins || 0
+  end
+
+  defp insert_check_in_session(attendee, attrs) do
+    now = current_timestamp()
+
+    entry =
+      %{
+        event_id: Map.get(attrs, :event_id),
+        attendee_id: attendee && Map.get(attendee, :id),
+        ticket_code: attendee && Map.get(attendee, :ticket_code),
+        action: Map.get(attrs, :action),
+        entrance_name: Map.get(attrs, :entrance_name),
+        operator_name: Map.get(attrs, :operator_name),
+        notes: Map.get(attrs, :notes),
+        occurred_at: now,
+        inserted_at: now,
+        updated_at: now
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+
+    Repo.insert_all("check_in_sessions", [entry])
+    :ok
+  rescue
+    exception ->
+      Logger.error("Failed to record check_in_session for #{attendee && attendee.ticket_code}: #{Exception.message(exception)}")
+      :error
+  end
+
+  defp handle_session_transaction({:ok, %{attendee: attendee, message: message}}, event_id, broadcast?) do
+    if broadcast?, do: broadcast_occupancy_breakdown(event_id)
+    {:ok, attendee, message}
+  end
+
+  defp handle_session_transaction({:error, {code, message}}, _event_id, _broadcast?) do
+    {:error, code, message}
+  end
+
+  defp handle_session_transaction({:error, reason}, _event_id, _broadcast?) do
+    Logger.error("Attendee session transaction failed: #{inspect(reason)}")
+    {:error, "DB_ERROR", "Unable to complete request"}
+  end
+
+  defp broadcast_occupancy_breakdown(event_id) do
+    Task.start(fn ->
+      breakdown = get_occupancy_breakdown(event_id)
+      PubSub.broadcast(
+        PetalBlueprint.PubSub,
+        "event:#{event_id}:occupancy",
+        {:occupancy_breakdown_updated, event_id, breakdown}
+      )
+    end)
+
+    :ok
+  end
+
+  defp current_timestamp do
+    DateTime.utc_now() |> DateTime.truncate(:second)
+  end
+
+  defp normalize_count(nil), do: 0
+  defp normalize_count(value) when is_integer(value), do: value
+  defp normalize_count(value) when is_float(value), do: trunc(value)
+  defp normalize_count(_value), do: 0
+
+  defp maybe_trim(nil), do: nil
+  defp maybe_trim(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp maybe_trim(value), do: value
 
   defp record_check_in(attendee, event_id, status, entrance_name, operator_name) do
     ticket_code = attendee && Map.get(attendee, :ticket_code)
