@@ -1,13 +1,23 @@
 #!/bin/bash
+# Codex Cloud maintenance script
+# This runs after setup.sh to clean up and finalize the environment
 
-set -e
+set +e  # Don't fail on errors in maintenance
 
-echo "🔄 [Codex Maintenance] Checking for updated deps..."
+echo "🧹 [Codex] Running maintenance tasks..."
 
-mix deps.get
-mix deps.compile
+# Clean up temporary files
+rm -f /tmp/*.ez 2>/dev/null || true
+rm -f /tmp/erl_ssl.conf 2>/dev/null || true
 
-echo "🎨 [Codex Maintenance] Rebuilding assets if needed..."
-mix assets.build
+# Clear build artifacts if needed
+rm -rf _build/dev/lib/*/.compile.app_ebin 2>/dev/null || true
 
-echo "✅ [Codex Maintenance] Maintenance done."
+# Verify setup completed
+if [[ -f "mix.exs" ]]; then
+  echo "✓ Project ready"
+else
+  echo "⚠ No mix.exs found"
+fi
+
+echo "✅ Maintenance complete"
