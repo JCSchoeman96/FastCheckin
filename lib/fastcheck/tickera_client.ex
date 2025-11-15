@@ -274,6 +274,9 @@ defmodule FastCheck.TickeraClient do
     with {:ok, data} <- fetch_json(url) do
       normalized = Map.update(data, "event_date_time", nil, &parse_datetime/1)
       {:ok, normalized}
+    else
+      {:error, reason} ->
+        {:error, format_fetch_error(reason)}
     end
   end
 
@@ -1275,6 +1278,34 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp safe_log_url(url), do: url
+
+  defp format_fetch_error({:http_error, :invalid_json, error}) do
+    "Failed to decode Tickera response: #{inspect(error)}"
+  end
+
+  defp format_fetch_error({:server_error, code, body}) do
+    "Tickera returned status #{code}: #{body}"
+  end
+
+  defp format_fetch_error({:http_error, code, body}) do
+    "Tickera returned status #{code}: #{body}"
+  end
+
+  defp format_fetch_error({:network_timeout, reason}) do
+    "Tickera request timed out: #{inspect(reason)}"
+  end
+
+  defp format_fetch_error({:network_error, reason}) do
+    "Tickera network error: #{inspect(reason)}"
+  end
+
+  defp format_fetch_error({:exception, message}) do
+    "Tickera request exception: #{message}"
+  end
+
+  defp format_fetch_error(reason) when is_binary(reason), do: reason
+  defp format_fetch_error(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp format_fetch_error(reason), do: inspect(reason)
 
   defp fetch_json(url) do
     Logger.debug("TickeraClient GET #{safe_log_url(url)}")
