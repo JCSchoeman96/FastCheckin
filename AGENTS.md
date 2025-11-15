@@ -330,5 +330,637 @@ And **never** do this:
 - You are FORBIDDEN from accessing the changeset in the template as it will cause errors
 - **Never** use `<.form let={f} ...>` in the template, instead **always use `<.form for={@form} ...>`**, then drive all form references from the form assign as in `@form[:field]`. The UI should **always** be driven by a `to_form/2` assigned in the LiveView module that is derived from a changeset
 <!-- phoenix:liveview-end -->
+# AGENTS.md - FastCheck Project Intelligence for Codex
 
+## 🤖 Project Context for AI Coding Agents
+
+This document provides ALL context needed for ChatGPT Codex, Claude, or any AI coding agent to consistently understand the FastCheck project throughout all 13 implementation tasks.
+
+---
+
+## 🎯 PROJECT ESSENTIALS
+
+### Project Name
+**FastCheck** - PETAL Stack Event Check-in System
+
+### Project Goal
+Replace Checkinera (WordPress Tickera check-in app) with a self-hosted, faster, more customizable event attendance tracking system.
+
+### Success Metric
+Process QR code scans in **10-50ms** instead of Checkinera's 500-1500ms
+
+### Problem Statement
+- Checkinera charges premium subscription
+- Limited customization (proprietary code)
+- Slow scanning experience (500-1500ms latency)
+- No offline capabilities after sync
+- Vendor lock-in (Tickera-hosted)
+
+### Solution
+- Self-hosted PETAL application on user's VPS
+- Local PostgreSQL database (0.01s queries vs WordPress API calls)
+- Complete source code ownership
+- Offline-capable after initial sync
+- No ongoing subscription costs
+
+---
+
+## 💼 BUSINESS CONTEXT
+
+### User Profile
+**Name**: South African digital entrepreneur  
+**Tech Stack**: WordPress (full ecosystem), PHP, JavaScript, Elixir (learning), PostgreSQL  
+**Infrastructure**: Self-hosted VPS (16-core, 32GB RAM) with OpenLiteSpeed, Cloudflare, Redis  
+**Use Case**: Running Voelgoed Live (weekly TV broadcasts with check-in requirement)  
+**Goal**: Build reusable event ticketing + check-in system for multiple events
+
+### Expected Usage
+- **Events per month**: 2-4 initial, scaling to 10+
+- **Attendees per event**: 100-5000
+- **Concurrent scanners at door**: 3-10 tablets/devices
+- **Check-in velocity**: 20-50 scans per minute during peak entrance time
+- **Venues**: Multiple entrances (Main, VIP, Staff) per event
+
+### User Preferences
+- **Accuracy**: Wants truth, not sugar-coating
+- **Approach**: Analyze → Plan → Execute (system thinker)
+- **Persistence**: Finish what you start
+- **Tone**: Intelligent, confident, practical
+- **Documentation**: Detailed, actionable, clear
+
+---
+
+## 🏗️ TECHNICAL ARCHITECTURE
+
+### Technology Stack (PETAL)
+
+**P** - Phoenix 1.7 (web framework)  
+**E** - Elixir (functional programming language)  
+**T** - TailwindCSS (styling)  
+**A** - Assets (Svelte 5 optional, LiveView primary)  
+**L** - LiveView (real-time web interface)
+
+### Deployment Infrastructure
+- **Server**: User's existing VPS (OpenLiteSpeed + PostgreSQL)
+- **Database**: PostgreSQL 12+ (existing)
+- **Domain**: voelgoed.co.za (https only)
+- **SSL**: Let's Encrypt certificates
+- **Process Manager**: systemd service
+
+### Data Sources
+- **Primary**: Tickera WordPress plugin (REST API at `/tc-api/{API_KEY}/{endpoint}`)
+- **Secondary**: Local PostgreSQL (cached after sync)
+
+---
+
+## 📊 DATA MODEL
+
+### Three Core Tables
+
+#### 1. **events** Table
+Stores event configuration and Tickera API credentials
+
+```
+id              SERIAL PRIMARY KEY
+name            VARCHAR(255)        -- Event name
+api_key         VARCHAR(255) UNIQUE -- From Tickera (secret)
+site_url        VARCHAR(255)        -- WordPress domain
+status          VARCHAR(50)         -- active|syncing|archived
+total_tickets   INTEGER             -- From Tickera event_essentials
+checked_in_count INTEGER            -- Real-time counter
+event_date      DATE                -- When event occurs
+event_time      TIME                -- Event start time
+location        VARCHAR(255)        -- Venue name
+entrance_name   VARCHAR(100)        -- "Main"|"VIP"|"Staff"
+sync_started_at TIMESTAMP           -- When sync began
+sync_completed_at TIMESTAMP         -- When sync finished
+last_checked_at TIMESTAMP           -- Last check-in time
+inserted_at     TIMESTAMP DEFAULT NOW()
+updated_at      TIMESTAMP DEFAULT NOW()
+```
+
+#### 2. **attendees** Table
+Synced attendee data from Tickera
+
+```
+id                  SERIAL PRIMARY KEY
+event_id            INTEGER FOREIGN KEY (events)
+ticket_code         VARCHAR(255)        -- QR code data "25955-1"
+first_name          VARCHAR(100)
+last_name           VARCHAR(100)
+email               VARCHAR(255)
+ticket_type         VARCHAR(100)        -- "VIP", "General", etc
+allowed_checkins    INTEGER DEFAULT 1   -- 1=single, 2+=multiple, 9999=unlimited
+checkins_remaining  INTEGER DEFAULT 1   -- Countdown
+payment_status      VARCHAR(50)         -- "completed"|"pending"
+custom_fields       JSONB               -- All Tickera form data
+checked_in_at       TIMESTAMP           -- First check-in time
+last_checked_in_at  TIMESTAMP           -- Most recent
+inserted_at         TIMESTAMP DEFAULT NOW()
+updated_at          TIMESTAMP DEFAULT NOW()
+
+UNIQUE CONSTRAINT: (event_id, ticket_code)
+```
+
+#### 3. **check_ins** Table
+Audit trail of every check-in attempt
+
+```
+id              SERIAL PRIMARY KEY
+attendee_id     INTEGER FOREIGN KEY (attendees)
+event_id        INTEGER FOREIGN KEY (events)
+ticket_code     VARCHAR(255)        -- Denormalized for queries
+checked_in_at   TIMESTAMP NOT NULL  -- When this check-in occurred
+entrance_name   VARCHAR(100)        -- Which gate/door
+operator_name   VARCHAR(100)        -- Staff member who scanned
+status          VARCHAR(50)         -- success|duplicate|invalid|error
+notes           TEXT                -- Additional info
+inserted_at     TIMESTAMP DEFAULT NOW()
+```
+
+### Indexes (8 total for performance)
+```
+events:
+  - idx_events_api_key (UNIQUE, for validation)
+  - idx_events_status (for filtering)
+
+attendees:
+  - idx_attendees_event_id (for lookups)
+  - idx_attendees_ticket_code (for QR scanning)
+  - idx_attendees_event_code (composite: fastest for check-in)
+  - idx_attendees_checked_in (for stats)
+
+check_ins:
+  - idx_check_ins_event_id (for audit reports)
+  - idx_check_ins_checked_in_at (for analytics)
+```
+
+---
+
+## 🔗 API INTEGRATION: Tickera
+
+### Endpoint Base URL
+```
+{site_url}/tc-api/{api_key}/{endpoint}
+```
+
+### Endpoints Used
+
+#### 1. Check Credentials
+```
+GET /tc-api/{api_key}/check_credentials
+
+Response (valid):
+{
+  "pass": true,
+  "license_key": "4DDGH-...",
+  "admin_email": "admin@voelgoed.co.za",
+  "tc_iw_is_pr": true
+}
+
+Response (invalid):
+{"pass": false}
+```
+
+#### 2. Event Essentials
+```
+GET /tc-api/{api_key}/event_essentials
+
+Response:
+{
+  "event_name": "Voelgoed Live 13 Nov",
+  "event_date_time": "13th November 2025 19:00",
+  "event_location": "Randburg, GP, SA",
+  "sold_tickets": 1500,
+  "checked_tickets": 0,
+  "pass": true
+}
+```
+
+#### 3. Tickets Info (Paginated)
+```
+GET /tc-api/{api_key}/tickets_info/{per_page}/{page}/
+
+Example: /tc-api/abc123/tickets_info/50/1/
+
+Response:
+{
+  "data": [
+    {
+      "checksum": "25955-1",
+      "buyer_first": "John",
+      "buyer_last": "Smith",
+      "payment_date": "1st Nov 2025 - 2:15 pm",
+      "transaction_id": "25955",
+      "allowed_checkins": 1,
+      "custom_fields": [
+        ["Ticket Type", "VIP Front Row"],
+        ["Buyer E-mail", "john@example.com"],
+        ["Company", "Tech Corp"],
+        ["Dietary Restrictions", "Vegetarian"]
+      ]
+    },
+    ... (up to 50 attendees)
+  ],
+  "additional": {
+    "results_count": 1500
+  }
+}
+```
+
+### API Constraints
+- Pagination: 50 results per page recommended
+- Timeout: 30 seconds per request
+- Rate limiting: Add 100ms delay between pagination calls
+- Authentication: API key in URL (treat as password)
+- Security: HTTPS only
+
+---
+
+## 📁 PROJECT STRUCTURE (Final)
+
+```
+fastcheck/
+├── README.md                                  ← Generated by Codex in TASK 0
+├── .gitignore
+├── mix.exs                                    ← Updated TASK 1
+├── mix.lock
+│
+├── config/
+│   ├── config.exs
+│   ├── dev.exs                               ← Updated TASK 12
+│   ├── test.exs
+│   ├── prod.exs                              ← Updated TASK 13
+│   └── runtime.exs                           ← Created TASK 13
+│
+├── lib/
+│   ├── fastcheck/
+│   │   ├── application.ex                    ← Auto-generated
+│   │   ├── repo.ex                           ← Auto-generated
+│   │   │
+│   │   ├── tickera_client.ex                 ← TASK 6
+│   │   ├── events.ex                         ← TASK 7
+│   │   ├── attendees.ex                      ← TASK 8
+│   │   │
+│   │   ├── events/
+│   │   │   └── event.ex                      ← TASK 3
+│   │   │
+│   │   └── attendees/
+│   │       ├── attendee.ex                   ← TASK 4
+│   │       └── check_in.ex                   ← TASK 5
+│   │
+│   └── fastcheck_web/
+│       ├── application.ex                    ← Auto-generated
+│       ├── components.ex
+│       ├── router.ex                         ← Updated TASK 11
+│       ├── endpoint.ex
+│       │
+│       ├── live/
+│       │   ├── dashboard_live.ex             ← TASK 9
+│       │   └── scanner_live.ex               ← TASK 10
+│       │
+│       ├── controllers/
+│       ├── views/
+│       └── templates/
+│
+├── priv/
+│   └── repo/
+│       ├── seeds.exs
+│       └── migrations/
+│           └── 20250115000000_create_event_tables.exs  ← TASK 2
+│
+├── assets/                                   ← TailwindCSS pre-configured
+│   ├── tailwind.config.js
+│   ├── css/
+│   └── js/
+│
+├── test/
+│
+├── .env.example                              ← Created TASK 13
+├── .env                                      ← Local (git-ignored)
+│
+└── /etc/systemd/system/
+    └── fastcheck.service                     ← Created TASK 13
+```
+
+---
+
+## 🔄 WORKFLOW PHASES
+
+### Phase 1: Foundation (Days 1-2)
+**Goal**: Database and schema ready
+- TASK 1: Phoenix project initialized
+- TASK 2: Database migrations created
+- TASK 3-5: Ecto schemas with validations
+- **Output**: `iex -S mix` runs without errors
+
+### Phase 2: Integration (Day 3)
+**Goal**: Tickera API connectivity confirmed
+- TASK 6: HTTP client for Tickera API
+- **Output**: `TickeraClient.check_credentials()` returns valid response
+
+### Phase 3: Business Logic (Days 4-5)
+**Goal**: Core operations working
+- TASK 7: Events context (CRUD + sync)
+- TASK 8: Attendees context (check-in logic)
+- **Output**: Can sync attendees from Tickera, process check-ins locally
+
+### Phase 4: Interface (Days 6-7)
+**Goal**: Web interface functional
+- TASK 9: Dashboard LiveView
+- TASK 10: Scanner LiveView
+- TASK 11: Router configuration
+- **Output**: `mix phx.server` loads web UI, events display, scanning works
+
+### Phase 5: Production (Day 8)
+**Goal**: Ready for deployment
+- TASK 12: Database optimization
+- TASK 13: Production configuration
+- **Output**: Systemd service runs, SSL configured, env vars set
+
+---
+
+## 🎯 PERFORMANCE TARGETS
+
+### Speed Benchmarks
+| Operation | Target | Status |
+|-----------|--------|--------|
+| QR code scan | <50ms | ⏳ |
+| Database query | <10ms | ⏳ |
+| Event sync (1000 attendees) | <5min | ⏳ |
+| LiveView broadcast | <100ms | ⏳ |
+| Duplicate check detection | <100ms | ⏳ |
+
+### Scalability Targets
+| Metric | Target |
+|--------|--------|
+| Max attendees per event | 100,000+ |
+| Max check-ins per minute | 10,000+ |
+| Concurrent scanners | 50+ |
+| Simultaneous events | Unlimited |
+| Database connections | 20 pool size |
+
+---
+
+## 🔐 SECURITY REQUIREMENTS
+
+### API Key Management
+- API keys treated as passwords (never logged)
+- Stored in PostgreSQL (encrypted at rest recommended)
+- Environment variables for secrets (not hardcoded)
+- Unique constraint prevents duplicate keys
+
+### Database Safety
+- Row-level locks (FOR UPDATE) during check-in to prevent race conditions
+- Unique constraint on (event_id, ticket_code) prevents duplicate entries
+- Foreign key constraints with ON DELETE CASCADE
+
+### Authentication & Authorization
+- API key validation on every sync
+- Site URL validation (exact match required: https, domain, www prefix)
+- License check (Checkinera requires premium, FastCheck doesn't)
+
+### Audit Trail
+- Every check-in logged to check_ins table with:
+  - Attendee ID
+  - Timestamp
+  - Entrance name
+  - Operator name
+  - Status (success/duplicate/invalid)
+
+### SSL/HTTPS
+- All API calls to Tickera over HTTPS
+- All LiveView connections over WSS (WebSocket Secure)
+- SSL certificates required for production
+
+---
+
+## 🧪 TESTING STRATEGY
+
+### Unit Tests
+- Tickera API client functions
+- Ecto schema validations
+- Context business logic
+
+### Integration Tests
+- Full sync workflow (API → Database)
+- Check-in processing logic
+- Duplicate detection
+
+### Performance Tests
+- Query execution time (<50ms for QR scan)
+- Bulk import speed (1000+ attendees/min)
+- Connection pooling under load
+
+### Manual Testing (Event Day)
+- Create test event with live API key
+- Sync attendee list
+- Scan 10 QR codes manually
+- Verify check-in counts
+- Test duplicate scan behavior
+- Monitor real-time stats updates
+
+---
+
+## 📝 CODING STANDARDS
+
+### Language: Elixir/Phoenix
+
+**Naming Conventions**:
+- Module names: CamelCase (e.g., `FastCheck.TickeraClient`)
+- Function names: snake_case (e.g., `fetch_all_attendees`)
+- Variables: snake_case
+- Atoms: :lowercase
+
+**Documentation**:
+- Every public function has @doc comment
+- Complex logic has inline comments
+- Error cases documented
+- Examples in documentation
+
+**Error Handling**:
+- All API calls use try/rescue
+- Database errors handled gracefully
+- User-friendly error messages
+- Logging at appropriate levels (debug, info, warn, error)
+
+**Code Organization**:
+- One module per file
+- Related functions grouped in contexts
+- Private helpers with `defp` prefix
+- Tests in separate `test/` directory
+
+### Language: SQL (Migrations)
+
+**Naming Conventions**:
+- Tables: plural lowercase (attendees, events, check_ins)
+- Columns: snake_case lowercase
+- Indexes: `idx_{table}_{column(s)}`
+- Constraints: `{constraint_type}_{table}_{column(s)}`
+
+**Standards**:
+- All timestamps use UTC (naive datetime in Ecto)
+- Foreign keys explicit with ON DELETE CASCADE
+- NOT NULL constraints for required fields
+- Defaults specified where applicable
+
+---
+
+## 🚀 DEPLOYMENT PROCESS
+
+### Development (Local)
+```bash
+mix phx.server
+# Runs on http://localhost:4000
+```
+
+### Staging (VPS - Optional)
+```bash
+MIX_ENV=staging mix release
+# Run on staging subdomain for testing
+```
+
+### Production (VPS)
+```bash
+MIX_ENV=prod mix release
+scp -r _build/prod/rel/fastcheck/ root@voelgoed.co.za:/opt/fastcheck/
+systemctl start fastcheck
+```
+
+### Monitoring
+```bash
+journalctl -u fastcheck -f
+# Tail systemd service logs
+```
+
+---
+
+## 🔄 CODE GENERATION GUIDELINES FOR CODEX
+
+### When Asking Codex to Generate Code
+
+**Always provide**:
+1. **Context**: What module/file this is for
+2. **Dependencies**: What other modules/tables it depends on
+3. **Requirements**: Explicit list of functions/fields needed
+4. **Output**: Specify exactly what format you want
+5. **Constraints**: Performance, security, or business rules
+
+**Example Structure**:
+```
+I'm building FastCheck, a PETAL event check-in system.
+
+CURRENT PROGRESS: Tasks 1-5 complete. Database and schemas ready.
+DEPENDENCIES: Needs Event and Attendee schemas from previous tasks.
+
+TASK X: [Task Name]
+
+FILE PATH: lib/fastcheck/[module].ex
+
+REQUIREMENTS:
+1. Function one_function(param1, param2)
+   - Does this thing
+   - Returns {:ok, data} or {:error, reason}
+2. Function two_function(param)
+   - Does that thing
+   - Handles edge case X
+
+OUTPUT:
+- Complete, production-ready module
+- Include @doc comments
+- Include error handling with try/rescue
+- Include Logger statements for debugging
+```
+
+---
+
+## ✅ COMPLETION CHECKLIST
+
+By the end of all 13 tasks:
+
+**Technology**
+- [ ] Phoenix 1.7 project initialized
+- [ ] PostgreSQL database with 3 tables + 8 indexes
+- [ ] Ecto schemas with validations
+- [ ] Tickera HTTP client functional
+- [ ] Business logic contexts implemented
+- [ ] LiveView components rendering
+- [ ] Router configured
+- [ ] Database optimized
+- [ ] Production config ready
+
+**Functionality**
+- [ ] Can create events with Tickera API key
+- [ ] Can sync 1000+ attendees from Tickera
+- [ ] Can scan QR codes and record check-ins
+- [ ] Can handle duplicate scans
+- [ ] Real-time stats updating
+- [ ] Audit trail recording
+- [ ] Multiple simultaneous events
+- [ ] Multiple concurrent scanners
+
+**Deployment**
+- [ ] Systemd service auto-starts
+- [ ] SSL certificate configured
+- [ ] Environment variables set
+- [ ] Database backed up
+- [ ] Logs accessible
+- [ ] Performance acceptable
+- [ ] Ready for live event
+
+**Quality**
+- [ ] Code compiles without warnings
+- [ ] Tests passing
+- [ ] Error handling robust
+- [ ] Logging comprehensive
+- [ ] Documentation complete
+- [ ] Security hardened
+
+---
+
+## 🎓 REFERENCE DOCUMENTS
+
+Related documentation provided:
+1. **fastcheck-petal-guide.md** - Complete architecture & implementation
+2. **fastcheck-checklist.md** - Day-by-day implementation checklist
+3. **fastcheck-reference.md** - API contracts & technical details
+4. **codex-project-plan.md** - All 13 task prompts
+5. **codex-start-here.md** - First 3 tasks ready to run
+6. **codex-quick-reference.md** - Quick development reference
+7. **tickera-checkinera-deepdive.md** - API documentation
+8. **tickera-api-reference.md** - Code examples
+9. **README.md** - Generated by TASK 0 (Codex scaffold step)
+
+---
+
+## 🆘 COMMON ISSUES & SOLUTIONS
+
+### "API key won't validate"
+- Verify Site URL exactly matches (www, https, domain)
+- Check API key isn't deleted in Tickera
+- Ensure WordPress is accessible via HTTPS
+
+### "No attendees syncing"
+- Check orders are "Completed" status in WordPress
+- Verify API key assigned to correct event
+- Check network connectivity to WordPress
+
+### "Scan taking >100ms"
+- Verify database indexes created
+- Check pool_size = 20 in config
+- Monitor CPU/memory usage
+
+### "Duplicate ticket allowed"
+- Verify UNIQUE constraint created on (event_id, ticket_code)
+- Check migration ran successfully
+- Restart app to clear any caches
+
+### "LiveView not updating in real-time"
+- Verify WebSocket connections active
+- Check browser console for JavaScript errors
+- Ensure no firewall blocking WS connections
+
+---
+
+This document serves as the "project brain" for Codex. Reference it whenever generating code for FastCheck.
 <!-- usage-rules-end -->
