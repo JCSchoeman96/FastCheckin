@@ -209,6 +209,11 @@ defmodule FastCheckWeb.ScannerLive do
     case Attendees.check_in(event_id, code, entrance_name) do
       {:ok, attendee, _message} ->
         stats = Attendees.get_event_stats(event_id)
+        PubSub.broadcast(
+          PetalBlueprint.PubSub,
+          event_topic(event_id),
+          {:event_stats_updated, event_id, stats}
+        )
 
         {:noreply,
          socket
