@@ -8,7 +8,7 @@ defmodule FastCheck.Events do
   require Logger
 
   alias Ecto.Changeset
-  alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.{Attendee, CheckIn}
   alias PetalBlueprint.Repo
   alias FastCheck.{Events.Event, Events.CheckInConfiguration, Attendees}
   alias FastCheck.TickeraClient
@@ -189,6 +189,100 @@ defmodule FastCheck.Events do
         %{event | checked_in_count: checked_in_count}
     end
   end
+
+  @doc """
+  Computes advanced analytics for an event including attendee, entrance, and
+  configuration derived metrics.
+  """
+  @spec get_event_advanced_stats(integer()) :: map()
+  def get_event_advanced_stats(event_id) when is_integer(event_id) do
+    try do
+      attendee_scope = from(a in Attendee, where: a.event_id == ^event_id)
+      start_of_day = beginning_of_day_utc()
+
+      total_attendees = attendee_scope |> select([a], count(a.id)) |> Repo.one() |> normalize_count()
+
+      checked_in =
+        attendee_scope
+        |> where([a], not is_nil(a.checked_in_at))
+        |> select([a], count(a.id))
+        |> Repo.one()
+        |> normalize_count()
+
+      pending = max(total_attendees - checked_in, 0)
+
+      currently_inside =
+        attendee_scope
+        |> where([a], not is_nil(a.checked_in_at))
+        |> where([a], is_nil(a.checked_out_at) or a.checked_out_at < a.checked_in_at)
+        |> select([a], count(a.id))
+        |> Repo.one()
+        |> normalize_count()
+
+      scans_today =
+        attendee_scope
+        |> where([a], not is_nil(a.checked_in_at) and a.checked_in_at >= ^start_of_day)
+        |> select([a], count(a.id))
+        |> Repo.one()
+        |> normalize_count()
+
+      per_entrance = fetch_per_entrance_stats(event_id)
+
+      total_entries = Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
+      total_exits = Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
+
+      avg_session_seconds =
+        attendee_scope
+        |> where([a], not is_nil(a.checked_in_at) and not is_nil(a.checked_out_at))
+        |> select([a], fragment("avg(extract(epoch from (? - ?)))", a.checked_out_at, a.checked_in_at))
+        |> Repo.one()
+        |> normalize_float()
+
+      average_session_minutes =
+        avg_session_seconds
+        |> Kernel./(60)
+        |> Float.round(2)
+        |> max(0.0)
+
+      configs = Repo.all(from(c in CheckInConfiguration, where: c.event_id == ^event_id))
+
+      total_config_limit =
+        configs
+        |> Enum.reduce(0, fn config, acc ->
+          limit = config.daily_check_in_limit || config.allowed_checkins || 0
+          acc + normalize_count(limit)
+        end)
+
+      available_tomorrow = max(total_config_limit - scans_today, 0)
+
+      time_basis_info =
+        configs
+        |> Enum.map(&compact_time_basis_info/1)
+        |> Enum.reject(&(&1 == %{}))
+
+      %{
+        total_attendees: total_attendees,
+        checked_in: checked_in,
+        pending: pending,
+        checked_in_percentage: percentage(checked_in, total_attendees),
+        currently_inside: currently_inside,
+        scans_today: scans_today,
+        per_entrance: per_entrance,
+        total_entries: total_entries,
+        total_exits: total_exits,
+        occupancy_percentage: percentage(currently_inside, total_attendees),
+        available_tomorrow: available_tomorrow,
+        time_basis_info: time_basis_info,
+        average_session_duration_minutes: average_session_minutes
+      }
+    rescue
+      exception ->
+        Logger.error("Failed to compute advanced stats for event #{event_id}: #{Exception.message(exception)}")
+        default_advanced_stats()
+    end
+  end
+
+  def get_event_advanced_stats(_), do: default_advanced_stats()
 
   @doc """
   Fetches live occupancy information for an event using the Tickera API,
@@ -714,6 +808,125 @@ defmodule FastCheck.Events do
       exception ->
         Logger.warning("Progress callback error: #{Exception.message(exception)}")
     end
+  end
+
+  defp fetch_per_entrance_stats(event_id) do
+    query =
+      from(ci in CheckIn,
+        where: ci.event_id == ^event_id,
+        group_by: ci.entrance_name,
+        select: %{
+          entrance_name: fragment("coalesce(?, ?)", ci.entrance_name, ^"Unassigned"),
+          entries: fragment("sum(case when lower(?) in ('entry','success') then 1 else 0 end)", ci.status),
+          exits: fragment("sum(case when lower(?) in ('exit','checked_out') then 1 else 0 end)", ci.status),
+          inside: fragment("sum(case when lower(?) = 'inside' then 1 else 0 end)", ci.status)
+        }
+      )
+
+    Repo.all(query)
+    |> Enum.map(fn stat ->
+      %{
+        entrance_name: stat.entrance_name || "Unassigned",
+        entries: normalize_count(stat.entries),
+        exits: normalize_count(stat.exits),
+        inside: normalize_count(stat.inside)
+      }
+    end)
+  rescue
+    exception ->
+      Logger.error("Failed to load entrance stats for event #{event_id}: #{Exception.message(exception)}")
+      []
+  end
+
+  defp compact_time_basis_info(%CheckInConfiguration{} = config) do
+    %{
+      ticket_type: config.ticket_type || config.ticket_name,
+      ticket_name: config.ticket_name,
+      time_basis: config.time_basis,
+      timezone: config.time_basis_timezone,
+      daily_check_in_limit: config.daily_check_in_limit,
+      allowed_checkins: config.allowed_checkins
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp compact_time_basis_info(_), do: %{}
+
+  defp beginning_of_day_utc do
+    date = Date.utc_today()
+
+    with {:ok, naive} <- NaiveDateTime.new(date, ~T[00:00:00]),
+         {:ok, datetime} <- DateTime.from_naive(naive, "Etc/UTC") do
+      datetime
+    else
+      _ -> DateTime.utc_now() |> DateTime.truncate(:second)
+    end
+  end
+
+  defp normalize_count(nil), do: 0
+  defp normalize_count(value) when is_integer(value), do: value
+  defp normalize_count(value) when is_float(value), do: round(value)
+
+  defp normalize_count(%Decimal{} = value) do
+    value
+    |> Decimal.to_float()
+    |> round()
+  rescue
+    _ -> 0
+  end
+
+  defp normalize_count(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, _} -> parsed
+      :error -> 0
+    end
+  end
+
+  defp normalize_count(value) when is_boolean(value), do: if(value, do: 1, else: 0)
+  defp normalize_count(_), do: 0
+
+  defp normalize_float(nil), do: 0.0
+  defp normalize_float(value) when is_float(value), do: value
+  defp normalize_float(value) when is_integer(value), do: value * 1.0
+
+  defp normalize_float(%Decimal{} = value) do
+    Decimal.to_float(value)
+  rescue
+    _ -> 0.0
+  end
+
+  defp normalize_float(_), do: 0.0
+
+  defp percentage(_part, total) when total <= 0, do: 0.0
+
+  defp percentage(part, total) do
+    part_float = normalize_float(part)
+    total_float = normalize_float(total)
+
+    if total_float <= 0 do
+      0.0
+    else
+      Float.round(part_float / total_float * 100, 2)
+    end
+  end
+
+  defp default_advanced_stats do
+    %{
+      total_attendees: 0,
+      checked_in: 0,
+      pending: 0,
+      checked_in_percentage: 0.0,
+      currently_inside: 0,
+      scans_today: 0,
+      per_entrance: [],
+      total_entries: 0,
+      total_exits: 0,
+      occupancy_percentage: 0.0,
+      available_tomorrow: 0,
+      time_basis_info: [],
+      average_session_duration_minutes: 0.0
+    }
   end
 
   defp format_reason({:error, reason}), do: format_reason(reason)

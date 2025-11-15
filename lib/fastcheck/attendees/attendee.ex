@@ -22,6 +22,7 @@ defmodule FastCheck.Attendees.Attendee do
           payment_status: String.t() | nil,
           custom_fields: map() | nil,
           checked_in_at: DateTime.t() | nil,
+          checked_out_at: DateTime.t() | nil,
           last_checked_in_at: DateTime.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil,
@@ -51,6 +52,8 @@ defmodule FastCheck.Attendees.Attendee do
     field :custom_fields, :map
     # Timestamp of the first time the ticket was scanned
     field :checked_in_at, :utc_datetime
+    # Timestamp of the most recent time the attendee exited the venue
+    field :checked_out_at, :utc_datetime
     # Timestamp of the most recent check-in attempt
     field :last_checked_in_at, :utc_datetime
 
@@ -76,6 +79,7 @@ defmodule FastCheck.Attendees.Attendee do
       :payment_status,
       :custom_fields,
       :checked_in_at,
+      :checked_out_at,
       :last_checked_in_at,
       :event_id
     ])
