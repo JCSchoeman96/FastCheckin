@@ -16,7 +16,7 @@ defmodule FastCheck.Attendees.Attendee do
           first_name: String.t() | nil,
           last_name: String.t() | nil,
           email: String.t() | nil,
-          ticket_type_id: integer() | nil,
+          ticket_type_id: pos_integer() | nil,
           ticket_type: String.t() | nil,
           allowed_checkins: integer() | nil,
           checkins_remaining: integer() | nil,
