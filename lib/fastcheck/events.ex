@@ -9,7 +9,8 @@ defmodule FastCheck.Events do
 
   alias Ecto.Changeset
   alias FastCheck.Attendees.Attendee
-  alias FastCheck.{Repo, Events.Event, Attendees}
+  alias PetalBlueprint.Repo
+  alias FastCheck.{Events.Event, Attendees}
   alias FastCheck.TickeraClient
 
   @attr_atom_lookup %{

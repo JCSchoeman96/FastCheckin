@@ -6,7 +6,8 @@ defmodule FastCheck.Attendees do
   import Ecto.Query, warn: false
   require Logger
 
-  alias FastCheck.{Repo, Attendees.Attendee, Attendees.CheckIn, TickeraClient}
+  alias PetalBlueprint.Repo
+  alias FastCheck.{Attendees.Attendee, Attendees.CheckIn, TickeraClient}
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -186,6 +187,50 @@ defmodule FastCheck.Attendees do
   end
 
   def get_event_stats(_), do: %{total: 0, checked_in: 0, pending: 0, percentage: 0.0}
+
+  @doc """
+  Performs a debounced attendee search scoped to a single event.
+
+  Supports case-insensitive matches across first/last name, email, and
+  ticket code fields.
+  """
+  @spec search_event_attendees(integer(), String.t(), keyword()) :: [Attendee.t()]
+  def search_event_attendees(event_id, query, opts \\ []) when is_integer(event_id) do
+    trimmed = query |> to_string() |> String.trim()
+    limit = opts |> Keyword.get(:limit, 10) |> max(1)
+
+    if trimmed == "" do
+      []
+    else
+      pattern = "%#{escape_like(trimmed)}%"
+
+      from(a in Attendee,
+        where: a.event_id == ^event_id,
+        where:
+          ilike(a.first_name, ^pattern) or
+            ilike(a.last_name, ^pattern) or
+            ilike(a.email, ^pattern) or
+            ilike(a.ticket_code, ^pattern),
+        order_by: [asc: a.last_name, asc: a.first_name, desc: a.inserted_at],
+        limit: ^limit
+      )
+      |> Repo.all()
+    end
+  rescue
+    exception ->
+      Logger.error("Attendee search failed for event #{event_id}: #{Exception.message(exception)}")
+      []
+  end
+
+  def search_event_attendees(_, _, _), do: []
+
+  defp escape_like(term) when is_binary(term) do
+    term
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
+  end
+
+  defp escape_like(term), do: term
 
   defp record_check_in(attendee, event_id, status, entrance_name, operator_name) do
     ticket_code = attendee && Map.get(attendee, :ticket_code)
