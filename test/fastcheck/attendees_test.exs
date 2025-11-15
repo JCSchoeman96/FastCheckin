@@ -1,6 +1,7 @@
 defmodule FastCheck.AttendeesTest do
   use PetalBlueprint.DataCase, async: true
 
+  alias Cachex
   alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
@@ -193,6 +194,34 @@ defmodule FastCheck.AttendeesTest do
       assert breakdown.currently_inside == 1
       assert breakdown.pending == 1
       assert_in_delta breakdown.occupancy_percentage, 33.33, 0.1
+    end
+
+    test "caches occupancy breakdown for two seconds" do
+      event = insert_event!("Cached occupancy")
+      attendee = create_attendee(event, %{allowed_checkins: 1, checkins_remaining: 1})
+
+      initial = Attendees.get_occupancy_breakdown(event.id)
+      assert initial.currently_inside == 0
+
+      cache_key = "occupancy:event:#{event.id}:breakdown"
+
+      assert {:ok, %{} = cached} = Cachex.get(:fastcheck_cache, cache_key)
+      assert cached == initial
+
+      assert {:ok, ttl} = Cachex.ttl(:fastcheck_cache, cache_key)
+      assert ttl <= 2_000
+      assert ttl > 0
+
+      assert {:ok, %Attendee{}, "SUCCESS"} =
+               Attendees.check_in_advanced(event.id, attendee.ticket_code, "entry", "Main Gate", nil)
+
+      cached_breakdown = Attendees.get_occupancy_breakdown(event.id)
+      assert cached_breakdown.currently_inside == 0
+
+      Process.sleep(2_100)
+
+      refreshed = Attendees.get_occupancy_breakdown(event.id)
+      assert refreshed.currently_inside == 1
     end
   end
 
