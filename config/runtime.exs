@@ -1,5 +1,22 @@
 import Config
 
+# Cache defaults shared across all environments. The values can be overridden
+# via environment variables without recompiling the release.
+cache_enabled = System.get_env("CACHE_ENABLED", "true") == "true"
+
+cache_ttl = [
+  ticket_config: :timer.hours(1),
+  event_metadata: :timer.hours(6),
+  occupancy: :timer.seconds(10)
+]
+
+redis_url = System.get_env("REDIS_URL", "redis://localhost:6379")
+
+config :fastcheck,
+  cache_enabled: cache_enabled,
+  cache_ttl: cache_ttl,
+  redis_url: redis_url
+
 # config/runtime.exs is executed for all environments and is the right place to
 # read secrets that should not be baked into the release.
 

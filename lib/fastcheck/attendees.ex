@@ -8,7 +8,13 @@ defmodule FastCheck.Attendees do
 
   alias PetalBlueprint.Repo
   alias Phoenix.PubSub
-  alias FastCheck.{Attendees.Attendee, Attendees.CheckIn, Attendees.CheckInSession, TickeraClient}
+  alias FastCheck.{
+    Attendees.Attendee,
+    Attendees.CheckIn,
+    Attendees.CheckInSession,
+    Cache.CacheManager,
+    TickeraClient
+  }
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -410,20 +416,24 @@ defmodule FastCheck.Attendees do
 
     Repo.transaction(fn ->
       with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
-           :ok <- ensure_can_check_in(attendee) do
-        attrs = build_check_in_attributes(attendee, entrance_name)
+           {attendee_with_config, _config} <- attach_ticket_config(event_id, attendee),
+           :ok <- ensure_can_check_in(attendee_with_config) do
+        attrs = build_check_in_attributes(attendee_with_config, entrance_name)
 
-        case Attendee.changeset(attendee, attrs) |> Repo.update() do
+        case Attendee.changeset(attendee_with_config, attrs) |> Repo.update() do
           {:ok, updated} ->
             with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
+              normalized_type = String.downcase(check_in_type)
+
               record_check_in(
                 updated,
                 event_id,
-                String.downcase(check_in_type),
+                normalized_type,
                 entrance_name,
                 operator
               )
 
+              maybe_increment_occupancy(event_id, normalized_type)
               %{attendee: updated, message: "SUCCESS"}
             else
               {:error, session_reason} -> Repo.rollback(session_reason)
@@ -463,6 +473,7 @@ defmodule FastCheck.Attendees do
           {:ok, updated} ->
             with {:ok, _session} <- close_active_session(updated, entrance_name, now) do
               record_check_in(updated, event_id, "checked_out", entrance_name, operator)
+              maybe_increment_occupancy(event_id, "exit")
               %{attendee: updated, message: "CHECKED_OUT"}
             else
               {:error, session_reason} -> Repo.rollback(session_reason)
@@ -518,13 +529,15 @@ defmodule FastCheck.Attendees do
 
     Repo.transaction(fn ->
       with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
-           :ok <- ensure_can_check_in(attendee) do
-        attrs = build_check_in_attributes(attendee, entrance_name)
+           {attendee_with_config, _} <- attach_ticket_config(event_id, attendee),
+           :ok <- ensure_can_check_in(attendee_with_config) do
+        attrs = build_check_in_attributes(attendee_with_config, entrance_name)
 
-        case Attendee.changeset(attendee, attrs) |> Repo.update() do
+        case Attendee.changeset(attendee_with_config, attrs) |> Repo.update() do
           {:ok, updated} ->
             with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
               record_check_in(updated, event_id, "manual", entrance_name, operator)
+              maybe_increment_occupancy(event_id, "entry")
               %{attendee: updated, message: "MANUAL_ENTRY_RECORDED"}
             else
               {:error, session_reason} -> Repo.rollback(session_reason)
@@ -574,6 +587,26 @@ defmodule FastCheck.Attendees do
         {:ok, attendee}
     end
   end
+
+  defp attach_ticket_config(event_id, %Attendee{} = attendee) do
+    case CacheManager.cache_get_ticket_config(event_id, attendee.ticket_type) do
+      {:ok, config} ->
+        updated = maybe_apply_ticket_limits(attendee, config)
+        {updated, config}
+
+      {:error, _} ->
+        {attendee, nil}
+    end
+  end
+
+  defp maybe_apply_ticket_limits(%Attendee{} = attendee, %{allowed_checkins: allowed})
+       when is_integer(allowed) and allowed > 0 do
+    remaining = attendee.checkins_remaining || allowed
+
+    %{attendee | allowed_checkins: allowed, checkins_remaining: min(remaining, allowed)}
+  end
+
+  defp maybe_apply_ticket_limits(attendee, _config), do: attendee
 
   defp ensure_can_check_in(%Attendee{} = attendee) do
     cond do
@@ -783,6 +816,21 @@ defmodule FastCheck.Attendees do
         {:error, changeset}
     end
   end
+
+  defp maybe_increment_occupancy(event_id, change_type)
+       when is_integer(event_id) and change_type in ["entry", "exit"] do
+    Task.start(fn -> CacheManager.increment_occupancy(event_id, change_type) end)
+    :ok
+  rescue
+    exception ->
+      Logger.warn(
+        "Failed to enqueue occupancy increment for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      :ok
+  end
+
+  defp maybe_increment_occupancy(_, _), do: :ok
 
   defp broadcast_event_stats_async(event_id) when is_integer(event_id) do
     Task.start(fn ->

@@ -7,6 +7,18 @@ defmodule PetalBlueprint.Application do
 
   @impl true
   def start(_type, _args) do
+    cache_children =
+      if Application.get_env(:fastcheck, :cache_enabled, true) do
+        redis_url = Application.get_env(:fastcheck, :redis_url, "redis://localhost:6379")
+
+        [
+          {Cachex, name: :fastcheck_cache},
+          {Redix, {redis_url, [name: :redix]}}
+        ]
+      else
+        []
+      end
+
     children = [
       PetalBlueprintWeb.Telemetry,
       PetalBlueprint.Repo,
@@ -16,7 +28,7 @@ defmodule PetalBlueprint.Application do
       # {PetalBlueprint.Worker, arg},
       # Start to serve requests, typically the last entry
       PetalBlueprintWeb.Endpoint
-    ]
+    ] ++ cache_children
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

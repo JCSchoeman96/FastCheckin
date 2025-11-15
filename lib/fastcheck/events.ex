@@ -10,7 +10,12 @@ defmodule FastCheck.Events do
   alias Ecto.Changeset
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias PetalBlueprint.Repo
-  alias FastCheck.{Events.Event, Events.CheckInConfiguration, Attendees}
+  alias FastCheck.{
+    Attendees,
+    Cache.CacheManager,
+    Events.CheckInConfiguration,
+    Events.Event
+  }
   alias FastCheck.TickeraClient
   alias Postgrex.Range
 
@@ -211,13 +216,22 @@ defmodule FastCheck.Events do
 
       pending = max(total_attendees - checked_in, 0)
 
-      currently_inside =
-        attendee_scope
-        |> where([a], not is_nil(a.checked_in_at))
-        |> where([a], is_nil(a.checked_out_at) or a.checked_out_at < a.checked_in_at)
-        |> select([a], count(a.id))
-        |> Repo.one()
-        |> normalize_count()
+      {currently_inside, occupancy_percentage, cached_entry_total, cached_exit_total} =
+        case CacheManager.get_cached_occupancy(event_id) do
+          {:ok, snapshot} ->
+            {snapshot.inside, snapshot.percentage, snapshot.total_entries, snapshot.total_exits}
+
+          {:error, _} ->
+            fallback_inside =
+              attendee_scope
+              |> where([a], not is_nil(a.checked_in_at))
+              |> where([a], is_nil(a.checked_out_at) or a.checked_out_at < a.checked_in_at)
+              |> select([a], count(a.id))
+              |> Repo.one()
+              |> normalize_count()
+
+            {fallback_inside, percentage(fallback_inside, total_attendees), nil, nil}
+        end
 
       scans_today =
         attendee_scope
@@ -228,8 +242,11 @@ defmodule FastCheck.Events do
 
       per_entrance = fetch_per_entrance_stats(event_id)
 
-      total_entries = Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
-      total_exits = Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
+      total_entries =
+        cached_entry_total || Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
+
+      total_exits =
+        cached_exit_total || Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
 
       avg_session_seconds =
         attendee_scope
@@ -270,7 +287,7 @@ defmodule FastCheck.Events do
         per_entrance: per_entrance,
         total_entries: total_entries,
         total_exits: total_exits,
-        occupancy_percentage: percentage(currently_inside, total_attendees),
+        occupancy_percentage: occupancy_percentage,
         available_tomorrow: available_tomorrow,
         time_basis_info: time_basis_info,
         average_session_duration_minutes: average_session_minutes
