@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "prettier-plugin-tailwindcss": "^0.7.1"
+  },
+  "dependencies": {
+    "alpinejs": "^3.15.1"
+  }
+}
