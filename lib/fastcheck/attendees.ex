@@ -13,6 +13,7 @@ defmodule FastCheck.Attendees do
     Attendees.CheckIn,
     Attendees.CheckInSession,
     Cache.CacheManager,
+    Events,
     TickeraClient
   }
 
@@ -28,6 +29,8 @@ defmodule FastCheck.Attendees do
   @attendee_cache_not_found :attendee_not_found
   @attendee_id_cache_namespace "attendee:id"
   @attendee_id_cache_ttl :timer.minutes(30)
+  @event_attendees_cache_prefix "attendees:event"
+  @event_attendees_cache_ttl :timer.minutes(5)
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -84,8 +87,9 @@ defmodule FastCheck.Attendees do
   @doc """
   Processes a check-in attempt for a ticket code.
 
-  Returns `{:ok, attendee, "SUCCESS"}` when the scan is valid, otherwise
-  `{:error, code, message}` describing the failure.
+  Successful scans now invalidate the attendee, stats, and occupancy caches so
+  dashboards refresh immediately. Returns `{:ok, attendee, "SUCCESS"}` when the
+  scan is valid, otherwise `{:error, code, message}` describing the failure.
   """
   @spec check_in(integer(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
@@ -132,6 +136,8 @@ defmodule FastCheck.Attendees do
 
                   case Attendee.changeset(attendee, attrs) |> Repo.update() do
                     {:ok, updated} ->
+                      invalidate_check_in_caches(updated, event_id, sanitized_code)
+                      refresh_event_occupancy(event_id)
                       record_check_in(updated, event_id, "success", sanitized_entrance, operator_name)
                       broadcast_event_stats_async(event_id)
                       log_check_in(:success, %{
@@ -601,6 +607,94 @@ defmodule FastCheck.Attendees do
       :error
   end
 
+  defp invalidate_check_in_caches(%Attendee{id: attendee_id}, event_id, ticket_code)
+       when is_integer(event_id) and is_binary(ticket_code) do
+    delete_attendee_cache_entry(event_id, ticket_code)
+    delete_attendee_id_cache(attendee_id)
+    delete_cache_entry("attendees:event:#{event_id}", "event attendees cache")
+    delete_cache_entry("stats:#{event_id}", "event stats cache")
+    purge_local_occupancy_breakdown(event_id)
+    :ok
+  end
+
+  defp invalidate_check_in_caches(_, _, _), do: :ok
+
+  defp delete_attendee_cache_entry(event_id, ticket_code) do
+    case CacheManager.delete_attendee(event_id, ticket_code) do
+      {:ok, true} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warn(
+          "Failed to delete attendee cache entry for event #{event_id} ticket #{ticket_code}: #{inspect(reason)}"
+        )
+
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Attendee cache delete raised for event #{event_id} ticket #{ticket_code}: #{Exception.message(exception)}"
+      )
+
+      :error
+  end
+
+  defp delete_cache_entry(key, description) do
+    case CacheManager.delete(key) do
+      {:ok, true} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warn("Failed to delete #{description} (#{key}): #{inspect(reason)}")
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn("Cache delete raised for #{description} (#{key}): #{Exception.message(exception)}")
+      :error
+  end
+
+  defp purge_local_occupancy_breakdown(event_id) do
+    cache_key = occupancy_cache_key(event_id)
+
+    if occupancy_cache_available?() do
+      case Cachex.del(@cache_name, cache_key) do
+        {:ok, _} -> :ok
+        {:error, reason} ->
+          Logger.warn(
+            "Failed to purge occupancy breakdown cache for event #{event_id} (#{cache_key}): #{inspect(reason)}"
+          )
+
+          :error
+      end
+    else
+      :ok
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Occupancy breakdown cache purge raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      :error
+  end
+
+  defp refresh_event_occupancy(event_id) when is_integer(event_id) do
+    case Events.update_occupancy(event_id, 1) do
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warn("Unable to refresh occupancy for event #{event_id}: #{inspect(reason)}")
+        :ok
+    end
+  rescue
+    exception ->
+      Logger.warn("Occupancy refresh raised for event #{event_id}: #{Exception.message(exception)}")
+      :ok
+  end
+
+  defp refresh_event_occupancy(_), do: :ok
+
   @doc """
   Lists all attendees for the given event ordered by most recent check-in.
   """
@@ -614,6 +708,77 @@ defmodule FastCheck.Attendees do
   end
 
   def list_event_attendees(_), do: []
+
+  @doc """
+  Retrieves and caches the attendee list for an event for five minutes to
+  accelerate dashboard views and repeated queries.
+  """
+  @spec get_attendees_by_event(integer(), keyword()) :: [Attendee.t()]
+  def get_attendees_by_event(event_id, opts \\ []) when is_integer(event_id) do
+    force_refresh = Keyword.get(opts, :force_refresh, false)
+    cache_key = attendees_by_event_cache_key(event_id)
+
+    if force_refresh do
+      fetch_and_cache_attendees_by_event(event_id, cache_key)
+    else
+      case CacheManager.get(cache_key) do
+        {:ok, nil} -> fetch_and_cache_attendees_by_event(event_id, cache_key)
+        {:ok, attendees} when is_list(attendees) -> attendees
+        {:error, reason} ->
+          Logger.warn("Attendee list cache read failed for event #{event_id}: #{inspect(reason)}")
+          fetch_and_cache_attendees_by_event(event_id, cache_key)
+      end
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Attendee list cache lookup raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      list_event_attendees(event_id)
+  end
+
+  def get_attendees_by_event(_, _), do: []
+
+  @doc """
+  Removes the cached attendee list for the provided event so future reads hit
+  the database and rebuild the snapshot.
+  """
+  @spec invalidate_attendees_by_event_cache(integer()) :: :ok | :error
+  def invalidate_attendees_by_event_cache(event_id) when is_integer(event_id) do
+    cache_key = attendees_by_event_cache_key(event_id)
+
+    case CacheManager.delete(cache_key) do
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warn("Failed to delete attendees cache for event #{event_id}: #{inspect(reason)}")
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Attendee list cache delete raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      :error
+  end
+
+  def invalidate_attendees_by_event_cache(_), do: :ok
+
+  defp fetch_and_cache_attendees_by_event(event_id, cache_key) do
+    attendees = list_event_attendees(event_id)
+
+    case CacheManager.put(cache_key, attendees, ttl: @event_attendees_cache_ttl) do
+      {:ok, true} -> :ok
+      {:error, reason} ->
+        Logger.warn("Failed to store attendees cache for event #{event_id}: #{inspect(reason)}")
+        :error
+    end
+
+    attendees
+  end
+
+  defp attendees_by_event_cache_key(event_id), do: "#{@event_attendees_cache_prefix}:#{event_id}"
 
   @doc """
   Computes aggregate statistics for an event's attendees.
