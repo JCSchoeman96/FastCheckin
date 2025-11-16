@@ -22,6 +22,10 @@ defmodule FastCheck.Attendees do
   @entrance_name_pattern ~r/^[A-Za-z0-9\s\-\._]+$/
   @cache_name :fastcheck_cache
   @default_occupancy_cache_ttl :timer.seconds(2)
+  @attendee_cache_namespace "attendee"
+  @attendee_cache_hit_ttl :infinity
+  @attendee_cache_miss_ttl :timer.minutes(1)
+  @attendee_cache_not_found :attendee_not_found
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -422,12 +426,88 @@ defmodule FastCheck.Attendees do
     %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
   end
 
+  defp fetch_attendee_with_cache(event_id, ticket_code, cache_key) do
+    case Repo.get_by(Attendee, event_id: event_id, ticket_code: ticket_code) do
+      %Attendee{} = attendee ->
+        persist_attendee_cache(event_id, ticket_code, cache_key, attendee)
+        attendee
+
+      nil ->
+        persist_attendee_miss(cache_key)
+        nil
+    end
+  end
+
+  defp persist_attendee_cache(event_id, ticket_code, cache_key, attendee) do
+    case CacheManager.put_attendee(event_id, ticket_code, attendee) do
+      {:ok, true} ->
+        Logger.debug(
+          "Stored attendee cache entry for #{cache_key} (ttl=#{inspect(@attendee_cache_hit_ttl)})"
+        )
+        :ok
+
+      {:error, reason} ->
+        Logger.warn("Unable to store attendee cache entry for #{cache_key}: #{inspect(reason)}")
+        :error
+    end
+  end
+
+  defp persist_attendee_miss(cache_key) do
+    case CacheManager.put(cache_key, @attendee_cache_not_found, ttl: @attendee_cache_miss_ttl) do
+      {:ok, true} ->
+        Logger.debug(
+          "Stored attendee cache miss sentinel for #{cache_key} (ttl=#{@attendee_cache_miss_ttl}ms)"
+        )
+        :ok
+
+      {:error, reason} ->
+        Logger.warn("Unable to cache attendee miss for #{cache_key}: #{inspect(reason)}")
+        :error
+    end
+  end
+
+  defp attendee_cache_key(event_id, ticket_code) do
+    "#{@attendee_cache_namespace}:#{event_id}:#{ticket_code}"
+  end
+
   @doc """
-  Fetches a single attendee by ticket code within an event.
+  Fetches a single attendee by ticket code within an event, leveraging the
+  attendee cache for faster lookups.
   """
+  @spec get_attendee_by_ticket_code(integer(), String.t()) :: Attendee.t() | nil
+  def get_attendee_by_ticket_code(event_id, ticket_code)
+      when is_integer(event_id) and is_binary(ticket_code) do
+    cache_key = attendee_cache_key(event_id, ticket_code)
+
+    case CacheManager.get_attendee(event_id, ticket_code) do
+      {:ok, %Attendee{} = attendee} ->
+        Logger.debug("Attendee cache hit for #{cache_key}")
+        attendee
+
+      {:ok, @attendee_cache_not_found} ->
+        Logger.debug("Attendee cache hit (not found) for #{cache_key}")
+        nil
+
+      {:ok, nil} ->
+        Logger.debug("Attendee cache miss for #{cache_key}")
+        fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+
+      {:error, reason} ->
+        Logger.warn("Attendee cache lookup failed for #{cache_key}: #{inspect(reason)}")
+        fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+    end
+  rescue
+    exception ->
+      Logger.warn("Attendee cache lookup raised for #{cache_key}: #{Exception.message(exception)}")
+      fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+  end
+
+  def get_attendee_by_ticket_code(_, _), do: nil
+
   @spec get_attendee(integer(), String.t()) :: Attendee.t() | nil
-  def get_attendee(event_id, ticket_code) when is_integer(event_id) and is_binary(ticket_code) do
-    Repo.get_by(Attendee, event_id: event_id, ticket_code: ticket_code)
+  def get_attendee(event_id, ticket_code)
+      when is_integer(event_id) and is_binary(ticket_code) do
+    get_attendee_by_ticket_code(event_id, ticket_code)
   end
 
   def get_attendee(_, _), do: nil
