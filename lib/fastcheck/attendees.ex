@@ -29,6 +29,8 @@ defmodule FastCheck.Attendees do
   @attendee_cache_not_found :attendee_not_found
   @attendee_id_cache_prefix "attendee:id"
   @attendee_id_cache_ttl :timer.minutes(30)
+  @event_attendees_cache_prefix "attendees:event"
+  @event_attendees_cache_ttl :timer.minutes(5)
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -714,6 +716,77 @@ defmodule FastCheck.Attendees do
   end
 
   def list_event_attendees(_), do: []
+
+  @doc """
+  Retrieves and caches the attendee list for an event for five minutes to
+  accelerate dashboard views and repeated queries.
+  """
+  @spec get_attendees_by_event(integer(), keyword()) :: [Attendee.t()]
+  def get_attendees_by_event(event_id, opts \\ []) when is_integer(event_id) do
+    force_refresh = Keyword.get(opts, :force_refresh, false)
+    cache_key = attendees_by_event_cache_key(event_id)
+
+    if force_refresh do
+      fetch_and_cache_attendees_by_event(event_id, cache_key)
+    else
+      case CacheManager.get(cache_key) do
+        {:ok, nil} -> fetch_and_cache_attendees_by_event(event_id, cache_key)
+        {:ok, attendees} when is_list(attendees) -> attendees
+        {:error, reason} ->
+          Logger.warn("Attendee list cache read failed for event #{event_id}: #{inspect(reason)}")
+          fetch_and_cache_attendees_by_event(event_id, cache_key)
+      end
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Attendee list cache lookup raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      list_event_attendees(event_id)
+  end
+
+  def get_attendees_by_event(_, _), do: []
+
+  @doc """
+  Removes the cached attendee list for the provided event so future reads hit
+  the database and rebuild the snapshot.
+  """
+  @spec invalidate_attendees_by_event_cache(integer()) :: :ok | :error
+  def invalidate_attendees_by_event_cache(event_id) when is_integer(event_id) do
+    cache_key = attendees_by_event_cache_key(event_id)
+
+    case CacheManager.delete(cache_key) do
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warn("Failed to delete attendees cache for event #{event_id}: #{inspect(reason)}")
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Attendee list cache delete raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      :error
+  end
+
+  def invalidate_attendees_by_event_cache(_), do: :ok
+
+  defp fetch_and_cache_attendees_by_event(event_id, cache_key) do
+    attendees = list_event_attendees(event_id)
+
+    case CacheManager.put(cache_key, attendees, ttl: @event_attendees_cache_ttl) do
+      {:ok, true} -> :ok
+      {:error, reason} ->
+        Logger.warn("Failed to store attendees cache for event #{event_id}: #{inspect(reason)}")
+        :error
+    end
+
+    attendees
+  end
+
+  defp attendees_by_event_cache_key(event_id), do: "#{@event_attendees_cache_prefix}:#{event_id}"
 
   @doc """
   Computes aggregate statistics for an event's attendees.
