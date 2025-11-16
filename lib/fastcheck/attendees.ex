@@ -26,6 +26,8 @@ defmodule FastCheck.Attendees do
   @attendee_cache_hit_ttl :infinity
   @attendee_cache_miss_ttl :timer.minutes(1)
   @attendee_cache_not_found :attendee_not_found
+  @attendee_id_cache_prefix "attendee:id"
+  @attendee_id_cache_ttl :timer.minutes(30)
 
   @doc """
   Bulk inserts attendees for the provided event.
@@ -470,6 +472,41 @@ defmodule FastCheck.Attendees do
     "#{@attendee_cache_namespace}:#{event_id}:#{ticket_code}"
   end
 
+  defp attendee_id_cache_key(attendee_id), do: "#{@attendee_id_cache_prefix}:#{attendee_id}"
+
+  defp fetch_attendee_by_id(attendee_id, cache_key, should_cache?) do
+    attendee = Repo.get!(Attendee, attendee_id)
+
+    if should_cache? do
+      persist_attendee_id_cache(cache_key, attendee)
+    end
+
+    attendee
+  end
+
+  defp persist_attendee_id_cache(cache_key, attendee) do
+    case CacheManager.put(cache_key, attendee, ttl: @attendee_id_cache_ttl) do
+      {:ok, true} ->
+        Logger.debug(
+          "Stored attendee id cache entry for #{cache_key} (ttl=#{inspect(@attendee_id_cache_ttl)}ms)"
+        )
+
+        :ok
+
+      {:error, :cache_unavailable} ->
+        Logger.debug("Skipping attendee id cache write for #{cache_key} (cache unavailable)")
+        :ok
+
+      {:error, reason} ->
+        Logger.warn("Unable to store attendee id cache entry for #{cache_key}: #{inspect(reason)}")
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn("Attendee id cache write raised for #{cache_key}: #{Exception.message(exception)}")
+      :error
+  end
+
   @doc """
   Fetches a single attendee by ticket code within an event, leveraging the
   attendee cache for faster lookups.
@@ -511,6 +548,66 @@ defmodule FastCheck.Attendees do
   end
 
   def get_attendee(_, _), do: nil
+
+  @doc """
+  Fetches a single attendee by id using a dedicated cache entry.
+  """
+  @spec get_attendee!(integer()) :: Attendee.t()
+  def get_attendee!(attendee_id) when is_integer(attendee_id) and attendee_id > 0 do
+    cache_key = attendee_id_cache_key(attendee_id)
+
+    case CacheManager.get(cache_key) do
+      {:ok, %Attendee{} = attendee} ->
+        Logger.debug("Attendee id cache hit for #{cache_key}")
+        attendee
+
+      {:ok, nil} ->
+        Logger.debug("Attendee id cache miss for #{cache_key}")
+        fetch_attendee_by_id(attendee_id, cache_key, true)
+
+      {:error, :cache_unavailable} ->
+        Logger.debug("Attendee id cache unavailable for #{cache_key}, skipping cache")
+        Repo.get!(Attendee, attendee_id)
+
+      {:error, reason} ->
+        Logger.warn("Attendee id cache lookup failed for #{cache_key}: #{inspect(reason)}")
+        fetch_attendee_by_id(attendee_id, cache_key, false)
+    end
+  rescue
+    exception ->
+      Logger.warn("Attendee id cache lookup raised for #{cache_key}: #{Exception.message(exception)}")
+      Repo.get!(Attendee, attendee_id)
+  end
+
+  def get_attendee!(attendee_id), do: Repo.get!(Attendee, attendee_id)
+
+  @doc """
+  Removes the cached attendee lookup by id so future reads hit the database.
+  """
+  @spec delete_attendee_id_cache(integer()) :: :ok | :error
+  def delete_attendee_id_cache(attendee_id) when is_integer(attendee_id) and attendee_id > 0 do
+    cache_key = attendee_id_cache_key(attendee_id)
+
+    case CacheManager.delete(cache_key) do
+      {:ok, true} ->
+        Logger.debug("Deleted attendee id cache entry for #{cache_key}")
+        :ok
+
+      {:error, :cache_unavailable} ->
+        Logger.debug("Cache unavailable when deleting #{cache_key}, skipping invalidation")
+        :ok
+
+      {:error, reason} ->
+        Logger.warn("Unable to delete attendee id cache entry for #{cache_key}: #{inspect(reason)}")
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn("Attendee id cache delete raised for #{cache_key}: #{Exception.message(exception)}")
+      :error
+  end
+
+  def delete_attendee_id_cache(_), do: :ok
 
   @doc """
   Lists all attendees for the given event ordered by most recent check-in.
