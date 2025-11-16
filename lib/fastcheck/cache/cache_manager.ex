@@ -141,9 +141,13 @@ defmodule FastCheck.Cache.CacheManager do
 
   use GenServer
 
+  import Ecto.Query, only: [from: 2]
+
   require Logger
   require Cachex.Spec
   alias Phoenix.PubSub
+  alias PetalBlueprint.Repo
+  alias FastCheck.Events.CheckInConfiguration
 
   @typedoc """
   Describes the cache key used within Cachex. Keys are typically binaries but
@@ -451,17 +455,22 @@ defmodule FastCheck.Cache.CacheManager do
   Convenience helper that persists event configuration payloads with the
   appropriate TTL.
   """
-  @spec put_event_config(integer(), map()) :: cache_result(true)
+  @spec put_event_config(integer(), list() | map()) :: cache_result(true)
   def put_event_config(event_id, config) when is_integer(event_id) do
-    put(event_config_key(event_id), config, ttl: :timer.hours(1))
+    normalized = ensure_ticket_config_cache_entry(config)
+    put(event_config_key(event_id), normalized, ttl: :timer.hours(1))
   end
 
   @doc """
   Retrieves cached event configuration metadata.
   """
   @spec cache_get_ticket_config(integer(), any()) :: cache_result(map() | nil)
-  def cache_get_ticket_config(event_id, _ticket_type) when is_integer(event_id) do
-    get(event_config_key(event_id))
+  def cache_get_ticket_config(event_id, ticket_identifier) when is_integer(event_id) do
+    cache_key = event_config_key(event_id)
+
+    with {:ok, cache_entry} <- fetch_or_cache_event_configs(cache_key, event_id) do
+      {:ok, find_cached_ticket_config(cache_entry, ticket_identifier)}
+    end
   end
 
   @doc """
@@ -502,7 +511,7 @@ defmodule FastCheck.Cache.CacheManager do
   @spec get_cached_occupancy(integer()) :: cache_result(map())
   def get_cached_occupancy(event_id) when is_integer(event_id) do
     case get(occupancy_event_key(event_id)) do
-      {:ok, nil} -> {:ok, @empty_occupancy}
+      {:ok, nil} -> {:error, :not_found}
       {:ok, snapshot} -> {:ok, normalize_occupancy(snapshot)}
       {:error, reason} -> {:error, reason}
     end
@@ -560,16 +569,31 @@ defmodule FastCheck.Cache.CacheManager do
       key = occupancy_event_key(event_id)
       delta = if(change_type == "entry", do: 1, else: -1)
 
-      updated =
-        case Cachex.get(cache_name(), key) do
-          {:ok, snapshot} -> normalize_occupancy(snapshot)
-          _ -> @empty_occupancy
-        end
-        |> apply_occupancy_delta(delta)
+      case Cachex.transaction(cache_name(), [key], fn cache ->
+             snapshot =
+               case Cachex.get(cache, key) do
+                 {:ok, value} -> normalize_occupancy(value)
+                 _ -> @empty_occupancy
+               end
 
-      with {:ok, true} <- put(key, updated, ttl: :timer.seconds(10)) do
-        broadcast_occupancy(event_id, updated.inside, change_type)
-        {:ok, updated.inside}
+             updated = apply_occupancy_delta(snapshot, delta)
+
+             case Cachex.put(cache, key, updated, ttl: :timer.seconds(10)) do
+               {:ok, true} -> {:ok, updated}
+               {:error, reason} -> {:error, reason}
+             end
+           end) do
+        {:ok, {:ok, updated}} ->
+          broadcast_occupancy(event_id, updated.inside, change_type)
+          maybe_enforce_limit()
+          {:ok, updated.inside}
+
+        {:ok, {:error, reason}} ->
+          {:error, reason}
+
+        {:error, reason} ->
+          log_cache_error(:transaction, key, reason)
+          {:error, reason}
       end
     else
       {:error, :cache_unavailable}
@@ -742,6 +766,128 @@ defmodule FastCheck.Cache.CacheManager do
         :ok
     end
   end
+
+  defp fetch_or_cache_event_configs(cache_key, event_id) do
+    case get(cache_key) do
+      {:ok, nil} -> load_event_configs_from_db(cache_key, event_id)
+      {:ok, entry} -> {:ok, ensure_ticket_config_cache_entry(entry)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp load_event_configs_from_db(cache_key, event_id) do
+    with {:ok, configs} <- fetch_ticket_configs_from_db(event_id) do
+      entry = build_ticket_config_cache_entry(configs)
+      _ = put(cache_key, entry, ttl: :timer.hours(1))
+      {:ok, entry}
+    end
+  end
+
+  defp fetch_ticket_configs_from_db(event_id) do
+    query = from(c in CheckInConfiguration, where: c.event_id == ^event_id)
+
+    {:ok, Repo.all(query)}
+  rescue
+    exception ->
+      Logger.error(fn ->
+        {"Failed to load ticket configs", event_id: event_id, error: Exception.message(exception)}
+      end)
+
+      {:error, :config_lookup_failed}
+  end
+
+  defp ensure_ticket_config_cache_entry(%{records: _records, by_id: _by_id, by_label: _by_label} = entry),
+    do: entry
+
+  defp ensure_ticket_config_cache_entry(entry), do: build_ticket_config_cache_entry(entry)
+
+  defp build_ticket_config_cache_entry(configs) do
+    records =
+      configs
+      |> List.wrap()
+      |> Enum.reject(&is_nil/1)
+
+    {by_id, by_label} =
+      Enum.reduce(records, {%{}, %{}}, fn config, {id_acc, label_acc} ->
+        {index_config_by_id(id_acc, config), index_config_by_label(label_acc, config)}
+      end)
+
+    %{records: records, by_id: by_id, by_label: by_label}
+  end
+
+  defp index_config_by_id(acc, config) do
+    case Map.get(config, :ticket_type_id) do
+      nil -> acc
+      id -> Map.put(acc, id, config)
+    end
+  end
+
+  defp index_config_by_label(acc, config) do
+    config
+    |> ticket_config_labels()
+    |> Enum.reduce(acc, fn label, map -> Map.put_new(map, label, config) end)
+  end
+
+  defp ticket_config_labels(config) do
+    [Map.get(config, :ticket_type), Map.get(config, :ticket_name)]
+    |> Enum.map(&normalize_ticket_label/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp find_cached_ticket_config(%{by_id: by_id, by_label: by_label}, ticket_identifier) do
+    cond do
+      is_nil(ticket_identifier) -> nil
+      is_integer(ticket_identifier) -> Map.get(by_id, ticket_identifier)
+      is_binary(ticket_identifier) ->
+        trimmed = String.trim(ticket_identifier)
+        normalized = normalize_ticket_label(trimmed)
+        parsed_id = parse_ticket_type_id(trimmed)
+
+        Map.get(by_id, parsed_id) || Map.get(by_label, normalized)
+
+      is_map(ticket_identifier) ->
+        case Map.get(ticket_identifier, :ticket_type_id) do
+          nil -> Map.get(by_label, normalize_ticket_label(Map.get(ticket_identifier, :ticket_type)))
+          id -> Map.get(by_id, id)
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp find_cached_ticket_config(_entry, _ticket_identifier), do: nil
+
+  defp parse_ticket_type_id(value) when is_integer(value) and value > 0, do: value
+
+  defp parse_ticket_type_id(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> nil
+      trimmed ->
+        case Integer.parse(trimmed) do
+          {number, ""} when number > 0 -> number
+          _ -> nil
+        end
+    end
+  end
+
+  defp parse_ticket_type_id(_), do: nil
+
+  defp normalize_ticket_label(nil), do: nil
+
+  defp normalize_ticket_label(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
+
+  defp normalize_ticket_label(_), do: nil
 
   defp normalize_occupancy(nil), do: @empty_occupancy
 
