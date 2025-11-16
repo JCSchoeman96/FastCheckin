@@ -57,6 +57,14 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# Cache manager configuration
+config :petal_blueprint, FastCheck.Cache.CacheManager,
+  cache_name: :fastcheck_cache,
+  default_ttl: :timer.hours(1),
+  expiration_interval: :timer.minutes(1),
+  max_size: 10_000,
+  pubsub_topic: "fastcheck:cache:invalidate"
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
