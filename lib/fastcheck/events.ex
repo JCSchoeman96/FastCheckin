@@ -56,6 +56,20 @@ defmodule FastCheck.Events do
   @config_replace_fields (@config_fields ++ [:check_in_window, :updated_at])
 
   @occupancy_task_timeout 15_000
+  @event_config_ttl :timer.hours(1)
+  @events_list_ttl :timer.minutes(15)
+  @stats_ttl :timer.minutes(1)
+
+  @events_list_cache_key "events:all"
+  @default_event_stats %{
+    total_tickets: 0,
+    total: 0,
+    checked_in: 0,
+    pending: 0,
+    no_shows: 0,
+    occupancy_percent: 0.0,
+    percentage: 0.0
+  }
 
   @doc """
   Creates a new event by validating Tickera credentials, fetching event
@@ -79,6 +93,8 @@ defmodule FastCheck.Events do
          event_attrs <- build_event_attrs(attrs, essentials),
          {:ok, %Event{} = event} <- %Event{} |> Event.changeset(event_attrs) |> Repo.insert() do
       Logger.info("Created event #{event.id} for site #{site_url}")
+      _ = persist_event_cache(event)
+      invalidate_events_list_cache()
       {:ok, event}
     else
       {:error, :invalid_credentials} ->
@@ -97,29 +113,82 @@ defmodule FastCheck.Events do
   def create_event(_), do: {:error, "Invalid attributes"}
 
   @doc """
-  Lists every event stored in the database along with aggregated statistics
-  such as the number of attendees linked to the event.
+  Lists cached events along with their attendee counts, falling back to the
+  database when the cache is cold.
 
-  ## Returns
-    * list of `%Event{}` structs with the virtual `attendee_count` field
-      populated.
+  The result is cached for 15 minutes using the `"events:all"` key so
+  successive dashboard loads stay under the 50ms target.
+
+  ## Examples
+
+      iex> Events.list_events()
+      # Cache miss example – hits the database and stores the collection
+
+      iex> CacheManager.put("events:all", [%Event{id: 1}], ttl: :timer.minutes(15))
+      iex> Events.list_events()
+      [%Event{id: 1}]
   """
   @spec list_events() :: [Event.t()]
   def list_events do
-    Event
-    |> join(:left, [e], a in Attendee, on: a.event_id == e.id)
-    |> group_by([e, _a], e)
-    |> select_merge([_e, a], %{attendee_count: count(a.id)})
-    |> Repo.all()
+    case CacheManager.get(@events_list_cache_key) do
+      {:ok, events} when is_list(events) ->
+        Logger.debug(fn -> {"events cache hit", key: @events_list_cache_key, count: length(events)} end)
+        events
+
+      {:ok, nil} ->
+        Logger.debug(fn -> {"events cache miss", key: @events_list_cache_key} end)
+        fetch_and_cache_events()
+
+      {:ok, other} ->
+        Logger.debug(fn -> {"events cache miss due to unexpected payload", payload: inspect(other)} end)
+        fetch_and_cache_events()
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"events cache unavailable", reason: inspect(reason)} end)
+        fetch_events_from_db()
+    end
   end
 
   @doc """
-  Retrieves a single event by id, raising `Ecto.NoResultsError` when not found.
+  Retrieves an event by id using a cache-aside strategy.
+
+  The event configuration is cached for one hour under the
+  `"event_config:{event_id}"` key. Cache errors are logged and the database is
+  queried directly when necessary.
+
+  ## Examples
+
+      iex> Events.get_event!(event.id)
+      %Event{} # Cache miss – loads from the database and stores the entry
+
+      iex> CacheManager.put("event_config:#{event.id}", event, ttl: :timer.hours(1))
+      iex> Events.get_event!(event.id)
+      %Event{} # Cache hit – avoids a round trip to Postgres
   """
   @spec get_event!(integer()) :: Event.t()
-  def get_event!(event_id) do
-    Repo.get!(Event, event_id)
+  def get_event!(event_id) when is_integer(event_id) and event_id > 0 do
+    cache_key = event_config_cache_key(event_id)
+
+    case CacheManager.get(cache_key) do
+      {:ok, %Event{} = event} ->
+        Logger.debug(fn -> {"event cache hit", event_id: event_id} end)
+        event
+
+      {:ok, nil} ->
+        Logger.debug(fn -> {"event cache miss", event_id: event_id} end)
+        fetch_and_cache_event!(event_id)
+
+      {:ok, other} ->
+        Logger.debug(fn -> {"event cache miss due to unexpected payload", payload: inspect(other)} end)
+        fetch_and_cache_event!(event_id)
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"event cache unavailable", event_id: event_id, reason: inspect(reason)} end)
+        Repo.get!(Event, event_id)
+    end
   end
+
+  def get_event!(event_id), do: Repo.get!(Event, event_id)
 
   @doc """
   Synchronizes attendees for the specified event and updates status timestamps.
@@ -153,6 +222,12 @@ defmodule FastCheck.Events do
               {:ok, inserted_count} ->
                 finalize_sync(event)
                 count_message = resolve_synced_count(inserted_count, attendees, total_count)
+                invalidate_event_cache(event.id)
+                invalidate_events_list_cache()
+                invalidate_event_stats_cache(event.id)
+                invalidate_occupancy_cache(event.id)
+                stats = get_event_stats(event.id)
+                broadcast_event_stats(event.id, stats)
                 {:ok, "Synced #{count_message} attendees"}
 
               {:error, reason} ->
@@ -194,6 +269,105 @@ defmodule FastCheck.Events do
         %{event | checked_in_count: checked_in_count}
     end
   end
+
+  @doc """
+  Returns cached roll-up statistics for an event including totals and
+  occupancy percentage.
+
+  Stats are cached for one minute using the `"stats:{event_id}"` key so
+  repeated dashboard refreshes are served from memory.
+
+  ## Examples
+
+      iex> Events.get_event_stats(event.id)
+      %{checked_in: 120, total_tickets: 500} # Cache miss – queries Postgres
+
+      iex> CacheManager.put("stats:#{event.id}", %{checked_in: 5, total_tickets: 10}, ttl: :timer.minutes(1))
+      iex> Events.get_event_stats(event.id)
+      %{checked_in: 5, total_tickets: 10} # Cache hit – served from Cachex
+  """
+  @spec get_event_stats(integer()) :: map()
+  def get_event_stats(event_id) when is_integer(event_id) and event_id > 0 do
+    cache_key = stats_cache_key(event_id)
+
+    case CacheManager.get(cache_key) do
+      {:ok, %{} = stats} ->
+        Logger.debug(fn -> {"stats cache hit", event_id: event_id} end)
+        stats
+
+      {:ok, nil} ->
+        Logger.debug(fn -> {"stats cache miss", event_id: event_id} end)
+        fetch_and_cache_event_stats(event_id)
+
+      {:ok, other} ->
+        Logger.debug(fn -> {"stats cache miss due to unexpected payload", payload: inspect(other)} end)
+        fetch_and_cache_event_stats(event_id)
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"stats cache unavailable", event_id: event_id, reason: inspect(reason)} end)
+        compute_event_stats(event_id)
+    end
+  end
+
+  def get_event_stats(_), do: @default_event_stats
+
+  @doc """
+  Updates the cached occupancy count when a guest enters or exits and
+  broadcasts the new totals via PubSub.
+
+  A cache miss triggers a recalculation from the attendee table so stale data
+  never leaks into the occupancy dashboard.
+
+  ## Examples
+
+      iex> Events.update_occupancy(event.id, 1)
+      {:ok, 101} # Cache miss – recalculates from the database
+
+      iex> CacheManager.put("occupancy:event:#{event.id}", %{inside: 50}, ttl: :timer.seconds(10))
+      iex> Events.update_occupancy(event.id, -1)
+      {:ok, 49} # Cache hit – updates the cached snapshot
+  """
+  @spec update_occupancy(integer(), integer()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def update_occupancy(event_id, delta) when is_integer(event_id) and delta in [-1, 1] do
+    case Repo.get(Event, event_id) do
+      nil ->
+        {:error, :event_not_found}
+
+      %Event{} = event ->
+        capacity = normalize_non_neg_integer(event.total_tickets || 0)
+        {base_inside, snapshot} = occupancy_snapshot_for_update(event_id)
+
+        new_inside = max(base_inside + delta, 0)
+        total_entries = Map.get(snapshot, :total_entries, 0) + max(delta, 0)
+        total_exits = Map.get(snapshot, :total_exits, 0) + max(-delta, 0)
+
+        updated_snapshot =
+          snapshot
+          |> Map.put(:inside, new_inside)
+          |> Map.put(:total_entries, total_entries)
+          |> Map.put(:total_exits, total_exits)
+          |> Map.put(:capacity, capacity)
+          |> Map.put(:percentage, compute_percentage(new_inside, capacity))
+          |> Map.put(:updated_at, DateTime.utc_now())
+
+        case CacheManager.put_event_occupancy(event_id, updated_snapshot) do
+          {:ok, true} ->
+            Logger.debug(fn -> {"occupancy cache updated", event_id: event_id, inside: new_inside} end)
+
+          {:error, reason} ->
+            Logger.warn(fn -> {"occupancy cache update failed", event_id: event_id, reason: inspect(reason)} end)
+        end
+
+        broadcast_occupancy_update(event_id, new_inside)
+        {:ok, new_inside}
+    end
+  rescue
+    exception ->
+      Logger.error("Occupancy update failed for event #{event_id}: #{Exception.message(exception)}")
+      {:error, :occupancy_update_failed}
+  end
+
+  def update_occupancy(_event_id, _delta), do: {:error, :invalid_delta}
 
   @doc """
   Computes advanced analytics for an event including attendee, entrance, and
@@ -426,6 +600,204 @@ defmodule FastCheck.Events do
 
   def fetch_and_store_ticket_configs(_), do: {:error, "INVALID_EVENT"}
 
+  defp fetch_and_cache_events do
+    events = fetch_events_from_db()
+    cache_events_list(events)
+    events
+  end
+
+  defp fetch_events_from_db do
+    Event
+    |> join(:left, [e], a in Attendee, on: a.event_id == e.id)
+    |> group_by([e, _a], e)
+    |> select_merge([_e, a], %{attendee_count: count(a.id)})
+    |> Repo.all()
+  end
+
+  defp fetch_and_cache_event!(event_id) do
+    event = Repo.get!(Event, event_id)
+    _ = persist_event_cache(event)
+    event
+  end
+
+  defp fetch_and_cache_event_stats(event_id) do
+    stats = compute_event_stats(event_id)
+    cache_event_stats(event_id, stats)
+    stats
+  end
+
+  defp compute_event_stats(event_id) do
+    base_stats = Attendees.get_event_stats(event_id)
+    event = get_event!(event_id)
+
+    total_tickets = normalize_non_neg_integer(event.total_tickets || Map.get(base_stats, :total, 0))
+    checked_in = normalize_count(Map.get(base_stats, :checked_in, 0))
+    pending = normalize_count(Map.get(base_stats, :pending, 0))
+    no_shows = max(total_tickets - checked_in, 0)
+
+    occupancy_percent =
+      if total_tickets <= 0 do
+        0.0
+      else
+        Float.round(checked_in / total_tickets * 100, 2)
+      end
+
+    Map.merge(@default_event_stats, %{
+      total_tickets: total_tickets,
+      total: total_tickets,
+      checked_in: checked_in,
+      pending: pending,
+      no_shows: no_shows,
+      occupancy_percent: occupancy_percent,
+      percentage: occupancy_percent
+    })
+  rescue
+    exception ->
+      Logger.error("Failed to compute stats for event #{event_id}: #{Exception.message(exception)}")
+      @default_event_stats
+  end
+
+  defp occupancy_snapshot_for_update(event_id) do
+    case CacheManager.get_cached_occupancy(event_id) do
+      {:ok, %{} = snapshot} ->
+        updated_at = Map.get(snapshot, :updated_at)
+
+        inside =
+          if is_nil(updated_at) do
+            recalc = recalculate_occupancy_from_db(event_id)
+            recalc
+          else
+            normalize_count(Map.get(snapshot, :inside, 0))
+          end
+
+        {inside, Map.put(snapshot, :inside, inside)}
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"occupancy cache read failed", event_id: event_id, reason: inspect(reason)} end)
+        inside = recalculate_occupancy_from_db(event_id)
+
+        snapshot = %{
+          inside: inside,
+          total_entries: 0,
+          total_exits: 0,
+          capacity: nil,
+          percentage: 0.0,
+          updated_at: nil
+        }
+
+        {inside, snapshot}
+    end
+  end
+
+  defp recalculate_occupancy_from_db(event_id) do
+    from(a in Attendee,
+      where: a.event_id == ^event_id and not is_nil(a.checked_in_at),
+      where: is_nil(a.checked_out_at) or a.checked_out_at < a.checked_in_at,
+      select: count(a.id)
+    )
+    |> Repo.one()
+    |> normalize_count()
+  end
+
+  defp persist_event_cache(%Event{} = event) do
+    case CacheManager.put(event_config_cache_key(event.id), event, ttl: @event_config_ttl) do
+      {:ok, true} -> :ok
+      {:error, reason} ->
+        Logger.warn(fn -> {"event cache write failed", event_id: event.id, reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp cache_events_list(events) do
+    case CacheManager.put(@events_list_cache_key, events, ttl: @events_list_ttl) do
+      {:ok, true} -> :ok
+      {:error, reason} ->
+        Logger.warn(fn -> {"events cache write failed", reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp cache_event_stats(event_id, stats) do
+    case CacheManager.put(stats_cache_key(event_id), stats, ttl: @stats_ttl) do
+      {:ok, true} -> :ok
+      {:error, reason} ->
+        Logger.warn(fn -> {"stats cache write failed", event_id: event_id, reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp invalidate_event_cache(event_id) do
+    case CacheManager.delete(event_config_cache_key(event_id)) do
+      {:ok, _} ->
+        Logger.debug(fn -> {"event cache invalidated", event_id: event_id} end)
+        :ok
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"event cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp invalidate_events_list_cache do
+    case CacheManager.delete(@events_list_cache_key) do
+      {:ok, _} ->
+        Logger.debug(fn -> {"events list cache invalidated", key: @events_list_cache_key} end)
+        :ok
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"events list cache invalidate failed", reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp invalidate_event_stats_cache(event_id) do
+    case CacheManager.delete(stats_cache_key(event_id)) do
+      {:ok, _} ->
+        Logger.debug(fn -> {"stats cache invalidated", event_id: event_id} end)
+        :ok
+
+      {:error, reason} ->
+        Logger.warn(fn -> {"stats cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp invalidate_occupancy_cache(event_id) do
+    pattern = occupancy_pattern(event_id)
+
+    case CacheManager.invalidate_pattern(pattern) do
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warn(fn -> {"occupancy pattern invalidation failed", event_id: event_id, reason: inspect(reason)} end)
+        :error
+    end
+
+    case CacheManager.delete(occupancy_cache_key(event_id)) do
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warn(fn -> {"occupancy cache delete failed", event_id: event_id, reason: inspect(reason)} end)
+        :error
+    end
+  end
+
+  defp broadcast_event_stats(event_id, stats) do
+    Phoenix.PubSub.broadcast(
+      PetalBlueprint.PubSub,
+      stats_topic(event_id),
+      {:event_stats_updated, event_id, stats}
+    )
+  rescue
+    exception ->
+      Logger.error("Failed to broadcast stats for event #{event_id}: #{Exception.message(exception)}")
+      {:error, :broadcast_failed}
+  end
+
+  defp event_config_cache_key(event_id), do: "event_config:#{event_id}"
+  defp stats_cache_key(event_id), do: "stats:#{event_id}"
+  defp occupancy_cache_key(event_id), do: "occupancy:event:#{event_id}"
+  defp occupancy_pattern(event_id), do: "occupancy:event:#{event_id}:*"
+  defp stats_topic(event_id), do: "event:#{event_id}:stats"
+
   defp ensure_credentials(site_url, api_key) when is_binary(site_url) and is_binary(api_key) do
     case TickeraClient.check_credentials(site_url, api_key) do
       {:ok, _resp} -> :ok
@@ -498,7 +870,10 @@ defmodule FastCheck.Events do
     ]
 
     case Event |> where([e], e.id == ^event_id) |> Repo.update_all(set: updates) do
-      {count, _} when count > 0 -> :ok
+      {count, _} when count > 0 ->
+        invalidate_event_cache(event_id)
+        invalidate_events_list_cache()
+        :ok
       _ -> {:error, :not_updated}
     end
   end
@@ -753,7 +1128,10 @@ defmodule FastCheck.Events do
     from(e in Event, where: e.id == ^event_id)
     |> Repo.update_all(set: [last_config_sync: now, updated_at: now])
     |> case do
-      {1, _} -> :ok
+      {1, _} ->
+        invalidate_event_cache(event_id)
+        invalidate_events_list_cache()
+        :ok
       _ -> {:error, "EVENT_NOT_FOUND"}
     end
   end
@@ -847,6 +1225,8 @@ defmodule FastCheck.Events do
          |> Changeset.change(%{status: "syncing", sync_started_at: now, sync_completed_at: nil})
          |> Repo.update() do
       {:ok, _} ->
+        invalidate_event_cache(event.id)
+        invalidate_events_list_cache()
         :ok
 
       {:error, changeset} ->
@@ -863,6 +1243,8 @@ defmodule FastCheck.Events do
          |> Changeset.change(%{status: "active", sync_completed_at: now})
          |> Repo.update() do
       {:ok, _} ->
+        invalidate_event_cache(event.id)
+        invalidate_events_list_cache()
         :ok
 
       {:error, changeset} ->
@@ -873,9 +1255,18 @@ defmodule FastCheck.Events do
   end
 
   defp mark_error(event, reason) do
-    event
-    |> Changeset.change(%{status: "error"})
-    |> Repo.update()
+    case event
+         |> Changeset.change(%{status: "error"})
+         |> Repo.update() do
+      {:ok, _} ->
+        invalidate_event_cache(event.id)
+        invalidate_events_list_cache()
+
+      {:error, changeset} ->
+        Logger.warning(
+          "Unable to mark event #{event.id} as errored: #{inspect(changeset.errors)}"
+        )
+    end
 
     Logger.error("Sync failed for event #{event.id}: #{format_reason(reason)}")
   end
