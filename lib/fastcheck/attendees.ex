@@ -169,7 +169,7 @@ defmodule FastCheck.Attendees do
           {:ok, result} -> result
           {:error, {:changeset, message}} -> {:error, "ERROR", message}
           {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} ->
-            {:error, "TICKET_IN_USE_ELSEWHERE"}
+            {:error, "TICKET_IN_USE_ELSEWHERE", "Ticket is currently being processed"}
           {:error, reason} ->
             log_check_in(:transaction_failed, %{
               event_id: event_id,
