@@ -13,6 +13,7 @@ defmodule FastCheck.Attendees do
     Attendees.CheckIn,
     Attendees.CheckInSession,
     Cache.CacheManager,
+    Events,
     TickeraClient
   }
 
@@ -84,8 +85,9 @@ defmodule FastCheck.Attendees do
   @doc """
   Processes a check-in attempt for a ticket code.
 
-  Returns `{:ok, attendee, "SUCCESS"}` when the scan is valid, otherwise
-  `{:error, code, message}` describing the failure.
+  Successful scans now invalidate the attendee, stats, and occupancy caches so
+  dashboards refresh immediately. Returns `{:ok, attendee, "SUCCESS"}` when the
+  scan is valid, otherwise `{:error, code, message}` describing the failure.
   """
   @spec check_in(integer(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
@@ -132,6 +134,8 @@ defmodule FastCheck.Attendees do
 
                   case Attendee.changeset(attendee, attrs) |> Repo.update() do
                     {:ok, updated} ->
+                      invalidate_check_in_caches(updated, event_id, sanitized_code)
+                      refresh_event_occupancy(event_id)
                       record_check_in(updated, event_id, "success", sanitized_entrance, operator_name)
                       broadcast_event_stats_async(event_id)
                       log_check_in(:success, %{
@@ -608,6 +612,94 @@ defmodule FastCheck.Attendees do
   end
 
   def delete_attendee_id_cache(_), do: :ok
+
+  defp invalidate_check_in_caches(%Attendee{id: attendee_id}, event_id, ticket_code)
+       when is_integer(event_id) and is_binary(ticket_code) do
+    delete_attendee_cache_entry(event_id, ticket_code)
+    delete_attendee_id_cache(attendee_id)
+    delete_cache_entry("attendees:event:#{event_id}", "event attendees cache")
+    delete_cache_entry("stats:#{event_id}", "event stats cache")
+    purge_local_occupancy_breakdown(event_id)
+    :ok
+  end
+
+  defp invalidate_check_in_caches(_, _, _), do: :ok
+
+  defp delete_attendee_cache_entry(event_id, ticket_code) do
+    case CacheManager.delete_attendee(event_id, ticket_code) do
+      {:ok, true} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warn(
+          "Failed to delete attendee cache entry for event #{event_id} ticket #{ticket_code}: #{inspect(reason)}"
+        )
+
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Attendee cache delete raised for event #{event_id} ticket #{ticket_code}: #{Exception.message(exception)}"
+      )
+
+      :error
+  end
+
+  defp delete_cache_entry(key, description) do
+    case CacheManager.delete(key) do
+      {:ok, true} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warn("Failed to delete #{description} (#{key}): #{inspect(reason)}")
+        :error
+    end
+  rescue
+    exception ->
+      Logger.warn("Cache delete raised for #{description} (#{key}): #{Exception.message(exception)}")
+      :error
+  end
+
+  defp purge_local_occupancy_breakdown(event_id) do
+    cache_key = occupancy_cache_key(event_id)
+
+    if occupancy_cache_available?() do
+      case Cachex.del(@cache_name, cache_key) do
+        {:ok, _} -> :ok
+        {:error, reason} ->
+          Logger.warn(
+            "Failed to purge occupancy breakdown cache for event #{event_id} (#{cache_key}): #{inspect(reason)}"
+          )
+
+          :error
+      end
+    else
+      :ok
+    end
+  rescue
+    exception ->
+      Logger.warn(
+        "Occupancy breakdown cache purge raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      :error
+  end
+
+  defp refresh_event_occupancy(event_id) when is_integer(event_id) do
+    case Events.update_occupancy(event_id, 1) do
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warn("Unable to refresh occupancy for event #{event_id}: #{inspect(reason)}")
+        :ok
+    end
+  rescue
+    exception ->
+      Logger.warn("Occupancy refresh raised for event #{event_id}: #{Exception.message(exception)}")
+      :ok
+  end
+
+  defp refresh_event_occupancy(_), do: :ok
 
   @doc """
   Lists all attendees for the given event ordered by most recent check-in.
