@@ -262,6 +262,8 @@ defmodule FastCheck.Events do
 
     case event |> Changeset.change(%{checked_in_count: checked_in_count}) |> Repo.update() do
       {:ok, updated} ->
+        _ = persist_event_cache(updated)
+        _ = invalidate_events_list_cache()
         updated
 
       {:error, changeset} ->
