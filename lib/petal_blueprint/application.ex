@@ -9,12 +9,7 @@ defmodule PetalBlueprint.Application do
   def start(_type, _args) do
     cache_children =
       if Application.get_env(:fastcheck, :cache_enabled, true) do
-        redis_url = Application.get_env(:fastcheck, :redis_url, "redis://localhost:6379")
-
-        [
-          {Cachex, name: :fastcheck_cache},
-          {Redix, {redis_url, [name: :redix]}}
-        ]
+        [FastCheck.Cache.CacheManager]
       else
         []
       end
