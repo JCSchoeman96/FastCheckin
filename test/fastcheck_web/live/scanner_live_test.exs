@@ -10,8 +10,6 @@ defmodule FastCheckWeb.ScannerLiveTest do
   @api_key "api-key"
   @valid_event_attrs %{
     name: "Launch Week",
-    tickera_api_key_encrypted: @api_key,
-    tickera_api_key_last4: String.slice(@api_key, -4, 4),
     tickera_site_url: "https://example.com",
     status: "active",
     entrance_name: "Main Entrance"
@@ -74,9 +72,17 @@ defmodule FastCheckWeb.ScannerLiveTest do
 
   defp insert_event(attrs \\ %{}) do
     attrs = Map.merge(@valid_event_attrs, attrs)
+    api_key = Map.get(attrs, :tickera_api_key, @api_key)
+    {:ok, encrypted} = FastCheck.Crypto.encrypt(api_key)
+
+    params =
+      attrs
+      |> Map.put(:tickera_api_key_encrypted, encrypted)
+      |> Map.put(:tickera_api_key_last4, String.slice(api_key, -4, 4))
+      |> Map.delete(:tickera_api_key)
 
     %Event{}
-    |> Event.changeset(attrs)
+    |> Event.changeset(params)
     |> Repo.insert!()
   end
 

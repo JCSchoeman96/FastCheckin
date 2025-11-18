@@ -3,12 +3,12 @@ defmodule FastCheck.TickeraClient.Fallback do
   Provides cached Tickera attendee data when the remote API is unreachable.
   """
 
-  import Ecto.Query, only: [from: 2]
+  import Ecto.Query
 
   require Logger
 
   alias FastCheck.Repo
-  alias FastCheck.{Attendees.Attendee, Events.Event}
+  alias FastCheck.{Attendees.Attendee, Events, Events.Event}
 
   @no_cached "NO_CACHED_DATA"
   @timeout_reasons [:timeout, :connect_timeout, :closed, :nxdomain, :enetunreach, :econnrefused]
@@ -63,11 +63,24 @@ defmodule FastCheck.TickeraClient.Fallback do
   def unreachable?({:error, reason}), do: unreachable?(reason)
   def unreachable?(_), do: false
 
-  defp fetch_event(api_key, _site_url) do
-    case Repo.get_by(Event, tickera_api_key_encrypted: api_key) do
-      %Event{} = event -> {:ok, event}
-      nil -> {:error, :event_not_found}
-    end
+  defp fetch_event(api_key, site_url) do
+    Event
+    |> where([e], e.tickera_site_url == ^site_url)
+    |> maybe_filter_last4(api_key)
+    |> Repo.all()
+    |> Enum.reduce_while({:error, :event_not_found}, fn event, _acc ->
+      case Events.get_tickera_api_key(event) do
+        {:ok, stored_key} when stored_key == api_key ->
+          {:halt, {:ok, event}}
+
+        {:error, :decryption_failed} ->
+          Logger.warn("Tickera fallback unable to decrypt credentials for event #{event.id}")
+          {:cont, {:error, :event_not_found}}
+
+        _ ->
+          {:cont, {:error, :event_not_found}}
+      end
+    end)
   end
 
   defp fetch_cached_attendees(event_id) do
@@ -143,4 +156,24 @@ defmodule FastCheck.TickeraClient.Fallback do
       "***#{suffix}"
     end
   end
+
+  defp maybe_filter_last4(query, api_key) do
+    case derive_last4(api_key) do
+      nil -> query
+      last4 -> where(query, [e], e.tickera_api_key_last4 == ^last4)
+    end
+  end
+
+  defp derive_last4(value) when is_binary(value) do
+    trimmed = String.trim(value || "")
+
+    if trimmed == "" do
+      nil
+    else
+      start = max(String.length(trimmed) - 4, 0)
+      String.slice(trimmed, start, 4)
+    end
+  end
+
+  defp derive_last4(_), do: nil
 end
