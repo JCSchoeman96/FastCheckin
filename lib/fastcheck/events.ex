@@ -357,7 +357,7 @@ defmodule FastCheck.Events do
 
   def get_event_stats(_), do: @default_event_stats
 
-  @doc """
+  @doc ~S"""
   Updates the cached occupancy count when a guest enters or exits and
   broadcasts the new totals via PubSub.
 
