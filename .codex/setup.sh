@@ -1,65 +1,39 @@
 #!/bin/bash
 set -e
 # ============================================================================
-# Codex Cloud PETAL Setup - The "Ironclad" Script
+# Codex Cloud PETAL Setup - SSL Bypass Strategy
 # ============================================================================
 
 echo "🔧 [Codex] Starting Setup..."
 
-# ----------------------------------------------------------------------------
-# PHASE 1: SSL & Network Prep (The Fix for "Unknown CA")
-# ----------------------------------------------------------------------------
-echo "🛡️  Configuring SSL & Network..."
-
-# 1. Update OS Certificates (so the OS trusts the proxy)
-if command -v apt-get &>/dev/null; then
-    apt-get update -y && apt-get install -y ca-certificates curl
-fi
-update-ca-certificates --fresh
-
-# 2. VITAL: Force Hex to use the OS certificates we just updated
-#    This bridges the gap between the OS trust store and Erlang's HTTP client.
-export HEX_CACERTS_PATH="/etc/ssl/certs/ca-certificates.crt"
-
-# 3. EDGE CASE FALLBACK: Disable SSL verification if the proxy cert is weird.
-#    This prevents the "Fatal - Unknown CA" error from blocking the build.
-export HEX_UNSAFE_HTTPS=1
-
-# 4. Ensure these env vars persist for future commands in this session
-export HEX_HTTP_TIMEOUT=120
-
-# ----------------------------------------------------------------------------
-# PHASE 2: Install Hex (Solved: Version Match)
-# ----------------------------------------------------------------------------
-echo "📦 Building Hex from source (Ensures version match)..."
-# We use the force flag to overwrite any broken previous installs
+# 1. Build Hex from source (This works and is required)
+echo "📦 [Step 1] Building Hex from source..."
 mix archive.install github hexpm/hex branch latest --force
 
-# ----------------------------------------------------------------------------
-# PHASE 3: Dependency Resolution (Solved: Mirror + Lockfile Reset)
-# ----------------------------------------------------------------------------
-echo "🌐 Configuring Mirrors..."
+# 2. Configure Environment to IGNORE SSL Errors
+# We are setting this because we know 'repo.hex.pm' is reachable, 
+# but the Codex proxy's certificate is untrusted.
+echo "🛡️  [Step 2] Disabling SSL verification for Hex..."
+export HEX_UNSAFE_HTTPS=1
+export HEX_HTTP_TIMEOUT=120
 
-# 1. Force-remove the default repo (it's blocked/slow)
-mix hex.repo remove hexpm --force || true
+# 3. Reset to Default Repository
+# We remove the broken 'upyun' mirror and ensure we are using the standard repo.
+echo "🌐 [Step 3] Resetting to default Hex repository..."
+mix hex.repo remove upyun --force 2>/dev/null || true
+mix hex.repo add hexpm https://repo.hex.pm --force
 
-# 2. Add UpYun Mirror (Fast & Accessible)
-mix hex.repo add upyun https://hexpm.upyun.com
-
-# 3. Nuke the lockfile.
-#    Edge Case: If mix.lock exists, it might force the 'hexpm' repo specifically.
-#    Removing it forces resolution against our new 'upyun' mirror.
-echo "🔓 Removing mix.lock to force resolution..."
+# 4. Remove lockfile to ensure fresh resolution
+echo "🔓 [Step 4] Cleaning lockfile..."
 rm -f mix.lock
 
-# ----------------------------------------------------------------------------
-# PHASE 4: Build
-# ----------------------------------------------------------------------------
-echo "📥 Fetching dependencies..."
+# 5. Fetch Dependencies
+echo "📥 [Step 5] Fetching dependencies (SSL Bypass Active)..."
 mix deps.get
 
+# --- Standard Build Steps ---
 echo "⚙️  Compiling..."
 mix deps.compile
 mix compile
 
-echo "✅ Setup Complete! Environment is ready."
+echo "✅ Setup Complete!"
