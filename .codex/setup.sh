@@ -1,70 +1,100 @@
-#!/bin/bash
-set -e
-# ============================================================================
-# Codex Cloud PETAL Setup - The "Hybrid" Solution
-# Combines Manual Tool Install (Forum Fix) + SSL Trust Path (Cert Fix)
-# ============================================================================
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "🔧 [Codex] Starting Setup..."
+echo "🔧 [Codex] Starting Setup (offline Hex mode)..."
 
-# 1. PREP: Update System Certificates
-# We do this first so the system trusts the Codex Proxy.
+##
+## 1. System certs (harmless; leave it)
+##
 echo "🛡️  [Step 1] Updating System Certificates..."
 if command -v apt-get &>/dev/null; then
-    apt-get update -y && apt-get install -y ca-certificates curl
+  apt-get update -y && apt-get install -y ca-certificates curl
 fi
-update-ca-certificates --fresh
+update-ca-certificates --fresh || true
 
-# 2. RUNTIME: Install Erlang/Elixir via Mise
+##
+## 2. Install Erlang/Elixir via mise
+##
 echo "📦 [Step 2] Verifying Runtime Environment..."
 if command -v mise &>/dev/null; then
   mise install erlang@27.2 elixir@1.18.4-otp-27
   eval "$(mise activate bash)"
 fi
 
-# 3. HEX: Build from source (Bypasses version errors)
-echo "📦 [Step 3] Installing Hex..."
-mix archive.install github hexpm/hex branch latest --force
+##
+## 3. Force Hex into OFFLINE mode
+##    We rely on deps/ + mix.lock being committed already.
+##
+echo "🌐 [Step 3] Forcing Hex into offline mode..."
+export HEX_OFFLINE=1
 
-# 4. REBAR: Manually Install (Bypasses 'mix local.rebar' network block)
-echo "📦 [Step 4] Manually installing Rebar3..."
-mkdir -p "$HOME/.mix"
-curl -fSL https://github.com/erlang/rebar3/releases/latest/download/rebar3 -o "$HOME/.mix/rebar3"
-chmod +x "$HOME/.mix/rebar3"
-mix local.rebar rebar3 "$HOME/.mix/rebar3" --force
+# DO NOT delete mix.lock
+# DO NOT set HEX_MIRROR or HEX_UNSAFE_HTTPS here.
 
-# 5. NETWORK: The Critical Fixes
-echo "🌐 [Step 5] Configuring Network & SSL..."
-# A. Point Erlang to the system certs we just updated (FIXES 'Unknown CA')
-export HEX_CACERTS_PATH="/etc/ssl/certs/ca-certificates.crt"
+##
+## 4. Ensure Rebar3 via GitHub (works through proxy)
+##
+echo "📦 [Step 4] Ensuring Rebar3..."
+REBAR3_PATH="$HOME/.mix/rebar3"
+mkdir -p "$(dirname "$REBAR3_PATH")"
 
-# B. Force UpYun Mirror (Bypasses 'repo.hex.pm' 503 block)
-export HEX_MIRROR="https://hexpm.upyun.com"
+if [ ! -x "$REBAR3_PATH" ]; then
+  curl -fSL \
+    https://github.com/erlang/rebar3/releases/latest/download/rebar3 \
+    -o "$REBAR3_PATH"
+  chmod +x "$REBAR3_PATH"
+fi
 
-# C. Safety Net: Ignore SSL errors if the proxy cert is still weird
-export HEX_UNSAFE_HTTPS=1
+export MIX_REBAR3="$REBAR3_PATH"
 
-# D. Point to our manual Rebar
-export MIX_REBAR3="$HOME/.mix/rebar3"
+##
+## 5. Dependencies: verify only, do NOT fetch from the network.
+##    deps/ must already be present from the repo.
+##
+echo "📥 [Step 5] Verifying dependencies (offline)..."
 
-# 6. DEPENDENCIES: Fetch
-echo "📥 [Step 6] Fetching dependencies..."
-# Force-clean any old locks
-rm -f mix.lock
-mix deps.get
+# This should NOT hit the network because HEX_OFFLINE=1.
+# If deps/ is missing, this will fail and tell you.
+mix deps.get || {
+  echo "❌ mix deps.get failed in offline mode."
+  echo "   Make sure deps/ and mix.lock are committed from a machine with working Hex."
+  exit 1
+}
 
-# 7. TAILWIND: Manual Pre-install
-echo "🎨 [Step 7] Manually installing Tailwind..."
+##
+## 6. Tailwind: download binary from GitHub (proxy allows this).
+##
+echo "🎨 [Step 6] Manually installing Tailwind..."
 TAILWIND_VERSION=3.4.3
-TARGET="linux-x64"
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "$ARCH" in
+  x86_64|amd64) ARCH="x64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  armv7l) ARCH="armv7" ;;
+esac
+
+TARGET="${OS}-${ARCH}"
+if [ "$OS" = "linux" ] && command -v ldd >/dev/null && ldd --version 2>&1 | grep -qi musl; then
+  TARGET="${TARGET}-musl"
+fi
+
 TAILWIND_DEST="_build/tailwind-${TARGET}"
 mkdir -p "$(dirname "$TAILWIND_DEST")"
-curl -fSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-${TARGET}" -o "$TAILWIND_DEST"
+
+curl -fSL \
+  "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-${TARGET}" \
+  -o "$TAILWIND_DEST"
+
 chmod +x "$TAILWIND_DEST"
 
-# --- Standard Build Steps ---
-echo "⚙️  Compiling..."
+##
+## 7. Compile project
+##
+echo "⚙️  [Step 7] Compiling project..."
 mix deps.compile
 mix compile
 
-echo "✅ Setup Complete!"
+echo "✅ Setup Complete (offline Hex)."
