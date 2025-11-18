@@ -9,7 +9,7 @@ defmodule FastCheck.Events do
 
   alias Ecto.Changeset
   alias FastCheck.Attendees.{Attendee, CheckIn}
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
   alias FastCheck.{
     Attendees,
     Cache.CacheManager,
@@ -528,7 +528,7 @@ defmodule FastCheck.Events do
 
         try do
           Phoenix.PubSub.broadcast!(
-            PetalBlueprint.PubSub,
+            FastCheck.PubSub,
             occupancy_topic(event_id),
             {:occupancy_update, payload}
           )
@@ -784,7 +784,7 @@ defmodule FastCheck.Events do
 
   defp broadcast_event_stats(event_id, stats) do
     Phoenix.PubSub.broadcast(
-      PetalBlueprint.PubSub,
+      FastCheck.PubSub,
       stats_topic(event_id),
       {:event_stats_updated, event_id, stats}
     )
@@ -894,7 +894,7 @@ defmodule FastCheck.Events do
 
   defp broadcast_live_occupancy(event_id, current_occupancy) do
     Phoenix.PubSub.broadcast!(
-      PetalBlueprint.PubSub,
+      FastCheck.PubSub,
       "event:#{event_id}:occupancy",
       {:occupancy_changed, current_occupancy, "live_update"}
     )

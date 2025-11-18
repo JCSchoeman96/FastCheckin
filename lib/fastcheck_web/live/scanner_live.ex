@@ -3,7 +3,7 @@ defmodule FastCheckWeb.ScannerLive do
   Real-time scanner interface for on-site staff to check in attendees via QR codes.
   """
 
-  use PetalBlueprintWeb, :live_view
+  use FastCheckWeb, :live_view
 
   import Phoenix.Component, only: [to_form: 1]
 
@@ -46,8 +46,8 @@ defmodule FastCheckWeb.ScannerLive do
         )
 
       if connected?(socket) do
-        PubSub.subscribe(PetalBlueprint.PubSub, event_topic(event_id))
-        PubSub.subscribe(PetalBlueprint.PubSub, occupancy_topic(event_id))
+        PubSub.subscribe(FastCheck.PubSub, event_topic(event_id))
+        PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
       end
 
       {:ok, socket}

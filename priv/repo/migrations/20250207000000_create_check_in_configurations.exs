@@ -1,4 +1,4 @@
-defmodule PetalBlueprint.Repo.Migrations.CreateCheckInConfigurations do
+defmodule FastCheck.Repo.Migrations.CreateCheckInConfigurations do
   use Ecto.Migration
 
   def change do

@@ -1,11 +1,11 @@
 defmodule FastCheckWeb.ScannerLiveTest do
-  use PetalBlueprintWeb.ConnCase, async: true
+  use FastCheckWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
 
   @valid_event_attrs %{
     name: "Launch Week",

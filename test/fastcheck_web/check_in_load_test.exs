@@ -1,12 +1,12 @@
 defmodule FastCheckWeb.CheckInLoadTest do
-  use PetalBlueprintWeb.ConnCase, async: false
+  use FastCheckWeb.ConnCase, async: false
 
   import Phoenix.ConnTest
 
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
 
   @moduletag :capture_log
 
@@ -25,7 +25,7 @@ defmodule FastCheckWeb.CheckInLoadTest do
       scan_codes
       |> Task.async_stream(
         fn ticket_code ->
-          Sandbox.allow(PetalBlueprint.Repo, parent, self())
+          Sandbox.allow(FastCheck.Repo, parent, self())
 
           conn =
             build_conn()

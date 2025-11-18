@@ -146,7 +146,7 @@ defmodule FastCheck.Cache.CacheManager do
   require Logger
   require Cachex.Spec
   alias Phoenix.PubSub
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
   alias FastCheck.Events.CheckInConfiguration
 
   @typedoc """
@@ -189,7 +189,7 @@ defmodule FastCheck.Cache.CacheManager do
   @attendee_prefix "attendee:"
   @stats_prefix "stats:"
 
-  @pubsub PetalBlueprint.PubSub
+  @pubsub FastCheck.PubSub
   @invalidation_event :cache_invalidate
   @config_key {__MODULE__, :config}
 
@@ -619,7 +619,7 @@ defmodule FastCheck.Cache.CacheManager do
   end
 
   defp build_config(opts) do
-    app_opts = Application.get_env(:petal_blueprint, __MODULE__, [])
+    app_opts = Application.get_env(:fastcheck, __MODULE__, [])
 
     @default_config
     |> Keyword.merge(app_opts)

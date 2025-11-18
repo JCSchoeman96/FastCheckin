@@ -6,7 +6,7 @@ defmodule FastCheck.Attendees do
   import Ecto.Query, warn: false
   require Logger
 
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
   alias Phoenix.PubSub
   alias FastCheck.{
     Attendees.Attendee,
@@ -1222,7 +1222,7 @@ defmodule FastCheck.Attendees do
     Task.start(fn ->
       breakdown = get_occupancy_breakdown(event_id)
       PubSub.broadcast(
-        PetalBlueprint.PubSub,
+        FastCheck.PubSub,
         "event:#{event_id}:occupancy",
         {:occupancy_breakdown_updated, event_id, breakdown}
       )
@@ -1357,7 +1357,7 @@ defmodule FastCheck.Attendees do
   defp broadcast_event_stats_async(event_id) when is_integer(event_id) do
     Task.start(fn ->
       stats = get_event_stats(event_id)
-      PubSub.broadcast(PetalBlueprint.PubSub, "event:#{event_id}:stats", {:event_stats_updated, event_id, stats})
+      PubSub.broadcast(FastCheck.PubSub, "event:#{event_id}:stats", {:event_stats_updated, event_id, stats})
     end)
     :ok
   end

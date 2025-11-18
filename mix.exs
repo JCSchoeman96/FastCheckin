@@ -1,9 +1,9 @@
-defmodule PetalBlueprint.MixProject do
+defmodule FastCheck.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :petal_blueprint,
+      app: :fastcheck,
       version: "0.1.0",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -18,7 +18,7 @@ defmodule PetalBlueprint.MixProject do
   # Type `mix help compile.app` for more information.
   def application do
     [
-      mod: {PetalBlueprint.Application, []},
+      mod: {FastCheck.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
@@ -84,10 +84,10 @@ defmodule PetalBlueprint.MixProject do
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["compile", "tailwind petal_blueprint", "esbuild petal_blueprint"],
+      "assets.build": ["compile", "tailwind fastcheck", "esbuild fastcheck"],
       "assets.deploy": [
-        "tailwind petal_blueprint --minify",
-        "esbuild petal_blueprint --minify",
+        "tailwind fastcheck --minify",
+        "esbuild fastcheck --minify",
         "phx.digest"
       ],
       precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]

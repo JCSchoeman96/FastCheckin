@@ -9,7 +9,7 @@ defmodule FastCheckWeb.HealthController do
   require Logger
 
   alias Ecto.Adapters.SQL
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
 
   def check(conn, _params) do
     case SQL.query(Repo, "SELECT 1", []) do

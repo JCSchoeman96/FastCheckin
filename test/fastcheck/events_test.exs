@@ -1,11 +1,11 @@
 defmodule FastCheck.EventsTest do
-  use PetalBlueprint.DataCase, async: true
+  use FastCheck.DataCase, async: true
 
   alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.{Event, CheckInConfiguration}
   alias FastCheck.Attendees.{Attendee, CheckIn}
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
 
   describe "list_events/0" do
     test "returns attendee counts per event" do
@@ -107,7 +107,7 @@ defmodule FastCheck.EventsTest do
         |> Changeset.change(total_tickets: 200)
         |> Repo.update!()
 
-      Phoenix.PubSub.subscribe(PetalBlueprint.PubSub, "event:#{event.id}:occupancy")
+      Phoenix.PubSub.subscribe(FastCheck.PubSub, "event:#{event.id}:occupancy")
 
       assert :ok = Events.broadcast_occupancy_update(event.id, 42)
 

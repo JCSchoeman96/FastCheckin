@@ -20,10 +20,10 @@ config :fastcheck,
 # config/runtime.exs is executed for all environments and is the right place to
 # read secrets that should not be baked into the release.
 
-# Allow operators to run `PHX_SERVER=true bin/petal_blueprint start` so releases
+# Allow operators to run `PHX_SERVER=true bin/fastcheck start` so releases
 # boot the HTTP endpoint automatically.
 if System.get_env("PHX_SERVER") do
-  config :petal_blueprint, PetalBlueprintWeb.Endpoint, server: true
+  config :fastcheck, FastCheckWeb.Endpoint, server: true
 end
 
 if config_env() == :prod do
@@ -33,7 +33,7 @@ if config_env() == :prod do
     System.get_env("DATABASE_URL") ||
       "ecto://postgres:password@pgbouncer:6432/fastcheck_prod"
 
-  config :petal_blueprint, PetalBlueprint.Repo,
+  config :fastcheck, FastCheck.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "50"),
     queue_target: 5_000,
@@ -55,11 +55,11 @@ if config_env() == :prod do
 
   # DNS cluster query makes it possible to auto-discover other nodes when the
   # app runs on Kubernetes or Fly.io. Leave it nil when not clustering.
-  config :petal_blueprint, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+  config :fastcheck, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   # Configure the endpoint with runtime values so releases can adjust ports and
   # hosts without being recompiled.
-  config :petal_blueprint, PetalBlueprintWeb.Endpoint,
+  config :fastcheck, FastCheckWeb.Endpoint,
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
     url: [host: domain, scheme: "https", port: 443],
     check_origin: ["https://#{domain}"],

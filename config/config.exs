@@ -7,19 +7,19 @@
 # General application configuration
 import Config
 
-config :petal_blueprint,
-  ecto_repos: [PetalBlueprint.Repo],
+config :fastcheck,
+  ecto_repos: [FastCheck.Repo],
   generators: [timestamp_type: :utc_datetime]
 
 # Configures the endpoint
-config :petal_blueprint, PetalBlueprintWeb.Endpoint,
+config :fastcheck, FastCheckWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
   render_errors: [
-    formats: [html: PetalBlueprintWeb.ErrorHTML, json: PetalBlueprintWeb.ErrorJSON],
+    formats: [html: FastCheckWeb.ErrorHTML, json: FastCheckWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: PetalBlueprint.PubSub,
+  pubsub_server: FastCheck.PubSub,
   live_view: [signing_salt: "VA/1SpaB"]
 
 # Configures the mailer
@@ -29,12 +29,12 @@ config :petal_blueprint, PetalBlueprintWeb.Endpoint,
 #
 # For production it's recommended to configure a different adapter
 # at the `config/runtime.exs`.
-config :petal_blueprint, PetalBlueprint.Mailer, adapter: Swoosh.Adapters.Local
+config :fastcheck, FastCheck.Mailer, adapter: Swoosh.Adapters.Local
 
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",
-  petal_blueprint: [
+  fastcheck: [
     args:
       ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../assets", __DIR__),
@@ -44,7 +44,7 @@ config :esbuild,
 # Configure tailwind (the version is required)
 config :tailwind,
   version: "4.1.17",
-  petal_blueprint: [
+  fastcheck: [
     args: ~w(
       --input=assets/css/app.css
       --output=priv/static/assets/css/app.css
@@ -58,7 +58,7 @@ config :logger, :default_formatter,
   metadata: [:request_id]
 
 # Cache manager configuration
-config :petal_blueprint, FastCheck.Cache.CacheManager,
+config :fastcheck, FastCheck.Cache.CacheManager,
   cache_name: :fastcheck_cache,
   default_ttl: :timer.hours(1),
   expiration_interval: :timer.minutes(1),

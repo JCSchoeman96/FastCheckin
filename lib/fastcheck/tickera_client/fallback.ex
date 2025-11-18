@@ -7,7 +7,7 @@ defmodule FastCheck.TickeraClient.Fallback do
 
   require Logger
 
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
   alias FastCheck.{Attendees.Attendee, Events.Event}
 
   @no_cached "NO_CACHED_DATA"
