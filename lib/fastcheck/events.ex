@@ -314,7 +314,7 @@ defmodule FastCheck.Events do
     end
   end
 
-  @doc """
+  @doc ~S"""
   Returns cached roll-up statistics for an event including totals and
   occupancy percentage.
 
@@ -331,6 +331,7 @@ defmodule FastCheck.Events do
       iex> Events.get_event_stats(event_id)
       %{checked_in: 5, total_tickets: 10} # Cache hit – served from Cachex
   """
+
   @spec get_event_stats(integer()) :: map()
   def get_event_stats(event_id) when is_integer(event_id) and event_id > 0 do
     cache_key = stats_cache_key(event_id)
