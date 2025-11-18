@@ -748,12 +748,13 @@ defmodule FastCheck.Cache.CacheManager do
 
   defp maybe_enforce_limit do
     max = max_size()
+
     case Cachex.size(cache_name()) do
       {:ok, size} when size > max ->
-        case Cachex.prune(cache_name(), max_size(), reclaim: 0.1) do
+        case Cachex.prune(cache_name(), max, reclaim: 0.1) do
           {:ok, true} ->
             Logger.info(fn ->
-              {"Cache pruned to enforce limit", max_size: max_size(), size: size}
+              {"Cache pruned to enforce limit", max_size: max, size: size}
             end)
 
             :ok
