@@ -389,7 +389,7 @@ defmodule FastCheck.Cache.CacheManager do
     if cache_ready?() do
       case Cachex.clear(cache_name()) do
         {:ok, _} ->
-          Logger.warn("Cache cleared")
+          Logger.warning("Cache cleared")
           :ok
 
         {:error, reason} ->

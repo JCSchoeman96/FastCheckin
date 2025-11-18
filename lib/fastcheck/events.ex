@@ -174,7 +174,7 @@ defmodule FastCheck.Events do
         fetch_and_cache_events()
 
       {:error, reason} ->
-        Logger.warn(fn -> {"events cache unavailable", reason: inspect(reason)} end)
+        Logger.warning(fn -> {"events cache unavailable", reason: inspect(reason)} end)
         fetch_events_from_db()
     end
   end
@@ -213,7 +213,7 @@ defmodule FastCheck.Events do
         fetch_and_cache_event!(event_id)
 
       {:error, reason} ->
-        Logger.warn(fn -> {"event cache unavailable", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"event cache unavailable", event_id: event_id, reason: inspect(reason)} end)
         Repo.get!(Event, event_id)
     end
   end
@@ -350,7 +350,7 @@ defmodule FastCheck.Events do
         fetch_and_cache_event_stats(event_id)
 
       {:error, reason} ->
-        Logger.warn(fn -> {"stats cache unavailable", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"stats cache unavailable", event_id: event_id, reason: inspect(reason)} end)
         compute_event_stats(event_id)
     end
   end
@@ -401,7 +401,7 @@ defmodule FastCheck.Events do
             Logger.debug(fn -> {"occupancy cache updated", event_id: event_id, inside: new_inside} end)
 
           {:error, reason} ->
-            Logger.warn(fn -> {"occupancy cache update failed", event_id: event_id, reason: inspect(reason)} end)
+            Logger.warning(fn -> {"occupancy cache update failed", event_id: event_id, reason: inspect(reason)} end)
         end
 
         broadcast_occupancy_update(event_id, new_inside)
@@ -801,7 +801,7 @@ defmodule FastCheck.Events do
         {inside, Map.put(snapshot, :inside, inside)}
 
       {:error, reason} ->
-        Logger.warn(fn -> {"occupancy cache read failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"occupancy cache read failed", event_id: event_id, reason: inspect(reason)} end)
         inside = recalculate_occupancy_from_db(event_id)
 
         snapshot = %{
@@ -831,7 +831,7 @@ defmodule FastCheck.Events do
     case CacheManager.put(event_config_cache_key(event.id), event, ttl: @event_config_ttl) do
       {:ok, true} -> :ok
       {:error, reason} ->
-        Logger.warn(fn -> {"event cache write failed", event_id: event.id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"event cache write failed", event_id: event.id, reason: inspect(reason)} end)
         :error
     end
   end
@@ -840,7 +840,7 @@ defmodule FastCheck.Events do
     case CacheManager.put(@events_list_cache_key, events, ttl: @events_list_ttl) do
       {:ok, true} -> :ok
       {:error, reason} ->
-        Logger.warn(fn -> {"events cache write failed", reason: inspect(reason)} end)
+        Logger.warning(fn -> {"events cache write failed", reason: inspect(reason)} end)
         :error
     end
   end
@@ -849,7 +849,7 @@ defmodule FastCheck.Events do
     case CacheManager.put(stats_cache_key(event_id), stats, ttl: @stats_ttl) do
       {:ok, true} -> :ok
       {:error, reason} ->
-        Logger.warn(fn -> {"stats cache write failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"stats cache write failed", event_id: event_id, reason: inspect(reason)} end)
         :error
     end
   end
@@ -861,7 +861,7 @@ defmodule FastCheck.Events do
         :ok
 
       {:error, reason} ->
-        Logger.warn(fn -> {"event cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"event cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
         :error
     end
   end
@@ -873,7 +873,7 @@ defmodule FastCheck.Events do
         :ok
 
       {:error, reason} ->
-        Logger.warn(fn -> {"events list cache invalidate failed", reason: inspect(reason)} end)
+        Logger.warning(fn -> {"events list cache invalidate failed", reason: inspect(reason)} end)
         :error
     end
   end
@@ -885,7 +885,7 @@ defmodule FastCheck.Events do
         :ok
 
       {:error, reason} ->
-        Logger.warn(fn -> {"stats cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"stats cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
         :error
     end
   end
@@ -896,14 +896,14 @@ defmodule FastCheck.Events do
     case CacheManager.invalidate_pattern(pattern) do
       {:ok, _} -> :ok
       {:error, reason} ->
-        Logger.warn(fn -> {"occupancy pattern invalidation failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"occupancy pattern invalidation failed", event_id: event_id, reason: inspect(reason)} end)
         :error
     end
 
     case CacheManager.delete(occupancy_cache_key(event_id)) do
       {:ok, _} -> :ok
       {:error, reason} ->
-        Logger.warn(fn -> {"occupancy cache delete failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn -> {"occupancy cache delete failed", event_id: event_id, reason: inspect(reason)} end)
         :error
     end
   end
@@ -1018,7 +1018,7 @@ defmodule FastCheck.Events do
   end
 
   defp log_live_occupancy(event_id, occupancy_map, missing_fields) do
-    Logger.warn(
+    Logger.warning(
       "Live occupancy update for event #{event_id} missing #{Enum.join(missing_fields, ", ")}: #{inspect(occupancy_map)}"
     )
   end
