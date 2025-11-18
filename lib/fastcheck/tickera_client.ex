@@ -5,11 +5,14 @@ defmodule FastCheck.TickeraClient do
 
   require Logger
   alias FastCheck.TickeraClient.Fallback
+  alias Req.Response
+  alias Req.TransportError
 
   @timeout 30_000
   @pagination_delay 100
   @status_timeout 5_000
   @rate_limit_delay 100
+  @request_fun Application.compile_env(:fastcheck, :tickera_request_fun, &Req.request/1)
 
   @doc """
   Fetches the historical check-in events for a ticket checksum.
@@ -37,38 +40,40 @@ defmodule FastCheck.TickeraClient do
       {"accept", "application/json"}
     ]
 
-    options = [timeout: 5_000, recv_timeout: 5_000]
-
-    case HTTPoison.get(url, headers, options) do
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+    case request(:get, url,
+           headers: headers,
+           connect_timeout: 5_000,
+           receive_timeout: 5_000
+         ) do
+      {:ok, %Response{status: code, body: body}} when code in 200..299 ->
         with {:ok, records} <- decode_check_in_history(body) do
           Logger.info("TickeraClient: fetch_check_in_history – SUCCESS")
           {:ok, records}
         end
 
-      {:ok, %HTTPoison.Response{status_code: 401}} ->
+      {:ok, %Response{status: 401}} ->
         Logger.warn("TickeraClient: fetch_check_in_history – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
-      {:ok, %HTTPoison.Response{status_code: 404}} ->
+      {:ok, %Response{status: 404}} ->
         Logger.warn("TickeraClient: fetch_check_in_history – NOT_FOUND")
         {:error, "NOT_FOUND", "Check-in history not found"}
 
-      {:ok, %HTTPoison.Response{status_code: 429}} ->
+      {:ok, %Response{status: 429}} ->
         Logger.warn("TickeraClient: fetch_check_in_history – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+      {:ok, %Response{status: code, body: body}} when code >= 500 ->
         Logger.warn("TickeraClient: fetch_check_in_history – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+      {:ok, %Response{status: code, body: body}} ->
         Logger.error("Tickera check-in history unexpected response (#{code}): #{body}")
         {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
 
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        Logger.error("Tickera check-in history request failed: #{inspect(reason)}")
-        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
+      {:error, error} ->
+        Logger.error("Tickera check-in history request failed: #{inspect(error)}")
+        {:error, "HTTP_ERROR", "#{inspect(error)}"}
     end
   end
 
@@ -301,39 +306,41 @@ defmodule FastCheck.TickeraClient do
       {"accept", "application/json"}
     ]
 
-    options = [timeout: @status_timeout, recv_timeout: @status_timeout]
-
-    case HTTPoison.get(url, headers, options) do
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+    case request(:get, url,
+           headers: headers,
+           connect_timeout: @status_timeout,
+           receive_timeout: @status_timeout
+         ) do
+      {:ok, %Response{status: code, body: body}} when code in 200..299 ->
         with {:ok, payload} <- decode_json_map(body),
              {:ok, normalized} <- normalize_event_occupancy(payload) do
           Logger.info("TickeraClient: get_event_occupancy – SUCCESS")
           {:ok, normalized}
         end
 
-      {:ok, %HTTPoison.Response{status_code: 401}} ->
+      {:ok, %Response{status: 401}} ->
         Logger.warn("TickeraClient: get_event_occupancy – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
-      {:ok, %HTTPoison.Response{status_code: 404}} ->
+      {:ok, %Response{status: 404}} ->
         Logger.warn("TickeraClient: get_event_occupancy – NOT_FOUND")
         {:error, "NOT_FOUND", "Event occupancy not found"}
 
-      {:ok, %HTTPoison.Response{status_code: 429}} ->
+      {:ok, %Response{status: 429}} ->
         Logger.warn("TickeraClient: get_event_occupancy – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+      {:ok, %Response{status: code, body: body}} when code >= 500 ->
         Logger.warn("TickeraClient: get_event_occupancy – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+      {:ok, %Response{status: code, body: body}} ->
         Logger.error("Tickera event occupancy unexpected response (#{code}): #{body}")
         {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
 
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        Logger.error("Tickera event occupancy request failed: #{inspect(reason)}")
-        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
+      {:error, error} ->
+        Logger.error("Tickera event occupancy request failed: #{inspect(error)}")
+        {:error, "HTTP_ERROR", "#{inspect(error)}"}
     end
   end
 
@@ -380,39 +387,41 @@ defmodule FastCheck.TickeraClient do
       {"accept", "application/json"}
     ]
 
-    options = [timeout: @status_timeout, recv_timeout: @status_timeout]
-
-    case HTTPoison.get(url, headers, options) do
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+    case request(:get, url,
+           headers: headers,
+           connect_timeout: @status_timeout,
+           receive_timeout: @status_timeout
+         ) do
+      {:ok, %Response{status: code, body: body}} when code in 200..299 ->
         with {:ok, payload} <- decode_ticket_status(body),
              {:ok, normalized} <- normalize_ticket_payload(payload) do
           Logger.info("TickeraClient: get_ticket_detailed_status – SUCCESS")
           {:ok, normalized}
         end
 
-      {:ok, %HTTPoison.Response{status_code: 401}} ->
+      {:ok, %Response{status: 401}} ->
         Logger.warn("TickeraClient: get_ticket_detailed_status – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
-      {:ok, %HTTPoison.Response{status_code: 404}} ->
+      {:ok, %Response{status: 404}} ->
         Logger.warn("TickeraClient: get_ticket_detailed_status – NOT_FOUND")
         {:error, "NOT_FOUND", "Ticket not found"}
 
-      {:ok, %HTTPoison.Response{status_code: 429}} ->
+      {:ok, %Response{status: 429}} ->
         Logger.warn("TickeraClient: get_ticket_detailed_status – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+      {:ok, %Response{status: code, body: body}} when code >= 500 ->
         Logger.warn("TickeraClient: get_ticket_detailed_status – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+      {:ok, %Response{status: code, body: body}} ->
         Logger.error("Tickera ticket status unexpected response (#{code}): #{body}")
         {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
 
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        Logger.error("Tickera ticket status request failed: #{inspect(reason)}")
-        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
+      {:error, error} ->
+        Logger.error("Tickera ticket status request failed: #{inspect(error)}")
+        {:error, "HTTP_ERROR", "#{inspect(error)}"}
     end
   end
 
@@ -443,39 +452,41 @@ defmodule FastCheck.TickeraClient do
       {"accept", "application/json"}
     ]
 
-    options = [timeout: @status_timeout, recv_timeout: @status_timeout]
-
-    case HTTPoison.get(url, headers, options) do
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+    case request(:get, url,
+           headers: headers,
+           connect_timeout: @status_timeout,
+           receive_timeout: @status_timeout
+         ) do
+      {:ok, %Response{status: code, body: body}} when code in 200..299 ->
         with {:ok, payload} <- decode_json_map(body),
              {:ok, config} <- normalize_ticket_config(payload) do
           Logger.info("TickeraClient: get_ticket_config – SUCCESS")
           {:ok, config}
         end
 
-      {:ok, %HTTPoison.Response{status_code: 401}} ->
+      {:ok, %Response{status: 401}} ->
         Logger.warn("TickeraClient: get_ticket_config – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
-      {:ok, %HTTPoison.Response{status_code: 404}} ->
+      {:ok, %Response{status: 404}} ->
         Logger.warn("TickeraClient: get_ticket_config – NOT_FOUND")
         {:error, "NOT_FOUND", "Ticket type config not found"}
 
-      {:ok, %HTTPoison.Response{status_code: 429}} ->
+      {:ok, %Response{status: 429}} ->
         Logger.warn("TickeraClient: get_ticket_config – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code >= 500 ->
+      {:ok, %Response{status: code, body: body}} when code >= 500 ->
         Logger.warn("TickeraClient: get_ticket_config – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+      {:ok, %Response{status: code, body: body}} ->
         Logger.error("Tickera ticket config unexpected response (#{code}): #{body}")
         {:error, "HTTP_ERROR", "Unexpected HTTP status #{code}"}
 
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        Logger.error("Tickera ticket config request failed: #{inspect(reason)}")
-        {:error, "HTTP_ERROR", "#{inspect(reason)}"}
+      {:error, error} ->
+        Logger.error("Tickera ticket config request failed: #{inspect(error)}")
+        {:error, "HTTP_ERROR", "#{inspect(error)}"}
     end
   end
 
@@ -548,25 +559,28 @@ defmodule FastCheck.TickeraClient do
       {"accept", "application/json"}
     ]
 
-    options = [timeout: 5_000, recv_timeout: 5_000]
-
-    case HTTPoison.post(url, Jason.encode!(payload), headers, options) do
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+    case request(:post, url,
+           headers: headers,
+           body: Jason.encode!(payload),
+           connect_timeout: 5_000,
+           receive_timeout: 5_000
+         ) do
+      {:ok, %Response{status: code, body: body}} when code in 200..299 ->
         with {:ok, decoded} <- decode_json_map(body),
              {:ok, normalized} <- normalize_advanced_check_in(decoded) do
           Logger.info("TickeraClient: submit_advanced_check_in – SUCCESS")
           {:ok, normalized}
         end
 
-      {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+      {:ok, %Response{status: code, body: body}} ->
         Logger.error(
           "TickeraClient: submit_advanced_check_in HTTP #{code} – #{String.slice(body || "", 0, 200)}"
         )
 
         {:error, "HTTP_#{code}", "Tickera returned status #{code}"}
 
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        handle_advanced_network_error(reason)
+      {:error, error} ->
+        handle_advanced_network_error(error)
     end
   end
 
@@ -734,6 +748,15 @@ defmodule FastCheck.TickeraClient do
         {:error, {:fallback_error, fallback_reason}, partial}
     end
   end
+
+  defp handle_advanced_network_error(%TransportError{reason: reason}),
+    do: handle_advanced_network_error(reason)
+
+  defp handle_advanced_network_error(%Mint.TransportError{reason: reason}),
+    do: handle_advanced_network_error(reason)
+
+  defp handle_advanced_network_error(%Finch.Error{reason: reason}),
+    do: handle_advanced_network_error(reason)
 
   defp handle_advanced_network_error(reason) do
     case reason do
@@ -1264,6 +1287,22 @@ defmodule FastCheck.TickeraClient do
   defp ensure_map(value) when is_map(value), do: value
   defp ensure_map(_value), do: %{}
 
+  defp request(method, url, opts \\ []) do
+    req_opts =
+      opts
+      |> Keyword.put(:method, method)
+      |> Keyword.put(:url, url)
+      |> Keyword.update(:headers, [], &List.wrap/1)
+
+    req = Req.new(req_opts)
+
+    request_fun().(req)
+  end
+
+  defp request_fun do
+    Application.get_env(:fastcheck, :tickera_request_fun, @request_fun)
+  end
+
   defp build_url(site_url, api_key, endpoint) do
     trimmed = site_url |> to_string() |> String.trim_trailing("/")
     endpoint = endpoint |> to_string() |> String.trim_leading("/")
@@ -1281,10 +1320,8 @@ defmodule FastCheck.TickeraClient do
 
     try do
       headers = [{"accept", "application/json"}]
-      options = [timeout: @timeout, recv_timeout: @timeout]
-
-      case HTTPoison.get(url, headers, options) do
-        {:ok, %HTTPoison.Response{status_code: code, body: body}} when code in 200..299 ->
+      case request(:get, url, headers: headers, connect_timeout: @timeout, receive_timeout: @timeout) do
+        {:ok, %Response{status: code, body: body}} when code in 200..299 ->
           case Jason.decode(body) do
             {:ok, data} ->
               {:ok, data}
@@ -1294,14 +1331,14 @@ defmodule FastCheck.TickeraClient do
               {:error, {:http_error, :invalid_json, error}}
           end
 
-        {:ok, %HTTPoison.Response{status_code: code, body: body}} ->
+        {:ok, %Response{status: code, body: body}} ->
           reason = classify_http_status(code, body)
           Logger.error("Tickera request failed (status #{code}): #{body}")
           {:error, reason}
 
-        {:error, %HTTPoison.Error{reason: reason}} ->
-          classified = classify_network_reason(reason)
-          Logger.error("Tickera request error: #{inspect(reason)}")
+        {:error, error} ->
+          classified = classify_network_error(error)
+          Logger.error("Tickera request error: #{inspect(error)}")
           {:error, classified}
       end
     rescue
@@ -1315,6 +1352,18 @@ defmodule FastCheck.TickeraClient do
     do: {:server_error, code, body}
 
   defp classify_http_status(code, body), do: {:http_error, code, body}
+
+  defp classify_network_error(%TransportError{reason: reason}),
+    do: classify_network_reason(reason)
+
+  defp classify_network_error(%Mint.TransportError{reason: reason}),
+    do: classify_network_reason(reason)
+
+  defp classify_network_error(%Finch.Error{reason: reason}), do: classify_network_reason(reason)
+  defp classify_network_error(reason) when is_atom(reason) or is_tuple(reason),
+    do: classify_network_reason(reason)
+
+  defp classify_network_error(reason), do: {:network_error, reason}
 
   defp classify_network_reason(reason) when reason in [:timeout, :connect_timeout],
     do: {:network_timeout, reason}

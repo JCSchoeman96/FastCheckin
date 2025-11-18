@@ -60,7 +60,6 @@ defmodule FastCheck.MixProject do
       {:cachex, "~> 3.6"},
       {:redix, "~> 1.2"},
       {:req, "~> 0.5"},
-      {:httpoison, "~> 2.2"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.26"},
