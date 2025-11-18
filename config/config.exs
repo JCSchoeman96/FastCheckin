@@ -11,6 +11,8 @@ config :fastcheck,
   ecto_repos: [FastCheck.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :fastcheck, :event_post_grace_days, 14
+
 # Configures the endpoint
 config :fastcheck, FastCheckWeb.Endpoint,
   url: [host: "localhost"],

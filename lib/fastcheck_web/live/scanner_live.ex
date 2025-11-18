@@ -44,11 +44,16 @@ defmodule FastCheckWeb.ScannerLive do
           search_error: nil,
           camera_permission: default_camera_permission()
         )
+        |> assign_event_state()
 
-      if connected?(socket) do
-        PubSub.subscribe(FastCheck.PubSub, event_topic(event_id))
-        PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
-      end
+      socket =
+        if connected?(socket) do
+          PubSub.subscribe(FastCheck.PubSub, event_topic(event_id))
+          PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
+          schedule_event_state_refresh(socket)
+        else
+          socket
+        end
 
       {:ok, socket}
     else
@@ -160,7 +165,7 @@ defmodule FastCheckWeb.ScannerLive do
   @impl true
   def handle_info({:event_stats_updated, event_id, stats}, socket) do
     if socket.assigns.event_id == event_id do
-      {:noreply, assign(socket, :stats, stats)}
+      {:noreply, socket |> assign(:stats, stats) |> assign_event_state()}
     else
       {:noreply, socket}
     end
@@ -220,6 +225,10 @@ defmodule FastCheckWeb.ScannerLive do
        |> assign(:search_error, "Unable to search attendees right now.")}
   end
 
+  def handle_info(:refresh_event_state, socket) do
+    {:noreply, socket |> assign_event_state() |> schedule_event_state_refresh()}
+  end
+
   def handle_info(_message, socket) do
     {:noreply, socket}
   end
@@ -242,7 +251,27 @@ defmodule FastCheckWeb.ScannerLive do
               Entrance:
               <span class="font-semibold text-white">{entrance_label(@event.entrance_name)}</span>
             </p>
+            <div class="mt-4 flex flex-wrap gap-3">
+              <span
+                class={[
+                  "inline-flex items-center rounded-full px-4 py-1 text-xs font-semibold uppercase tracking-wide",
+                  scanner_lifecycle_badge_class(@event_lifecycle_state)
+                ]}
+              >
+                {scanner_lifecycle_label(@event_lifecycle_state)}
+              </span>
+            </div>
           </header>
+
+          <section
+            :if={@scans_disabled?}
+            class="rounded-3xl border border-red-500/40 bg-red-900/40 px-6 py-4 text-center text-red-100 shadow-lg"
+          >
+            <p class="text-lg font-semibold">Scanning disabled</p>
+            <p class="mt-1 text-sm">
+              {@scans_disabled_message || "Event archived, scanning disabled"}
+            </p>
+          </section>
 
           <section class="rounded-3xl bg-slate-900/85 px-6 py-6 shadow-2xl backdrop-blur">
             <div class="flex flex-col gap-4">
@@ -259,9 +288,10 @@ defmodule FastCheckWeb.ScannerLive do
                   phx-click="set_check_in_type"
                   phx-value-type="entry"
                   class={[
-                    "px-6 py-3 rounded-lg font-bold text-lg transition-all",
+                    "px-6 py-3 rounded-lg font-bold text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
                     @check_in_type == "entry" ? "bg-green-600 text-white shadow-lg" : "bg-slate-700 text-slate-300"
                   ]}
+                  disabled={@scans_disabled?}
                 >
                   ➡️ ENTRY
                 </button>
@@ -269,9 +299,10 @@ defmodule FastCheckWeb.ScannerLive do
                   phx-click="set_check_in_type"
                   phx-value-type="exit"
                   class={[
-                    "px-6 py-3 rounded-lg font-bold text-lg transition-all",
+                    "px-6 py-3 rounded-lg font-bold text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
                     @check_in_type == "exit" ? "bg-orange-600 text-white shadow-lg" : "bg-slate-700 text-slate-300"
                   ]}
+                  disabled={@scans_disabled?}
                 >
                   ⤴️ EXIT
                 </button>
@@ -400,6 +431,12 @@ defmodule FastCheckWeb.ScannerLive do
                   <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
                 </div>
 
+              <% {status: :archived} -> %>
+                <div class="mt-6 p-8 bg-slate-900 border-4 border-red-400 rounded-lg text-center shadow-2xl">
+                  <p class="text-4xl font-bold text-red-200">⏸️ Scanning disabled</p>
+                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                </div>
+
               <% {status: :error} -> %>
                 <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-red-300">✖️ ERROR</p>
@@ -488,10 +525,13 @@ defmodule FastCheckWeb.ScannerLive do
                 autofocus
                 aria-label="Ticket code input"
                 class="w-full rounded-2xl border-2 border-transparent bg-white px-6 py-5 text-xl font-semibold text-slate-900 shadow-lg focus:border-green-400 focus:outline-none focus:ring-4 focus:ring-green-500"
+                disabled={@scans_disabled?}
               />
               <button
                 type="submit"
-                class="mt-4 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300"
+                class="mt-4 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={@scans_disabled?}
+                aria-disabled={@scans_disabled?}
               >
                 Process scan
               </button>
@@ -564,7 +604,7 @@ defmodule FastCheckWeb.ScannerLive do
                     phx-click="manual_check_in"
                     phx-value-ticket-code={attendee.ticket_code}
                     phx-disable-with="Checking..."
-                    disabled={not is_nil(attendee.checked_in_at)}
+                    disabled={@scans_disabled? or not is_nil(attendee.checked_in_at)}
                     data-test={"manual-check-in-#{attendee.ticket_code}"}
                   >
                     Check in
@@ -612,6 +652,23 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   defp process_scan(code, socket) do
+    if socket.assigns.scans_disabled? do
+      message = socket.assigns.scans_disabled_message || "Event archived, scanning disabled"
+
+      {:noreply,
+       socket
+       |> assign(:last_scan_status, :archived)
+       |> assign(:last_scan_result, message)
+       |> assign(:last_scan_reason, nil)
+       |> assign(:last_scan_checkins_used, 0)
+       |> assign(:last_scan_checkins_allowed, 0)
+       |> assign(:ticket_code, "")}
+    else
+      do_process_scan(code, socket)
+    end
+  end
+
+  defp do_process_scan(code, socket) do
     event_id = socket.assigns.event_id
     entrance_name = socket.assigns.event.entrance_name || "Main Entrance"
     check_in_type = socket.assigns.check_in_type || "entry"
@@ -686,7 +743,7 @@ defmodule FastCheckWeb.ScannerLive do
         {:noreply,
          socket
          |> assign(
-           last_scan_status: :invalid,
+            last_scan_status: :invalid,
            last_scan_result: message,
            last_scan_reason: nil,
            last_scan_checkins_used: 0,
@@ -694,19 +751,77 @@ defmodule FastCheckWeb.ScannerLive do
            ticket_code: ""
          )}
 
+      {:error, code, message} when code in ["ARCHIVED_EVENT", "SCANS_DISABLED"] ->
+        {:noreply,
+         socket
+         |> assign(
+           last_scan_status: :archived,
+           last_scan_result: message,
+           last_scan_reason: nil,
+           last_scan_checkins_used: 0,
+           last_scan_checkins_allowed: 0,
+           ticket_code: "",
+           scans_disabled?: true,
+           scans_disabled_message: message,
+           event_lifecycle_state: if(code == "ARCHIVED_EVENT", do: :archived, else: socket.assigns.event_lifecycle_state)
+         )}
+
       {:error, _code, message} ->
         {:noreply,
          socket
          |> assign(
-           last_scan_status: :error,
-           last_scan_result: message,
+            last_scan_status: :error,
+            last_scan_result: message,
            last_scan_reason: nil,
            last_scan_checkins_used: 0,
            last_scan_checkins_allowed: 0
          )}
     end
   end
-  
+
+  defp assign_event_state(socket) do
+    event = Map.get(socket.assigns, :event)
+
+    {state, disabled?, message} =
+      case Events.can_check_in?(event) do
+        {:ok, lifecycle_state} -> {lifecycle_state, false, nil}
+        {:error, {:event_archived, msg}} -> {:archived, true, msg}
+        {:error, {_reason, msg}} -> {:unknown, true, msg || "Scanning disabled"}
+      end
+
+    message_value =
+      if disabled? do
+        message || Map.get(socket.assigns, :scans_disabled_message) || "Event archived, scanning disabled"
+      else
+        nil
+      end
+
+    socket
+    |> assign(:event_lifecycle_state, state)
+    |> assign(:scans_disabled?, disabled?)
+    |> assign(:scans_disabled_message, message_value)
+  end
+
+  defp schedule_event_state_refresh(socket) do
+    if connected?(socket) do
+      Process.send_after(self(), :refresh_event_state, :timer.minutes(1))
+    end
+
+    socket
+  end
+
+  defp scanner_lifecycle_badge_class(:archived), do: "bg-red-500/20 text-red-200"
+  defp scanner_lifecycle_badge_class(:grace), do: "bg-amber-500/20 text-amber-100"
+  defp scanner_lifecycle_badge_class(:upcoming), do: "bg-slate-500/20 text-slate-200"
+  defp scanner_lifecycle_badge_class(:unknown), do: "bg-slate-500/20 text-slate-200"
+  defp scanner_lifecycle_badge_class(_), do: "bg-emerald-500/20 text-emerald-100"
+
+  defp scanner_lifecycle_label(:archived), do: "Archived"
+  defp scanner_lifecycle_label(:grace), do: "In grace period"
+  defp scanner_lifecycle_label(:upcoming), do: "Upcoming"
+  defp scanner_lifecycle_label(:unknown), do: "Status unknown"
+  defp scanner_lifecycle_label(_), do: "Active"
+
   defp update_search_results(search_results, %{} = updated) when is_list(search_results) do
     Enum.map(search_results, fn existing ->
       if Map.get(existing, :ticket_code) == Map.get(updated, :ticket_code), do: updated, else: existing

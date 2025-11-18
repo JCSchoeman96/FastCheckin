@@ -76,6 +76,7 @@ defmodule FastCheck.Events do
   @event_config_ttl :timer.hours(1)
   @events_list_ttl :timer.minutes(15)
   @stats_ttl :timer.minutes(1)
+  @seconds_per_day 86_400
 
   @events_list_cache_key "events:all"
   @default_event_stats %{
@@ -87,6 +88,61 @@ defmodule FastCheck.Events do
     occupancy_percent: 0.0,
     percentage: 0.0
   }
+
+  @doc """
+  Determines an event's lifecycle state using its Tickera start and end dates
+  plus the configured post-event grace period.
+  """
+  @spec event_lifecycle_state(Event.t() | nil, DateTime.t() | NaiveDateTime.t() | nil) ::
+          :unknown | :upcoming | :active | :grace | :archived
+  def event_lifecycle_state(%Event{} = event, reference_datetime \\ DateTime.utc_now()) do
+    now = normalize_reference_datetime(reference_datetime)
+    start_time = normalize_event_datetime(event.tickera_start_date)
+    end_time = normalize_event_datetime(event.tickera_end_date)
+    grace_cutoff = grace_period_end(end_time)
+
+    cond do
+      is_nil(now) -> :unknown
+      is_nil(start_time) and is_nil(end_time) -> :unknown
+      not is_nil(start_time) and NaiveDateTime.compare(now, start_time) == :lt -> :upcoming
+      is_nil(end_time) -> :active
+      NaiveDateTime.compare(now, end_time) in [:lt, :eq] -> :active
+      not is_nil(grace_cutoff) and NaiveDateTime.compare(now, grace_cutoff) in [:lt, :eq] -> :grace
+      true -> :archived
+    end
+  end
+
+  def event_lifecycle_state(_, _), do: :unknown
+
+  @doc """
+  Returns `{:ok, state}` when syncing is allowed or `{:error, {:event_archived, message}}`
+  when the event has moved beyond the grace period.
+  """
+  @spec can_sync_event?(Event.t() | nil, DateTime.t() | NaiveDateTime.t() | nil) ::
+          {:ok, atom()} | {:error, {:event_archived, String.t()} | {:event_missing, String.t()}}
+  def can_sync_event?(%Event{} = event, reference_datetime \\ DateTime.utc_now()) do
+    case event_lifecycle_state(event, reference_datetime) do
+      :archived -> {:error, {:event_archived, "Event archived, sync disabled"}}
+      state -> {:ok, state}
+    end
+  end
+
+  def can_sync_event?(_, _), do: {:error, {:event_missing, "Event not available"}}
+
+  @doc """
+  Returns `{:ok, state}` when check-ins are permitted or `{:error, {:event_archived, message}}`
+  when the event is archived.
+  """
+  @spec can_check_in?(Event.t() | nil, DateTime.t() | NaiveDateTime.t() | nil) ::
+          {:ok, atom()} | {:error, {:event_archived, String.t()} | {:event_missing, String.t()}}
+  def can_check_in?(%Event{} = event, reference_datetime \\ DateTime.utc_now()) do
+    case event_lifecycle_state(event, reference_datetime) do
+      :archived -> {:error, {:event_archived, "Event archived, scanning disabled"}}
+      state -> {:ok, state}
+    end
+  end
+
+  def can_check_in?(_, _), do: {:error, {:event_missing, "Event not available"}}
 
   @doc """
   Creates a new event by validating Tickera credentials, fetching event
@@ -240,46 +296,56 @@ defmodule FastCheck.Events do
         {:error, "Event not found"}
 
       %Event{} = event ->
-        mark_syncing(event)
+        case can_sync_event?(event) do
+          {:ok, _state} ->
+            mark_syncing(event)
 
-        callback = wrap_progress_callback(progress_callback)
+            callback = wrap_progress_callback(progress_callback)
 
-        case get_tickera_api_key(event) do
-          {:ok, api_key} ->
-            case TickeraClient.fetch_all_attendees(
-                   event.tickera_site_url,
-                   api_key,
-                   100,
-                   callback
-                 ) do
-              {:ok, attendees, total_count} ->
-                Logger.info("Fetched #{total_count} attendees for event #{event.id}")
+            case get_tickera_api_key(event) do
+              {:ok, api_key} ->
+                case TickeraClient.fetch_all_attendees(
+                       event.tickera_site_url,
+                       api_key,
+                       100,
+                       callback
+                     ) do
+                  {:ok, attendees, total_count} ->
+                    Logger.info("Fetched #{total_count} attendees for event #{event.id}")
 
-                case Attendees.create_bulk(event.id, attendees) do
-                  {:ok, inserted_count} ->
-                    finalize_sync(event)
-                    count_message = resolve_synced_count(inserted_count, attendees, total_count)
-                    invalidate_event_cache(event.id)
-                    invalidate_events_list_cache()
-                    invalidate_event_stats_cache(event.id)
-                    invalidate_occupancy_cache(event.id)
-                    stats = get_event_stats(event.id)
-                    broadcast_event_stats(event.id, stats)
-                    {:ok, "Synced #{count_message} attendees"}
+                    case Attendees.create_bulk(event.id, attendees) do
+                      {:ok, inserted_count} ->
+                        finalize_sync(event)
+                        count_message = resolve_synced_count(inserted_count, attendees, total_count)
+                        invalidate_event_cache(event.id)
+                        invalidate_events_list_cache()
+                        invalidate_event_stats_cache(event.id)
+                        invalidate_occupancy_cache(event.id)
+                        stats = get_event_stats(event.id)
+                        broadcast_event_stats(event.id, stats)
+                        {:ok, "Synced #{count_message} attendees"}
 
-                  {:error, reason} ->
+                      {:error, reason} ->
+                        mark_error(event, reason)
+                        {:error, format_reason(reason)}
+                    end
+
+                  {:error, reason, _partial} ->
                     mark_error(event, reason)
                     {:error, format_reason(reason)}
                 end
 
-              {:error, reason, _partial} ->
-                mark_error(event, reason)
-                {:error, format_reason(reason)}
+              {:error, :decryption_failed} ->
+                mark_error(event, :decryption_failed)
+                {:error, "Unable to decrypt Tickera credentials"}
             end
 
-          {:error, :decryption_failed} ->
-            mark_error(event, :decryption_failed)
-            {:error, "Unable to decrypt Tickera credentials"}
+          {:error, {:event_archived, message}} ->
+            Logger.warning("Sync attempt blocked for archived event #{event.id}")
+            {:error, message}
+
+          {:error, {_reason, message}} ->
+            {:error, message}
         end
     end
   end
@@ -1644,5 +1710,45 @@ defmodule FastCheck.Events do
       true ->
         length(attendees)
     end
+  end
+
+  defp normalize_reference_datetime(nil), do: DateTime.utc_now() |> DateTime.to_naive()
+
+  defp normalize_reference_datetime(%DateTime{} = datetime) do
+    DateTime.to_naive(datetime)
+  rescue
+    _ -> normalize_reference_datetime(nil)
+  end
+
+  defp normalize_reference_datetime(%NaiveDateTime{} = datetime), do: datetime
+  defp normalize_reference_datetime(_), do: normalize_reference_datetime(nil)
+
+  defp normalize_event_datetime(nil), do: nil
+
+  defp normalize_event_datetime(%NaiveDateTime{} = datetime), do: datetime
+
+  defp normalize_event_datetime(%DateTime{} = datetime) do
+    DateTime.to_naive(datetime)
+  rescue
+    _ -> nil
+  end
+
+  defp normalize_event_datetime(_), do: nil
+
+  defp grace_period_end(nil), do: nil
+
+  defp grace_period_end(%NaiveDateTime{} = end_time) do
+    grace_days = event_post_grace_days()
+
+    if grace_days > 0 do
+      NaiveDateTime.add(end_time, grace_days * @seconds_per_day, :second)
+    else
+      end_time
+    end
+  end
+
+  defp event_post_grace_days do
+    Application.get_env(:fastcheck, :event_post_grace_days, 0)
+    |> normalize_non_neg_integer()
   end
 end
