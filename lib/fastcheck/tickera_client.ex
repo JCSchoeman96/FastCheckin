@@ -52,19 +52,19 @@ defmodule FastCheck.TickeraClient do
         end
 
       {:ok, %Response{status: 401}} ->
-        Logger.warn("TickeraClient: fetch_check_in_history – AUTH_ERROR")
+        Logger.warning("TickeraClient: fetch_check_in_history – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
       {:ok, %Response{status: 404}} ->
-        Logger.warn("TickeraClient: fetch_check_in_history – NOT_FOUND")
+        Logger.warning("TickeraClient: fetch_check_in_history – NOT_FOUND")
         {:error, "NOT_FOUND", "Check-in history not found"}
 
       {:ok, %Response{status: 429}} ->
-        Logger.warn("TickeraClient: fetch_check_in_history – RATE_LIMITED")
+        Logger.warning("TickeraClient: fetch_check_in_history – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
       {:ok, %Response{status: code, body: body}} when code >= 500 ->
-        Logger.warn("TickeraClient: fetch_check_in_history – SERVER_ERROR")
+        Logger.warning("TickeraClient: fetch_check_in_history – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
       {:ok, %Response{status: code, body: body}} ->
@@ -319,19 +319,19 @@ defmodule FastCheck.TickeraClient do
         end
 
       {:ok, %Response{status: 401}} ->
-        Logger.warn("TickeraClient: get_event_occupancy – AUTH_ERROR")
+        Logger.warning("TickeraClient: get_event_occupancy – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
       {:ok, %Response{status: 404}} ->
-        Logger.warn("TickeraClient: get_event_occupancy – NOT_FOUND")
+        Logger.warning("TickeraClient: get_event_occupancy – NOT_FOUND")
         {:error, "NOT_FOUND", "Event occupancy not found"}
 
       {:ok, %Response{status: 429}} ->
-        Logger.warn("TickeraClient: get_event_occupancy – RATE_LIMITED")
+        Logger.warning("TickeraClient: get_event_occupancy – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
       {:ok, %Response{status: code, body: body}} when code >= 500 ->
-        Logger.warn("TickeraClient: get_event_occupancy – SERVER_ERROR")
+        Logger.warning("TickeraClient: get_event_occupancy – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
       {:ok, %Response{status: code, body: body}} ->
@@ -400,19 +400,19 @@ defmodule FastCheck.TickeraClient do
         end
 
       {:ok, %Response{status: 401}} ->
-        Logger.warn("TickeraClient: get_ticket_detailed_status – AUTH_ERROR")
+        Logger.warning("TickeraClient: get_ticket_detailed_status – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
       {:ok, %Response{status: 404}} ->
-        Logger.warn("TickeraClient: get_ticket_detailed_status – NOT_FOUND")
+        Logger.warning("TickeraClient: get_ticket_detailed_status – NOT_FOUND")
         {:error, "NOT_FOUND", "Ticket not found"}
 
       {:ok, %Response{status: 429}} ->
-        Logger.warn("TickeraClient: get_ticket_detailed_status – RATE_LIMITED")
+        Logger.warning("TickeraClient: get_ticket_detailed_status – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
       {:ok, %Response{status: code, body: body}} when code >= 500 ->
-        Logger.warn("TickeraClient: get_ticket_detailed_status – SERVER_ERROR")
+        Logger.warning("TickeraClient: get_ticket_detailed_status – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
       {:ok, %Response{status: code, body: body}} ->
@@ -465,19 +465,19 @@ defmodule FastCheck.TickeraClient do
         end
 
       {:ok, %Response{status: 401}} ->
-        Logger.warn("TickeraClient: get_ticket_config – AUTH_ERROR")
+        Logger.warning("TickeraClient: get_ticket_config – AUTH_ERROR")
         {:error, "AUTH_ERROR", "Authentication failed"}
 
       {:ok, %Response{status: 404}} ->
-        Logger.warn("TickeraClient: get_ticket_config – NOT_FOUND")
+        Logger.warning("TickeraClient: get_ticket_config – NOT_FOUND")
         {:error, "NOT_FOUND", "Ticket type config not found"}
 
       {:ok, %Response{status: 429}} ->
-        Logger.warn("TickeraClient: get_ticket_config – RATE_LIMITED")
+        Logger.warning("TickeraClient: get_ticket_config – RATE_LIMITED")
         {:error, "RATE_LIMITED", "Tickera rate limit reached"}
 
       {:ok, %Response{status: code, body: body}} when code >= 500 ->
-        Logger.warn("TickeraClient: get_ticket_config – SERVER_ERROR")
+        Logger.warning("TickeraClient: get_ticket_config – SERVER_ERROR")
         {:error, "SERVER_ERROR", "Tickera returned status #{code}: #{body}"}
 
       {:ok, %Response{status: code, body: body}} ->
@@ -494,7 +494,7 @@ defmodule FastCheck.TickeraClient do
     case Integer.parse(ticket_type_id) do
       {value, _rest} when value > 0 -> get_ticket_config(site_url, api_key, value)
       _ ->
-        Logger.warn(
+        Logger.warning(
           "TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}"
         )
 
@@ -503,7 +503,7 @@ defmodule FastCheck.TickeraClient do
   end
 
   def get_ticket_config(_site_url, _api_key, ticket_type_id) do
-    Logger.warn("TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}")
+    Logger.warning("TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}")
     {:error, "INVALID_TICKET_TYPE_ID", "Ticket type id must be positive"}
   end
 
@@ -782,9 +782,9 @@ defmodule FastCheck.TickeraClient do
     case extract_business_error(payload) do
       {:error, code, message} = error ->
         if code in @advanced_business_errors do
-          Logger.warn("TickeraClient: submit_advanced_check_in – #{code}")
+          Logger.warning("TickeraClient: submit_advanced_check_in – #{code}")
         else
-          Logger.warn("TickeraClient: submit_advanced_check_in – BUSINESS_ERROR")
+          Logger.warning("TickeraClient: submit_advanced_check_in – BUSINESS_ERROR")
         end
 
         error
@@ -868,7 +868,7 @@ defmodule FastCheck.TickeraClient do
       {:ok, %{} = payload} ->
         case extract_business_error(payload) do
           {:error, code, message} ->
-            Logger.warn("TickeraClient: fetch_check_in_history – #{code}")
+            Logger.warning("TickeraClient: fetch_check_in_history – #{code}")
             {:error, code, message}
 
           :ok ->
@@ -895,7 +895,7 @@ defmodule FastCheck.TickeraClient do
   defp normalize_ticket_config(%{} = payload) do
     case extract_business_error(payload) do
       {:error, code, message} ->
-        Logger.warn("TickeraClient: get_ticket_config – #{code}")
+        Logger.warning("TickeraClient: get_ticket_config – #{code}")
         {:error, code, message}
 
       :ok ->
@@ -930,7 +930,7 @@ defmodule FastCheck.TickeraClient do
   defp normalize_ticket_payload(%{} = payload) do
     case extract_business_error(payload) do
       {:error, code, message} ->
-        Logger.warn("TickeraClient: get_ticket_detailed_status – #{code}")
+        Logger.warning("TickeraClient: get_ticket_detailed_status – #{code}")
         {:error, code, message}
 
       :ok ->
@@ -989,7 +989,7 @@ defmodule FastCheck.TickeraClient do
   defp normalize_event_occupancy(%{} = payload) do
     case extract_business_error(payload) do
       {:error, code, message} ->
-        Logger.warn("TickeraClient: get_event_occupancy – #{code}")
+        Logger.warning("TickeraClient: get_event_occupancy – #{code}")
         {:error, code, message}
 
       :ok ->

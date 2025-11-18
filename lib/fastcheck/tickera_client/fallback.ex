@@ -28,14 +28,14 @@ defmodule FastCheck.TickeraClient.Fallback do
 
       with {:ok, %Event{} = event} <- fetch_event(api_key, site_url),
            {:ok, attendees} <- fetch_cached_attendees(event.id) do
-        Logger.warn(
+        Logger.warning(
           "Tickera fallback activated for event #{event.id} at #{timestamp}: #{inspect(reason)}"
         )
 
         {:ok, attendees}
       else
         {:error, error_reason} ->
-          Logger.warn(
+          Logger.warning(
             "Tickera fallback unavailable for API key #{redact(api_key)} at #{timestamp}: #{inspect(error_reason)}"
           )
 
@@ -74,7 +74,7 @@ defmodule FastCheck.TickeraClient.Fallback do
           {:halt, {:ok, event}}
 
         {:error, :decryption_failed} ->
-          Logger.warn("Tickera fallback unable to decrypt credentials for event #{event.id}")
+          Logger.warning("Tickera fallback unable to decrypt credentials for event #{event.id}")
           {:cont, {:error, :event_not_found}}
 
         _ ->

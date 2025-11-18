@@ -130,7 +130,7 @@ defmodule FastCheck.TickeraCircuitBreaker do
   end
 
   defp open_circuit(%{timer_ref: timer_ref} = state) do
-    Logger.warn("TickeraCircuitBreaker opening circuit after consecutive failures")
+    Logger.warning("TickeraCircuitBreaker opening circuit after consecutive failures")
 
     cancel_timer(timer_ref)
     timer_ref = Process.send_after(self(), :transition_to_half_open, state.open_timeout)
