@@ -1,11 +1,11 @@
 defmodule FastCheck.AttendeesTest do
-  use PetalBlueprint.DataCase, async: true
+  use FastCheck.DataCase, async: true
 
   alias Cachex
   alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
-  alias PetalBlueprint.Repo
+  alias FastCheck.Repo
   alias Phoenix.PubSub
   alias Ecto.Adapters.SQL.Sandbox
 
@@ -69,7 +69,7 @@ defmodule FastCheck.AttendeesTest do
         })
 
       topic = "event:#{event.id}:stats"
-      :ok = PubSub.subscribe(PetalBlueprint.PubSub, topic)
+      :ok = PubSub.subscribe(FastCheck.PubSub, topic)
 
       assert {:ok, %Attendee{}, "SUCCESS"} =
                Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
@@ -114,7 +114,7 @@ defmodule FastCheck.AttendeesTest do
         1..2
         |> Enum.map(fn _ ->
           Task.async(fn ->
-            Sandbox.allow(PetalBlueprint.Repo, parent, self())
+            Sandbox.allow(FastCheck.Repo, parent, self())
             Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "North Gate", "Scanner")
           end)
         end)

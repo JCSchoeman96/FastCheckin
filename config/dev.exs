@@ -1,11 +1,11 @@
 import Config
 
 # Configure your database
-config :petal_blueprint, PetalBlueprint.Repo,
+config :fastcheck, FastCheck.Repo,
   username: "postgres",
   password: "3S2MFp8s5b3xye8YQ2rJ",
   hostname: "localhost",
-  database: "petal_blueprint_dev",
+  database: "fastcheck_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 20,
@@ -19,7 +19,7 @@ config :petal_blueprint, PetalBlueprint.Repo,
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
-config :petal_blueprint, PetalBlueprintWeb.Endpoint,
+config :fastcheck, FastCheckWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {127, 0, 0, 1}, port: String.to_integer(System.get_env("PORT") || "4000")],
@@ -28,8 +28,8 @@ config :petal_blueprint, PetalBlueprintWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "bwacjdLNrUIRXobPOlKcOVcenk24MXSG3lgvALulPJOYKIDUIOzGw75pMy4V2P+3",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:petal_blueprint, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:petal_blueprint, ~w(--watch)]}
+    esbuild: {Esbuild, :install_and_run, [:fastcheck, ~w(--sourcemap=inline --watch)]},
+    tailwind: {Tailwind, :install_and_run, [:fastcheck, ~w(--watch)]}
   ]
 
 # ## SSL Support
@@ -56,18 +56,18 @@ config :petal_blueprint, PetalBlueprintWeb.Endpoint,
 # different ports.
 
 # Watch static and templates for browser reloading.
-config :petal_blueprint, PetalBlueprintWeb.Endpoint,
+config :fastcheck, FastCheckWeb.Endpoint,
   live_reload: [
     web_console_logger: true,
     patterns: [
       ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
       ~r"priv/gettext/.*(po)$",
-      ~r"lib/petal_blueprint_web/(?:controllers|live|components|router)/?.*\.(ex|heex)$"
+      ~r"lib/fastcheck_web/(?:controllers|live|components|router)/?.*\.(ex|heex)$"
     ]
   ]
 
 # Enable dev routes for dashboard and mailbox
-config :petal_blueprint, dev_routes: true
+config :fastcheck, dev_routes: true
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

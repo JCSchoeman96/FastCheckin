@@ -4,7 +4,7 @@ defmodule FastCheckWeb.DashboardLive do
   monitoring high-level statistics.
   """
 
-  use PetalBlueprintWeb, :live_view
+  use FastCheckWeb, :live_view
 
   import Phoenix.Component, only: [to_form: 1]
 

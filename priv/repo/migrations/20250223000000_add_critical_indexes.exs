@@ -1,4 +1,4 @@
-defmodule PetalBlueprint.Repo.Migrations.AddCriticalIndexes do
+defmodule FastCheck.Repo.Migrations.AddCriticalIndexes do
   use Ecto.Migration
 
   def change do

@@ -1,4 +1,4 @@
-defmodule PetalBlueprint.Repo.Migrations.CreateIndexesOptimization do
+defmodule FastCheck.Repo.Migrations.CreateIndexesOptimization do
   use Ecto.Migration
 
   def change do

@@ -1,2 +1,2 @@
 ExUnit.start()
-Ecto.Adapters.SQL.Sandbox.mode(PetalBlueprint.Repo, :manual)
+Ecto.Adapters.SQL.Sandbox.mode(FastCheck.Repo, :manual)

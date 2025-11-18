@@ -5,7 +5,7 @@
 @import "../vendor/mishka_chelekom.css";
 @source "../css";
 @source "../js";
-@source "../../lib/petal_blueprint_web";
+@source "../../lib/fastcheck_web";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */

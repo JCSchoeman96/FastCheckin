@@ -21,7 +21,7 @@ defmodule FastCheckWeb.OccupancyLive do
         |> assign_dashboard(event, stats)
 
       if connected?(socket) do
-        PubSub.subscribe(PetalBlueprint.PubSub, occupancy_topic(event_id))
+        PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
       end
 
       {:ok, socket}
