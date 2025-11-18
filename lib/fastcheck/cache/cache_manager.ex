@@ -747,8 +747,9 @@ defmodule FastCheck.Cache.CacheManager do
   end
 
   defp maybe_enforce_limit do
+    max = max_size()
     case Cachex.size(cache_name()) do
-      {:ok, size} when size > max_size() ->
+      {:ok, size} when size > max ->
         case Cachex.prune(cache_name(), max_size(), reclaim: 0.1) do
           {:ok, true} ->
             Logger.info(fn ->
