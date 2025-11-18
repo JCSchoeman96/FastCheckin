@@ -142,11 +142,12 @@ defmodule FastCheck.EventsTest do
 
   defp insert_event!(name) do
     api_key = "key-#{System.unique_integer([:positive])}"
+    {:ok, encrypted} = FastCheck.Crypto.encrypt(api_key)
 
     %Event{}
     |> Event.changeset(%{
       name: name,
-      tickera_api_key_encrypted: api_key,
+      tickera_api_key_encrypted: encrypted,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
       tickera_site_url: "https://example.com"
     })
@@ -187,5 +188,49 @@ defmodule FastCheck.EventsTest do
   defp today_start_of_day do
     {:ok, start_of_day} = DateTime.new(Date.utc_today(), ~T[00:00:00], "Etc/UTC")
     start_of_day
+  end
+
+  describe "Tickera credential helpers" do
+    test "set_tickera_credentials encrypts and returns struct" do
+      api_key = "new-key-#{System.unique_integer([:positive])}"
+      {:ok, cred_struct} =
+        Events.set_tickera_credentials(
+          %Event{},
+          "https://demo.example.com",
+          api_key,
+          ~N[2024-01-01 10:00:00],
+          ~N[2024-01-02 10:00:00]
+        )
+
+      assert cred_struct.tickera_site_url == "https://demo.example.com"
+      assert cred_struct.status == "active"
+      assert cred_struct.tickera_api_key_last4 == String.slice(api_key, -4, 4)
+      assert {:ok, decrypted} = Events.get_tickera_api_key(cred_struct)
+      assert decrypted == api_key
+    end
+
+    test "set_tickera_credentials updates persisted event" do
+      event = insert_event!("Credentials")
+      api_key = "rotated-#{System.unique_integer([:positive])}"
+
+      {:ok, updated} =
+        Events.set_tickera_credentials(event, "https://rotated.example.com", api_key, nil, nil)
+
+      assert updated.tickera_site_url == "https://rotated.example.com"
+      assert updated.tickera_api_key_last4 == String.slice(api_key, -4, 4)
+      assert {:ok, decrypted} = Events.get_tickera_api_key(updated)
+      assert decrypted == api_key
+    end
+
+    test "touch_last_sync and touch_last_soft_sync update timestamps" do
+      event = insert_event!("Timestamps")
+
+      assert :ok = Events.touch_last_sync(event.id)
+      assert :ok = Events.touch_last_soft_sync(event.id)
+
+      refreshed = Repo.get!(Event, event.id)
+      assert refreshed.last_sync_at
+      assert refreshed.last_soft_sync_at
+    end
   end
 end

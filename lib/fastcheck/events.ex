@@ -13,6 +13,7 @@ defmodule FastCheck.Events do
   alias FastCheck.{
     Attendees,
     Cache.CacheManager,
+    Crypto,
     Events.CheckInConfiguration,
     Events.Event
   }
@@ -36,6 +37,15 @@ defmodule FastCheck.Events do
     "last_sync_at" => :last_sync_at,
     "last_soft_sync_at" => :last_soft_sync_at
   }
+
+  @credential_fields [
+    :tickera_site_url,
+    :tickera_api_key_encrypted,
+    :tickera_api_key_last4,
+    :tickera_start_date,
+    :tickera_end_date,
+    :status
+  ]
 
   @config_fields [
     :ticket_type,
@@ -98,9 +108,15 @@ defmodule FastCheck.Events do
       fetch_attr(attrs, "tickera_api_key_encrypted") ||
         fetch_attr(attrs, "api_key")
 
+    start_date = fetch_attr(attrs, "tickera_start_date")
+    end_date = fetch_attr(attrs, "tickera_end_date")
+
     with :ok <- ensure_credentials(site_url, api_key),
          {:ok, essentials} <- TickeraClient.get_event_essentials(site_url, api_key),
-         event_attrs <- build_event_attrs(attrs, essentials),
+         {:ok, credential_struct} <-
+           set_tickera_credentials(%Event{}, site_url, api_key, start_date, end_date),
+         credential_attrs <- credential_attrs_from_struct(credential_struct),
+         event_attrs <- build_event_attrs(attrs, essentials) |> Map.merge(credential_attrs),
          {:ok, %Event{} = event} <- %Event{} |> Event.changeset(event_attrs) |> Repo.insert() do
       Logger.info("Created event #{event.id} for site #{site_url}")
       _ = persist_event_cache(event)
@@ -113,6 +129,10 @@ defmodule FastCheck.Events do
 
       {:error, %Changeset{} = changeset} ->
         {:error, changeset}
+
+      {:error, :encryption_failed} ->
+        Logger.error("Unable to store credentials for #{site_url}: encryption failed")
+        {:error, "Unable to store Tickera credentials"}
 
       {:error, reason} ->
         Logger.error("Unable to create event: #{inspect(reason)}")
@@ -224,35 +244,42 @@ defmodule FastCheck.Events do
 
         callback = wrap_progress_callback(progress_callback)
 
-        case TickeraClient.fetch_all_attendees(
-               event.tickera_site_url,
-               event.tickera_api_key_encrypted,
-               100,
-               callback
-             ) do
-          {:ok, attendees, total_count} ->
-            Logger.info("Fetched #{total_count} attendees for event #{event.id}")
+        case get_tickera_api_key(event) do
+          {:ok, api_key} ->
+            case TickeraClient.fetch_all_attendees(
+                   event.tickera_site_url,
+                   api_key,
+                   100,
+                   callback
+                 ) do
+              {:ok, attendees, total_count} ->
+                Logger.info("Fetched #{total_count} attendees for event #{event.id}")
 
-            case Attendees.create_bulk(event.id, attendees) do
-              {:ok, inserted_count} ->
-                finalize_sync(event)
-                count_message = resolve_synced_count(inserted_count, attendees, total_count)
-                invalidate_event_cache(event.id)
-                invalidate_events_list_cache()
-                invalidate_event_stats_cache(event.id)
-                invalidate_occupancy_cache(event.id)
-                stats = get_event_stats(event.id)
-                broadcast_event_stats(event.id, stats)
-                {:ok, "Synced #{count_message} attendees"}
+                case Attendees.create_bulk(event.id, attendees) do
+                  {:ok, inserted_count} ->
+                    finalize_sync(event)
+                    count_message = resolve_synced_count(inserted_count, attendees, total_count)
+                    invalidate_event_cache(event.id)
+                    invalidate_events_list_cache()
+                    invalidate_event_stats_cache(event.id)
+                    invalidate_occupancy_cache(event.id)
+                    stats = get_event_stats(event.id)
+                    broadcast_event_stats(event.id, stats)
+                    {:ok, "Synced #{count_message} attendees"}
 
-              {:error, reason} ->
+                  {:error, reason} ->
+                    mark_error(event, reason)
+                    {:error, format_reason(reason)}
+                end
+
+              {:error, reason, _partial} ->
                 mark_error(event, reason)
                 {:error, format_reason(reason)}
             end
 
-          {:error, reason, _partial} ->
-            mark_error(event, reason)
-            {:error, format_reason(reason)}
+          {:error, :decryption_failed} ->
+            mark_error(event, :decryption_failed)
+            {:error, "Unable to decrypt Tickera credentials"}
         end
     end
   end
@@ -519,6 +546,10 @@ defmodule FastCheck.Events do
         Logger.error("Live occupancy update failed for event #{event_id}: missing credentials")
         {:error, "MISSING_CREDENTIALS"}
 
+      {:error, :decryption_failed} ->
+        Logger.error("Live occupancy update failed for event #{event_id}: credential decryption failed")
+        {:error, "CREDENTIAL_DECRYPTION_FAILED"}
+
       {:error, code, message} ->
         Logger.error("Live occupancy update failed for event #{event_id}: #{code} – #{message}")
         {:error, "OCCUPANCY_FETCH_FAILED"}
@@ -581,20 +612,28 @@ defmodule FastCheck.Events do
           Repo.rollback("EVENT_NOT_FOUND")
 
         %Event{} = event ->
-          case ensure_event_credentials_present(event) do
-            :ok ->
+          case ensure_event_credentials(event) do
+            {:ok, _site_url, api_key} ->
               ticket_type_ids = load_ticket_type_ids(event.id)
 
-              case persist_ticket_configs(event, ticket_type_ids) do
+              case persist_ticket_configs(event, ticket_type_ids, api_key) do
                 {:ok, count} ->
                   case touch_last_config_sync(event.id) do
-                    :ok -> count
+                    :ok ->
+                      case touch_last_soft_sync(event.id) do
+                        :ok -> count
+                        {:error, reason} -> Repo.rollback(reason)
+                      end
+
                     {:error, reason} -> Repo.rollback(reason)
                   end
 
                 {:error, reason} ->
                   Repo.rollback(reason)
               end
+
+            {:error, :decryption_failed} ->
+              Repo.rollback("CREDENTIAL_DECRYPTION_FAILED")
 
             {:error, reason} ->
               Repo.rollback(reason)
@@ -605,7 +644,8 @@ defmodule FastCheck.Events do
       {:ok, count} ->
         {:ok, count}
 
-      {:error, reason} when reason in ["EVENT_NOT_FOUND", "MISSING_CREDENTIALS", "CONFIG_FETCH_FAILED"] ->
+      {:error, reason}
+      when reason in ["EVENT_NOT_FOUND", "MISSING_CREDENTIALS", "CONFIG_FETCH_FAILED", "CREDENTIAL_DECRYPTION_FAILED"] ->
         {:error, reason}
 
       {:error, reason} when is_binary(reason) ->
@@ -617,6 +657,75 @@ defmodule FastCheck.Events do
   end
 
   def fetch_and_store_ticket_configs(_), do: {:error, "INVALID_EVENT"}
+
+  @doc """
+  Encrypts and persists Tickera credentials for the provided event.
+
+  When called with a new `%Event{}` struct, the encrypted attributes are returned on
+  the struct so they can be merged into a changeset prior to insert.
+  """
+  @spec set_tickera_credentials(Event.t(), String.t(), String.t(), NaiveDateTime.t() | nil, NaiveDateTime.t() | nil) ::
+          {:ok, Event.t()} | {:error, term()}
+  def set_tickera_credentials(%Event{} = event, site_url, api_key, start_date, end_date)
+      when is_binary(site_url) and is_binary(api_key) do
+    with {:ok, encrypted} <- Crypto.encrypt(api_key),
+         attrs <-
+           %{
+             tickera_site_url: String.trim(site_url),
+             tickera_api_key_encrypted: encrypted,
+             tickera_api_key_last4: derive_last4(api_key),
+             tickera_start_date: start_date,
+             tickera_end_date: end_date,
+             status: "active"
+           } do
+      apply_credential_attrs(event, attrs)
+    end
+  end
+
+  def set_tickera_credentials(_event, _site_url, _api_key, _start_date, _end_date),
+    do: {:error, :invalid_credentials}
+
+  @doc """
+  Decrypts the stored Tickera API key for the event.
+  """
+  @spec get_tickera_api_key(Event.t() | nil) :: {:ok, String.t()} | {:error, :decryption_failed}
+  def get_tickera_api_key(%Event{id: id, tickera_api_key_encrypted: encrypted}) when is_binary(encrypted) do
+    case Crypto.decrypt(encrypted) do
+      {:ok, api_key} -> {:ok, api_key}
+      {:error, :decryption_failed} ->
+        Logger.warning("Unable to decrypt Tickera API key for event #{id}")
+        {:error, :decryption_failed}
+    end
+  end
+
+  def get_tickera_api_key(%Event{id: id}) do
+    Logger.warning("Event #{id} is missing encrypted Tickera credentials")
+    {:error, :decryption_failed}
+  end
+
+  def get_tickera_api_key(_), do: {:error, :decryption_failed}
+
+  @doc """
+  Updates `last_sync_at` to the current timestamp for the event.
+  """
+  @spec touch_last_sync(integer()) :: :ok | {:error, term()}
+  def touch_last_sync(event_id) when is_integer(event_id) and event_id > 0 do
+    timestamp = current_timestamp()
+    update_sync_timestamp(event_id, %{last_sync_at: timestamp}, timestamp)
+  end
+
+  def touch_last_sync(_), do: {:error, :invalid_event}
+
+  @doc """
+  Updates `last_soft_sync_at` to the current timestamp for the event.
+  """
+  @spec touch_last_soft_sync(integer()) :: :ok | {:error, term()}
+  def touch_last_soft_sync(event_id) when is_integer(event_id) and event_id > 0 do
+    timestamp = current_timestamp()
+    update_sync_timestamp(event_id, %{last_soft_sync_at: timestamp}, timestamp)
+  end
+
+  def touch_last_soft_sync(_), do: {:error, :invalid_event}
 
   defp fetch_and_cache_events do
     events = fetch_events_from_db()
@@ -825,14 +934,16 @@ defmodule FastCheck.Events do
 
   defp ensure_credentials(_site_url, _api_key), do: {:error, :invalid_credentials}
 
-  defp ensure_event_credentials(%Event{
-         tickera_site_url: site_url,
-         tickera_api_key_encrypted: api_key
-       }) do
-    if present?(site_url) and present?(api_key) do
-      {:ok, site_url, api_key}
-    else
-      {:error, "MISSING_CREDENTIALS"}
+  defp ensure_event_credentials(%Event{tickera_site_url: site_url} = event) do
+    cond do
+      not present?(site_url) ->
+        {:error, "MISSING_CREDENTIALS"}
+
+      true ->
+        case get_tickera_api_key(event) do
+          {:ok, api_key} -> {:ok, site_url, api_key}
+          {:error, :decryption_failed} -> {:error, :decryption_failed}
+        end
     end
   end
 
@@ -965,18 +1076,6 @@ defmodule FastCheck.Events do
   defp ensure_map(%{} = value), do: value
   defp ensure_map(_), do: %{}
 
-  defp ensure_event_credentials_present(%Event{
-         tickera_site_url: site_url,
-         tickera_api_key_encrypted: api_key
-       }) do
-    if present?(site_url) and present?(api_key) do
-      :ok
-    else
-      Logger.error("Event missing credentials for ticket config sync")
-      {:error, "MISSING_CREDENTIALS"}
-    end
-  end
-
   defp load_ticket_type_ids(event_id) do
     from(a in Attendee,
       where: a.event_id == ^event_id and not is_nil(a.ticket_type_id),
@@ -1027,18 +1126,19 @@ defmodule FastCheck.Events do
 
   defp normalize_ticket_type_id(_), do: nil
 
-  defp persist_ticket_configs(%Event{id: event_id} = event, []) do
+  defp persist_ticket_configs(%Event{id: event_id} = event, [], _api_key) do
     Logger.info("No ticket types discovered for event #{event_id}; skipping config sync")
     {:ok, 0}
   end
 
-  defp persist_ticket_configs(%Event{id: event_id} = event, ticket_type_ids) when is_list(ticket_type_ids) do
+  defp persist_ticket_configs(%Event{id: event_id} = event, ticket_type_ids, api_key)
+       when is_list(ticket_type_ids) do
     ticket_type_ids
     |> Enum.reduce_while({:ok, 0}, fn ticket_type_id, {:ok, count} ->
       case
              TickeraClient.get_ticket_config(
                event.tickera_site_url,
-               event.tickera_api_key_encrypted,
+               api_key,
                ticket_type_id
              ) do
         {:ok, config} ->
@@ -1190,30 +1290,50 @@ defmodule FastCheck.Events do
 
   defp derive_last4(_), do: nil
 
+  defp credential_attrs_from_struct(%Event{} = event) do
+    event
+    |> Map.take(@credential_fields)
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp apply_credential_attrs(%Event{} = event, attrs) do
+    case event.__meta__.state do
+      :built ->
+        {:ok, struct(event, attrs)}
+
+      _ ->
+        event
+        |> Event.changeset(attrs)
+        |> Repo.update()
+        |> case do
+          {:ok, %Event{} = updated} ->
+            invalidate_event_cache(updated.id)
+            invalidate_events_list_cache()
+            {:ok, updated}
+
+          other ->
+            other
+        end
+    end
+  end
+
   defp build_event_attrs(attrs, essentials) do
     event_datetime =
       Map.get(essentials, "event_date_time") ||
         Map.get(essentials, :event_date_time)
 
     {event_date, event_time} = split_datetime(event_datetime)
-    api_key = fetch_attr(attrs, "tickera_api_key_encrypted") || fetch_attr(attrs, "api_key")
-    site_url = fetch_attr(attrs, "tickera_site_url") || fetch_attr(attrs, "site_url")
 
     %{
       name:
         fetch_attr(attrs, "name") || Map.get(essentials, "event_name") ||
           Map.get(essentials, :event_name),
-      tickera_api_key_encrypted: api_key,
-      tickera_api_key_last4: fetch_attr(attrs, "tickera_api_key_last4") || derive_last4(api_key),
-      tickera_site_url: site_url,
-      status: fetch_attr(attrs, "status") || "active",
       entrance_name: fetch_attr(attrs, "entrance_name"),
       location: fetch_attr(attrs, "location"),
       total_tickets: Map.get(essentials, "total_tickets") || Map.get(essentials, :total_tickets),
       event_date: fetch_attr(attrs, "event_date") || event_date,
       event_time: fetch_attr(attrs, "event_time") || event_time,
-      tickera_start_date: fetch_attr(attrs, "tickera_start_date"),
-      tickera_end_date: fetch_attr(attrs, "tickera_end_date"),
       last_sync_at: fetch_attr(attrs, "last_sync_at"),
       last_soft_sync_at: fetch_attr(attrs, "last_soft_sync_at")
     }
@@ -1274,6 +1394,11 @@ defmodule FastCheck.Events do
          |> Changeset.change(%{status: "syncing", sync_started_at: now, sync_completed_at: nil})
          |> Repo.update() do
       {:ok, _} ->
+        case touch_last_sync(event.id) do
+          :ok -> :ok
+          {:error, reason} ->
+            Logger.warning("Unable to update last sync timestamp for event #{event.id}: #{inspect(reason)}")
+        end
         invalidate_event_cache(event.id)
         invalidate_events_list_cache()
         :ok
@@ -1397,6 +1522,27 @@ defmodule FastCheck.Events do
   defp normalize_count(nil), do: 0
   defp normalize_count(value) when is_integer(value), do: value
   defp normalize_count(value) when is_float(value), do: round(value)
+
+  defp update_sync_timestamp(event_id, attrs, updated_at) do
+    updates =
+      attrs
+      |> Map.put(:updated_at, updated_at)
+      |> Enum.to_list()
+
+    case from(e in Event, where: e.id == ^event_id) |> Repo.update_all(set: updates) do
+      {1, _} ->
+        invalidate_event_cache(event_id)
+        invalidate_events_list_cache()
+        :ok
+
+      _ ->
+        {:error, :event_not_found}
+    end
+  end
+
+  defp current_timestamp do
+    DateTime.utc_now() |> DateTime.truncate(:second)
+  end
 
   defp normalize_count(%Decimal{} = value) do
     value
