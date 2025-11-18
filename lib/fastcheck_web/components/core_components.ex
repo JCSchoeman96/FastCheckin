@@ -9,15 +9,16 @@ defmodule FastCheckWeb.CoreComponents do
   them in any way you want, based on your application growth and needs.
 
   The foundation for styling is Tailwind CSS, a utility-first CSS framework,
-  augmented with daisyUI, a Tailwind CSS plugin that provides UI components
-  and themes. Here are useful references:
-
-    * [daisyUI](https://daisyui.com/docs/intro/) - a good place to get
-      started and see the available components.
+  plus FastCheck's custom design tokens defined in `assets/css/app.css` and
+  `assets/vendor/mishka_chelekom.css`. Here are useful references:
 
     * [Tailwind CSS](https://tailwindcss.com) - the foundational framework
       we build on. You will use it for layout, sizing, flexbox, grid, and
       spacing.
+
+    * FastCheck design tokens - see `assets/vendor/mishka_chelekom.css` for
+      color names like `primary-light` or `base-text-dark` that are exposed
+      as Tailwind utilities through the `@theme` block in `app.css`.
 
     * [Heroicons](https://heroicons.com) - see `icon/1` for usage.
 
@@ -56,13 +57,16 @@ defmodule FastCheckWeb.CoreComponents do
       id={@id}
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
-      class="toast toast-top toast-end z-50"
+      class="fixed inset-x-4 top-4 z-50 flex flex-col gap-3 sm:items-end"
       {@rest}
     >
       <div class={[
-        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
-        @kind == :info && "alert-info",
-        @kind == :error && "alert-error"
+        "flex w-full max-w-md items-start gap-3 rounded-2xl border px-4 py-3 text-sm shadow-lg backdrop-blur-sm sm:w-96",
+        "text-base-text-light dark:text-base-text-dark",
+        @kind == :info &&
+          "border-info-bordered-text-light bg-info-bordered-bg-light text-info-bordered-text-light dark:border-info-bordered-text-dark dark:bg-info-bordered-bg-dark dark:text-info-bordered-text-dark",
+        @kind == :error &&
+          "border-danger-bordered-text-light bg-danger-bordered-bg-light text-danger-bordered-text-light dark:border-danger-bordered-text-dark dark:bg-danger-bordered-bg-dark dark:text-danger-bordered-text-dark"
       ]}>
         <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
         <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
@@ -71,8 +75,12 @@ defmodule FastCheckWeb.CoreComponents do
           <p>{msg}</p>
         </div>
         <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label={gettext("close")}>
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
+        <button
+          type="button"
+          class="group self-start text-base-text-light/60 transition hover:text-base-text-light dark:text-base-text-dark/60 dark:hover:text-base-text-dark"
+          aria-label={gettext("close")}
+        >
+          <.icon name="hero-x-mark" class="size-5 opacity-60 group-hover:opacity-90" />
         </button>
       </div>
     </div>
@@ -94,11 +102,24 @@ defmodule FastCheckWeb.CoreComponents do
   slot :inner_block, required: true
 
   def button(%{rest: rest} = assigns) do
-    variants = %{"primary" => "btn-primary", nil => "btn-primary btn-soft"}
+    base_class =
+      "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold " <>
+        "transition duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 " <>
+        "focus-visible:outline-primary-light disabled:cursor-not-allowed disabled:opacity-60"
+
+    variants = %{
+      "primary" =>
+        "bg-primary-light text-white shadow-sm hover:bg-primary-hover-light dark:bg-primary-dark " <>
+          "dark:hover:bg-primary-hover-dark",
+      nil =>
+        "border border-primary-bordered-text-light bg-primary-bordered-bg-light text-primary-bordered-text-light " <>
+          "hover:bg-primary-hover-light/10 dark:border-primary-bordered-text-dark dark:bg-primary-bordered-bg-dark " <>
+          "dark:text-primary-bordered-text-dark dark:hover:bg-primary-hover-dark/20"
+    }
 
     assigns =
       assign_new(assigns, :class, fn ->
-        ["btn", Map.fetch!(variants, assigns[:variant])]
+        [base_class, Map.fetch!(variants, assigns[:variant])]
       end)
 
     if rest[:href] || rest[:navigate] || rest[:patch] do

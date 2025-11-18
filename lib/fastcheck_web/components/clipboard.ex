@@ -37,7 +37,9 @@ defmodule FastCheckWeb.Components.Clipboard do
   ### Basic copy button with static text
       <.clipboard text="Some text to copy">
         <:trigger>
-          <button class="btn">Copy</button>
+          <button class="inline-flex items-center rounded-2xl bg-primary-light px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover-light dark:bg-primary-dark dark:text-base-text-light dark:hover:bg-primary-hover-dark">
+            Copy
+          </button>
         </:trigger>
       </.clipboard>
 
@@ -46,7 +48,9 @@ defmodule FastCheckWeb.Components.Clipboard do
 
       <.clipboard target_selector="#my-text">
         <:trigger>
-          <button class="btn">Copy from element</button>
+          <button class="inline-flex items-center rounded-2xl bg-primary-light px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover-light dark:bg-primary-dark dark:text-base-text-light dark:hover:bg-primary-hover-dark">
+            Copy from element
+          </button>
         </:trigger>
       </.clipboard>
 
@@ -57,7 +61,9 @@ defmodule FastCheckWeb.Components.Clipboard do
         copy_error_text="Copy failed. Try again!"
       >
         <:trigger>
-          <button class="btn">Copy now</button>
+          <button class="inline-flex items-center rounded-2xl bg-primary-light px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover-light dark:bg-primary-dark dark:text-base-text-light dark:hover:bg-primary-hover-dark">
+            Copy now
+          </button>
         </:trigger>
       </.clipboard>
 
@@ -77,7 +83,9 @@ defmodule FastCheckWeb.Components.Clipboard do
         error_class="bg-red-200"
       >
         <:trigger>
-          <button class="btn">📋 Copy</button>
+          <button class="inline-flex items-center rounded-2xl bg-primary-light px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover-light dark:bg-primary-dark dark:text-base-text-light dark:hover:bg-primary-hover-dark">
+            📋 Copy
+          </button>
         </:trigger>
       </.clipboard>
   """

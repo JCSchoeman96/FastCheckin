@@ -53,7 +53,9 @@ defmodule FastCheckWeb.Components.Collapse do
           <:trigger>
             <button class="flex items-center gap-2">
               <span>Notifications</span>
-              <span class="badge">{@unread_count}</span>
+              <span class="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary-light px-2 text-xs font-semibold text-white dark:bg-primary-dark dark:text-base-text-light">
+                {@unread_count}
+              </span>
             </button>
           </:trigger>
           <div class="p-4">
