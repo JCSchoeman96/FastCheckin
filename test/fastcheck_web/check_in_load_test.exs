@@ -65,11 +65,12 @@ defmodule FastCheckWeb.CheckInLoadTest do
 
   defp insert_event!(name) do
     api_key = "key-#{System.unique_integer([:positive])}"
+    {:ok, encrypted} = FastCheck.Crypto.encrypt(api_key)
 
     %Event{}
     |> Event.changeset(%{
       name: name,
-      tickera_api_key_encrypted: api_key,
+      tickera_api_key_encrypted: encrypted,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
       tickera_site_url: "https://example.com"
     })
