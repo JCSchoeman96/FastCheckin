@@ -17,7 +17,6 @@ defmodule FastCheckWeb.Router do
   scope "/", FastCheckWeb do
     pipe_through :browser
 
-    get "/phoenix", PageController, :home
     live "/", DashboardLive, :index
     live "/scan/:event_id", ScannerLive, :index
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
