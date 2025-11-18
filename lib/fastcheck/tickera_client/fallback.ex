@@ -64,7 +64,7 @@ defmodule FastCheck.TickeraClient.Fallback do
   def unreachable?(_), do: false
 
   defp fetch_event(api_key, _site_url) do
-    case Repo.get_by(Event, api_key: api_key) do
+    case Repo.get_by(Event, tickera_api_key_encrypted: api_key) do
       %Event{} = event -> {:ok, event}
       nil -> {:error, :event_not_found}
     end

@@ -10,8 +10,11 @@ defmodule FastCheck.Events.Event do
   @type t :: %__MODULE__{
           id: integer() | nil,
           name: String.t() | nil,
-          api_key: String.t() | nil,
-          site_url: String.t() | nil,
+          tickera_api_key_encrypted: String.t() | nil,
+          tickera_api_key_last4: String.t() | nil,
+          tickera_site_url: String.t() | nil,
+          tickera_start_date: NaiveDateTime.t() | nil,
+          tickera_end_date: NaiveDateTime.t() | nil,
           status: String.t() | nil,
           total_tickets: integer() | nil,
           checked_in_count: integer() | nil,
@@ -22,6 +25,8 @@ defmodule FastCheck.Events.Event do
           entrance_name: String.t() | nil,
           sync_started_at: DateTime.t() | nil,
           sync_completed_at: DateTime.t() | nil,
+          last_sync_at: DateTime.t() | nil,
+          last_soft_sync_at: DateTime.t() | nil,
           last_checked_at: DateTime.t() | nil,
           last_config_sync: DateTime.t() | nil,
           inserted_at: DateTime.t() | nil,
@@ -31,10 +36,13 @@ defmodule FastCheck.Events.Event do
   schema "events" do
     # Human readable name, e.g. "Voelgoed Live 13 November"
     field :name, :string
-    # API key provided by Tickera for authenticating requests
-    field :api_key, :string
+    # API key provided by Tickera (stored encrypted in the database)
+    field :tickera_api_key_encrypted, :string
+    field :tickera_api_key_last4, :string
     # URL of the WordPress site hosting Tickera
-    field :site_url, :string
+    field :tickera_site_url, :string
+    field :tickera_start_date, :naive_datetime
+    field :tickera_end_date, :naive_datetime
     # Event lifecycle status such as "active", "syncing", or "archived"
     field :status, :string
     # Total number of tickets made available for the event
@@ -55,6 +63,8 @@ defmodule FastCheck.Events.Event do
     field :sync_started_at, :utc_datetime
     # Timestamp of when a sync job successfully completed
     field :sync_completed_at, :utc_datetime
+    field :last_sync_at, :utc_datetime
+    field :last_soft_sync_at, :utc_datetime
     # Timestamp of the last attendee check-in action
     field :last_checked_at, :utc_datetime
     field :last_config_sync, :utc_datetime
@@ -68,13 +78,27 @@ defmodule FastCheck.Events.Event do
 
   @doc """
   Builds an event changeset for create/update operations, validating required
-  fields and enforcing API key uniqueness per event.
+  fields and ensuring Tickera credentials are stored in their encrypted
+  columns.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:name, :api_key, :site_url, :status, :entrance_name, :event_date, :event_time, :location])
-    |> validate_required([:name, :api_key, :site_url])
-    |> unique_constraint(:api_key)
+    |> cast(attrs, [
+      :name,
+      :tickera_api_key_encrypted,
+      :tickera_api_key_last4,
+      :tickera_site_url,
+      :tickera_start_date,
+      :tickera_end_date,
+      :status,
+      :entrance_name,
+      :event_date,
+      :event_time,
+      :location,
+      :last_sync_at,
+      :last_soft_sync_at
+    ])
+    |> validate_required([:name, :tickera_api_key_encrypted, :tickera_site_url])
   end
 end

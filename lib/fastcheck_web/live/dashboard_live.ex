@@ -191,8 +191,8 @@ defmodule FastCheckWeb.DashboardLive do
             class="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2"
           >
             <.input field={@form[:name]} type="text" label="Event name" placeholder="Tech Summit 2024" />
-            <.input field={@form[:site_url]} type="text" label="Site URL" placeholder="https://example.com" />
-            <.input field={@form[:api_key]} type="password" label="Tickera API Key" placeholder="••••••" />
+            <.input field={@form[:tickera_site_url]} type="text" label="Site URL" placeholder="https://example.com" />
+            <.input field={@form[:tickera_api_key_encrypted]} type="password" label="Tickera API Key" placeholder="••••••" />
             <.input field={@form[:location]} type="text" label="Location" placeholder="Cape Town Convention Centre" />
             <.input field={@form[:entrance_name]} type="text" label="Entrance Name" placeholder="Main Gate" />
 
