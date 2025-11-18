@@ -16,6 +16,7 @@ defmodule FastCheck.Attendees do
     Events,
     TickeraClient
   }
+  alias FastCheck.Events.Event
 
   @ticket_code_min 3
   @ticket_code_max 100
@@ -100,7 +101,8 @@ defmodule FastCheck.Attendees do
              is_binary(entrance_name) do
     started_at = System.monotonic_time(:millisecond)
 
-    with {:ok, sanitized_code} <- validate_ticket_code(ticket_code),
+    with :ok <- ensure_scanning_allowed(event_id),
+         {:ok, sanitized_code} <- validate_ticket_code(ticket_code),
          {:ok, sanitized_entrance} <- validate_entrance_name(entrance_name) do
       query =
         from(a in Attendee,
@@ -197,6 +199,10 @@ defmodule FastCheck.Attendees do
           {:error, "ERROR", "Unexpected error"}
       end
     else
+      {:error, code, message} when is_binary(code) ->
+        Logger.warning("Check-in rejected for event #{event_id}: #{message}")
+        {:error, code, message}
+
       {:error, {:invalid_ticket_code, message}} ->
         Logger.warning("Check-in rejected: #{message}")
         {:error, "INVALID_CODE", message}
@@ -895,88 +901,96 @@ defmodule FastCheck.Attendees do
   def search_event_attendees(_, _, _), do: []
 
   defp do_advanced_check_in(event_id, ticket_code, check_in_type, entrance_name, operator_name) do
-    Logger.info(
-      "Advanced check-in start event=#{event_id} ticket=#{ticket_code} type=#{check_in_type} entrance=#{entrance_name}"
-    )
+    with :ok <- ensure_scanning_allowed(event_id) do
+      Logger.info(
+        "Advanced check-in start event=#{event_id} ticket=#{ticket_code} type=#{check_in_type} entrance=#{entrance_name}"
+      )
 
-    operator = maybe_trim(operator_name)
+      operator = maybe_trim(operator_name)
 
-    Repo.transaction(fn ->
-      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
-           {attendee_with_config, _config} <- attach_ticket_config(event_id, attendee),
-           :ok <- ensure_can_check_in(attendee_with_config) do
-        attrs = build_check_in_attributes(attendee_with_config, entrance_name)
+      Repo.transaction(fn ->
+        with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
+             {attendee_with_config, _config} <- attach_ticket_config(event_id, attendee),
+             :ok <- ensure_can_check_in(attendee_with_config) do
+          attrs = build_check_in_attributes(attendee_with_config, entrance_name)
 
-        case Attendee.changeset(attendee_with_config, attrs) |> Repo.update() do
-          {:ok, updated} ->
-            with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
-              normalized_type = String.downcase(check_in_type)
+          case Attendee.changeset(attendee_with_config, attrs) |> Repo.update() do
+            {:ok, updated} ->
+              with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
+                normalized_type = String.downcase(check_in_type)
 
-              record_check_in(
-                updated,
-                event_id,
-                normalized_type,
-                entrance_name,
-                operator
-              )
+                record_check_in(
+                  updated,
+                  event_id,
+                  normalized_type,
+                  entrance_name,
+                  operator
+                )
 
-              maybe_increment_occupancy(event_id, normalized_type)
-              %{attendee: updated, message: "SUCCESS"}
-            else
-              {:error, session_reason} -> Repo.rollback(session_reason)
-            end
+                maybe_increment_occupancy(event_id, normalized_type)
+                %{attendee: updated, message: "SUCCESS"}
+              else
+                {:error, session_reason} -> Repo.rollback(session_reason)
+              end
 
-          {:error, changeset} ->
-            Logger.error("Advanced check-in update failed for #{ticket_code}: #{inspect(changeset.errors)}")
-            Repo.rollback({"UPDATE_FAILED", "Unable to process advanced check-in"})
+            {:error, changeset} ->
+              Logger.error("Advanced check-in update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+              Repo.rollback({"UPDATE_FAILED", "Unable to process advanced check-in"})
+          end
+        else
+          {:error, code, message} ->
+            Logger.warning("Advanced check-in aborted for #{ticket_code}: #{code}")
+            Repo.rollback({code, message})
         end
-      else
-        {:error, code, message} ->
-          Logger.warning("Advanced check-in aborted for #{ticket_code}: #{code}")
-          Repo.rollback({code, message})
-      end
-    end)
-    |> handle_session_transaction(event_id, true)
+      end)
+      |> handle_session_transaction(event_id, true)
+    else
+      {:error, code, message} -> {:error, code, message}
+    end
   end
 
   defp do_check_out(event_id, ticket_code, entrance_name, operator_name) do
-    Logger.info(
-      "Check-out start event=#{event_id} ticket=#{ticket_code} entrance=#{entrance_name} operator=#{operator_name || "n/a"}"
-    )
+    with :ok <- ensure_scanning_allowed(event_id) do
+      Logger.info(
+        "Check-out start event=#{event_id} ticket=#{ticket_code} entrance=#{entrance_name} operator=#{operator_name || "n/a"}"
+      )
 
-    operator = maybe_trim(operator_name)
+      operator = maybe_trim(operator_name)
 
-    Repo.transaction(fn ->
-      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
-           :ok <- ensure_can_check_out(attendee) do
-        now = current_timestamp()
+      Repo.transaction(fn ->
+        with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
+             :ok <- ensure_can_check_out(attendee) do
+          now = current_timestamp()
 
-        attrs = %{
-          checked_out_at: now,
-          is_currently_inside: false
-        }
+          attrs = %{
+            checked_out_at: now,
+            is_currently_inside: false
+          }
 
-        case Attendee.changeset(attendee, attrs) |> Repo.update() do
-          {:ok, updated} ->
-            with {:ok, _session} <- close_active_session(updated, entrance_name, now) do
-              record_check_in(updated, event_id, "checked_out", entrance_name, operator)
-              maybe_increment_occupancy(event_id, "exit")
-              %{attendee: updated, message: "CHECKED_OUT"}
-            else
-              {:error, session_reason} -> Repo.rollback(session_reason)
-            end
+          case Attendee.changeset(attendee, attrs) |> Repo.update() do
+            {:ok, updated} ->
+              with {:ok, _session} <- close_active_session(updated, entrance_name, now) do
+                record_check_in(updated, event_id, "checked_out", entrance_name, operator)
+                maybe_increment_occupancy(event_id, "exit")
+                %{attendee: updated, message: "CHECKED_OUT"}
+              else
+                {:error, session_reason} -> Repo.rollback(session_reason)
+              end
 
-          {:error, changeset} ->
-            Logger.error("Check-out update failed for #{ticket_code}: #{inspect(changeset.errors)}")
-            Repo.rollback({"UPDATE_FAILED", "Unable to complete check-out"})
+            {:error, changeset} ->
+              Logger.error("Check-out update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+              Repo.rollback({"UPDATE_FAILED", "Unable to complete check-out"})
+          end
+        else
+          {:error, code, message} ->
+            Logger.warning("Check-out aborted for #{ticket_code}: #{code}")
+            Repo.rollback({code, message})
         end
-      else
-        {:error, code, message} ->
-          Logger.warning("Check-out aborted for #{ticket_code}: #{code}")
-          Repo.rollback({code, message})
-      end
-    end)
-    |> handle_session_transaction(event_id, true)
+      end)
+      |> handle_session_transaction(event_id, true)
+    else
+      {:error, code, message} -> {:error, code, message}
+    end
   end
 
   defp do_reset_scan_counters(event_id, ticket_code) do
@@ -1007,40 +1021,44 @@ defmodule FastCheck.Attendees do
   end
 
   defp do_manual_entry(event_id, ticket_code, entrance_name, operator_name, notes) do
-    Logger.info(
-      "Manual entry start event=#{event_id} ticket=#{ticket_code} entrance=#{entrance_name} operator=#{operator_name || "n/a"}"
-    )
+    with :ok <- ensure_scanning_allowed(event_id) do
+      Logger.info(
+        "Manual entry start event=#{event_id} ticket=#{ticket_code} entrance=#{entrance_name} operator=#{operator_name || "n/a"}"
+      )
 
-    operator = maybe_trim(operator_name)
-    _notes = maybe_trim(notes)
+      operator = maybe_trim(operator_name)
+      _notes = maybe_trim(notes)
 
-    Repo.transaction(fn ->
-      with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
-           {attendee_with_config, _} <- attach_ticket_config(event_id, attendee),
-           :ok <- ensure_can_check_in(attendee_with_config) do
-        attrs = build_check_in_attributes(attendee_with_config, entrance_name)
+      Repo.transaction(fn ->
+        with {:ok, attendee} <- fetch_attendee_for_update(event_id, ticket_code),
+             {attendee_with_config, _} <- attach_ticket_config(event_id, attendee),
+             :ok <- ensure_can_check_in(attendee_with_config) do
+          attrs = build_check_in_attributes(attendee_with_config, entrance_name)
 
-        case Attendee.changeset(attendee_with_config, attrs) |> Repo.update() do
-          {:ok, updated} ->
-            with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
-              record_check_in(updated, event_id, "manual", entrance_name, operator)
-              maybe_increment_occupancy(event_id, "entry")
-              %{attendee: updated, message: "MANUAL_ENTRY_RECORDED"}
-            else
-              {:error, session_reason} -> Repo.rollback(session_reason)
-            end
+          case Attendee.changeset(attendee_with_config, attrs) |> Repo.update() do
+            {:ok, updated} ->
+              with {:ok, _session} <- upsert_active_session(updated, entrance_name) do
+                record_check_in(updated, event_id, "manual", entrance_name, operator)
+                maybe_increment_occupancy(event_id, "entry")
+                %{attendee: updated, message: "MANUAL_ENTRY_RECORDED"}
+              else
+                {:error, session_reason} -> Repo.rollback(session_reason)
+              end
 
-          {:error, changeset} ->
-            Logger.error("Manual entry update failed for #{ticket_code}: #{inspect(changeset.errors)}")
-            Repo.rollback({"UPDATE_FAILED", "Unable to mark manual entry"})
+            {:error, changeset} ->
+              Logger.error("Manual entry update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+              Repo.rollback({"UPDATE_FAILED", "Unable to mark manual entry"})
+          end
+        else
+          {:error, code, message} ->
+            Logger.warning("Manual entry aborted for #{ticket_code}: #{code}")
+            Repo.rollback({code, message})
         end
-      else
-        {:error, code, message} ->
-          Logger.warning("Manual entry aborted for #{ticket_code}: #{code}")
-          Repo.rollback({code, message})
-      end
-    end)
-    |> handle_session_transaction(event_id, true)
+      end)
+      |> handle_session_transaction(event_id, true)
+    else
+      {:error, code, message} -> {:error, code, message}
+    end
   end
 
   defp sanitize_query(nil), do: ""
@@ -1121,6 +1139,26 @@ defmodule FastCheck.Attendees do
       true ->
         Logger.warning("Attendee #{attendee.id} cannot be checked out because no check-in exists")
         {:error, "NOT_CHECKED_IN", "Attendee has not checked in"}
+    end
+  end
+
+  defp ensure_scanning_allowed(event_id) do
+    case Repo.get(Event, event_id) do
+      nil ->
+        Logger.warning("Scan attempt blocked for missing event #{event_id}")
+        {:error, "EVENT_NOT_FOUND", "Event not found"}
+
+      %Event{} = event ->
+        case Events.can_check_in?(event) do
+          {:ok, _state} -> :ok
+
+          {:error, {:event_archived, message}} ->
+            Logger.warning("Scan attempt blocked for archived event #{event_id}")
+            {:error, "ARCHIVED_EVENT", message}
+
+          {:error, {_reason, message}} ->
+            {:error, "SCANS_DISABLED", message || "Scanning disabled"}
+        end
     end
   end
 

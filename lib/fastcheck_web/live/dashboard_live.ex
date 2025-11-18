@@ -229,14 +229,20 @@ defmodule FastCheckWeb.DashboardLive do
                 @selected_event_id == event.id && "ring-2 ring-blue-500"
               ]}
             >
-              <div class="flex items-start justify-between">
+              <% lifecycle_state = Events.event_lifecycle_state(event) %>
+              <div class="flex items-start justify-between gap-4">
                 <div>
                   <p class="text-sm uppercase tracking-wide text-slate-400">{event.location || "Unassigned"}</p>
                   <h3 class="mt-1 text-xl font-semibold text-slate-900">{event.name}</h3>
                 </div>
-                <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-                  {event.entrance_name || "Entrance"}
-                </span>
+                <div class="flex flex-col items-end gap-2 text-right">
+                  <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                    {event.entrance_name || "Entrance"}
+                  </span>
+                  <span class={["rounded-full px-3 py-1 text-xs font-semibold", lifecycle_badge_class(lifecycle_state)]}>
+                    {lifecycle_label(lifecycle_state)}
+                  </span>
+                </div>
               </div>
 
               <div class="mt-6 grid grid-cols-2 gap-4 text-center md:grid-cols-3">
@@ -257,20 +263,41 @@ defmodule FastCheckWeb.DashboardLive do
               <div class="mt-6 flex flex-wrap gap-3">
                 <button
                   type="button"
-                  class="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+                  class={[
+                    "flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2",
+                    lifecycle_state == :archived && "cursor-not-allowed opacity-60"
+                  ]}
                   phx-click="start_sync"
                   phx-value-event_id={event.id}
                   phx-disable-with="Syncing..."
+                  disabled={lifecycle_state == :archived}
+                  aria-disabled={lifecycle_state == :archived}
                 >
                   Sync attendees
                 </button>
 
                 <a
-                  href={"/scan/#{event.id}"}
-                  class="flex-1 rounded-md border border-slate-200 px-4 py-2 text-center text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+                  href={if lifecycle_state == :archived, do: "#", else: "/scan/#{event.id}"}
+                  class={[
+                    "flex-1 rounded-md border border-slate-200 px-4 py-2 text-center text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900",
+                    lifecycle_state == :archived && "cursor-not-allowed opacity-60 pointer-events-none"
+                  ]}
+                  aria-disabled={lifecycle_state == :archived}
                 >
                   Open scanner
                 </a>
+                <p
+                  :if={lifecycle_state == :archived}
+                  class="w-full text-sm font-medium text-red-600"
+                >
+                  Event archived, sync disabled
+                </p>
+                <p
+                  :if={lifecycle_state == :archived}
+                  class="w-full text-xs text-red-500"
+                >
+                  Scanning disabled for archived events
+                </p>
               </div>
             </div>
 
@@ -361,6 +388,18 @@ defmodule FastCheckWeb.DashboardLive do
     ["Page #{page} of #{max(safe_total, 1)}", "#{count} attendees processed"]
     |> Enum.join(" · ")
   end
+
+  defp lifecycle_badge_class(:archived), do: "bg-red-100 text-red-700"
+  defp lifecycle_badge_class(:grace), do: "bg-amber-100 text-amber-700"
+  defp lifecycle_badge_class(:upcoming), do: "bg-slate-100 text-slate-700"
+  defp lifecycle_badge_class(:unknown), do: "bg-slate-100 text-slate-700"
+  defp lifecycle_badge_class(_), do: "bg-emerald-100 text-emerald-700"
+
+  defp lifecycle_label(:archived), do: "Archived"
+  defp lifecycle_label(:grace), do: "In grace period"
+  defp lifecycle_label(:upcoming), do: "Upcoming"
+  defp lifecycle_label(:unknown), do: "Status unknown"
+  defp lifecycle_label(_), do: "Active"
 
   defp format_error(%Changeset{} = changeset) do
     changeset
