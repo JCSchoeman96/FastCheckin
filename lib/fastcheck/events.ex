@@ -1132,16 +1132,22 @@ defmodule FastCheck.Events do
     {:ok, 0}
   end
 
+    # Persist all ticket configs returned by Tickera for a given event.
+  # Returns {:ok, count} on success or {:error, reason} on first failure.
+  defp persist_ticket_configs(%Event{id: event_id} = event, [], _api_key) do
+    Logger.info("No ticket types discovered for event #{event_id}; skipping config sync")
+    {:ok, 0}
+  end
+
   defp persist_ticket_configs(%Event{id: event_id} = event, ticket_type_ids, api_key)
        when is_list(ticket_type_ids) do
     ticket_type_ids
     |> Enum.reduce_while({:ok, 0}, fn ticket_type_id, {:ok, count} ->
-      case
-             TickeraClient.get_ticket_config(
-               event.tickera_site_url,
-               api_key,
-               ticket_type_id
-             ) do
+      case TickeraClient.get_ticket_config(
+             event.tickera_site_url,
+             api_key,
+             ticket_type_id
+           ) do
         {:ok, config} ->
           case upsert_ticket_config(event_id, ticket_type_id, config) do
             {:ok, _record} ->
@@ -1176,6 +1182,7 @@ defmodule FastCheck.Events do
       {:error, reason} -> {:error, reason}
     end
   end
+
 
   defp upsert_ticket_config(event_id, ticket_type_id, config) do
     attrs = build_config_attrs(config, event_id, ticket_type_id)
