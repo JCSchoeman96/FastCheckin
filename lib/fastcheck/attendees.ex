@@ -534,27 +534,32 @@ defmodule FastCheck.Attendees do
       when is_integer(event_id) and is_binary(ticket_code) do
     cache_key = attendee_cache_key(event_id, ticket_code)
 
-    case CacheManager.get_attendee(event_id, ticket_code) do
-      {:ok, %Attendee{} = attendee} ->
-        Logger.debug("Attendee cache hit for #{cache_key}")
-        attendee
+    try do
+      case CacheManager.get_attendee(event_id, ticket_code) do
+        {:ok, %Attendee{} = attendee} ->
+          Logger.debug("Attendee cache hit for #{cache_key}")
+          attendee
 
-      {:ok, @attendee_cache_not_found} ->
-        Logger.debug("Attendee cache hit (not found) for #{cache_key}")
-        nil
+        {:ok, @attendee_cache_not_found} ->
+          Logger.debug("Attendee cache hit (not found) for #{cache_key}")
+          nil
 
-      {:ok, nil} ->
-        Logger.debug("Attendee cache miss for #{cache_key}")
-        fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+        {:ok, nil} ->
+          Logger.debug("Attendee cache miss for #{cache_key}")
+          fetch_attendee_with_cache(event_id, ticket_code, cache_key)
 
-      {:error, reason} ->
-        Logger.warning("Attendee cache lookup failed for #{cache_key}: #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.warning("Attendee cache lookup failed for #{cache_key}: #{inspect(reason)}")
+          fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+      end
+    rescue
+      exception ->
+        Logger.warning(
+          "Attendee cache lookup raised for #{cache_key}: #{Exception.message(exception)}"
+        )
+
         fetch_attendee_with_cache(event_id, ticket_code, cache_key)
     end
-  rescue
-    exception ->
-      Logger.warning("Attendee cache lookup raised for #{cache_key}: #{Exception.message(exception)}")
-      fetch_attendee_with_cache(event_id, ticket_code, cache_key)
   end
 
   def get_attendee_by_ticket_code(_, _), do: nil
@@ -574,27 +579,32 @@ defmodule FastCheck.Attendees do
   def get_attendee!(attendee_id) when is_integer(attendee_id) and attendee_id > 0 do
     cache_key = attendee_id_cache_key(attendee_id)
 
-    case CacheManager.get(cache_key) do
-      {:ok, %Attendee{} = attendee} ->
-        Logger.debug("Attendee id cache hit for #{cache_key}")
-        attendee
+    try do
+      case CacheManager.get(cache_key) do
+        {:ok, %Attendee{} = attendee} ->
+          Logger.debug("Attendee id cache hit for #{cache_key}")
+          attendee
 
-      {:ok, nil} ->
-        Logger.debug("Attendee id cache miss for #{cache_key}")
-        fetch_attendee_by_id(attendee_id, cache_key, true)
+        {:ok, nil} ->
+          Logger.debug("Attendee id cache miss for #{cache_key}")
+          fetch_attendee_by_id(attendee_id, cache_key, true)
 
-      {:error, :cache_unavailable} ->
-        Logger.debug("Attendee id cache unavailable for #{cache_key}, skipping cache")
+        {:error, :cache_unavailable} ->
+          Logger.debug("Attendee id cache unavailable for #{cache_key}, skipping cache")
+          Repo.get!(Attendee, attendee_id)
+
+        {:error, reason} ->
+          Logger.warning("Attendee id cache lookup failed for #{cache_key}: #{inspect(reason)}")
+          fetch_attendee_by_id(attendee_id, cache_key, false)
+      end
+    rescue
+      exception ->
+        Logger.warning(
+          "Attendee id cache lookup raised for #{cache_key}: #{Exception.message(exception)}"
+        )
+
         Repo.get!(Attendee, attendee_id)
-
-      {:error, reason} ->
-        Logger.warning("Attendee id cache lookup failed for #{cache_key}: #{inspect(reason)}")
-        fetch_attendee_by_id(attendee_id, cache_key, false)
     end
-  rescue
-    exception ->
-      Logger.warning("Attendee id cache lookup raised for #{cache_key}: #{Exception.message(exception)}")
-      Repo.get!(Attendee, attendee_id)
   end
 
   def get_attendee!(attendee_id), do: Repo.get!(Attendee, attendee_id)
@@ -606,23 +616,31 @@ defmodule FastCheck.Attendees do
   def delete_attendee_id_cache(attendee_id) when is_integer(attendee_id) and attendee_id > 0 do
     cache_key = attendee_id_cache_key(attendee_id)
 
-    case CacheManager.delete(cache_key) do
-      {:ok, true} ->
-        Logger.debug("Deleted attendee id cache entry for #{cache_key}")
-        :ok
+    try do
+      case CacheManager.delete(cache_key) do
+        {:ok, true} ->
+          Logger.debug("Deleted attendee id cache entry for #{cache_key}")
+          :ok
 
-      {:error, :cache_unavailable} ->
-        Logger.debug("Cache unavailable when deleting #{cache_key}, skipping invalidation")
-        :ok
+        {:error, :cache_unavailable} ->
+          Logger.debug("Cache unavailable when deleting #{cache_key}, skipping invalidation")
+          :ok
 
-      {:error, reason} ->
-        Logger.warning("Unable to delete attendee id cache entry for #{cache_key}: #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.warning(
+            "Unable to delete attendee id cache entry for #{cache_key}: #{inspect(reason)}"
+          )
+
+          :error
+      end
+    rescue
+      exception ->
+        Logger.warning(
+          "Attendee id cache delete raised for #{cache_key}: #{Exception.message(exception)}"
+        )
+
         :error
     end
-  rescue
-    exception ->
-      Logger.warning("Attendee id cache delete raised for #{cache_key}: #{Exception.message(exception)}")
-      :error
   end
 
   def delete_attendee_id_cache(_), do: :ok

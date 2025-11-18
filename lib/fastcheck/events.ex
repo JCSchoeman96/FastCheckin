@@ -281,11 +281,12 @@ defmodule FastCheck.Events do
 
   ## Examples
 
-      iex> Events.get_event_stats(event.id)
+      iex> event_id = event.id
+      iex> Events.get_event_stats(event_id)
       %{checked_in: 120, total_tickets: 500} # Cache miss – queries Postgres
 
-      iex> CacheManager.put("stats:#{event.id}", %{checked_in: 5, total_tickets: 10}, ttl: :timer.minutes(1))
-      iex> Events.get_event_stats(event.id)
+      iex> CacheManager.put("stats:#{event_id}", %{checked_in: 5, total_tickets: 10}, ttl: :timer.minutes(1))
+      iex> Events.get_event_stats(event_id)
       %{checked_in: 5, total_tickets: 10} # Cache hit – served from Cachex
   """
   @spec get_event_stats(integer()) :: map()
