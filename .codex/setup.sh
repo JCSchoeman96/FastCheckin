@@ -1,54 +1,61 @@
 #!/bin/bash
 set -e
 # ============================================================================
-# Codex Cloud PETAL Setup - Community Solution (The "Manual Install" Method)
-# Reference: https://community.openai.com/t/codex-cloud-issues/1364544
+# Codex Cloud PETAL Setup - The "Hybrid" Solution
+# Combines Manual Tool Install (Forum Fix) + SSL Trust Path (Cert Fix)
 # ============================================================================
 
 echo "🔧 [Codex] Starting Setup..."
 
-# 1. Ensure Runtimes (Optional if container already has them, but safe to run)
-echo "📦 [Step 1] Verifying Runtime Environment..."
+# 1. PREP: Update System Certificates
+# We do this first so the system trusts the Codex Proxy.
+echo "🛡️  [Step 1] Updating System Certificates..."
+if command -v apt-get &>/dev/null; then
+    apt-get update -y && apt-get install -y ca-certificates curl
+fi
+update-ca-certificates --fresh
+
+# 2. RUNTIME: Install Erlang/Elixir via Mise
+echo "📦 [Step 2] Verifying Runtime Environment..."
 if command -v mise &>/dev/null; then
   mise install erlang@27.2 elixir@1.18.4-otp-27
   eval "$(mise activate bash)"
 fi
 
-# 2. Install Hex from Source (We know this works for you)
-echo "📦 [Step 2] Installing Hex..."
+# 3. HEX: Build from source (Bypasses version errors)
+echo "📦 [Step 3] Installing Hex..."
 mix archive.install github hexpm/hex branch latest --force
 
-# 3. MANUALLY Install Rebar3 (The "Rebar Trap" Fix)
-# Mix usually downloads this from Hex.pm (which is blocked).
-# We use curl to download it manually, bypassing the blockage.
-echo "📦 [Step 3] Manually installing Rebar3..."
+# 4. REBAR: Manually Install (Bypasses 'mix local.rebar' network block)
+echo "📦 [Step 4] Manually installing Rebar3..."
 mkdir -p "$HOME/.mix"
 curl -fSL https://github.com/erlang/rebar3/releases/latest/download/rebar3 -o "$HOME/.mix/rebar3"
 chmod +x "$HOME/.mix/rebar3"
 mix local.rebar rebar3 "$HOME/.mix/rebar3" --force
 
-# 4. Configure Environment (The "Nuclear" Network Fixes)
-echo "🛡️  [Step 4] configuring Network Environment..."
-# Use UpYun mirror via ENV VAR (More robust than mix hex.repo add)
+# 5. NETWORK: The Critical Fixes
+echo "🌐 [Step 5] Configuring Network & SSL..."
+# A. Point Erlang to the system certs we just updated (FIXES 'Unknown CA')
+export HEX_CACERTS_PATH="/etc/ssl/certs/ca-certificates.crt"
+
+# B. Force UpYun Mirror (Bypasses 'repo.hex.pm' 503 block)
 export HEX_MIRROR="https://hexpm.upyun.com"
-# Disable SSL verification (Fixes "Unknown CA" from proxy)
+
+# C. Safety Net: Ignore SSL errors if the proxy cert is still weird
 export HEX_UNSAFE_HTTPS=1
-# Point Mix to our manual Rebar install
+
+# D. Point to our manual Rebar
 export MIX_REBAR3="$HOME/.mix/rebar3"
 
-# 5. Reset Lockfile
-echo "🔓 [Step 5] Cleaning lockfile to force mirror usage..."
-rm -f mix.lock
-
-# 6. Fetch Dependencies
+# 6. DEPENDENCIES: Fetch
 echo "📥 [Step 6] Fetching dependencies..."
+# Force-clean any old locks
+rm -f mix.lock
 mix deps.get
 
-# 7. MANUALLY Download Tailwind (Proactive Fix)
-# mix tailwind.install will fail for the same reasons as Hex.
-# We download the binary manually now to save you the next headache.
+# 7. TAILWIND: Manual Pre-install
 echo "🎨 [Step 7] Manually installing Tailwind..."
-TAILWIND_VERSION=3.4.3 # Stuck to v3 for stability unless you need v4
+TAILWIND_VERSION=3.4.3
 TARGET="linux-x64"
 TAILWIND_DEST="_build/tailwind-${TARGET}"
 mkdir -p "$(dirname "$TAILWIND_DEST")"
