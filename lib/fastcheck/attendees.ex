@@ -96,7 +96,8 @@ defmodule FastCheck.Attendees do
   def check_in(event_id, ticket_code, entrance_name \\ "Main", operator_name \\ nil)
 
   def check_in(event_id, ticket_code, entrance_name, operator_name)
-      when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+      when is_integer(event_id) and is_binary(ticket_code) and
+             is_binary(entrance_name) do
     started_at = System.monotonic_time(:millisecond)
 
     with {:ok, sanitized_code} <- validate_ticket_code(ticket_code),
@@ -217,12 +218,11 @@ defmodule FastCheck.Attendees do
   """
   @spec check_in_advanced(integer(), String.t(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
-  def check_in_advanced(event_id, ticket_code, check_in_type, entrance_name, operator_name \\
-        nil)
+  def check_in_advanced(event_id, ticket_code, check_in_type, entrance_name, operator_name \\ nil)
 
   def check_in_advanced(event_id, ticket_code, check_in_type, entrance_name, operator_name)
-      when is_integer(event_id) and is_binary(ticket_code) and is_binary(check_in_type) and
-             is_binary(entrance_name) do
+      when is_integer(event_id) and is_binary(ticket_code) and
+             is_binary(check_in_type) and is_binary(entrance_name) do
     sanitized_code = ticket_code |> String.trim()
     sanitized_type = check_in_type |> String.trim()
     sanitized_entrance = entrance_name |> String.trim()
@@ -262,7 +262,8 @@ defmodule FastCheck.Attendees do
   def check_out(event_id, ticket_code, entrance_name, operator_name \\ nil)
 
   def check_out(event_id, ticket_code, entrance_name, operator_name)
-      when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+      when is_integer(event_id) and is_binary(ticket_code) and
+             is_binary(entrance_name) do
     sanitized_code = String.trim(ticket_code)
     sanitized_entrance = String.trim(entrance_name)
 
@@ -310,7 +311,8 @@ defmodule FastCheck.Attendees do
   def mark_manual_entry(event_id, ticket_code, entrance_name, operator_name \\ nil, notes \\ nil)
 
   def mark_manual_entry(event_id, ticket_code, entrance_name, operator_name, notes)
-      when is_integer(event_id) and is_binary(ticket_code) and is_binary(entrance_name) do
+      when is_integer(event_id) and is_binary(ticket_code) and
+             is_binary(entrance_name) do
     sanitized_code = String.trim(ticket_code)
     sanitized_entrance = String.trim(entrance_name)
 
@@ -737,7 +739,8 @@ defmodule FastCheck.Attendees do
   @spec get_attendees_by_event(integer(), keyword()) :: [Attendee.t()]
   def get_attendees_by_event(event_id, opts \\ [])
 
-  def get_attendees_by_event(event_id, opts) when is_integer(event_id) do
+  def get_attendees_by_event(event_id, opts)
+      when is_integer(event_id) do
     force_refresh = Keyword.get(opts, :force_refresh, false)
     cache_key = attendees_by_event_cache_key(event_id)
 
