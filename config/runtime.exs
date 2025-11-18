@@ -1,5 +1,18 @@
 import Config
 
+encryption_key =
+  System.get_env("ENCRYPTION_KEY") ||
+    if config_env() == :prod do
+      raise """
+      environment variable ENCRYPTION_KEY is missing.
+      Generate a strong 32+ byte key and export it before booting FastCheck.
+      """
+    else
+      "dev fastcheck encryption key dev fastcheck encryption key"
+    end
+
+config :fastcheck, :encryption_key, encryption_key
+
 # Cache defaults shared across all environments. The values can be overridden
 # via environment variables without recompiling the release.
 cache_enabled = System.get_env("CACHE_ENABLED", "true") == "true"
