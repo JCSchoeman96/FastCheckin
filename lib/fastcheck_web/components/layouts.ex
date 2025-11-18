@@ -45,16 +45,29 @@ defmodule FastCheckWeb.Layouts do
       <div class="flex-none">
         <ul class="flex flex-column px-1 space-x-4 items-center">
           <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
+            <a
+              href="https://phoenixframework.org/"
+              class="inline-flex items-center rounded-2xl border border-base-border-light px-3 py-1.5 text-sm font-semibold text-base-text-light transition hover:bg-base-hover-light dark:border-base-border-dark dark:text-base-text-dark dark:hover:bg-base-hover-dark"
+            >
+              Website
+            </a>
           </li>
           <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
+            <a
+              href="https://github.com/phoenixframework/phoenix"
+              class="inline-flex items-center rounded-2xl border border-base-border-light px-3 py-1.5 text-sm font-semibold text-base-text-light transition hover:bg-base-hover-light dark:border-base-border-dark dark:text-base-text-dark dark:hover:bg-base-hover-dark"
+            >
+              GitHub
+            </a>
           </li>
           <li>
             <.theme_toggle />
           </li>
           <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
+            <a
+              href="https://hexdocs.pm/phoenix/overview.html"
+              class="inline-flex items-center gap-2 rounded-2xl bg-primary-light px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-hover-light dark:bg-primary-dark dark:text-base-text-light dark:hover:bg-primary-hover-dark"
+            >
               Get Started <span aria-hidden="true">&rarr;</span>
             </a>
           </li>
