@@ -408,11 +408,13 @@ defmodule FastCheck.Attendees do
       :miss
   end
 
-  defp persist_occupancy_cache(_cache_key, _value) when not occupancy_cache_available?(), do: :ok
-
   defp persist_occupancy_cache(cache_key, value) do
-    ttl = occupancy_cache_ttl()
-    :ok = Cachex.put(@cache_name, cache_key, value, ttl: ttl)
+    if not occupancy_cache_available?() do
+      :ok
+    else
+      ttl = occupancy_cache_ttl()
+      :ok = Cachex.put(@cache_name, cache_key, value, ttl: ttl)
+    end
   rescue
     exception ->
       Logger.warning("Unable to persist occupancy cache #{cache_key}: #{Exception.message(exception)}")
