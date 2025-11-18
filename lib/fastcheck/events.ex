@@ -161,7 +161,7 @@ defmodule FastCheck.Events do
       iex> Events.get_event!(event.id)
       %Event{} # Cache miss – loads from the database and stores the entry
 
-      iex> CacheManager.put("event_config:#{event.id}", event, ttl: :timer.hours(1))
+      iex> CacheManager.put("event_config:\#{event.id}", event, ttl: :timer.hours(1))
       iex> Events.get_event!(event.id)
       %Event{} # Cache hit – avoids a round trip to Postgres
   """
