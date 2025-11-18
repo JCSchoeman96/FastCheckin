@@ -7,10 +7,12 @@ defmodule FastCheckWeb.ScannerLiveTest do
   alias FastCheck.Events.Event
   alias FastCheck.Repo
 
+  @api_key "api-key"
   @valid_event_attrs %{
     name: "Launch Week",
-    api_key: "api-key",
-    site_url: "https://example.com",
+    tickera_api_key_encrypted: @api_key,
+    tickera_api_key_last4: String.slice(@api_key, -4, 4),
+    tickera_site_url: "https://example.com",
     status: "active",
     entrance_name: "Main Entrance"
   }

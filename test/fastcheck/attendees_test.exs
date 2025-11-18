@@ -248,11 +248,14 @@ defmodule FastCheck.AttendeesTest do
   end
 
   defp insert_event!(name) do
+    api_key = "key-#{System.unique_integer([:positive])}"
+
     %Event{}
     |> Event.changeset(%{
       name: name,
-      api_key: "key-#{System.unique_integer([:positive])}",
-      site_url: "https://example.com"
+      tickera_api_key_encrypted: api_key,
+      tickera_api_key_last4: String.slice(api_key, -4, 4),
+      tickera_site_url: "https://example.com"
     })
     |> Repo.insert!()
   end

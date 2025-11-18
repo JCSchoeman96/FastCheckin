@@ -21,13 +21,20 @@ defmodule FastCheck.Events do
 
   @attr_atom_lookup %{
     "site_url" => :site_url,
+    "tickera_site_url" => :tickera_site_url,
     "api_key" => :api_key,
+    "tickera_api_key_encrypted" => :tickera_api_key_encrypted,
+    "tickera_api_key_last4" => :tickera_api_key_last4,
     "name" => :name,
     "status" => :status,
     "entrance_name" => :entrance_name,
     "location" => :location,
     "event_date" => :event_date,
-    "event_time" => :event_time
+    "event_time" => :event_time,
+    "tickera_start_date" => :tickera_start_date,
+    "tickera_end_date" => :tickera_end_date,
+    "last_sync_at" => :last_sync_at,
+    "last_soft_sync_at" => :last_soft_sync_at
   }
 
   @config_fields [
@@ -76,7 +83,8 @@ defmodule FastCheck.Events do
   essentials, and persisting the event record.
 
   ## Parameters
-    * `attrs` - map of attributes such as `site_url`, `api_key`, and `name`.
+    * `attrs` - map of attributes such as `tickera_site_url`,
+      `tickera_api_key_encrypted`, and `name`.
 
   ## Returns
     * `{:ok, %Event{}}` on success.
@@ -85,8 +93,10 @@ defmodule FastCheck.Events do
   """
   @spec create_event(map()) :: {:ok, Event.t()} | {:error, String.t() | Changeset.t()}
   def create_event(attrs) when is_map(attrs) do
-    site_url = fetch_attr(attrs, "site_url")
-    api_key = fetch_attr(attrs, "api_key")
+    site_url = fetch_attr(attrs, "tickera_site_url") || fetch_attr(attrs, "site_url")
+    api_key =
+      fetch_attr(attrs, "tickera_api_key_encrypted") ||
+        fetch_attr(attrs, "api_key")
 
     with :ok <- ensure_credentials(site_url, api_key),
          {:ok, essentials} <- TickeraClient.get_event_essentials(site_url, api_key),
@@ -214,7 +224,12 @@ defmodule FastCheck.Events do
 
         callback = wrap_progress_callback(progress_callback)
 
-        case TickeraClient.fetch_all_attendees(event.site_url, event.api_key, 100, callback) do
+        case TickeraClient.fetch_all_attendees(
+               event.tickera_site_url,
+               event.tickera_api_key_encrypted,
+               100,
+               callback
+             ) do
           {:ok, attendees, total_count} ->
             Logger.info("Fetched #{total_count} attendees for event #{event.id}")
 
@@ -810,7 +825,10 @@ defmodule FastCheck.Events do
 
   defp ensure_credentials(_site_url, _api_key), do: {:error, :invalid_credentials}
 
-  defp ensure_event_credentials(%Event{site_url: site_url, api_key: api_key}) do
+  defp ensure_event_credentials(%Event{
+         tickera_site_url: site_url,
+         tickera_api_key_encrypted: api_key
+       }) do
     if present?(site_url) and present?(api_key) do
       {:ok, site_url, api_key}
     else
@@ -947,7 +965,10 @@ defmodule FastCheck.Events do
   defp ensure_map(%{} = value), do: value
   defp ensure_map(_), do: %{}
 
-  defp ensure_event_credentials_present(%Event{site_url: site_url, api_key: api_key}) do
+  defp ensure_event_credentials_present(%Event{
+         tickera_site_url: site_url,
+         tickera_api_key_encrypted: api_key
+       }) do
     if present?(site_url) and present?(api_key) do
       :ok
     else
@@ -1014,7 +1035,12 @@ defmodule FastCheck.Events do
   defp persist_ticket_configs(%Event{id: event_id} = event, ticket_type_ids) when is_list(ticket_type_ids) do
     ticket_type_ids
     |> Enum.reduce_while({:ok, 0}, fn ticket_type_id, {:ok, count} ->
-      case TickeraClient.get_ticket_config(event.site_url, event.api_key, ticket_type_id) do
+      case
+             TickeraClient.get_ticket_config(
+               event.tickera_site_url,
+               event.tickera_api_key_encrypted,
+               ticket_type_id
+             ) do
         {:ok, config} ->
           case upsert_ticket_config(event_id, ticket_type_id, config) do
             {:ok, _record} ->
@@ -1151,25 +1177,45 @@ defmodule FastCheck.Events do
 
   defp presence(value), do: value
 
+  defp derive_last4(value) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if trimmed == "" do
+      nil
+    else
+      start = max(String.length(trimmed) - 4, 0)
+      String.slice(trimmed, start, 4)
+    end
+  end
+
+  defp derive_last4(_), do: nil
+
   defp build_event_attrs(attrs, essentials) do
     event_datetime =
       Map.get(essentials, "event_date_time") ||
         Map.get(essentials, :event_date_time)
 
     {event_date, event_time} = split_datetime(event_datetime)
+    api_key = fetch_attr(attrs, "tickera_api_key_encrypted") || fetch_attr(attrs, "api_key")
+    site_url = fetch_attr(attrs, "tickera_site_url") || fetch_attr(attrs, "site_url")
 
     %{
       name:
         fetch_attr(attrs, "name") || Map.get(essentials, "event_name") ||
           Map.get(essentials, :event_name),
-      api_key: fetch_attr(attrs, "api_key"),
-      site_url: fetch_attr(attrs, "site_url"),
+      tickera_api_key_encrypted: api_key,
+      tickera_api_key_last4: fetch_attr(attrs, "tickera_api_key_last4") || derive_last4(api_key),
+      tickera_site_url: site_url,
       status: fetch_attr(attrs, "status") || "active",
       entrance_name: fetch_attr(attrs, "entrance_name"),
       location: fetch_attr(attrs, "location"),
       total_tickets: Map.get(essentials, "total_tickets") || Map.get(essentials, :total_tickets),
       event_date: fetch_attr(attrs, "event_date") || event_date,
-      event_time: fetch_attr(attrs, "event_time") || event_time
+      event_time: fetch_attr(attrs, "event_time") || event_time,
+      tickera_start_date: fetch_attr(attrs, "tickera_start_date"),
+      tickera_end_date: fetch_attr(attrs, "tickera_end_date"),
+      last_sync_at: fetch_attr(attrs, "last_sync_at"),
+      last_soft_sync_at: fetch_attr(attrs, "last_soft_sync_at")
     }
   end
 
