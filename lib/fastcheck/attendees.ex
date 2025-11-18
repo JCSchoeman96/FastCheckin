@@ -520,7 +520,8 @@ defmodule FastCheck.Attendees do
   @spec get_attendee_by_ticket_code(integer(), String.t()) :: Attendee.t() | nil
   def get_attendee_by_ticket_code(event_id, ticket_code)
       when is_integer(event_id) and is_binary(ticket_code) do
-    cache_key = attendee_cache_key(event_id, ticket_code)
+    cache_key =
+      attendee_cache_key(event_id, ticket_code)
 
     case CacheManager.get_attendee(event_id, ticket_code) do
       {:ok, %Attendee{} = attendee} ->
@@ -560,7 +561,8 @@ defmodule FastCheck.Attendees do
   """
   @spec get_attendee!(integer()) :: Attendee.t()
   def get_attendee!(attendee_id) when is_integer(attendee_id) and attendee_id > 0 do
-    cache_key = attendee_id_cache_key(attendee_id)
+    cache_key =
+      attendee_id_cache_key(attendee_id)
 
     case CacheManager.get(cache_key) do
       {:ok, %Attendee{} = attendee} ->
@@ -592,7 +594,8 @@ defmodule FastCheck.Attendees do
   """
   @spec delete_attendee_id_cache(integer()) :: :ok | :error
   def delete_attendee_id_cache(attendee_id) when is_integer(attendee_id) and attendee_id > 0 do
-    cache_key = attendee_id_cache_key(attendee_id)
+    cache_key =
+      attendee_id_cache_key(attendee_id)
 
     case CacheManager.delete(cache_key) do
       {:ok, true} ->
