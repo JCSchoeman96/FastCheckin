@@ -1397,21 +1397,25 @@ defmodule FastCheck.Attendees do
 
   defp validate_entrance_name(_), do: invalid_error(:entrance_name, "is invalid")
 
-  defp validate_trimmed_value("", _min, _max, _pattern, field), do: invalid_error(field, "is required")
-
-  defp validate_trimmed_value(value, min, _max, _pattern, field) when String.length(value) < min do
-    invalid_error(field, "must be at least #{min} characters")
-  end
-
-  defp validate_trimmed_value(value, _min, max, _pattern, field) when String.length(value) > max do
-    invalid_error(field, "must be #{max} characters or fewer")
-  end
-
-  defp validate_trimmed_value(value, _min, _max, pattern, field) do
-    if String.match?(value, pattern) do
-      {:ok, value}
+  defp validate_trimmed_value(value, min, max, pattern, field) do
+    if value == "" do
+      invalid_error(field, "is required")
     else
-      invalid_error(field, "contains invalid characters")
+      length = String.length(value)
+
+      cond do
+        length < min ->
+          invalid_error(field, "must be at least #{min} characters")
+
+        length > max ->
+          invalid_error(field, "must be #{max} characters or fewer")
+
+        not String.match?(value, pattern) ->
+          invalid_error(field, "contains invalid characters")
+
+        true ->
+          {:ok, value}
+      end
     end
   end
 
