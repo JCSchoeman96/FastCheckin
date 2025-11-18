@@ -1,31 +1,41 @@
 #!/bin/bash
 set -e
 # ============================================================================
-# Codex Cloud PETAL Setup - Final
-#
-# Strategy:
-# 1. Build Hex from source to match the container's Elixir/OTP version.
-# 2. Configure the UpYun mirror (without the failing flag).
+# Codex Cloud PETAL Setup - Final Fix
 # ============================================================================
 
 echo "🔧 [Codex] Starting Setup..."
 
-# 1. Install Hex from GitHub source code.
+# --- Fix 1: Update SSL Certificates ---
+# This fixes the "Fatal - Unknown CA" errors by updating the system's trust store.
+echo "📜 Updating SSL certificates..."
+if command -v apt-get &>/dev/null; then
+    apt-get update -y && apt-get install -y ca-certificates
+fi
+if command -v update-ca-certificates &>/dev/null; then
+    update-ca-certificates --fresh
+fi
+
+# --- Step 1: Build Hex from Source ---
+# (This part is working, we keep it)
 echo "📦 [Step 1] Building Hex from source..."
 mix archive.install github hexpm/hex branch latest --force
 
-# 2. Configure the Mirror for project dependencies
+# --- Fix 2: Configure Mirror & Reset Lockfile ---
 echo "🌐 [Step 2] Configuring Hex mirror..."
-mix hex.repo remove hexpm --force
-
-# This is the corrected line:
+mix hex.repo remove hexpm --force || true
 mix hex.repo add upyun https://hexpm.upyun.com
 
-# 3. Fetch Dependencies (This will now use the UpYun mirror)
-echo "📥 [Step 3] Fetching dependencies..."
+# IMPORTANT: Delete mix.lock to stop Mix from trying to use the old 'hexpm' repo
+echo "🔓 [Step 3] Removing mix.lock to force mirror usage..."
+rm -f mix.lock
+
+# --- Step 3: Fetch & Build ---
+echo "📥 [Step 4] Fetching dependencies..."
+# If SSL still fails, we try one last fallback: insecure mode (uncomment if needed)
+# export HEX_UNSAFE_HTTPS=1 
 mix deps.get
 
-# --- Standard Build Steps ---
 echo "⚙️  Compiling..."
 mix deps.compile
 mix compile
