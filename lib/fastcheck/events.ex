@@ -689,12 +689,13 @@ defmodule FastCheck.Events do
   Decrypts the stored Tickera API key for the event.
   """
   @spec get_tickera_api_key(Event.t() | nil) :: {:ok, String.t()} | {:error, :decryption_failed}
-  def get_tickera_api_key(%Event{id: id, tickera_api_key_encrypted: encrypted}) when is_binary(encrypted) do
+  def get_tickera_api_key(%Event{tickera_api_key_encrypted: encrypted} = event) when is_binary(encrypted) do
     case Crypto.decrypt(encrypted) do
-      {:ok, api_key} -> {:ok, api_key}
+      {:ok, api_key} ->
+        {:ok, api_key}
+
       {:error, :decryption_failed} ->
-        Logger.warning("Unable to decrypt Tickera API key for event #{id}")
-        {:error, :decryption_failed}
+        handle_legacy_tickera_key(event)
     end
   end
 
@@ -1289,6 +1290,68 @@ defmodule FastCheck.Events do
   end
 
   defp derive_last4(_), do: nil
+
+  defp handle_legacy_tickera_key(%Event{id: id} = event) do
+    legacy_key = event.tickera_api_key_encrypted |> String.trim()
+
+    cond do
+      legacy_key == "" ->
+        Logger.warning("Event #{id} is missing Tickera credentials")
+        {:error, :decryption_failed}
+
+      not legacy_plaintext_key?(legacy_key, event.tickera_api_key_last4) ->
+        Logger.warning("Unable to decrypt Tickera API key for event #{id}")
+        {:error, :decryption_failed}
+
+      true ->
+        Logger.warning(
+          "Detected legacy plaintext Tickera key for event #{id}; encrypting credentials in place"
+        )
+
+        _ = persist_legacy_tickera_key(event, legacy_key)
+
+        {:ok, legacy_key}
+    end
+  end
+
+  defp legacy_plaintext_key?(value, last4) do
+    plaintext_matches_last4?(value, last4) or not looks_like_ciphertext?(value)
+  end
+
+  defp plaintext_matches_last4?(_value, last4) when is_nil(last4) or last4 == "", do: false
+
+  defp plaintext_matches_last4?(value, last4) do
+    derive_last4(value) == last4
+  end
+
+  defp looks_like_ciphertext?(value) do
+    String.contains?(value, "--") and byte_size(value) > 32
+  end
+
+  defp persist_legacy_tickera_key(%Event{} = event, plaintext) do
+    with {:ok, ciphertext} <- Crypto.encrypt(plaintext),
+         {:ok, %Event{}} <-
+           apply_credential_attrs(event, %{
+             tickera_api_key_encrypted: ciphertext,
+             tickera_api_key_last4: derive_last4(plaintext)
+           }) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.error(
+          "Failed to persist legacy Tickera credentials for event #{event.id}: #{inspect(reason)}"
+        )
+
+        :error
+
+      other ->
+        Logger.error(
+          "Unexpected error while persisting legacy Tickera credentials for event #{event.id}: #{inspect(other)}"
+        )
+
+        :error
+    end
+  end
 
   defp credential_attrs_from_struct(%Event{} = event) do
     event
