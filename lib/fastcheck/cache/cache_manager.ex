@@ -232,7 +232,9 @@ defmodule FastCheck.Cache.CacheManager do
     :persistent_term.put(@config_key, config)
 
     case maybe_start_cache(config) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, reason} ->
         Logger.error(fn ->
           {"Cachex failed to start", cache_name: config.cache_name, reason: inspect(reason)}
@@ -304,6 +306,7 @@ defmodule FastCheck.Cache.CacheManager do
         {:ok, true} = response ->
           maybe_persist(key, ttl)
           maybe_enforce_limit()
+
           Logger.info(fn ->
             {"Cache write", cache_key: key, ttl: ttl, size: byte_size_safe(value)}
           end)
@@ -324,7 +327,7 @@ defmodule FastCheck.Cache.CacheManager do
   missing. The callback is executed once on cache misses and its return value is
   stored using the provided TTL options.
   """
-  @spec get_or_put(key(), (() -> value()), Keyword.t()) :: cache_result(value())
+  @spec get_or_put(key(), (-> value()), Keyword.t()) :: cache_result(value())
   def get_or_put(key, callback, opts \\ []) when is_function(callback, 0) do
     with {:ok, value} <- get(key) do
       case value do
@@ -405,7 +408,12 @@ defmodule FastCheck.Cache.CacheManager do
   Exposes Cachex runtime statistics such as hits, misses, and evictions for
   monitoring dashboards.
   """
-  @spec stats() :: cache_result(%{hits: non_neg_integer(), misses: non_neg_integer(), evictions: non_neg_integer()})
+  @spec stats() ::
+          cache_result(%{
+            hits: non_neg_integer(),
+            misses: non_neg_integer(),
+            evictions: non_neg_integer()
+          })
   def stats do
     if cache_ready?() do
       case Cachex.stats(cache_name()) do
@@ -432,8 +440,10 @@ defmodule FastCheck.Cache.CacheManager do
   @spec info() :: cache_result(map())
   def info do
     if cache_ready?() do
-      case Cachex.info(cache_name()) do
-        {:ok, info} -> {:ok, info}
+      case Cachex.inspect(cache_name(), :cache) do
+        {:ok, info} ->
+          {:ok, info}
+
         {:error, reason} ->
           log_cache_error(:info, :all, reason)
           {:error, reason}
@@ -633,12 +643,16 @@ defmodule FastCheck.Cache.CacheManager do
     else
       cache_options = [
         stats: true,
-        expiration: Cachex.Spec.expiration(default: config.default_ttl, interval: config.expiration_interval)
+        expiration:
+          Cachex.Spec.expiration(
+            default: config.default_ttl,
+            interval: config.expiration_interval
+          )
       ]
 
       case Cachex.start_link(name, cache_options) do
         {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+        {:error, {:already_started, _}} -> :ok
         {:error, reason} -> {:error, reason}
       end
     end
@@ -731,7 +745,10 @@ defmodule FastCheck.Cache.CacheManager do
   defp ticket_types_key(event_id), do: @ticket_types_prefix <> to_string(event_id)
   defp occupancy_event_key(event_id), do: @occupancy_event_prefix <> to_string(event_id)
   defp occupancy_gate_key(gate_id), do: @occupancy_gate_prefix <> to_string(gate_id)
-  defp attendee_key(event_id, ticket_code), do: @attendee_prefix <> to_string(event_id) <> ":" <> to_string(ticket_code)
+
+  defp attendee_key(event_id, ticket_code),
+    do: @attendee_prefix <> to_string(event_id) <> ":" <> to_string(ticket_code)
+
   defp stats_key(event_id), do: @stats_prefix <> to_string(event_id)
 
   defp broadcast_occupancy(event_id, count, change_type) do
@@ -751,7 +768,7 @@ defmodule FastCheck.Cache.CacheManager do
 
     case Cachex.size(cache_name()) do
       {:ok, size} when size > max ->
-        case Cachex.prune(cache_name(), max, reclaim: 0.1) do
+        case Cachex.purge(cache_name()) do
           {:ok, true} ->
             Logger.info(fn ->
               {"Cache pruned to enforce limit", max_size: max, size: size}
@@ -798,8 +815,10 @@ defmodule FastCheck.Cache.CacheManager do
       {:error, :config_lookup_failed}
   end
 
-  defp ensure_ticket_config_cache_entry(%{records: _records, by_id: _by_id, by_label: _by_label} = entry),
-    do: entry
+  defp ensure_ticket_config_cache_entry(
+         %{records: _records, by_id: _by_id, by_label: _by_label} = entry
+       ),
+       do: entry
 
   defp ensure_ticket_config_cache_entry(entry), do: build_ticket_config_cache_entry(entry)
 
@@ -838,8 +857,12 @@ defmodule FastCheck.Cache.CacheManager do
 
   defp find_cached_ticket_config(%{by_id: by_id, by_label: by_label}, ticket_identifier) do
     cond do
-      is_nil(ticket_identifier) -> nil
-      is_integer(ticket_identifier) -> Map.get(by_id, ticket_identifier)
+      is_nil(ticket_identifier) ->
+        nil
+
+      is_integer(ticket_identifier) ->
+        Map.get(by_id, ticket_identifier)
+
       is_binary(ticket_identifier) ->
         trimmed = String.trim(ticket_identifier)
         normalized = normalize_ticket_label(trimmed)
@@ -849,8 +872,11 @@ defmodule FastCheck.Cache.CacheManager do
 
       is_map(ticket_identifier) ->
         case Map.get(ticket_identifier, :ticket_type_id) do
-          nil -> Map.get(by_label, normalize_ticket_label(Map.get(ticket_identifier, :ticket_type)))
-          id -> Map.get(by_id, id)
+          nil ->
+            Map.get(by_label, normalize_ticket_label(Map.get(ticket_identifier, :ticket_type)))
+
+          id ->
+            Map.get(by_id, id)
         end
 
       true ->
@@ -866,7 +892,9 @@ defmodule FastCheck.Cache.CacheManager do
     value
     |> String.trim()
     |> case do
-      "" -> nil
+      "" ->
+        nil
+
       trimmed ->
         case Integer.parse(trimmed) do
           {number, ""} when number > 0 -> number
