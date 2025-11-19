@@ -222,6 +222,26 @@ defmodule FastCheck.EventsTest do
       assert decrypted == api_key
     end
 
+    test "get_tickera_api_key re-encrypts legacy plaintext values" do
+      legacy_key = "legacy-#{System.unique_integer([:positive])}"
+
+      legacy_event =
+        %Event{}
+        |> Event.changeset(%{
+          name: "Legacy Credentials",
+          tickera_site_url: "https://legacy.example.com",
+          tickera_api_key_encrypted: legacy_key,
+          tickera_api_key_last4: String.slice(legacy_key, -4, 4)
+        })
+        |> Repo.insert!()
+
+      assert {:ok, ^legacy_key} = Events.get_tickera_api_key(legacy_event)
+
+      refreshed = Repo.get!(Event, legacy_event.id)
+      refute refreshed.tickera_api_key_encrypted == legacy_key
+      assert {:ok, ^legacy_key} = Events.get_tickera_api_key(refreshed)
+    end
+
     test "touch_last_sync and touch_last_soft_sync update timestamps" do
       event = insert_event!("Timestamps")
 
