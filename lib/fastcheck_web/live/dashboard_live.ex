@@ -4,6 +4,7 @@ defmodule FastCheckWeb.DashboardLive do
   monitoring high-level statistics.
   """
 
+  use Phoenix.LiveView
   use FastCheckWeb, :live_view
 
   import Phoenix.Component, only: [to_form: 1]

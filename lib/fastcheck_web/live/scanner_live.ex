@@ -3,6 +3,7 @@ defmodule FastCheckWeb.ScannerLive do
   Real-time scanner interface for on-site staff to check in attendees via QR codes.
   """
 
+  use Phoenix.LiveView
   use FastCheckWeb, :live_view
 
   import Phoenix.Component, only: [to_form: 1]

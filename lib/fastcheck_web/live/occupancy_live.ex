@@ -4,6 +4,7 @@ defmodule FastCheckWeb.OccupancyLive do
   pressure, alerts, and entrance level performance.
   """
 
+  use Phoenix.LiveView
   use FastCheckWeb, :live_view
 
   alias FastCheck.Events
