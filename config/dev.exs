@@ -56,14 +56,16 @@ config :fastcheck, FastCheckWeb.Endpoint,
 # different ports.
 
 # Watch static and templates for browser reloading.
+live_reload_pattern_sources = [
+  "priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
+  "priv/gettext/.*(po)$",
+  "lib/fastcheck_web/(?:controllers|live|components|router)/?.*\.(ex|heex)$"
+]
+
 config :fastcheck, FastCheckWeb.Endpoint,
   live_reload: [
     web_console_logger: true,
-    patterns: [
-      ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
-      ~r"priv/gettext/.*(po)$",
-      ~r"lib/fastcheck_web/(?:controllers|live|components|router)/?.*\.(ex|heex)$"
-    ]
+    pattern_sources: live_reload_pattern_sources
   ]
 
 # Enable dev routes for dashboard and mailbox

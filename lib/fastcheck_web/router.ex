@@ -20,6 +20,7 @@ defmodule FastCheckWeb.Router do
     pipe_through :browser
 
     live "/", DashboardLive, :index
+    live "/dashboard", DashboardLive, :index
     live "/scan/:event_id", ScannerLive, :index
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
   end
