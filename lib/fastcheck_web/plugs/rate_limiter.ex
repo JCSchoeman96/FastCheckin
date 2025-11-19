@@ -48,6 +48,35 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     end
   end
 
+  # Block auto-banned IPs (high-frequency abusers)
+  rule "block_auto_banned", conn do
+    ip = get_peer_ip(conn)
+
+    case :ets.lookup(:fastcheck_abuse_tracking, {:banned, ip}) do
+      [{_, ban_info}] when is_map(ban_info) ->
+        if DateTime.compare(DateTime.utc_now(), ban_info.ban_until) == :lt do
+          # Ban still active - return ban metadata
+          Logger.warning("Auto-banned IP attempted access",
+            ip: ip,
+            ban_until: ban_info.ban_until,
+            reason: ban_info.reason,
+            path: conn.request_path
+          )
+          {:error, :auto_banned, ban_info}
+        else
+          # Ban expired - clean up and allow
+          :ets.delete(:fastcheck_abuse_tracking, {:banned, ip})
+          :next
+        end
+
+      _ ->
+        # Not banned or old format
+        :next
+    end
+  rescue
+    ArgumentError -> :next
+  end
+
   # Tier 1: Critical operations (Tickera API + expensive DB queries)
   rule "throttle_sync", conn do
     if sync_operation?(conn) do
@@ -111,6 +140,18 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   def allow_action(conn, _data, _opts), do: conn
 
   # Block rate limited requests
+  def block_action(conn, {:error, :auto_banned, ban_info}, _opts) when is_map(ban_info) do
+    # Auto-ban with metadata
+    retry_after = DateTime.diff(ban_info.ban_until, DateTime.utc_now())
+
+    conn
+    |> put_status(429)
+    |> put_resp_header("retry-after", to_string(max(retry_after, 1)))
+    |> put_resp_header("x-ban-reason", ban_info.reason)
+    |> send_auto_ban_response(ban_info)
+    |> halt()
+  end
+
   def block_action(conn, {:throttle, data}, _opts) do
     retry_after = div(data.period, 1000)
 
@@ -197,6 +238,14 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     end
   end
 
+  # Helper: Check if IP is currently auto-banned
+  defp auto_banned?(ip) do
+    case :ets.lookup(:fastcheck_abuse_tracking, {:banned, ip}) do
+      [{_, ban_until}] -> DateTime.compare(DateTime.utc_now(), ban_until) == :lt
+      [] -> false
+    end
+  end
+
   # Helper: Send appropriate error response based on request type
   defp send_rate_limit_response(conn) do
     retry_after = get_resp_header(conn, "retry-after") |> List.first() || "60"
@@ -237,5 +286,37 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   defp live_view_request?(conn) do
     conn.private[:phoenix_live_view] != nil or
       (conn.request_path =~ ~r/^\/live\// or get_req_header(conn, "x-requested-with") == ["live-view"])
+  end
+
+  # Send auto-ban specific responses with ban metadata
+  defp send_auto_ban_response(conn, ban_info) do
+    retry_after = DateTime.diff(ban_info.ban_until, DateTime.utc_now())
+
+    cond do
+      json_request?(conn) ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          429,
+          Jason.encode!(%{
+            error: "auto_banned",
+            message: "Your IP has been temporarily banned due to abuse.",
+            reason: ban_info.reason,
+            ban_until: DateTime.to_iso8601(ban_info.ban_until),
+            retry_after: max(retry_after, 1),
+            ban_count: ban_info.ban_count
+          })
+        )
+
+      live_view_request?(conn) ->
+        conn
+        |> Phoenix.Controller.put_flash(:error, "Access temporarily blocked. Reason: #{ban_info.reason}")
+        |> Phoenix.Controller.redirect(to: "/")
+
+      true ->
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(429, "Access blocked. Reason: #{ban_info.reason}. Retry after #{ban_info.ban_until}")
+    end
   end
 end

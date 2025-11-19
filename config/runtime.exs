@@ -92,3 +92,9 @@ config :fastcheck, FastCheck.RateLimiter,
   scan_period: 60_000,
   dashboard_limit: String.to_integer(System.get_env("RATE_LIMIT_DASHBOARD") || "100"),
   dashboard_period: 60_000
+
+# Alert thresholds for rate limiting monitoring
+config :fastcheck, :rate_limit_alerts,
+  abuse_threshold: String.to_integer(System.get_env("RATE_LIMIT_ABUSE_THRESHOLD") || "10"),
+  abuse_window_seconds: 60,
+  ets_size_alert_threshold: String.to_integer(System.get_env("ETS_SIZE_ALERT") || "1000")
