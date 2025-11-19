@@ -114,7 +114,7 @@ defmodule FastCheck.TickeraClient.Fallback do
 
   defp normalize_custom_fields(list) when is_list(list) do
     Enum.map(list, fn
-      %{"name" => name, "value" => value} = field -> field
+      %{"name" => _name, "value" => _value} = field -> field
       %{name: name, value: value} -> %{"name" => name, "value" => value}
       {name, value} -> %{"name" => to_string(name), "value" => value}
       other -> %{"name" => "field", "value" => inspect(other)}

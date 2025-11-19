@@ -686,7 +686,7 @@ defmodule FastCheck.TickeraClient do
     }
   end
 
-  def parse_attendee(ticket_data), do: %{}
+  def parse_attendee(_ticket_data), do: %{}
 
   defp email_from_field(nil, _value), do: nil
 

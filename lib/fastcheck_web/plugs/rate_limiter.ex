@@ -239,12 +239,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   end
 
   # Helper: Check if IP is currently auto-banned
-  defp auto_banned?(ip) do
-    case :ets.lookup(:fastcheck_abuse_tracking, {:banned, ip}) do
-      [{_, ban_until}] -> DateTime.compare(DateTime.utc_now(), ban_until) == :lt
-      [] -> false
-    end
-  end
+
 
   # Helper: Send appropriate error response based on request type
   defp send_rate_limit_response(conn) do

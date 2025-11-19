@@ -95,7 +95,9 @@ defmodule FastCheck.Events do
   """
   @spec event_lifecycle_state(Event.t() | nil, DateTime.t() | NaiveDateTime.t() | nil) ::
           :unknown | :upcoming | :active | :grace | :archived
-  def event_lifecycle_state(%Event{} = event, reference_datetime \\ DateTime.utc_now()) do
+  def event_lifecycle_state(event, reference_datetime \\ DateTime.utc_now())
+
+  def event_lifecycle_state(%Event{} = event, reference_datetime) do
     now = normalize_reference_datetime(reference_datetime)
     start_time = normalize_event_datetime(event.tickera_start_date)
     end_time = normalize_event_datetime(event.tickera_end_date)
@@ -120,7 +122,9 @@ defmodule FastCheck.Events do
   """
   @spec can_sync_event?(Event.t() | nil, DateTime.t() | NaiveDateTime.t() | nil) ::
           {:ok, atom()} | {:error, {:event_archived, String.t()} | {:event_missing, String.t()}}
-  def can_sync_event?(%Event{} = event, reference_datetime \\ DateTime.utc_now()) do
+  def can_sync_event?(event, reference_datetime \\ DateTime.utc_now())
+
+  def can_sync_event?(%Event{} = event, reference_datetime) do
     case event_lifecycle_state(event, reference_datetime) do
       :archived -> {:error, {:event_archived, "Event archived, sync disabled"}}
       state -> {:ok, state}
@@ -135,7 +139,9 @@ defmodule FastCheck.Events do
   """
   @spec can_check_in?(Event.t() | nil, DateTime.t() | NaiveDateTime.t() | nil) ::
           {:ok, atom()} | {:error, {:event_archived, String.t()} | {:event_missing, String.t()}}
-  def can_check_in?(%Event{} = event, reference_datetime \\ DateTime.utc_now()) do
+  def can_check_in?(event, reference_datetime \\ DateTime.utc_now())
+
+  def can_check_in?(%Event{} = event, reference_datetime) do
     case event_lifecycle_state(event, reference_datetime) do
       :archived -> {:error, {:event_archived, "Event archived, scanning disabled"}}
       state -> {:ok, state}
@@ -1275,14 +1281,11 @@ defmodule FastCheck.Events do
 
   defp normalize_ticket_type_id(_), do: nil
 
-  defp persist_ticket_configs(%Event{id: event_id} = event, [], _api_key) do
-    Logger.info("No ticket types discovered for event #{event_id}; skipping config sync")
-    {:ok, 0}
-  end
+
 
     # Persist all ticket configs returned by Tickera for a given event.
   # Returns {:ok, count} on success or {:error, reason} on first failure.
-  defp persist_ticket_configs(%Event{id: event_id} = event, [], _api_key) do
+  defp persist_ticket_configs(%Event{id: event_id} = _event, [], _api_key) do
     Logger.info("No ticket types discovered for event #{event_id}; skipping config sync")
     {:ok, 0}
   end
@@ -1782,6 +1785,14 @@ defmodule FastCheck.Events do
   defp normalize_count(value) when is_integer(value), do: value
   defp normalize_count(value) when is_float(value), do: round(value)
 
+  defp normalize_count(%Decimal{} = value) do
+    value
+    |> Decimal.to_float()
+    |> round()
+  rescue
+    _ -> 0
+  end
+
   defp update_sync_timestamp(event_id, attrs, updated_at) do
     updates =
       attrs
@@ -1803,13 +1814,7 @@ defmodule FastCheck.Events do
     DateTime.utc_now() |> DateTime.truncate(:second)
   end
 
-  defp normalize_count(%Decimal{} = value) do
-    value
-    |> Decimal.to_float()
-    |> round()
-  rescue
-    _ -> 0
-  end
+
 
   defp normalize_count(value) when is_binary(value) do
     case Integer.parse(value) do

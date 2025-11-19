@@ -64,7 +64,7 @@ defmodule FastCheck.TickeraCircuitBreaker do
   end
 
   @impl true
-  def handle_call({:execute, module, function, args}, _from, %{status: :open} = state) do
+  def handle_call({:execute, _module, _function, _args}, _from, %{status: :open} = state) do
     {:reply, {:error, :circuit_open}, state}
   end
 
