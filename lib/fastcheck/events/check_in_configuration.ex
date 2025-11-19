@@ -19,7 +19,6 @@ defmodule FastCheck.Events.CheckInConfiguration do
           allowed_entrances: map() | nil,
           check_in_window_start: Date.t() | nil,
           check_in_window_end: Date.t() | nil,
-          check_in_window: Postgrex.Range.t() | nil,
           check_in_window_timezone: String.t() | nil,
           check_in_window_days: integer() | nil,
           check_in_window_buffer_minutes: integer() | nil,
@@ -47,7 +46,6 @@ defmodule FastCheck.Events.CheckInConfiguration do
     field :allowed_entrances, :map
     field :check_in_window_start, :date
     field :check_in_window_end, :date
-    field :check_in_window, :daterange
     field :check_in_window_timezone, :string
     field :check_in_window_days, :integer
     field :check_in_window_buffer_minutes, :integer
@@ -75,7 +73,6 @@ defmodule FastCheck.Events.CheckInConfiguration do
     :allowed_entrances,
     :check_in_window_start,
     :check_in_window_end,
-    :check_in_window,
     :check_in_window_timezone,
     :check_in_window_days,
     :check_in_window_buffer_minutes,

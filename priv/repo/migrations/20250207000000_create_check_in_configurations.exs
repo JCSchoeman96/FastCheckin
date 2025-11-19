@@ -14,7 +14,6 @@ defmodule FastCheck.Repo.Migrations.CreateCheckInConfigurations do
       add :allowed_entrances, :map
       add :check_in_window_start, :date
       add :check_in_window_end, :date
-      add :check_in_window, :daterange
       add :check_in_window_timezone, :string
       add :check_in_window_days, :integer
       add :check_in_window_buffer_minutes, :integer
@@ -37,11 +36,6 @@ defmodule FastCheck.Repo.Migrations.CreateCheckInConfigurations do
            )
 
     create index(:check_in_configurations, [:time_basis], name: :idx_configs_time_basis)
-
-    create index(:check_in_configurations, [:check_in_window],
-      name: :idx_configs_check_in_window,
-      using: :gist
-    )
 
     create index(:check_in_configurations, [:last_checked_in_date],
       name: :idx_configs_last_checked_in_date
