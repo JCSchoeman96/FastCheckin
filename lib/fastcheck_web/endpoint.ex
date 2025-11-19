@@ -8,25 +8,6 @@ defmodule FastCheckWeb.Endpoint do
   # Set :encryption_salt if you would also like to encrypt it.
   @session_overrides @endpoint_config |> Keyword.get(:session_options, [])
 
-  @live_reload_options (
-    case Keyword.get(@endpoint_config, :live_reload) do
-      nil -> []
-      live_reload ->
-        {pattern_sources, live_reload} = Keyword.pop(live_reload, :pattern_sources, [])
-
-        patterns =
-          pattern_sources
-          |> Enum.reject(&is_nil/1)
-          |> Enum.map(&Regex.compile!(&1))
-
-        if patterns == [] do
-          live_reload
-        else
-          Keyword.put(live_reload, :patterns, patterns)
-        end
-    end
-  )
-
   @session_options [
                      store: :cookie,
                      key: "_fastcheck_key",
@@ -54,7 +35,7 @@ defmodule FastCheckWeb.Endpoint do
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-    plug Phoenix.LiveReloader, @live_reload_options
+    plug Phoenix.LiveReloader, live_reload_options()
     plug Phoenix.CodeReloader
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :fastcheck
   end
@@ -76,4 +57,22 @@ defmodule FastCheckWeb.Endpoint do
   plug Plug.Session, @session_options
   plug FastCheckWeb.Router
 
+  defp live_reload_options do
+    case Keyword.get(@endpoint_config, :live_reload) do
+      nil -> []
+      live_reload ->
+        {pattern_sources, live_reload} = Keyword.pop(live_reload, :pattern_sources, [])
+
+        patterns =
+          pattern_sources
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&Regex.compile!(&1))
+
+        if patterns == [] do
+          live_reload
+        else
+          Keyword.put(live_reload, :patterns, patterns)
+        end
+    end
+  end
 end
