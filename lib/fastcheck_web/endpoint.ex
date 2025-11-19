@@ -1,11 +1,14 @@
 defmodule FastCheckWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :fastcheck
 
+  @endpoint_config Application.compile_env(:fastcheck, __MODULE__, [])
+
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.
-  @session_overrides Application.compile_env(:fastcheck, __MODULE__, [])
-                     |> Keyword.get(:session_options, [])
+  @session_overrides @endpoint_config |> Keyword.get(:session_options, [])
+
+  @live_reload_options compile_live_reload_options(@endpoint_config)
 
   @session_options [
                      store: :cookie,
@@ -34,7 +37,7 @@ defmodule FastCheckWeb.Endpoint do
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-    plug Phoenix.LiveReloader
+    plug Phoenix.LiveReloader, @live_reload_options
     plug Phoenix.CodeReloader
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :fastcheck
   end
@@ -55,4 +58,24 @@ defmodule FastCheckWeb.Endpoint do
   plug Plug.Head
   plug Plug.Session, @session_options
   plug FastCheckWeb.Router
+
+  defp compile_live_reload_options(config) do
+    config
+    |> Keyword.get(:live_reload)
+    |> case do
+      nil -> []
+      live_reload ->
+        {pattern_sources, live_reload} = Keyword.pop(live_reload, :pattern_sources, [])
+
+        patterns =
+          pattern_sources
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&Regex.compile!(&1))
+
+        maybe_put_patterns(live_reload, patterns)
+    end
+  end
+
+  defp maybe_put_patterns(opts, []), do: opts
+  defp maybe_put_patterns(opts, patterns), do: Keyword.put(opts, :patterns, patterns)
 end
