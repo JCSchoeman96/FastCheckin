@@ -1,35 +1,111 @@
 name: CI
 
+# Trigger on pushes and pull requests to main and develop branches
 on:
   push:
-    branches: ["main"]
+    branches: [main, develop]
   pull_request:
+    branches: [main, develop]
+
+# Security best practice: limit permissions
+permissions:
+  contents: read
 
 jobs:
   test:
+    name: Test (Elixir ${{matrix.elixir}} OTP ${{matrix.otp}})
     runs-on: ubuntu-latest
 
+    # Matrix strategy for easy version expansion
+    strategy:
+      matrix:
+        elixir: ['1.19.3']
+        otp: ['28.0']
+
+    # PostgreSQL service for tests
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fastcheck_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    # Environment variables for all steps
+    env:
+      MIX_ENV: test
+      # PostgreSQL connection for Ecto
+      DATABASE_URL: ecto://postgres:postgres@localhost:5432/fastcheck_test
+      # Required for Phoenix - must be 64+ characters
+      SECRET_KEY_BASE: test_secret_key_base_for_github_actions_ci_pipeline_needs_64_chars_minimum
+
     steps:
+      # Step 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Elixir
+      # Step 2: Setup Elixir and OTP
+      - name: Setup Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18'
-          otp-version: '27'
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
 
+      # Step 3: Restore dependency cache
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
+
+      # Step 4: Install dependencies
       - name: Install dependencies
         run: mix deps.get
 
-      - name: Compile
+      # Step 5: Compile with warnings as errors
+      - name: Compile code (warnings as errors)
         run: mix compile --warnings-as-errors
 
-      - name: Run tests
-        run: mix test --warnings-as-errors
+      # Step 6: Check code formatting
+      - name: Check code formatting
+        run: mix format --check-formatted
 
-      - name: Credo
+      # Step 7: Run Credo (code quality)
+      - name: Run Credo (static analysis)
         run: mix credo --strict
 
-      - name: Format
-        run: mix format --check-formatted
+      # Step 8: Run Sobelow (security scan)
+      - name: Run Sobelow (security scan)
+        run: mix sobelow --exit --compact
+
+      # Step 9: Setup test database
+      - name: Create and migrate test database
+        run: |
+          mix ecto.create
+          mix ecto.migrate
+
+      # Step 10: Run test suite
+      - name: Run tests
+        run: mix test
+
+      # Step 11: Upload test artifacts on failure
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-elixir-${{ matrix.elixir }}-otp-${{ matrix.otp }}
+          path: |
+            _build/test/lib/fastcheck
+            cover/
+          retention-days: 7
