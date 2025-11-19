@@ -123,7 +123,13 @@ defmodule FastCheck.MixProject do
       ],
 
       # Developer precommit - may mutate mix.lock via deps.unlock
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "credo --strict", "test"]
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "credo --strict",
+        "test"
+      ]
     ]
   end
 end
