@@ -1,0 +1,15 @@
+{
+  "verbose": true,
+  "private": false,
+  "skip": false,
+  "router": "lib/fastcheck_web/router.ex",
+  "exit": "low",
+  "format": "txt",
+  "out": "",
+  "threshold": "low",
+  "ignore": [],
+  "ignore_files": [
+    "lib/fastcheck_web/components/layouts.ex"
+  ],
+  "mark_skip_all": false
+}

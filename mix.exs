@@ -25,7 +25,7 @@ defmodule FastCheck.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test, ci: :test]
+      preferred_envs: [precommit: :test, ci: :test, security: :test, quality: :test]
     ]
   end
 
@@ -69,7 +69,10 @@ defmodule FastCheck.MixProject do
       {:mishka_chelekom, "~> 0.0.8"},
 
       # Code quality
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+
+      # Security scanning
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -92,14 +95,26 @@ defmodule FastCheck.MixProject do
         "esbuild fastcheck --minify",
         "phx.digest"
       ],
+      # Security-focused alias
+      security: ["sobelow --config"],
+
+      # Combined quality checks (code quality + security)
+      quality: [
+        "format --check-formatted",
+        "credo --strict",
+        "sobelow --exit"
+      ],
+
       # Non-destructive CI checks - safe for automation
       ci: [
         "deps.get",
         "compile --warnings-as-errors",
         "format --check-formatted",
         "credo --strict",
+        "sobelow --exit --compact",
         "test"
       ],
+
       # Developer precommit - may mutate mix.lock via deps.unlock
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "credo --strict", "test"]
     ]

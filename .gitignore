@@ -35,3 +35,6 @@ petal_blueprint-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Code quality and security tools
+/.credo_cache/
+/.sobelow/
