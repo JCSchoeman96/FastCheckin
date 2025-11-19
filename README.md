@@ -13,6 +13,7 @@ FastCheck is a Phoenix-powered PETAL stack application that enables lightning-fa
 - ✓ 10–50 ms QR code scanning (≈40× faster than Checkinera)
 - ✓ Offline-capable once attendee data is synced locally
 - ✓ Support for multiple simultaneous events and venues
+- ✓ Lifecycle-aware syncing using cached Tickera UTC start/end windows
 - ✓ Real-time statistics, throughput charts, and live progress bars
 - ✓ 100% source-code ownership with no vendor dependencies
 - ✓ PostgreSQL database with tuned indexes for high-volume reads/writes

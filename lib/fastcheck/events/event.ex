@@ -1,7 +1,9 @@
 defmodule FastCheck.Events.Event do
   @moduledoc """
   Defines the Event schema which stores metadata about every synced Tickera event
-  including its status, entrance configuration, and sync timestamps.
+  including its status, entrance configuration, and sync timestamps. Tickera start
+  and end timestamps are stored as UTC datetimes so lifecycle helpers can reliably
+  determine when scanning should open, close, and move into the grace period.
   """
 
   use Ecto.Schema
@@ -13,8 +15,8 @@ defmodule FastCheck.Events.Event do
           tickera_api_key_encrypted: String.t() | nil,
           tickera_api_key_last4: String.t() | nil,
           tickera_site_url: String.t() | nil,
-          tickera_start_date: NaiveDateTime.t() | nil,
-          tickera_end_date: NaiveDateTime.t() | nil,
+          tickera_start_date: DateTime.t() | nil,
+          tickera_end_date: DateTime.t() | nil,
           status: String.t() | nil,
           total_tickets: integer() | nil,
           checked_in_count: integer() | nil,
@@ -41,8 +43,8 @@ defmodule FastCheck.Events.Event do
     field :tickera_api_key_last4, :string
     # URL of the WordPress site hosting Tickera
     field :tickera_site_url, :string
-    field :tickera_start_date, :naive_datetime
-    field :tickera_end_date, :naive_datetime
+    field :tickera_start_date, :utc_datetime
+    field :tickera_end_date, :utc_datetime
     # Event lifecycle status such as "active", "syncing", or "archived"
     field :status, :string
     # Total number of tickets made available for the event
