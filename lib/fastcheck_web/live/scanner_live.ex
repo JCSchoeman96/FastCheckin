@@ -406,7 +406,7 @@ defmodule FastCheckWeb.ScannerLive do
                   
                   <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                   
-                  <% if @last_scan_checkins_allowed > 1 do %>
+                  <% :if={@last_scan_checkins_allowed > 1} do %>
                     <p class="text-green-200 text-lg mt-3">
                       Check-in: <span class="font-bold">{@last_scan_checkins_used}</span>
                       of <span class="font-bold">{@last_scan_checkins_allowed}</span>
@@ -487,6 +487,7 @@ defmodule FastCheckWeb.ScannerLive do
           </div>
           
           <section
+            id="camera-permission-hook"
             phx-hook="CameraPermission"
             data-storage-key={"fastcheck:camera-permission:event-#{@event_id}"}
             class="rounded-3xl bg-slate-900/85 px-6 py-8 text-white shadow-2xl backdrop-blur"
