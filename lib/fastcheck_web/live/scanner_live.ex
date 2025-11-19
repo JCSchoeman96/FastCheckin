@@ -912,8 +912,12 @@ defmodule FastCheckWeb.ScannerLive do
     attendee
     |> Map.get(:first_name)
     |> case do
-      value when is_binary(value) and String.trim(value) != "" -> String.trim(value)
-      _ -> attendee_display_name(attendee)
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+        if trimmed != "", do: trimmed, else: attendee_display_name(attendee)
+
+      _ ->
+        attendee_display_name(attendee)
     end
   end
 

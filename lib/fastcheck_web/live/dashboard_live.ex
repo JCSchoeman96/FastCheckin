@@ -113,7 +113,7 @@ defmodule FastCheckWeb.DashboardLive do
     final_status =
       case socket.assigns.sync_status do
         nil -> "Sync complete!"
-        status when is_binary(status) and String.starts_with?(status, "Sync failed") -> status
+        "Sync failed" <> _rest -> socket.assigns.sync_status
         _ -> "Sync complete!"
       end
 
