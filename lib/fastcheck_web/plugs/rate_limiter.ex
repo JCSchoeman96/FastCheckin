@@ -31,10 +31,18 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   # Configurable limits (can be overridden in runtime.exs or via env vars)
   @sync_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :sync_limit], 3)
-  @occupancy_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :occupancy_limit], 10)
+  @occupancy_limit Application.compile_env(
+                     :fastcheck,
+                     [FastCheck.RateLimiter, :occupancy_limit],
+                     10
+                   )
   @checkin_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :checkin_limit], 30)
   @scan_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :scan_limit], 50)
-  @dashboard_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :dashboard_limit], 100)
+  @dashboard_limit Application.compile_env(
+                     :fastcheck,
+                     [FastCheck.RateLimiter, :dashboard_limit],
+                     100
+                   )
 
   # Storage backend configured in application.ex
   # {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000}
@@ -42,8 +50,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Don't rate limit localhost (development) - supports IPv4 and IPv6
   rule "allow_local", conn do
     case get_peer_ip(conn) do
-      "127.0.0.1" -> :allow  # IPv4 localhost
-      "::1" -> :allow        # IPv6 localhost
+      # IPv4 localhost
+      "127.0.0.1" -> :allow
+      # IPv6 localhost
+      "::1" -> :allow
       _ -> :next
     end
   end
@@ -62,6 +72,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
             reason: ban_info.reason,
             path: conn.request_path
           )
+
           {:error, :auto_banned, ban_info}
         else
           # Ban expired - clean up and allow
@@ -82,7 +93,13 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     if sync_operation?(conn) do
       key = "sync:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
       # Configurable limit per 5 minutes per event
-      throttle(key, limit: @sync_limit, period: 300_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+      throttle(key,
+        limit: @sync_limit,
+        period: 300_000,
+        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+      )
+    else
+      :next
     end
   end
 
@@ -90,7 +107,13 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     if occupancy_operation?(conn) do
       key = "occupancy:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
       # Configurable limit per minute per event
-      throttle(key, limit: @occupancy_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+      throttle(key,
+        limit: @occupancy_limit,
+        period: 60_000,
+        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+      )
+    else
+      :next
     end
   end
 
@@ -99,7 +122,13 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     if check_in_operation?(conn) do
       key = "check_in:#{get_peer_ip(conn)}"
       # Configurable limit per minute per IP
-      throttle(key, limit: @checkin_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+      throttle(key,
+        limit: @checkin_limit,
+        period: 60_000,
+        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+      )
+    else
+      :next
     end
   end
 
@@ -107,7 +136,13 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     if scan_operation?(conn) do
       key = "scan:#{get_peer_ip(conn)}"
       # Configurable limit per minute per IP
-      throttle(key, limit: @scan_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+      throttle(key,
+        limit: @scan_limit,
+        period: 60_000,
+        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+      )
+    else
+      :next
     end
   end
 
@@ -115,7 +150,11 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   rule "throttle_dashboard", conn do
     key = "general:#{get_peer_ip(conn)}"
     # Configurable limit per minute per IP
-    throttle(key, limit: @dashboard_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+    throttle(key,
+      limit: @dashboard_limit,
+      period: 60_000,
+      storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+    )
   end
 
   # Handle rate limit exceeded - log and prepare response
@@ -233,13 +272,13 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Helper: Get user agent (truncated to prevent log bloat)
   defp get_user_agent(conn) do
     case get_req_header(conn, "user-agent") do
-      [ua | _] -> String.slice(ua, 0, 100)  # Truncate to 100 chars
+      # Truncate to 100 chars
+      [ua | _] -> String.slice(ua, 0, 100)
       _ -> "unknown"
     end
   end
 
   # Helper: Check if IP is currently auto-banned
-
 
   # Helper: Send appropriate error response based on request type
   defp send_rate_limit_response(conn) do
@@ -261,7 +300,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       live_view_request?(conn) ->
         # LiveView will handle via flash message in controller
         conn
-        |> Phoenix.Controller.put_flash(:error, "Too many requests. Please wait before trying again.")
+        |> Phoenix.Controller.put_flash(
+          :error,
+          "Too many requests. Please wait before trying again."
+        )
         |> Phoenix.Controller.redirect(to: "/")
 
       true ->
@@ -280,7 +322,8 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   defp live_view_request?(conn) do
     conn.private[:phoenix_live_view] != nil or
-      (conn.request_path =~ ~r/^\/live\// or get_req_header(conn, "x-requested-with") == ["live-view"])
+      (conn.request_path =~ ~r/^\/live\// or
+         get_req_header(conn, "x-requested-with") == ["live-view"])
   end
 
   # Send auto-ban specific responses with ban metadata
@@ -305,13 +348,19 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
       live_view_request?(conn) ->
         conn
-        |> Phoenix.Controller.put_flash(:error, "Access temporarily blocked. Reason: #{ban_info.reason}")
+        |> Phoenix.Controller.put_flash(
+          :error,
+          "Access temporarily blocked. Reason: #{ban_info.reason}"
+        )
         |> Phoenix.Controller.redirect(to: "/")
 
       true ->
         conn
         |> put_resp_content_type("text/plain")
-        |> send_resp(429, "Access blocked. Reason: #{ban_info.reason}. Retry after #{ban_info.ban_until}")
+        |> send_resp(
+          429,
+          "Access blocked. Reason: #{ban_info.reason}. Retry after #{ban_info.ban_until}"
+        )
     end
   end
 end

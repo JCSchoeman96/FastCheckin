@@ -75,8 +75,9 @@ defmodule FastCheckWeb.Components.InputField do
   attr :multiple, :boolean, default: false, doc: "the multiple flag for select inputs"
 
   attr :rest, :global,
-    include: ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
-                multiple pattern placeholder readonly required rows size step),
+    include:
+      ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
+                multiple pattern placeholder readonly required rows size step autocorrect autocapitalize spellcheck inputmode),
     doc:
       "Global attributes can define defaults which are merged with attributes provided by the caller"
 
@@ -111,7 +112,6 @@ defmodule FastCheckWeb.Components.InputField do
           {@rest}
         /> {@label}
       </label>
-
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -121,7 +121,7 @@ defmodule FastCheckWeb.Components.InputField do
     ~H"""
     <div>
       <.label for={@id}>{@label}</.label>
-
+      
       <select
         id={@id}
         name={@name}
@@ -130,9 +130,8 @@ defmodule FastCheckWeb.Components.InputField do
         {@rest}
       >
         <option :if={@prompt} value="">{@prompt}</option>
-        {Phoenix.HTML.Form.options_for_select(@options, @value)}
+         {Phoenix.HTML.Form.options_for_select(@options, @value)}
       </select>
-
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -142,7 +141,7 @@ defmodule FastCheckWeb.Components.InputField do
     ~H"""
     <div>
       <.label for={@id}>{@label}</.label>
-      <textarea
+       <textarea
         id={@id}
         name={@name}
         class={[
@@ -162,7 +161,7 @@ defmodule FastCheckWeb.Components.InputField do
     ~H"""
     <div>
       <.label for={@id}>{@label}</.label>
-
+      
       <input
         type={@type}
         name={@name}
@@ -204,8 +203,9 @@ defmodule FastCheckWeb.Components.InputField do
   def error(assigns) do
     ~H"""
     <p class="mt-3 flex gap-3 text-sm leading-6 text-rose-600">
-      <.icon name="hero-exclamation-circle-mini" class="mt-0.5 h-5 w-5 flex-none" />
-      {render_slot(@inner_block)}
+      <.icon name="hero-exclamation-circle-mini" class="mt-0.5 h-5 w-5 flex-none" /> {render_slot(
+        @inner_block
+      )}
     </p>
     """
   end

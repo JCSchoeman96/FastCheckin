@@ -23,6 +23,40 @@ defmodule FastCheck.Events do
   alias FastCheck.Cache.EtsLayer
   alias Postgrex.Range
 
+  @compile {:nowarn_unused_function,
+            [
+              refresh_event_window_from_tickera: 2,
+              persist_event_window: 3,
+              same_datetime?: 2,
+              invalidate_event_stats_cache: 1,
+              invalidate_occupancy_cache: 1,
+              broadcast_event_stats: 2,
+              occupancy_cache_key: 1,
+              occupancy_pattern: 1,
+              stats_topic: 1,
+              fetch_live_occupancy: 2,
+              extract_live_occupancy: 1,
+              persist_live_occupancy: 2,
+              log_live_occupancy: 3,
+              broadcast_live_occupancy: 2,
+              normalize_occupancy_integer: 1,
+              normalize_occupancy_float: 1,
+              ensure_map: 1,
+              load_ticket_type_ids: 1,
+              normalize_ticket_type_id: 1,
+              persist_ticket_configs: 3,
+              upsert_ticket_config: 3,
+              build_config_attrs: 3,
+              normalize_config_dates: 1,
+              maybe_put_ticket_labels: 2,
+              pick_ticket_label: 2,
+              maybe_put_check_in_window: 1,
+              build_date_range: 2,
+              touch_last_config_sync: 1,
+              finalize_sync: 1,
+              resolve_synced_count: 3
+            ]}
+
   @attr_atom_lookup %{
     "site_url" => :site_url,
     "tickera_site_url" => :tickera_site_url,
@@ -1245,11 +1279,11 @@ defmodule FastCheck.Events do
 
     try do
       Task.await(task, @occupancy_task_timeout)
-    rescue
-      e in Task.TimeoutError ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, "TASK_TIMEOUT", Exception.message(e)}
     catch
+      :exit, {:timeout, _} ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, "TASK_TIMEOUT", "Task timed out"}
+
       :exit, reason ->
         {:error, "TASK_EXIT", inspect(reason)}
     end
@@ -1946,25 +1980,6 @@ defmodule FastCheck.Events do
     end
   end
 
-  defp normalize_count(nil), do: 0
-  defp normalize_count(value) when is_integer(value), do: value
-  defp normalize_count(value) when is_float(value), do: round(value)
-
-  defp normalize_count(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {parsed, _} -> parsed
-      :error -> 0
-    end
-  end
-
-  defp normalize_count(%Decimal{} = value) do
-    value
-    |> Decimal.to_float()
-    |> round()
-  rescue
-    _ -> 0
-  end
-
   defp update_sync_timestamp(event_id, attrs, updated_at) do
     updates =
       attrs
@@ -1984,6 +1999,25 @@ defmodule FastCheck.Events do
 
   defp current_timestamp do
     DateTime.utc_now() |> DateTime.truncate(:second)
+  end
+
+  defp normalize_count(nil), do: 0
+  defp normalize_count(value) when is_integer(value), do: value
+  defp normalize_count(value) when is_float(value), do: round(value)
+
+  defp normalize_count(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, _} -> parsed
+      :error -> 0
+    end
+  end
+
+  defp normalize_count(%Decimal{} = value) do
+    value
+    |> Decimal.to_float()
+    |> round()
+  rescue
+    _ -> 0
   end
 
   defp normalize_count(value) when is_boolean(value), do: if(value, do: 1, else: 0)

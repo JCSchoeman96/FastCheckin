@@ -4,7 +4,6 @@ defmodule FastCheckWeb.DashboardLive do
   monitoring high-level statistics.
   """
 
-  use Phoenix.LiveView
   use FastCheckWeb, :live_view
 
   alias Ecto.Changeset

@@ -406,7 +406,7 @@ defmodule FastCheckWeb.ScannerLive do
                   
                   <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                   
-                  <% :if={@last_scan_checkins_allowed > 1} do %>
+                  <div :if={@last_scan_checkins_allowed > 1}>
                     <p class="text-green-200 text-lg mt-3">
                       Check-in: <span class="font-bold">{@last_scan_checkins_used}</span>
                       of <span class="font-bold">{@last_scan_checkins_allowed}</span>
@@ -419,7 +419,7 @@ defmodule FastCheckWeb.ScannerLive do
                       <div class="bg-green-400 h-3 rounded-full" style={"width: #{percentage}%"}>
                       </div>
                     </div>
-                  <% end %>
+                  </div>
                   
                   <p class="text-green-200 text-sm mt-2">Occupancy: {@current_occupancy} inside</p>
                 </div>
@@ -1089,28 +1089,6 @@ defmodule FastCheckWeb.ScannerLive do
   defp occupancy_status_color(percentage) when percentage > 90, do: "bg-red-500"
   defp occupancy_status_color(percentage) when percentage > 75, do: "bg-yellow-500"
   defp occupancy_status_color(_), do: "bg-green-500"
-
-  defp scan_status_classes(:success),
-    do:
-      "rounded-3xl border-2 border-green-500 bg-green-900/70 px-6 py-6 text-green-100 shadow-2xl transition"
-
-  defp scan_status_classes(:duplicate),
-    do:
-      "rounded-3xl border-2 border-yellow-500 bg-yellow-900/70 px-6 py-6 text-yellow-100 shadow-2xl transition"
-
-  defp scan_status_classes(status) when status in [:invalid, :error],
-    do:
-      "rounded-3xl border-2 border-red-500 bg-red-900/70 px-6 py-6 text-red-100 shadow-2xl transition"
-
-  defp scan_status_classes(_),
-    do:
-      "rounded-3xl border-2 border-slate-600 bg-slate-800/80 px-6 py-6 text-slate-100 shadow-2xl"
-
-  defp scan_status_icon(:success), do: "✓"
-  defp scan_status_icon(:duplicate), do: "⚠"
-  defp scan_status_icon(:invalid), do: "✕"
-  defp scan_status_icon(:error), do: "✕"
-  defp scan_status_icon(_), do: "ℹ"
 
   defp default_camera_permission, do: @default_camera_permission
 
