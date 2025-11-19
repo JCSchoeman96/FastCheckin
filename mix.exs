@@ -25,7 +25,7 @@ defmodule FastCheck.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, ci: :test]
     ]
   end
 
@@ -66,7 +66,10 @@ defmodule FastCheck.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:mishka_chelekom, "~> 0.0.8"}
+      {:mishka_chelekom, "~> 0.0.8"},
+
+      # Code quality
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -82,14 +85,23 @@ defmodule FastCheck.MixProject do
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
-      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
+      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --ifmissing"],
       "assets.build": ["compile", "tailwind fastcheck", "esbuild fastcheck"],
       "assets.deploy": [
         "tailwind fastcheck --minify",
         "esbuild fastcheck --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      # Non-destructive CI checks - safe for automation
+      ci: [
+        "deps.get",
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "credo --strict",
+        "test"
+      ],
+      # Developer precommit - may mutate mix.lock via deps.unlock
+      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "credo --strict", "test"]
     ]
   end
 end
