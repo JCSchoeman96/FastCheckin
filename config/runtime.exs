@@ -78,3 +78,17 @@ if config_env() == :prod do
     check_origin: ["https://#{domain}"],
     secret_key_base: secret_key_base
 end
+
+# Runtime configurable rate limiting
+# Override defaults via environment variables for production tuning without recompilation
+config :fastcheck, FastCheck.RateLimiter,
+  sync_limit: String.to_integer(System.get_env("RATE_LIMIT_SYNC") || "3"),
+  sync_period: 300_000,
+  occupancy_limit: String.to_integer(System.get_env("RATE_LIMIT_OCCUPANCY") || "10"),
+  occupancy_period: 60_000,
+  checkin_limit: String.to_integer(System.get_env("RATE_LIMIT_CHECKIN") || "30"),
+  checkin_period: 60_000,
+  scan_limit: String.to_integer(System.get_env("RATE_LIMIT_SCAN") || "50"),
+  scan_period: 60_000,
+  dashboard_limit: String.to_integer(System.get_env("RATE_LIMIT_DASHBOARD") || "100"),
+  dashboard_period: 60_000

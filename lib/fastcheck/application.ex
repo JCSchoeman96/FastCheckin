@@ -21,6 +21,10 @@ defmodule FastCheck.Application do
         FastCheck.TickeraCircuitBreaker,
         {DNSCluster, query: Application.get_env(:fastcheck, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: FastCheck.PubSub},
+        # Rate limiter storage (ETS table) - cleans up expired entries every 60 seconds
+        {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000},
+        # Rate limiter monitor - logs ETS table stats every 5 minutes
+        FastCheck.RateLimiterMonitor,
         # Start a worker by calling: FastCheck.Worker.start_link(arg)
         # {FastCheck.Worker, arg},
         # Start to serve requests, typically the last entry

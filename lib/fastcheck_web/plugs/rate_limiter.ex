@@ -1,0 +1,241 @@
+defmodule FastCheckWeb.Plugs.RateLimiter do
+  @moduledoc """
+  Rate limiting plug using PlugAttack to protect FastCheck endpoints.
+
+  ## Rate Limits (Configurable)
+
+  **Tier 1 - Critical (Strictest):**
+  - Sync operations: 3 per event per 5 minutes (configurable)
+  - Occupancy refresh: 10 per event per minute (configurable)
+
+  **Tier 2 - High Frequency (Moderate):**
+  - Check-in/out: 30 per IP per minute (configurable)
+  - QR validation: 50 per IP per minute (configurable)
+
+  **Tier 3 - Read-Only (Lenient):**
+  - Dashboard: 100 per IP per minute (configurable)
+
+  ## Configuration
+
+  Set environment variables to override defaults:
+  - `RATE_LIMIT_SYNC` - Sync operations limit (default: 3)
+  - `RATE_LIMIT_OCCUPANCY` - Occupancy limit (default: 10)
+  - `RATE_LIMIT_CHECKIN` - Check-in limit (default: 30)
+  - `RATE_LIMIT_SCAN` - Scan limit (default: 50)
+  - `RATE_LIMIT_DASHBOARD` - Dashboard limit (default: 100)
+  """
+
+  use PlugAttack
+  import Plug.Conn
+  require Logger
+
+  # Configurable limits (can be overridden in runtime.exs or via env vars)
+  @sync_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :sync_limit], 3)
+  @occupancy_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :occupancy_limit], 10)
+  @checkin_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :checkin_limit], 30)
+  @scan_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :scan_limit], 50)
+  @dashboard_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :dashboard_limit], 100)
+
+  # Storage backend configured in application.ex
+  # {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000}
+
+  # Don't rate limit localhost (development) - supports IPv4 and IPv6
+  rule "allow_local", conn do
+    case get_peer_ip(conn) do
+      "127.0.0.1" -> :allow  # IPv4 localhost
+      "::1" -> :allow        # IPv6 localhost
+      _ -> :next
+    end
+  end
+
+  # Tier 1: Critical operations (Tickera API + expensive DB queries)
+  rule "throttle_sync", conn do
+    if sync_operation?(conn) do
+      key = "sync:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
+      # Configurable limit per 5 minutes per event
+      throttle(key, limit: @sync_limit, period: 300_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+    end
+  end
+
+  rule "throttle_occupancy", conn do
+    if occupancy_operation?(conn) do
+      key = "occupancy:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
+      # Configurable limit per minute per event
+      throttle(key, limit: @occupancy_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+    end
+  end
+
+  # Tier 2: High frequency scanner operations
+  rule "throttle_check_in", conn do
+    if check_in_operation?(conn) do
+      key = "check_in:#{get_peer_ip(conn)}"
+      # Configurable limit per minute per IP
+      throttle(key, limit: @checkin_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+    end
+  end
+
+  rule "throttle_scan", conn do
+    if scan_operation?(conn) do
+      key = "scan:#{get_peer_ip(conn)}"
+      # Configurable limit per minute per IP
+      throttle(key, limit: @scan_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+    end
+  end
+
+  # Tier 3: General dashboard/read operations (lenient)
+  rule "throttle_dashboard", conn do
+    key = "general:#{get_peer_ip(conn)}"
+    # Configurable limit per minute per IP
+    throttle(key, limit: @dashboard_limit, period: 60_000, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter})
+  end
+
+  # Handle rate limit exceeded - log and prepare response
+  def allow_action(conn, {:throttle, data}, _opts) do
+    retry_after = div(data.period, 1000)
+
+    # Enhanced logging with more context
+    Logger.warning("Rate limit exceeded",
+      ip: get_peer_ip(conn),
+      path: conn.request_path,
+      limit: data.limit,
+      period: data.period,
+      event_id: get_event_id(conn),
+      user_agent: get_user_agent(conn)
+    )
+
+    conn
+    |> put_resp_header("retry-after", to_string(retry_after))
+    |> send_rate_limit_response()
+  end
+
+  def allow_action(conn, _data, _opts), do: conn
+
+  # Block rate limited requests
+  def block_action(conn, {:throttle, data}, _opts) do
+    retry_after = div(data.period, 1000)
+
+    # Emit telemetry event BEFORE halting (non-blocking)
+    :telemetry.execute(
+      [:fastcheck, :rate_limit, :blocked],
+      %{count: 1},
+      %{
+        path: conn.request_path,
+        ip: get_peer_ip(conn),
+        limit: data.limit,
+        period: data.period,
+        event_id: get_event_id(conn)
+      }
+    )
+
+    # Enhanced logging with more context
+    Logger.warning("Rate limit blocked request",
+      ip: get_peer_ip(conn),
+      path: conn.request_path,
+      limit: data.limit,
+      period: data.period,
+      event_id: get_event_id(conn),
+      user_agent: get_user_agent(conn)
+    )
+
+    conn
+    |> put_status(429)
+    |> put_resp_header("retry-after", to_string(retry_after))
+    |> send_rate_limit_response()
+    |> halt()
+  end
+
+  def block_action(conn, _data, _opts), do: conn
+
+  # Helper: Detect operation types
+  defp sync_operation?(conn) do
+    conn.request_path =~ ~r/\/events\/\d+\/sync/
+  end
+
+  defp occupancy_operation?(conn) do
+    conn.request_path =~ ~r/\/events\/\d+\/occupancy/ or
+      conn.request_path =~ ~r/\/dashboard\/occupancy/
+  end
+
+  defp check_in_operation?(conn) do
+    conn.request_path =~ ~r/\/(check_in|check_out|check-in|check-out)/
+  end
+
+  defp scan_operation?(conn) do
+    conn.request_path =~ ~r/\/scan/ or conn.request_path =~ ~r/\/validate_ticket/
+  end
+
+  # Helper: Extract event ID from path or params
+  defp get_event_id(conn) do
+    case Regex.run(~r/\/events\/(\d+)/, conn.request_path) do
+      [_, id] -> id
+      _ -> conn.params["event_id"] || "unknown"
+    end
+  end
+
+  # Helper: Get peer IP address (handles proxies and IPv6)
+  defp get_peer_ip(conn) do
+    # Check for proxy headers first (Cloudflare, nginx, etc.)
+    case get_req_header(conn, "x-forwarded-for") do
+      [ip | _] ->
+        # x-forwarded-for may contain multiple IPs, take the first
+        ip |> String.split(",") |> List.first() |> String.trim()
+
+      _ ->
+        # Fallback to direct connection IP (handles IPv4 and IPv6)
+        case Plug.Conn.get_peer_data(conn) do
+          %{address: address} -> :inet.ntoa(address) |> to_string()
+          _ -> "unknown"
+        end
+    end
+  end
+
+  # Helper: Get user agent (truncated to prevent log bloat)
+  defp get_user_agent(conn) do
+    case get_req_header(conn, "user-agent") do
+      [ua | _] -> String.slice(ua, 0, 100)  # Truncate to 100 chars
+      _ -> "unknown"
+    end
+  end
+
+  # Helper: Send appropriate error response based on request type
+  defp send_rate_limit_response(conn) do
+    retry_after = get_resp_header(conn, "retry-after") |> List.first() || "60"
+
+    cond do
+      json_request?(conn) ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          429,
+          Jason.encode!(%{
+            error: "rate_limited",
+            message: "Too many requests. Please wait and try again.",
+            retry_after: String.to_integer(retry_after)
+          })
+        )
+
+      live_view_request?(conn) ->
+        # LiveView will handle via flash message in controller
+        conn
+        |> Phoenix.Controller.put_flash(:error, "Too many requests. Please wait before trying again.")
+        |> Phoenix.Controller.redirect(to: "/")
+
+      true ->
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(429, "Rate limit exceeded. Retry after #{retry_after} seconds.")
+    end
+  end
+
+  defp json_request?(conn) do
+    case get_req_header(conn, "accept") do
+      [] -> false
+      [accept | _] -> String.contains?(accept, "application/json")
+    end
+  end
+
+  defp live_view_request?(conn) do
+    conn.private[:phoenix_live_view] != nil or
+      (conn.request_path =~ ~r/^\/live\// or get_req_header(conn, "x-requested-with") == ["live-view"])
+  end
+end

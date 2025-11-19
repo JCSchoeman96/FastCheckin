@@ -68,6 +68,9 @@ defmodule FastCheck.MixProject do
       {:bandit, "~> 1.5"},
       {:mishka_chelekom, "~> 0.0.8"},
 
+      # Rate limiting
+      {:plug_attack, "~> 0.4.3"},
+
       # Code quality
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
 

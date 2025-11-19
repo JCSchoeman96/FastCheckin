@@ -67,6 +67,10 @@ config :fastcheck, FastCheck.Cache.CacheManager,
   max_size: 10_000,
   pubsub_topic: "fastcheck:cache:invalidate"
 
+# Rate limiting configuration
+config :fastcheck, FastCheck.RateLimiter,
+  storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

@@ -8,10 +8,12 @@ defmodule FastCheckWeb.Router do
     plug :put_root_layout, html: {FastCheckWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug FastCheckWeb.Plugs.RateLimiter
   end
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug FastCheckWeb.Plugs.RateLimiter
   end
 
   scope "/", FastCheckWeb do
