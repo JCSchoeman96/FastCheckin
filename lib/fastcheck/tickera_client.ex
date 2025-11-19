@@ -497,7 +497,9 @@ defmodule FastCheck.TickeraClient do
 
   def get_ticket_config(site_url, api_key, ticket_type_id) when is_binary(ticket_type_id) do
     case Integer.parse(ticket_type_id) do
-      {value, _rest} when value > 0 -> get_ticket_config(site_url, api_key, value)
+      {value, _rest} when value > 0 ->
+        get_ticket_config(site_url, api_key, value)
+
       _ ->
         Logger.warning(
           "TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}"
@@ -508,7 +510,10 @@ defmodule FastCheck.TickeraClient do
   end
 
   def get_ticket_config(_site_url, _api_key, ticket_type_id) do
-    Logger.warning("TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}")
+    Logger.warning(
+      "TickeraClient: get_ticket_config – INVALID_TICKET_TYPE_ID #{inspect(ticket_type_id)}"
+    )
+
     {:error, "INVALID_TICKET_TYPE_ID", "Ticket type id must be positive"}
   end
 
@@ -690,20 +695,20 @@ defmodule FastCheck.TickeraClient do
 
   defp email_from_field(nil, _value), do: nil
 
+  defp email_from_field(name, value) do
+    if String.match?(String.downcase(to_string(name)), ~r/email/) do
+      value
+    else
+      nil
+    end
+  end
+
   defp normalize_ticket_type_id_field(value) do
     value
     |> coerce_integer()
     |> case do
       number when number > 0 -> number
       _ -> nil
-    end
-  end
-
-  defp email_from_field(name, value) do
-    if String.match?(String.downcase(to_string(name)), ~r/email/) do
-      value
-    else
-      nil
     end
   end
 
@@ -785,7 +790,7 @@ defmodule FastCheck.TickeraClient do
 
   defp normalize_advanced_check_in(%{} = payload) do
     case extract_business_error(payload) do
-      {:error, code, message} = error ->
+      {:error, code, _message} = error ->
         if code in @advanced_business_errors do
           Logger.warning("TickeraClient: submit_advanced_check_in – #{code}")
         else
@@ -1195,7 +1200,9 @@ defmodule FastCheck.TickeraClient do
     value
     |> String.trim()
     |> case do
-      "" -> nil
+      "" ->
+        nil
+
       trimmed ->
         case Time.from_iso8601(trimmed) do
           {:ok, time} -> time
@@ -1292,7 +1299,7 @@ defmodule FastCheck.TickeraClient do
   defp ensure_map(value) when is_map(value), do: value
   defp ensure_map(_value), do: %{}
 
-  defp request(method, url, opts \\ []) do
+  defp request(method, url, opts) do
     req_opts =
       opts
       |> Keyword.put(:method, method)
@@ -1325,7 +1332,12 @@ defmodule FastCheck.TickeraClient do
 
     try do
       headers = [{"accept", "application/json"}]
-      case request(:get, url, headers: headers, connect_timeout: @timeout, receive_timeout: @timeout) do
+
+      case request(:get, url,
+             headers: headers,
+             connect_timeout: @timeout,
+             receive_timeout: @timeout
+           ) do
         {:ok, %Response{status: code, body: body}} when code in 200..299 ->
           case Jason.decode(body) do
             {:ok, data} ->
@@ -1365,6 +1377,7 @@ defmodule FastCheck.TickeraClient do
     do: classify_network_reason(reason)
 
   defp classify_network_error(%Finch.Error{reason: reason}), do: classify_network_reason(reason)
+
   defp classify_network_error(reason) when is_atom(reason) or is_tuple(reason),
     do: classify_network_reason(reason)
 

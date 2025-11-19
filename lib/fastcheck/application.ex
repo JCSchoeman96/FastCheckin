@@ -25,7 +25,8 @@ defmodule FastCheck.Application do
         %{
           id: :fastcheck_abuse_tracking_table,
           start: {
-            :ets, :new,
+            :ets,
+            :new,
             [:fastcheck_abuse_tracking, [:public, :named_table, :set, {:write_concurrency, true}]]
           }
         },
@@ -33,6 +34,12 @@ defmodule FastCheck.Application do
         {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000},
         # Rate limiter monitor - logs ETS table stats every 5 minutes
         FastCheck.RateLimiterMonitor,
+        # NEW: ETS L1 cache initialization task
+        %{
+          id: FastCheck.Cache.EtsInit,
+          start: {Task, :start_link, [fn -> FastCheck.Cache.EtsLayer.init() end]},
+          restart: :transient
+        },
         # Start a worker by calling: FastCheck.Worker.start_link(arg)
         # {FastCheck.Worker, arg},
         # Start to serve requests, typically the last entry

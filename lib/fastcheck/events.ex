@@ -10,6 +10,7 @@ defmodule FastCheck.Events do
   alias Ecto.Changeset
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Repo
+
   alias FastCheck.{
     Attendees,
     Cache.CacheManager,
@@ -17,7 +18,9 @@ defmodule FastCheck.Events do
     Events.CheckInConfiguration,
     Events.Event
   }
+
   alias FastCheck.TickeraClient
+  alias FastCheck.Cache.EtsLayer
   alias Postgrex.Range
 
   @attr_atom_lookup %{
@@ -70,7 +73,7 @@ defmodule FastCheck.Events do
     :last_checked_in_date
   ]
 
-  @config_replace_fields (@config_fields ++ [:check_in_window, :updated_at])
+  @config_replace_fields @config_fields ++ [:check_in_window, :updated_at]
 
   @occupancy_task_timeout 15_000
   @event_config_ttl :timer.hours(1)
@@ -90,6 +93,27 @@ defmodule FastCheck.Events do
   }
 
   @doc """
+  Warm up ETS cache for a given event.
+
+  Loads attendees and entrances into ETS for ultra-fast lookup.
+  This does NOT change existing query behavior yet – it's preparatory.
+  """
+  def warm_event_cache(%Event{id: event_id}) do
+    attendees = Attendees.list_event_attendees(event_id)
+    entrances = list_entrances(event_id)
+
+    EtsLayer.put_attendees(event_id, attendees)
+    EtsLayer.put_entrances(event_id, entrances)
+
+    :ok
+  end
+
+  defp list_entrances(_event_id) do
+    # TODO: Implement entrance listing. Returning empty list for now as per minimal requirement.
+    []
+  end
+
+  @doc """
   Determines an event's lifecycle state using its Tickera start and end dates
   plus the configured post-event grace period.
   """
@@ -104,13 +128,26 @@ defmodule FastCheck.Events do
     grace_cutoff = grace_period_end(end_time)
 
     cond do
-      is_nil(now) -> :unknown
-      is_nil(start_time) and is_nil(end_time) -> :unknown
-      not is_nil(start_time) and NaiveDateTime.compare(now, start_time) == :lt -> :upcoming
-      is_nil(end_time) -> :active
-      NaiveDateTime.compare(now, end_time) in [:lt, :eq] -> :active
-      not is_nil(grace_cutoff) and NaiveDateTime.compare(now, grace_cutoff) in [:lt, :eq] -> :grace
-      true -> :archived
+      is_nil(now) ->
+        :unknown
+
+      is_nil(start_time) and is_nil(end_time) ->
+        :unknown
+
+      not is_nil(start_time) and NaiveDateTime.compare(now, start_time) == :lt ->
+        :upcoming
+
+      is_nil(end_time) ->
+        :active
+
+      NaiveDateTime.compare(now, end_time) in [:lt, :eq] ->
+        :active
+
+      not is_nil(grace_cutoff) and NaiveDateTime.compare(now, grace_cutoff) in [:lt, :eq] ->
+        :grace
+
+      true ->
+        :archived
     end
   end
 
@@ -166,6 +203,7 @@ defmodule FastCheck.Events do
   @spec create_event(map()) :: {:ok, Event.t()} | {:error, String.t() | Changeset.t()}
   def create_event(attrs) when is_map(attrs) do
     site_url = fetch_attr(attrs, "tickera_site_url") || fetch_attr(attrs, "site_url")
+
     api_key =
       fetch_attr(attrs, "tickera_api_key_encrypted") ||
         fetch_attr(attrs, "api_key")
@@ -222,7 +260,10 @@ defmodule FastCheck.Events do
   def list_events do
     case CacheManager.get(@events_list_cache_key) do
       {:ok, events} when is_list(events) ->
-        Logger.debug(fn -> {"events cache hit", key: @events_list_cache_key, count: length(events)} end)
+        Logger.debug(fn ->
+          {"events cache hit", key: @events_list_cache_key, count: length(events)}
+        end)
+
         events
 
       {:ok, nil} ->
@@ -230,7 +271,10 @@ defmodule FastCheck.Events do
         fetch_and_cache_events()
 
       {:ok, other} ->
-        Logger.debug(fn -> {"events cache miss due to unexpected payload", payload: inspect(other)} end)
+        Logger.debug(fn ->
+          {"events cache miss due to unexpected payload", payload: inspect(other)}
+        end)
+
         fetch_and_cache_events()
 
       {:error, reason} ->
@@ -269,11 +313,17 @@ defmodule FastCheck.Events do
         fetch_and_cache_event!(event_id)
 
       {:ok, other} ->
-        Logger.debug(fn -> {"event cache miss due to unexpected payload", payload: inspect(other)} end)
+        Logger.debug(fn ->
+          {"event cache miss due to unexpected payload", payload: inspect(other)}
+        end)
+
         fetch_and_cache_event!(event_id)
 
       {:error, reason} ->
-        Logger.warning(fn -> {"event cache unavailable", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"event cache unavailable", event_id: event_id, reason: inspect(reason)}
+        end)
+
         Repo.get!(Event, event_id)
     end
   end
@@ -322,7 +372,10 @@ defmodule FastCheck.Events do
                     case Attendees.create_bulk(event.id, attendees) do
                       {:ok, inserted_count} ->
                         finalize_sync(event)
-                        count_message = resolve_synced_count(inserted_count, attendees, total_count)
+
+                        count_message =
+                          resolve_synced_count(inserted_count, attendees, total_count)
+
                         invalidate_event_cache(event.id)
                         invalidate_events_list_cache()
                         invalidate_event_stats_cache(event.id)
@@ -418,11 +471,17 @@ defmodule FastCheck.Events do
         fetch_and_cache_event_stats(event_id)
 
       {:ok, other} ->
-        Logger.debug(fn -> {"stats cache miss due to unexpected payload", payload: inspect(other)} end)
+        Logger.debug(fn ->
+          {"stats cache miss due to unexpected payload", payload: inspect(other)}
+        end)
+
         fetch_and_cache_event_stats(event_id)
 
       {:error, reason} ->
-        Logger.warning(fn -> {"stats cache unavailable", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"stats cache unavailable", event_id: event_id, reason: inspect(reason)}
+        end)
+
         compute_event_stats(event_id)
     end
   end
@@ -470,10 +529,14 @@ defmodule FastCheck.Events do
 
         case CacheManager.put_event_occupancy(event_id, updated_snapshot) do
           {:ok, true} ->
-            Logger.debug(fn -> {"occupancy cache updated", event_id: event_id, inside: new_inside} end)
+            Logger.debug(fn ->
+              {"occupancy cache updated", event_id: event_id, inside: new_inside}
+            end)
 
           {:error, reason} ->
-            Logger.warning(fn -> {"occupancy cache update failed", event_id: event_id, reason: inspect(reason)} end)
+            Logger.warning(fn ->
+              {"occupancy cache update failed", event_id: event_id, reason: inspect(reason)}
+            end)
         end
 
         broadcast_occupancy_update(event_id, new_inside)
@@ -481,7 +544,10 @@ defmodule FastCheck.Events do
     end
   rescue
     exception ->
-      Logger.error("Occupancy update failed for event #{event_id}: #{Exception.message(exception)}")
+      Logger.error(
+        "Occupancy update failed for event #{event_id}: #{Exception.message(exception)}"
+      )
+
       {:error, :occupancy_update_failed}
   end
 
@@ -497,7 +563,8 @@ defmodule FastCheck.Events do
       attendee_scope = from(a in Attendee, where: a.event_id == ^event_id)
       start_of_day = beginning_of_day_utc()
 
-      total_attendees = attendee_scope |> select([a], count(a.id)) |> Repo.one() |> normalize_count()
+      total_attendees =
+        attendee_scope |> select([a], count(a.id)) |> Repo.one() |> normalize_count()
 
       checked_in =
         attendee_scope
@@ -535,15 +602,20 @@ defmodule FastCheck.Events do
       per_entrance = fetch_per_entrance_stats(event_id)
 
       total_entries =
-        cached_entry_total || Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
+        cached_entry_total ||
+          Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
 
       total_exits =
-        cached_exit_total || Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
+        cached_exit_total ||
+          Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
 
       avg_session_seconds =
         attendee_scope
         |> where([a], not is_nil(a.checked_in_at) and not is_nil(a.checked_out_at))
-        |> select([a], fragment("avg(extract(epoch from (? - ?)))", a.checked_out_at, a.checked_in_at))
+        |> select(
+          [a],
+          fragment("avg(extract(epoch from (? - ?)))", a.checked_out_at, a.checked_in_at)
+        )
         |> Repo.one()
         |> normalize_float()
 
@@ -586,7 +658,10 @@ defmodule FastCheck.Events do
       }
     rescue
       exception ->
-        Logger.error("Failed to compute advanced stats for event #{event_id}: #{Exception.message(exception)}")
+        Logger.error(
+          "Failed to compute advanced stats for event #{event_id}: #{Exception.message(exception)}"
+        )
+
         default_advanced_stats()
     end
   end
@@ -620,7 +695,10 @@ defmodule FastCheck.Events do
         {:error, "MISSING_CREDENTIALS"}
 
       {:error, :decryption_failed} ->
-        Logger.error("Live occupancy update failed for event #{event_id}: credential decryption failed")
+        Logger.error(
+          "Live occupancy update failed for event #{event_id}: credential decryption failed"
+        )
+
         {:error, "CREDENTIAL_DECRYPTION_FAILED"}
 
       {:error, code, message} ->
@@ -677,7 +755,8 @@ defmodule FastCheck.Events do
   Returns the count of configurations inserted/updated or an error tuple when
   credentials are missing or a remote fetch fails.
   """
-  @spec fetch_and_store_ticket_configs(integer()) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  @spec fetch_and_store_ticket_configs(integer()) ::
+          {:ok, non_neg_integer()} | {:error, String.t()}
   def fetch_and_store_ticket_configs(event_id) when is_integer(event_id) do
     Repo.transaction(fn ->
       case Repo.get(Event, event_id) do
@@ -698,7 +777,8 @@ defmodule FastCheck.Events do
                         {:error, reason} -> Repo.rollback(reason)
                       end
 
-                    {:error, reason} -> Repo.rollback(reason)
+                    {:error, reason} ->
+                      Repo.rollback(reason)
                   end
 
                 {:error, reason} ->
@@ -718,7 +798,12 @@ defmodule FastCheck.Events do
         {:ok, count}
 
       {:error, reason}
-      when reason in ["EVENT_NOT_FOUND", "MISSING_CREDENTIALS", "CONFIG_FETCH_FAILED", "CREDENTIAL_DECRYPTION_FAILED"] ->
+      when reason in [
+             "EVENT_NOT_FOUND",
+             "MISSING_CREDENTIALS",
+             "CONFIG_FETCH_FAILED",
+             "CREDENTIAL_DECRYPTION_FAILED"
+           ] ->
         {:error, reason}
 
       {:error, reason} when is_binary(reason) ->
@@ -772,8 +857,12 @@ defmodule FastCheck.Events do
         {start_dt, end_dt} = resolve_tickera_window(%{}, essentials)
 
         case persist_event_window(event, start_dt, end_dt) do
-          {:ok, _updated} -> :ok
-          :unchanged -> :ok
+          {:ok, _updated} ->
+            :ok
+
+          :unchanged ->
+            :ok
+
           {:error, reason} ->
             Logger.warning(fn ->
               {"event window update failed", event_id: event.id, reason: inspect(reason)}
@@ -797,7 +886,9 @@ defmodule FastCheck.Events do
     updates =
       [tickera_start_date: start_dt, tickera_end_date: end_dt]
       |> Enum.reduce(%{}, fn
-        {_field, nil}, acc -> acc
+        {_field, nil}, acc ->
+          acc
+
         {field, value}, acc ->
           current = Map.get(event, field)
 
@@ -835,7 +926,10 @@ defmodule FastCheck.Events do
   end
 
   defp same_datetime?(%NaiveDateTime{} = left, %NaiveDateTime{} = right) do
-    NaiveDateTime.compare(NaiveDateTime.truncate(left, :second), NaiveDateTime.truncate(right, :second)) == :eq
+    NaiveDateTime.compare(
+      NaiveDateTime.truncate(left, :second),
+      NaiveDateTime.truncate(right, :second)
+    ) == :eq
   end
 
   defp same_datetime?(left, right), do: left == right
@@ -844,9 +938,12 @@ defmodule FastCheck.Events do
   Decrypts the stored Tickera API key for the event.
   """
   @spec get_tickera_api_key(Event.t() | nil) :: {:ok, String.t()} | {:error, :decryption_failed}
-  def get_tickera_api_key(%Event{id: id, tickera_api_key_encrypted: encrypted}) when is_binary(encrypted) do
+  def get_tickera_api_key(%Event{id: id, tickera_api_key_encrypted: encrypted})
+      when is_binary(encrypted) do
     case Crypto.decrypt(encrypted) do
-      {:ok, api_key} -> {:ok, api_key}
+      {:ok, api_key} ->
+        {:ok, api_key}
+
       {:error, :decryption_failed} ->
         Logger.warning("Unable to decrypt Tickera API key for event #{id}")
         {:error, :decryption_failed}
@@ -912,7 +1009,9 @@ defmodule FastCheck.Events do
     base_stats = Attendees.get_event_stats(event_id)
     event = get_event!(event_id)
 
-    total_tickets = normalize_non_neg_integer(event.total_tickets || Map.get(base_stats, :total, 0))
+    total_tickets =
+      normalize_non_neg_integer(event.total_tickets || Map.get(base_stats, :total, 0))
+
     checked_in = normalize_count(Map.get(base_stats, :checked_in, 0))
     pending = normalize_count(Map.get(base_stats, :pending, 0))
     no_shows = max(total_tickets - checked_in, 0)
@@ -935,7 +1034,10 @@ defmodule FastCheck.Events do
     })
   rescue
     exception ->
-      Logger.error("Failed to compute stats for event #{event_id}: #{Exception.message(exception)}")
+      Logger.error(
+        "Failed to compute stats for event #{event_id}: #{Exception.message(exception)}"
+      )
+
       @default_event_stats
   end
 
@@ -955,7 +1057,10 @@ defmodule FastCheck.Events do
         {inside, Map.put(snapshot, :inside, inside)}
 
       {:error, reason} ->
-        Logger.warning(fn -> {"occupancy cache read failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"occupancy cache read failed", event_id: event_id, reason: inspect(reason)}
+        end)
+
         inside = recalculate_occupancy_from_db(event_id)
 
         snapshot = %{
@@ -983,16 +1088,23 @@ defmodule FastCheck.Events do
 
   defp persist_event_cache(%Event{} = event) do
     case CacheManager.put(event_config_cache_key(event.id), event, ttl: @event_config_ttl) do
-      {:ok, true} -> :ok
+      {:ok, true} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning(fn -> {"event cache write failed", event_id: event.id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"event cache write failed", event_id: event.id, reason: inspect(reason)}
+        end)
+
         :error
     end
   end
 
   defp cache_events_list(events) do
     case CacheManager.put(@events_list_cache_key, events, ttl: @events_list_ttl) do
-      {:ok, true} -> :ok
+      {:ok, true} ->
+        :ok
+
       {:error, reason} ->
         Logger.warning(fn -> {"events cache write failed", reason: inspect(reason)} end)
         :error
@@ -1001,9 +1113,14 @@ defmodule FastCheck.Events do
 
   defp cache_event_stats(event_id, stats) do
     case CacheManager.put(stats_cache_key(event_id), stats, ttl: @stats_ttl) do
-      {:ok, true} -> :ok
+      {:ok, true} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning(fn -> {"stats cache write failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"stats cache write failed", event_id: event_id, reason: inspect(reason)}
+        end)
+
         :error
     end
   end
@@ -1015,7 +1132,10 @@ defmodule FastCheck.Events do
         :ok
 
       {:error, reason} ->
-        Logger.warning(fn -> {"event cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"event cache invalidate failed", event_id: event_id, reason: inspect(reason)}
+        end)
+
         :error
     end
   end
@@ -1039,7 +1159,10 @@ defmodule FastCheck.Events do
         :ok
 
       {:error, reason} ->
-        Logger.warning(fn -> {"stats cache invalidate failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"stats cache invalidate failed", event_id: event_id, reason: inspect(reason)}
+        end)
+
         :error
     end
   end
@@ -1048,16 +1171,26 @@ defmodule FastCheck.Events do
     pattern = occupancy_pattern(event_id)
 
     case CacheManager.invalidate_pattern(pattern) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning(fn -> {"occupancy pattern invalidation failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"occupancy pattern invalidation failed", event_id: event_id, reason: inspect(reason)}
+        end)
+
         :error
     end
 
     case CacheManager.delete(occupancy_cache_key(event_id)) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning(fn -> {"occupancy cache delete failed", event_id: event_id, reason: inspect(reason)} end)
+        Logger.warning(fn ->
+          {"occupancy cache delete failed", event_id: event_id, reason: inspect(reason)}
+        end)
+
         :error
     end
   end
@@ -1070,7 +1203,10 @@ defmodule FastCheck.Events do
     )
   rescue
     exception ->
-      Logger.error("Failed to broadcast stats for event #{event_id}: #{Exception.message(exception)}")
+      Logger.error(
+        "Failed to broadcast stats for event #{event_id}: #{Exception.message(exception)}"
+      )
+
       {:error, :broadcast_failed}
   end
 
@@ -1161,7 +1297,9 @@ defmodule FastCheck.Events do
         invalidate_event_cache(event_id)
         invalidate_events_list_cache()
         :ok
-      _ -> {:error, :not_updated}
+
+      _ ->
+        {:error, :not_updated}
     end
   end
 
@@ -1258,7 +1396,9 @@ defmodule FastCheck.Events do
     value
     |> String.trim()
     |> case do
-      "" -> nil
+      "" ->
+        nil
+
       trimmed ->
         case Integer.parse(trimmed) do
           {number, _rest} when number > 0 -> number
@@ -1281,9 +1421,7 @@ defmodule FastCheck.Events do
 
   defp normalize_ticket_type_id(_), do: nil
 
-
-
-    # Persist all ticket configs returned by Tickera for a given event.
+  # Persist all ticket configs returned by Tickera for a given event.
   # Returns {:ok, count} on success or {:error, reason} on first failure.
   defp persist_ticket_configs(%Event{id: event_id} = _event, [], _api_key) do
     Logger.info("No ticket types discovered for event #{event_id}; skipping config sync")
@@ -1334,7 +1472,6 @@ defmodule FastCheck.Events do
     end
   end
 
-
   defp upsert_ticket_config(event_id, ticket_type_id, config) do
     attrs = build_config_attrs(config, event_id, ticket_type_id)
 
@@ -1366,8 +1503,14 @@ defmodule FastCheck.Events do
 
   defp maybe_put_ticket_labels(attrs, config) do
     attrs
-    |> Map.put(:ticket_type, pick_ticket_label(config, [:ticket_type, :ticket_title, :ticket_name]))
-    |> Map.put(:ticket_name, pick_ticket_label(config, [:ticket_name, :ticket_title, :ticket_type]))
+    |> Map.put(
+      :ticket_type,
+      pick_ticket_label(config, [:ticket_type, :ticket_title, :ticket_name])
+    )
+    |> Map.put(
+      :ticket_name,
+      pick_ticket_label(config, [:ticket_name, :ticket_title, :ticket_type])
+    )
   end
 
   defp pick_ticket_label(config, keys) do
@@ -1399,7 +1542,9 @@ defmodule FastCheck.Events do
     value
     |> String.trim()
     |> case do
-      "" -> nil
+      "" ->
+        nil
+
       trimmed ->
         case Date.from_iso8601(trimmed) do
           {:ok, date} -> date
@@ -1420,7 +1565,9 @@ defmodule FastCheck.Events do
         invalidate_event_cache(event_id)
         invalidate_events_list_cache()
         :ok
-      _ -> {:error, "EVENT_NOT_FOUND"}
+
+      _ ->
+        {:error, "EVENT_NOT_FOUND"}
     end
   end
 
@@ -1583,7 +1730,9 @@ defmodule FastCheck.Events do
     value
     |> String.trim()
     |> case do
-      "" -> nil
+      "" ->
+        nil
+
       trimmed ->
         with {:ok, datetime, _offset} <- DateTime.from_iso8601(trimmed) do
           shift_to_utc(datetime)
@@ -1657,10 +1806,15 @@ defmodule FastCheck.Events do
          |> Repo.update() do
       {:ok, _} ->
         case touch_last_sync(event.id) do
-          :ok -> :ok
+          :ok ->
+            :ok
+
           {:error, reason} ->
-            Logger.warning("Unable to update last sync timestamp for event #{event.id}: #{inspect(reason)}")
+            Logger.warning(
+              "Unable to update last sync timestamp for event #{event.id}: #{inspect(reason)}"
+            )
         end
+
         invalidate_event_cache(event.id)
         invalidate_events_list_cache()
         :ok
@@ -1734,8 +1888,16 @@ defmodule FastCheck.Events do
         group_by: ci.entrance_name,
         select: %{
           entrance_name: fragment("coalesce(?, ?)", ci.entrance_name, ^"Unassigned"),
-          entries: fragment("sum(case when lower(?) in ('entry','success') then 1 else 0 end)", ci.status),
-          exits: fragment("sum(case when lower(?) in ('exit','checked_out') then 1 else 0 end)", ci.status),
+          entries:
+            fragment(
+              "sum(case when lower(?) in ('entry','success') then 1 else 0 end)",
+              ci.status
+            ),
+          exits:
+            fragment(
+              "sum(case when lower(?) in ('exit','checked_out') then 1 else 0 end)",
+              ci.status
+            ),
           inside: fragment("sum(case when lower(?) = 'inside' then 1 else 0 end)", ci.status)
         }
       )
@@ -1751,7 +1913,10 @@ defmodule FastCheck.Events do
     end)
   rescue
     exception ->
-      Logger.error("Failed to load entrance stats for event #{event_id}: #{Exception.message(exception)}")
+      Logger.error(
+        "Failed to load entrance stats for event #{event_id}: #{Exception.message(exception)}"
+      )
+
       []
   end
 
@@ -1785,6 +1950,13 @@ defmodule FastCheck.Events do
   defp normalize_count(value) when is_integer(value), do: value
   defp normalize_count(value) when is_float(value), do: round(value)
 
+  defp normalize_count(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, _} -> parsed
+      :error -> 0
+    end
+  end
+
   defp normalize_count(%Decimal{} = value) do
     value
     |> Decimal.to_float()
@@ -1812,15 +1984,6 @@ defmodule FastCheck.Events do
 
   defp current_timestamp do
     DateTime.utc_now() |> DateTime.truncate(:second)
-  end
-
-
-
-  defp normalize_count(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {parsed, _} -> parsed
-      :error -> 0
-    end
   end
 
   defp normalize_count(value) when is_boolean(value), do: if(value, do: 1, else: 0)

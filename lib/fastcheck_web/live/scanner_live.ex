@@ -3,10 +3,7 @@ defmodule FastCheckWeb.ScannerLive do
   Real-time scanner interface for on-site staff to check in attendees via QR codes.
   """
 
-  use Phoenix.LiveView
   use FastCheckWeb, :live_view
-
-  import Phoenix.Component, only: [to_form: 1]
 
   alias FastCheck.{Attendees, Events}
   alias Phoenix.LiveView.JS
@@ -156,7 +153,11 @@ defmodule FastCheckWeb.ScannerLive do
       end
 
     {:noreply,
-     assign(socket, :camera_permission, %{status: status, remembered: remembered, message: message})}
+     assign(socket, :camera_permission, %{
+       status: status,
+       remembered: remembered,
+       message: message
+     })}
   end
 
   def handle_event("camera_permission_sync", _params, socket) do
@@ -247,50 +248,58 @@ defmodule FastCheckWeb.ScannerLive do
         <div class="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-8">
           <header class="rounded-3xl bg-slate-900/80 px-6 py-8 shadow-2xl backdrop-blur">
             <p class="text-sm uppercase tracking-[0.3em] text-slate-400">Event check-in</p>
+            
             <h1 class="mt-2 text-3xl font-semibold text-white sm:text-4xl">{@event.name}</h1>
+            
             <p class="mt-1 text-base text-slate-300">
               Entrance:
               <span class="font-semibold text-white">{entrance_label(@event.entrance_name)}</span>
             </p>
+            
             <div class="mt-4 flex flex-wrap gap-3">
-              <span
-                class={[
-                  "inline-flex items-center rounded-full px-4 py-1 text-xs font-semibold uppercase tracking-wide",
-                  scanner_lifecycle_badge_class(@event_lifecycle_state)
-                ]}
-              >
+              <span class={[
+                "inline-flex items-center rounded-full px-4 py-1 text-xs font-semibold uppercase tracking-wide",
+                scanner_lifecycle_badge_class(@event_lifecycle_state)
+              ]}>
                 {scanner_lifecycle_label(@event_lifecycle_state)}
               </span>
             </div>
           </header>
-
+          
           <section
             :if={@scans_disabled?}
             class="rounded-3xl border border-red-500/40 bg-red-900/40 px-6 py-4 text-center text-red-100 shadow-lg"
           >
             <p class="text-lg font-semibold">Scanning disabled</p>
+            
             <p class="mt-1 text-sm">
               {@scans_disabled_message || "Event archived, scanning disabled"}
             </p>
           </section>
-
+          
           <section class="rounded-3xl bg-slate-900/85 px-6 py-6 shadow-2xl backdrop-blur">
             <div class="flex flex-col gap-4">
               <div>
                 <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Scanner mode</p>
+                
                 <h2 class="mt-1 text-2xl font-semibold text-white">Entry & exit controls</h2>
+                
                 <p class="text-sm text-slate-300">
                   Switch the scanner direction instantly while keeping the field focused for rapid-fire processing.
                 </p>
               </div>
-
+              
               <div class="flex flex-wrap gap-4 mt-4 mb-6">
                 <button
                   phx-click="set_check_in_type"
                   phx-value-type="entry"
                   class={[
                     "px-6 py-3 rounded-lg font-bold text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
-                    @check_in_type == "entry" ? "bg-green-600 text-white shadow-lg" : "bg-slate-700 text-slate-300"
+                    if @check_in_type == "entry" do
+                      "bg-green-600 text-white shadow-lg"
+                    else
+                      "bg-slate-700 text-slate-300"
+                    end
                   ]}
                   disabled={@scans_disabled?}
                 >
@@ -301,57 +310,76 @@ defmodule FastCheckWeb.ScannerLive do
                   phx-value-type="exit"
                   class={[
                     "px-6 py-3 rounded-lg font-bold text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
-                    @check_in_type == "exit" ? "bg-orange-600 text-white shadow-lg" : "bg-slate-700 text-slate-300"
+                    if @check_in_type == "exit" do
+                      "bg-orange-600 text-white shadow-lg"
+                    else
+                      "bg-slate-700 text-slate-300"
+                    end
                   ]}
                   disabled={@scans_disabled?}
                 >
                   ⤴️ EXIT
                 </button>
               </div>
-
+              
               <div class="mt-2 bg-blue-900 rounded-lg p-6 border-4 border-blue-500">
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p class="text-blue-300 text-sm font-semibold">CURRENT OCCUPANCY</p>
-                    <p class="text-6xl font-bold text-blue-200 mt-2"><%= @current_occupancy %></p>
+                    
+                    <p class="text-6xl font-bold text-blue-200 mt-2">{@current_occupancy}</p>
+                    
                     <p class="text-blue-200 text-sm mt-2">Guests inside right now</p>
                   </div>
+                  
                   <div class="text-right">
                     <p class="text-blue-300 text-sm">CAPACITY</p>
-                    <p class="text-4xl font-bold text-blue-200"><%= format_percentage(@occupancy_percentage) %>%</p>
-                    <span
-                      class={[
-                        "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold text-white mt-3",
-                        occupancy_status_color(@occupancy_percentage)
-                      ]}
-                    >
+                    
+                    <p class="text-4xl font-bold text-blue-200">
+                      {format_percentage(@occupancy_percentage)}%
+                    </p>
+                    
+                    <span class={[
+                      "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold text-white mt-3",
+                      occupancy_status_color(@occupancy_percentage)
+                    ]}>
                       Crowd load
                     </span>
                   </div>
                 </div>
+                
                 <div class="mt-4 w-full bg-blue-800 rounded-full h-4 overflow-hidden">
-                  <div class="bg-blue-400 h-4 transition-all" style={"width: #{@occupancy_percentage}%"}></div>
+                  <div
+                    class="bg-blue-400 h-4 transition-all"
+                    style={"width: #{@occupancy_percentage}%"}
+                  >
+                  </div>
                 </div>
               </div>
             </div>
           </section>
-
+          
           <section class="rounded-3xl bg-slate-800/80 px-6 py-6 shadow-2xl backdrop-blur">
             <div class="grid gap-4 sm:grid-cols-3">
               <div class="rounded-2xl bg-slate-700/70 p-4">
                 <p class="text-xs uppercase tracking-widest text-slate-300">Total tickets</p>
+                
                 <p class="mt-2 text-3xl font-bold text-white">{@stats.total}</p>
               </div>
+              
               <div class="rounded-2xl bg-green-900/80 p-4">
                 <p class="text-xs uppercase tracking-widest text-green-200">Checked in</p>
+                
                 <p class="mt-2 text-3xl font-bold text-green-300">{@stats.checked_in}</p>
               </div>
+              
               <div class="rounded-2xl bg-yellow-900/80 p-4">
                 <p class="text-xs uppercase tracking-widest text-yellow-200">Pending</p>
+                
                 <p class="mt-2 text-3xl font-bold text-yellow-200">{@stats.pending}</p>
               </div>
             </div>
-
+            
             <div class="mt-5">
               <div class="h-3 w-full rounded-full bg-slate-900/60">
                 <div
@@ -359,98 +387,105 @@ defmodule FastCheckWeb.ScannerLive do
                   style={"width: #{min(@stats.percentage, 100)}%"}
                 />
               </div>
+              
               <p class="mt-2 text-sm font-medium text-slate-200">
                 {format_percentage(@stats.percentage)}% Checked In
               </p>
             </div>
           </section>
-
+          
           <div
             :if={@last_scan_status}
             id="scan-result"
             phx-remove={JS.add_class("opacity-0", transition: "transition-opacity duration-300")}
           >
-            <%= case {status: @last_scan_status, mode: @check_in_type} do %>
-              <% {status: :success, mode: "entry"} -> %>
+            <%= case %{status: @last_scan_status, mode: @check_in_type} do %>
+              <% %{status: :success, mode: "entry"} -> %>
                 <div class="mt-6 p-8 bg-green-900 border-4 border-green-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-green-300">➡️ ENTERED</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
+                  
                   <% if @last_scan_checkins_allowed > 1 do %>
                     <p class="text-green-200 text-lg mt-3">
-                      Check-in:
-                      <span class="font-bold"><%= @last_scan_checkins_used %></span>
-                      of
-                      <span class="font-bold"><%= @last_scan_checkins_allowed %></span>
+                      Check-in: <span class="font-bold">{@last_scan_checkins_used}</span>
+                      of <span class="font-bold">{@last_scan_checkins_allowed}</span>
                       used
                     </p>
+                    
                     <div class="mt-3 w-full bg-green-800 rounded-full h-3">
-                      <% percentage = div(@last_scan_checkins_used * 100, max(@last_scan_checkins_allowed, 1)) %>
-                      <div class="bg-green-400 h-3 rounded-full" style={"width: #{percentage}%"}></div>
+                      <% percentage =
+                        div(@last_scan_checkins_used * 100, max(@last_scan_checkins_allowed, 1)) %>
+                      <div class="bg-green-400 h-3 rounded-full" style={"width: #{percentage}%"}>
+                      </div>
                     </div>
                   <% end %>
-                  <p class="text-green-200 text-sm mt-2">Occupancy: <%= @current_occupancy %> inside</p>
+                  
+                  <p class="text-green-200 text-sm mt-2">Occupancy: {@current_occupancy} inside</p>
                 </div>
-
-              <% {status: :success, mode: "exit"} -> %>
+              <% %{status: :success, mode: "exit"} -> %>
                 <div class="mt-6 p-8 bg-orange-900 border-4 border-orange-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-orange-300">⤴️ EXITED</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
-                  <p class="text-orange-200 text-sm mt-2">Occupancy: <%= @current_occupancy %> inside</p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
+                  
+                  <p class="text-orange-200 text-sm mt-2">Occupancy: {@current_occupancy} inside</p>
                 </div>
-
-              <% {status: :duplicate_today} -> %>
+              <% %{status: :duplicate_today} -> %>
                 <div class="mt-6 p-8 bg-yellow-900 border-4 border-yellow-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-yellow-300">⚠️ DUPLICATE</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
+                  
                   <p class="text-yellow-200 text-sm mt-2">Next check-in: Tomorrow</p>
+                  
                   <p :if={@last_scan_reason} class="text-yellow-100 text-xs mt-1">
-                    <%= @last_scan_reason %>
+                    {@last_scan_reason}
                   </p>
                 </div>
-
-              <% {status: :limit_exceeded} -> %>
+              <% %{status: :limit_exceeded} -> %>
                 <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-red-300">✖️ LIMIT EXCEEDED</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                 </div>
-
-              <% {status: :not_yet_valid} -> %>
+              <% %{status: :not_yet_valid} -> %>
                 <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-red-300">✖️ NOT YET VALID</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                 </div>
-
-              <% {status: :expired} -> %>
+              <% %{status: :expired} -> %>
                 <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-red-300">✖️ EXPIRED</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                 </div>
-
-              <% {status: :invalid} -> %>
+              <% %{status: :invalid} -> %>
                 <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-red-300">✖️ INVALID</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                 </div>
-
-              <% {status: :archived} -> %>
+              <% %{status: :archived} -> %>
                 <div class="mt-6 p-8 bg-slate-900 border-4 border-red-400 rounded-lg text-center shadow-2xl">
                   <p class="text-4xl font-bold text-red-200">⏸️ Scanning disabled</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                 </div>
-
-              <% {status: :error} -> %>
+              <% %{status: :error} -> %>
                 <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
                   <p class="text-6xl font-bold text-red-300">✖️ ERROR</p>
-                  <p class="text-white text-2xl mt-3"><%= @last_scan_result %></p>
+                  
+                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
                 </div>
-
               <% _ -> %>
                 <div class="mt-6 p-8 bg-slate-900 border-4 border-slate-600 rounded-lg text-center shadow-2xl">
                   <p class="text-2xl font-semibold text-white">Ready for the next scan</p>
                 </div>
             <% end %>
           </div>
-
+          
           <section
             phx-hook="CameraPermission"
             data-storage-key={"fastcheck:camera-permission:event-#{@event_id}"}
@@ -459,25 +494,30 @@ defmodule FastCheckWeb.ScannerLive do
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Camera status</p>
+                
                 <h2 class="mt-1 text-2xl font-semibold">Ready the QR scanner</h2>
+                
                 <p class="mt-2 text-sm text-slate-300">
                   We'll remember your choice for this device so future scans start instantly.
                 </p>
               </div>
+              
               <span class="rounded-full border border-white/20 px-4 py-1 text-xs uppercase tracking-wide text-slate-100">
                 {camera_permission_status_label(@camera_permission.status)}
               </span>
             </div>
-
+            
             <div class={camera_permission_state_classes(@camera_permission.status)}>
               <p class="text-base font-semibold">
                 {camera_permission_status_label(@camera_permission.status)}
               </p>
+              
               <p class="mt-1 text-sm text-slate-100/80">
-                {@camera_permission.message || camera_permission_default_message(@camera_permission.status)}
+                {@camera_permission.message ||
+                  camera_permission_default_message(@camera_permission.status)}
               </p>
             </div>
-
+            
             <div class="mt-6 flex flex-wrap items-center gap-4">
               <button
                 :if={@camera_permission.status != :granted}
@@ -488,7 +528,6 @@ defmodule FastCheckWeb.ScannerLive do
               >
                 Enable camera
               </button>
-
               <p class="text-xs text-slate-400">
                 {if @camera_permission.remembered do
                   "Preference synced from this device."
@@ -498,15 +537,16 @@ defmodule FastCheckWeb.ScannerLive do
               </p>
             </div>
           </section>
-
+          
           <section class="rounded-3xl bg-slate-900/90 px-6 py-10 text-white shadow-2xl backdrop-blur">
             <div class="space-y-2 text-center">
               <h2 class="text-2xl font-semibold">Scan tickets</h2>
+              
               <p class="text-sm text-slate-300">
                 Use the QR scanner or type a code below. The field stays focused for rapid-fire check-ins.
               </p>
             </div>
-
+            
             <.form
               :let={f}
               for={@scan_form}
@@ -537,20 +577,19 @@ defmodule FastCheckWeb.ScannerLive do
                 Process scan
               </button>
             </.form>
-
-            <p class="mt-6 text-center text-sm text-slate-300">
-              Or manually enter ticket code
-            </p>
+            
+            <p class="mt-6 text-center text-sm text-slate-300">Or manually enter ticket code</p>
           </section>
-
+          
           <section class="rounded-3xl bg-slate-900/80 px-6 py-8 shadow-2xl backdrop-blur">
             <div class="space-y-2 text-center">
               <h2 class="text-2xl font-semibold">Find attendee</h2>
+              
               <p class="text-sm text-slate-300">
                 Search by name, email, or ticket code to handle manual check-ins.
               </p>
             </div>
-
+            
             <.form
               id="attendee-search-form"
               for={@search_form}
@@ -567,60 +606,46 @@ defmodule FastCheckWeb.ScannerLive do
                 class="w-full rounded-2xl border-2 border-transparent bg-slate-800/70 px-6 py-4 text-base text-white shadow-inner shadow-slate-950 focus:border-emerald-400 focus:bg-slate-900/70 focus:outline-none focus:ring-4 focus:ring-emerald-500"
               />
             </.form>
-
-            <p :if={@search_error} class="mt-4 text-center text-sm text-red-300">
-              {@search_error}
-            </p>
-
+            
+            <p :if={@search_error} class="mt-4 text-center text-sm text-red-300">{@search_error}</p>
+            
             <p :if={@search_loading} class="mt-4 text-center text-sm text-slate-300">
               Searching attendees...
             </p>
-
-            <ul
-              :if={@search_results != []}
-              class="mt-6 divide-y divide-slate-800/80 rounded-2xl border border-slate-800/60 bg-slate-900/60"
-            >
-              <li
-                :for={attendee <- @search_results}
-                data-test={"search-result-#{attendee.ticket_code}"}
-                class="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p data-test="attendee-name" class="text-lg font-semibold">
-                    {attendee_display_name(attendee)}
-                  </p>
-                  <p class="text-sm text-slate-300">{attendee.email || "No email provided"}</p>
-                  <p :if={attendee.checked_in_at} class="text-xs text-emerald-300">
-                    Already checked in
-                  </p>
-                </div>
-
-                <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <span class="rounded-full bg-slate-800/80 px-3 py-1 text-xs uppercase tracking-wide text-slate-100">
-                    {attendee.ticket_type || "Ticket"}
-                  </span>
+            
+            <div :if={@search_results != []} class="mt-6 space-y-3">
+              <%= for attendee <- @search_results do %>
+                <div class="flex items-center justify-between rounded-xl bg-slate-800/80 px-5 py-4 shadow-md backdrop-blur transition hover:bg-slate-700/80">
+                  <div>
+                    <p class="font-bold text-white">{attendee.first_name} {attendee.last_name}</p>
+                    
+                    <p class="text-sm text-slate-400">{attendee.ticket_code}</p>
+                    
+                    <p class="text-xs text-slate-500">{attendee.ticket_type}</p>
+                  </div>
+                  
                   <button
-                    type="button"
-                    class="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-200"
                     phx-click="manual_check_in"
-                    phx-value-ticket-code={attendee.ticket_code}
-                    phx-disable-with="Checking..."
-                    disabled={@scans_disabled? or not is_nil(attendee.checked_in_at)}
-                    data-test={"manual-check-in-#{attendee.ticket_code}"}
+                    phx-value-ticket_code={attendee.ticket_code}
+                    class="rounded-lg bg-emerald-600/20 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-600/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    disabled={@scans_disabled?}
                   >
-                    Check in
+                    Check In
                   </button>
                 </div>
-              </li>
-            </ul>
-
+              <% end %>
+            </div>
+            
             <p
-              :if={@search_results == [] and @search_query != "" and not @search_loading and is_nil(@search_error)}
+              :if={
+                @search_results == [] and @search_query != "" and not @search_loading and
+                  is_nil(@search_error)
+              }
               class="mt-6 text-center text-sm text-slate-300"
             >
               No attendees found. Double-check the spelling and try again.
             </p>
-
+            
             <p
               :if={@search_query == "" and not @search_loading and is_nil(@search_error)}
               class="mt-6 text-center text-sm text-slate-400"
@@ -628,16 +653,15 @@ defmodule FastCheckWeb.ScannerLive do
               Lookup results will appear here as you type.
             </p>
           </section>
-
+          
           <footer class="mt-auto rounded-3xl bg-slate-800/80 px-6 py-4 text-sm text-slate-300 shadow-2xl">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <a
                 href={~p"/dashboard"}
                 class="font-semibold text-emerald-300 transition hover:text-emerald-200"
               >
-                ← Back to dashboard
+                &larr; Back to dashboard
               </a>
-
               <a
                 href="#"
                 class="font-semibold text-slate-200 opacity-70 transition hover:opacity-100"
@@ -744,7 +768,7 @@ defmodule FastCheckWeb.ScannerLive do
         {:noreply,
          socket
          |> assign(
-            last_scan_status: :invalid,
+           last_scan_status: :invalid,
            last_scan_result: message,
            last_scan_reason: nil,
            last_scan_checkins_used: 0,
@@ -764,15 +788,19 @@ defmodule FastCheckWeb.ScannerLive do
            ticket_code: "",
            scans_disabled?: true,
            scans_disabled_message: message,
-           event_lifecycle_state: if(code == "ARCHIVED_EVENT", do: :archived, else: socket.assigns.event_lifecycle_state)
+           event_lifecycle_state:
+             if(code == "ARCHIVED_EVENT",
+               do: :archived,
+               else: socket.assigns.event_lifecycle_state
+             )
          )}
 
       {:error, _code, message} ->
         {:noreply,
          socket
          |> assign(
-            last_scan_status: :error,
-            last_scan_result: message,
+           last_scan_status: :error,
+           last_scan_result: message,
            last_scan_reason: nil,
            last_scan_checkins_used: 0,
            last_scan_checkins_allowed: 0
@@ -792,7 +820,8 @@ defmodule FastCheckWeb.ScannerLive do
 
     message_value =
       if disabled? do
-        message || Map.get(socket.assigns, :scans_disabled_message) || "Event archived, scanning disabled"
+        message || Map.get(socket.assigns, :scans_disabled_message) ||
+          "Event archived, scanning disabled"
       else
         nil
       end
@@ -825,7 +854,9 @@ defmodule FastCheckWeb.ScannerLive do
 
   defp update_search_results(search_results, %{} = updated) when is_list(search_results) do
     Enum.map(search_results, fn existing ->
-      if Map.get(existing, :ticket_code) == Map.get(updated, :ticket_code), do: updated, else: existing
+      if Map.get(existing, :ticket_code) == Map.get(updated, :ticket_code),
+        do: updated,
+        else: existing
     end)
   end
 
@@ -872,8 +903,12 @@ defmodule FastCheckWeb.ScannerLive do
 
   defp extract_operator_name(%{} = value) do
     cond do
-      is_binary(Map.get(value, :name)) -> normalize_name(Map.get(value, :name))
-      is_binary(Map.get(value, :full_name)) -> normalize_name(Map.get(value, :full_name))
+      is_binary(Map.get(value, :name)) ->
+        normalize_name(Map.get(value, :name))
+
+      is_binary(Map.get(value, :full_name)) ->
+        normalize_name(Map.get(value, :full_name))
+
       is_binary(Map.get(value, :first_name)) ->
         parts =
           [
@@ -1001,15 +1036,21 @@ defmodule FastCheckWeb.ScannerLive do
     capacity_value = normalize_capacity(capacity)
 
     cond do
-      capacity_value <= 0 -> 0.0
+      capacity_value <= 0 ->
+        0.0
+
       true ->
         count_clamped = min(count, capacity_value)
         Float.round(count_clamped / capacity_value * 100, 1)
     end
   end
 
-  defp normalize_percentage_override(value) when is_float(value), do: Float.round(max(value, 0.0), 1)
-  defp normalize_percentage_override(value) when is_integer(value), do: normalize_percentage_override(value / 1)
+  defp normalize_percentage_override(value) when is_float(value),
+    do: Float.round(max(value, 0.0), 1)
+
+  defp normalize_percentage_override(value) when is_integer(value),
+    do: normalize_percentage_override(value / 1)
+
   defp normalize_percentage_override(_), do: nil
 
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value
@@ -1061,7 +1102,8 @@ defmodule FastCheckWeb.ScannerLive do
       "rounded-3xl border-2 border-red-500 bg-red-900/70 px-6 py-6 text-red-100 shadow-2xl transition"
 
   defp scan_status_classes(_),
-    do: "rounded-3xl border-2 border-slate-600 bg-slate-800/80 px-6 py-6 text-slate-100 shadow-2xl"
+    do:
+      "rounded-3xl border-2 border-slate-600 bg-slate-800/80 px-6 py-6 text-slate-100 shadow-2xl"
 
   defp scan_status_icon(:success), do: "✓"
   defp scan_status_icon(:duplicate), do: "⚠"
@@ -1081,7 +1123,9 @@ defmodule FastCheckWeb.ScannerLive do
     end
   end
 
-  defp normalize_camera_permission_status(value) when value in [:granted, :denied, :error, :unsupported], do: value
+  defp normalize_camera_permission_status(value)
+       when value in [:granted, :denied, :error, :unsupported], do: value
+
   defp normalize_camera_permission_status(_), do: :unknown
 
   defp normalize_camera_permission_message(value) when value in [nil, ""], do: nil
@@ -1119,7 +1163,8 @@ defmodule FastCheckWeb.ScannerLive do
   defp camera_permission_status_label(_), do: "Awaiting camera choice"
 
   defp camera_permission_state_classes(:granted),
-    do: "mt-6 rounded-2xl border border-emerald-400/60 bg-emerald-500/10 px-5 py-4 text-emerald-100"
+    do:
+      "mt-6 rounded-2xl border border-emerald-400/60 bg-emerald-500/10 px-5 py-4 text-emerald-100"
 
   defp camera_permission_state_classes(status) when status in [:denied, :error],
     do: "mt-6 rounded-2xl border border-red-400/60 bg-red-500/10 px-5 py-4 text-red-100"

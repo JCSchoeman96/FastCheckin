@@ -7,8 +7,6 @@ defmodule FastCheckWeb.DashboardLive do
   use Phoenix.LiveView
   use FastCheckWeb, :live_view
 
-  import Phoenix.Component, only: [to_form: 1]
-
   alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.Event
@@ -134,9 +132,10 @@ defmodule FastCheckWeb.DashboardLive do
         <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p class="text-sm uppercase tracking-widest text-slate-500">Control Center</p>
+            
             <h1 class="text-3xl font-semibold text-slate-900">FastCheck Dashboard</h1>
           </div>
-
+          
           <div class="flex items-center gap-3">
             <button
               type="button"
@@ -147,16 +146,17 @@ defmodule FastCheckWeb.DashboardLive do
             </button>
           </div>
         </div>
-
+        
         <div :if={@sync_status} class="rounded-xl bg-white p-6 shadow">
           <div class="flex flex-col gap-4">
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm font-medium text-slate-600">Sync status</p>
+                
                 <p class="text-base font-semibold text-slate-900">{@sync_status}</p>
               </div>
             </div>
-
+            
             <div :if={@sync_progress} class="w-full rounded-full bg-slate-100 p-1">
               <div
                 class="h-3 rounded-full bg-blue-600 transition-all"
@@ -168,15 +168,17 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
         </div>
-
+        
         <div :if={@show_new_event_form} class="rounded-2xl bg-white p-8 shadow">
           <div class="flex items-center justify-between">
             <div>
               <h2 class="text-2xl font-semibold text-slate-900">Create new event</h2>
+              
               <p class="text-sm text-slate-500">
                 Connect a Tickera event by providing its credentials and entrance details.
               </p>
             </div>
+            
             <button
               type="button"
               class="text-sm font-medium text-slate-500 hover:text-slate-800"
@@ -185,18 +187,42 @@ defmodule FastCheckWeb.DashboardLive do
               Cancel
             </button>
           </div>
-
+          
           <.form
             for={@form}
             phx-submit="create_event"
             class="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2"
           >
-            <.input field={@form[:name]} type="text" label="Event name" placeholder="Tech Summit 2024" />
-            <.input field={@form[:tickera_site_url]} type="text" label="Site URL" placeholder="https://example.com" />
-            <.input field={@form[:tickera_api_key_encrypted]} type="password" label="Tickera API Key" placeholder="••••••" />
-            <.input field={@form[:location]} type="text" label="Location" placeholder="Cape Town Convention Centre" />
-            <.input field={@form[:entrance_name]} type="text" label="Entrance Name" placeholder="Main Gate" />
-
+            <.input
+              field={@form[:name]}
+              type="text"
+              label="Event name"
+              placeholder="Tech Summit 2024"
+            />
+            <.input
+              field={@form[:tickera_site_url]}
+              type="text"
+              label="Site URL"
+              placeholder="https://example.com"
+            />
+            <.input
+              field={@form[:tickera_api_key_encrypted]}
+              type="password"
+              label="Tickera API Key"
+              placeholder="••••••"
+            />
+            <.input
+              field={@form[:location]}
+              type="text"
+              label="Location"
+              placeholder="Cape Town Convention Centre"
+            />
+            <.input
+              field={@form[:entrance_name]}
+              type="text"
+              label="Entrance Name"
+              placeholder="Main Gate"
+            />
             <div class="md:col-span-2 flex items-center gap-3">
               <button
                 type="submit"
@@ -215,13 +241,16 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </.form>
         </div>
-
+        
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <h2 class="text-2xl font-semibold text-slate-900">Events</h2>
-            <p class="text-sm text-slate-500">Manage entrances, sync attendees, and launch scanners.</p>
+            
+            <p class="text-sm text-slate-500">
+              Manage entrances, sync attendees, and launch scanners.
+            </p>
           </div>
-
+          
           <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             <div
               :for={event <- @events}
@@ -233,34 +262,46 @@ defmodule FastCheckWeb.DashboardLive do
               <% lifecycle_state = Events.event_lifecycle_state(event) %>
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <p class="text-sm uppercase tracking-wide text-slate-400">{event.location || "Unassigned"}</p>
+                  <p class="text-sm uppercase tracking-wide text-slate-400">
+                    {event.location || "Unassigned"}
+                  </p>
+                  
                   <h3 class="mt-1 text-xl font-semibold text-slate-900">{event.name}</h3>
                 </div>
+                
                 <div class="flex flex-col items-end gap-2 text-right">
                   <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
                     {event.entrance_name || "Entrance"}
                   </span>
-                  <span class={["rounded-full px-3 py-1 text-xs font-semibold", lifecycle_badge_class(lifecycle_state)]}>
+                  <span class={[
+                    "rounded-full px-3 py-1 text-xs font-semibold",
+                    lifecycle_badge_class(lifecycle_state)
+                  ]}>
                     {lifecycle_label(lifecycle_state)}
                   </span>
                 </div>
               </div>
-
+              
               <div class="mt-6 grid grid-cols-2 gap-4 text-center md:grid-cols-3">
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Total tickets</p>
+                  
                   <p class="text-2xl font-semibold text-slate-900">{event.total_tickets || 0}</p>
                 </div>
+                
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Checked in</p>
+                  
                   <p class="text-2xl font-semibold text-green-600">{event.checked_in_count || 0}</p>
                 </div>
+                
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Total attendees</p>
+                  
                   <p class="text-2xl font-semibold text-slate-900">{event.attendee_count || 0}</p>
                 </div>
               </div>
-
+              
               <div class="mt-6 flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -276,12 +317,12 @@ defmodule FastCheckWeb.DashboardLive do
                 >
                   Sync attendees
                 </button>
-
                 <a
                   href={if lifecycle_state == :archived, do: "#", else: "/scan/#{event.id}"}
                   class={[
                     "flex-1 rounded-md border border-slate-200 px-4 py-2 text-center text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900",
-                    lifecycle_state == :archived && "cursor-not-allowed opacity-60 pointer-events-none"
+                    lifecycle_state == :archived &&
+                      "cursor-not-allowed opacity-60 pointer-events-none"
                   ]}
                   aria-disabled={lifecycle_state == :archived}
                 >
@@ -293,6 +334,7 @@ defmodule FastCheckWeb.DashboardLive do
                 >
                   Event archived, sync disabled
                 </p>
+                
                 <p
                   :if={lifecycle_state == :archived}
                   class="w-full text-xs text-red-500"
@@ -301,12 +343,17 @@ defmodule FastCheckWeb.DashboardLive do
                 </p>
               </div>
             </div>
-
-            <div :if={Enum.empty?(@events)} class="col-span-full rounded-2xl border border-dashed border-slate-300 p-10 text-center">
+            
+            <div
+              :if={Enum.empty?(@events)}
+              class="col-span-full rounded-2xl border border-dashed border-slate-300 p-10 text-center"
+            >
               <p class="text-lg font-semibold text-slate-700">No events yet</p>
+              
               <p class="mt-2 text-sm text-slate-500">
                 Create your first event to start syncing attendees and scanning tickets.
               </p>
+              
               <button
                 type="button"
                 phx-click="show_new_event_form"
@@ -409,7 +456,9 @@ defmodule FastCheckWeb.DashboardLive do
         String.replace(acc, "%{#{key}}", to_string(value))
       end)
     end)
-    |> Enum.map(fn {field, messages} -> "#{Phoenix.Naming.humanize(field)} #{Enum.join(messages, ", " )}" end)
+    |> Enum.map(fn {field, messages} ->
+      "#{Phoenix.Naming.humanize(field)} #{Enum.join(messages, ", ")}"
+    end)
     |> Enum.join(". ")
   end
 
