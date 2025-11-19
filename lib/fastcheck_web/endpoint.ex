@@ -8,7 +8,7 @@ defmodule FastCheckWeb.Endpoint do
   # Set :encryption_salt if you would also like to encrypt it.
   @session_overrides @endpoint_config |> Keyword.get(:session_options, [])
 
-  @live_reload_options
+  @live_reload_options =
     case Keyword.get(@endpoint_config, :live_reload) do
       nil -> []
       live_reload ->
