@@ -8,22 +8,24 @@ defmodule FastCheckWeb.Endpoint do
   # Set :encryption_salt if you would also like to encrypt it.
   @session_overrides @endpoint_config |> Keyword.get(:session_options, [])
 
-  @live_reload_options case Keyword.get(@endpoint_config, :live_reload) do
-    nil -> []
-    live_reload ->
-      {pattern_sources, live_reload} = Keyword.pop(live_reload, :pattern_sources, [])
+  @live_reload_options (
+    case Keyword.get(@endpoint_config, :live_reload) do
+      nil -> []
+      live_reload ->
+        {pattern_sources, live_reload} = Keyword.pop(live_reload, :pattern_sources, [])
 
-      patterns =
-        pattern_sources
-        |> Enum.reject(&is_nil/1)
-        |> Enum.map(&Regex.compile!(&1))
+        patterns =
+          pattern_sources
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&Regex.compile!(&1))
 
-      if patterns == [] do
-        live_reload
-      else
-        Keyword.put(live_reload, :patterns, patterns)
-      end
-  end
+        if patterns == [] do
+          live_reload
+        else
+          Keyword.put(live_reload, :patterns, patterns)
+        end
+    end
+  )
 
   @session_options [
                      store: :cookie,
