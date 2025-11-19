@@ -164,15 +164,13 @@ defmodule FastCheck.Events do
       fetch_attr(attrs, "tickera_api_key_encrypted") ||
         fetch_attr(attrs, "api_key")
 
-    start_date = fetch_attr(attrs, "tickera_start_date")
-    end_date = fetch_attr(attrs, "tickera_end_date")
-
     with :ok <- ensure_credentials(site_url, api_key),
          {:ok, essentials} <- TickeraClient.get_event_essentials(site_url, api_key),
+         {:ok, {start_date, end_date}} <- {:ok, resolve_tickera_window(attrs, essentials)},
          {:ok, credential_struct} <-
            set_tickera_credentials(%Event{}, site_url, api_key, start_date, end_date),
          credential_attrs <- credential_attrs_from_struct(credential_struct),
-         event_attrs <- build_event_attrs(attrs, essentials) |> Map.merge(credential_attrs),
+         event_attrs <- credential_attrs |> Map.merge(build_event_attrs(attrs, essentials)),
          {:ok, %Event{} = event} <- %Event{} |> Event.changeset(event_attrs) |> Repo.insert() do
       Logger.info("Created event #{event.id} for site #{site_url}")
       _ = persist_event_cache(event)
@@ -304,6 +302,8 @@ defmodule FastCheck.Events do
 
             case get_tickera_api_key(event) do
               {:ok, api_key} ->
+                _ = refresh_event_window_from_tickera(event, api_key)
+
                 case TickeraClient.fetch_all_attendees(
                        event.tickera_site_url,
                        api_key,
@@ -731,18 +731,26 @@ defmodule FastCheck.Events do
   When called with a new `%Event{}` struct, the encrypted attributes are returned on
   the struct so they can be merged into a changeset prior to insert.
   """
-  @spec set_tickera_credentials(Event.t(), String.t(), String.t(), NaiveDateTime.t() | nil, NaiveDateTime.t() | nil) ::
-          {:ok, Event.t()} | {:error, term()}
+  @spec set_tickera_credentials(
+          Event.t(),
+          String.t(),
+          String.t(),
+          DateTime.t() | NaiveDateTime.t() | Date.t() | String.t() | nil,
+          DateTime.t() | NaiveDateTime.t() | Date.t() | String.t() | nil
+        ) :: {:ok, Event.t()} | {:error, term()}
   def set_tickera_credentials(%Event{} = event, site_url, api_key, start_date, end_date)
       when is_binary(site_url) and is_binary(api_key) do
+    start_datetime = coerce_event_datetime(start_date)
+    end_datetime = coerce_event_datetime(end_date)
+
     with {:ok, encrypted} <- Crypto.encrypt(api_key),
          attrs <-
            %{
              tickera_site_url: String.trim(site_url),
              tickera_api_key_encrypted: encrypted,
              tickera_api_key_last4: derive_last4(api_key),
-             tickera_start_date: start_date,
-             tickera_end_date: end_date,
+             tickera_start_date: start_datetime,
+             tickera_end_date: end_datetime,
              status: "active"
            } do
       apply_credential_attrs(event, attrs)
@@ -751,6 +759,80 @@ defmodule FastCheck.Events do
 
   def set_tickera_credentials(_event, _site_url, _api_key, _start_date, _end_date),
     do: {:error, :invalid_credentials}
+
+  defp refresh_event_window_from_tickera(%Event{} = event, api_key) when is_binary(api_key) do
+    case TickeraClient.get_event_essentials(event.tickera_site_url, api_key) do
+      {:ok, essentials} ->
+        {start_dt, end_dt} = resolve_tickera_window(%{}, essentials)
+
+        case persist_event_window(event, start_dt, end_dt) do
+          {:ok, _updated} -> :ok
+          :unchanged -> :ok
+          {:error, reason} ->
+            Logger.warning(fn ->
+              {"event window update failed", event_id: event.id, reason: inspect(reason)}
+            end)
+
+            :error
+        end
+
+      {:error, reason} ->
+        Logger.debug(fn ->
+          {"event window refresh skipped", event_id: event.id, reason: inspect(reason)}
+        end)
+
+        :error
+    end
+  end
+
+  defp persist_event_window(_event, nil, nil), do: :unchanged
+
+  defp persist_event_window(%Event{} = event, start_dt, end_dt) do
+    updates =
+      [tickera_start_date: start_dt, tickera_end_date: end_dt]
+      |> Enum.reduce(%{}, fn
+        {_field, nil}, acc -> acc
+        {field, value}, acc ->
+          current = Map.get(event, field)
+
+          if same_datetime?(current, value) do
+            acc
+          else
+            Map.put(acc, field, value)
+          end
+      end)
+
+    if map_size(updates) == 0 do
+      :unchanged
+    else
+      event
+      |> Changeset.change(updates)
+      |> Repo.update()
+      |> case do
+        {:ok, %Event{} = updated} ->
+          _ = persist_event_cache(updated)
+          _ = invalidate_events_list_cache()
+          {:ok, updated}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp same_datetime?(nil, nil), do: true
+  defp same_datetime?(nil, _other), do: false
+  defp same_datetime?(_other, nil), do: false
+
+  defp same_datetime?(%DateTime{} = left, %DateTime{} = right) do
+    DateTime.compare(DateTime.truncate(left, :second), DateTime.truncate(right, :second)) == :eq
+  end
+
+  defp same_datetime?(%NaiveDateTime{} = left, %NaiveDateTime{} = right) do
+    NaiveDateTime.compare(NaiveDateTime.truncate(left, :second), NaiveDateTime.truncate(right, :second)) == :eq
+  end
+
+  defp same_datetime?(left, right), do: left == right
 
   @doc """
   Decrypts the stored Tickera API key for the event.
@@ -1398,6 +1480,7 @@ defmodule FastCheck.Events do
         Map.get(essentials, :event_date_time)
 
     {event_date, event_time} = split_datetime(event_datetime)
+    {tickera_start_date, tickera_end_date} = resolve_tickera_window(attrs, essentials)
 
     %{
       name:
@@ -1408,6 +1491,8 @@ defmodule FastCheck.Events do
       total_tickets: Map.get(essentials, "total_tickets") || Map.get(essentials, :total_tickets),
       event_date: fetch_attr(attrs, "event_date") || event_date,
       event_time: fetch_attr(attrs, "event_time") || event_time,
+      tickera_start_date: tickera_start_date,
+      tickera_end_date: tickera_end_date,
       last_sync_at: fetch_attr(attrs, "last_sync_at"),
       last_soft_sync_at: fetch_attr(attrs, "last_soft_sync_at")
     }
@@ -1441,6 +1526,106 @@ defmodule FastCheck.Events do
   end
 
   defp split_datetime(_), do: {nil, nil}
+
+  defp resolve_tickera_window(attrs, essentials) do
+    start_source =
+      fetch_attr(attrs, "tickera_start_date") ||
+        Map.get(essentials, "event_start_date") ||
+        Map.get(essentials, :event_start_date) ||
+        Map.get(essentials, "event_date_time") ||
+        Map.get(essentials, :event_date_time)
+
+    end_source =
+      fetch_attr(attrs, "tickera_end_date") ||
+        Map.get(essentials, "event_end_date") ||
+        Map.get(essentials, :event_end_date)
+
+    {
+      coerce_event_datetime(start_source),
+      coerce_event_datetime(end_source)
+    }
+  end
+
+  defp coerce_event_datetime(nil), do: nil
+
+  defp coerce_event_datetime(%DateTime{} = datetime) do
+    shift_to_utc(datetime)
+  rescue
+    _ -> nil
+  end
+
+  defp coerce_event_datetime(%NaiveDateTime{} = datetime) do
+    case DateTime.from_naive(datetime, "Etc/UTC") do
+      {:ok, utc} -> DateTime.truncate(utc, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_event_datetime(%Date{} = date) do
+    case DateTime.new(date, ~T[00:00:00], "Etc/UTC") do
+      {:ok, datetime} -> DateTime.truncate(datetime, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_event_datetime(%Time{} = time) do
+    DateTime.new(Date.utc_today(), time, "Etc/UTC")
+    |> case do
+      {:ok, datetime} -> DateTime.truncate(datetime, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_event_datetime(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> nil
+      trimmed ->
+        with {:ok, datetime, _offset} <- DateTime.from_iso8601(trimmed) do
+          shift_to_utc(datetime)
+        else
+          {:error, _} ->
+            case NaiveDateTime.from_iso8601(trimmed) do
+              {:ok, naive} -> coerce_event_datetime(naive)
+              {:error, _} -> parse_unix_datetime(trimmed)
+            end
+        end
+    end
+  end
+
+  defp coerce_event_datetime(value) when is_integer(value) do
+    value
+    |> DateTime.from_unix()
+    |> case do
+      {:ok, datetime} -> shift_to_utc(datetime)
+      _ -> nil
+    end
+  end
+
+  defp coerce_event_datetime(_value), do: nil
+
+  defp parse_unix_datetime(trimmed) do
+    case Integer.parse(trimmed) do
+      {unix, ""} ->
+        case DateTime.from_unix(unix) do
+          {:ok, datetime} -> shift_to_utc(datetime)
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp shift_to_utc(%DateTime{} = datetime) do
+    datetime
+    |> DateTime.shift_zone("Etc/UTC")
+    |> case do
+      {:ok, shifted} -> DateTime.truncate(shifted, :second)
+      {:error, _} -> DateTime.truncate(datetime, :second)
+    end
+  end
 
   defp fetch_attr(attrs, key) when is_map(attrs) and is_binary(key) do
     cond do

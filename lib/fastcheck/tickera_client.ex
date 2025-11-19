@@ -264,9 +264,9 @@ defmodule FastCheck.TickeraClient do
   @doc """
   Fetches summary details for the configured event.
 
-  The returned map includes the event name, start time, and ticket statistics. The
-  `"event_date_time"` field is normalized to a `DateTime`/`NaiveDateTime` when possible
-  via `parse_datetime/1`.
+  The returned map includes the event name, start/end timestamps, and ticket statistics. The
+  `"event_date_time"`, `"event_start_date"`, and `"event_end_date"` fields are normalized to
+  a `DateTime`/`NaiveDateTime` when possible via `parse_datetime/1`.
 
   ## Returns
     * `{:ok, response_map}` on success.
@@ -277,7 +277,12 @@ defmodule FastCheck.TickeraClient do
     url = build_url(site_url, api_key, "event_essentials")
 
     with {:ok, data} <- fetch_json(url) do
-      normalized = Map.update(data, "event_date_time", nil, &parse_datetime/1)
+      normalized =
+        data
+        |> Map.update("event_date_time", nil, &parse_datetime/1)
+        |> Map.update("event_start_date", nil, &parse_datetime/1)
+        |> Map.update("event_end_date", nil, &parse_datetime/1)
+
       {:ok, normalized}
     end
   end
