@@ -12,8 +12,8 @@ defmodule FastCheck.Crypto do
   def encrypt(plaintext) when is_binary(plaintext) do
     try do
       ciphertext =
-        plaintext
-        |> MessageEncryptor.encrypt(encryption_secret(), signing_secret())
+        encryption_secret()
+        |> MessageEncryptor.encrypt(signing_secret(), plaintext)
         |> Base.encode64()
 
       {:ok, ciphertext}
