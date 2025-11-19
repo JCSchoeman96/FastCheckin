@@ -67,6 +67,10 @@ defmodule FastCheck.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:mishka_chelekom, "~> 0.0.8"},
+      {:sourceror,
+       github: "doorgan/sourceror",
+       ref: "ffb1ad3c2b111371ff9c568b93ee41a145499349",
+       override: true},
 
       # Rate limiting
       {:plug_attack, "~> 0.4.3"},
