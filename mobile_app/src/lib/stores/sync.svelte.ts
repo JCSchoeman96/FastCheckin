@@ -1,4 +1,6 @@
 import { browser } from '$app/environment';
+import { API_ENDPOINTS } from '$lib/config';
+import { setJWT, setCurrentEventId } from '$lib/db';
 
 class SyncStore {
   // State using Svelte 5 Runes
@@ -24,8 +26,31 @@ class SyncStore {
   };
 
   async login(eventId: string, deviceName: string): Promise<boolean> {
-    // TODO: Implement login logic
-    return false;
+    if (!this.isOnline) return false;
+
+    try {
+      const response = await fetch(API_ENDPOINTS.LOGIN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: parseInt(eventId), device_name: deviceName })
+      });
+
+      if (!response.ok) {
+        console.error('Login failed:', response.statusText);
+        return false;
+      }
+
+      const data = await response.json();
+      
+      // Persist auth state
+      await setJWT(data.token);
+      await setCurrentEventId(data.event_id);
+      
+      return true;
+    } catch (error) {
+      console.error('Login error:', error);
+      return false;
+    }
   }
 
   async syncDown(): Promise<void> {
