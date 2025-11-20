@@ -6,6 +6,8 @@
   import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
   import { onMount, onDestroy } from "svelte";
   import { db } from "$lib/db";
+  import { Capacitor } from "@capacitor/core";
+  import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
 
   // State
   let direction = $state<ScanDirection>("in");
@@ -14,6 +16,8 @@
   let isProcessing = $state(false);
   let scanner: Html5QrcodeScanner | null = null;
   let lookupResult = $state<Attendee | null>(null);
+  let isNative = Capacitor.isNativePlatform();
+  let isScanningNative = $state(false);
 
   // Derived
   let statusColor = $derived(
@@ -25,16 +29,24 @@
   );
 
   onMount(() => {
-    startScanner();
+    if (!isNative) {
+      startWebScanner();
+    } else {
+      // Request permissions on mount for native
+      BarcodeScanner.requestPermissions();
+    }
   });
 
   onDestroy(() => {
     if (scanner) {
       scanner.clear().catch(console.error);
     }
+    if (isNative && isScanningNative) {
+      stopNativeScanner();
+    }
   });
 
-  function startScanner() {
+  function startWebScanner() {
     const config = {
       fps: 10,
       qrbox: { width: 250, height: 250 },
@@ -44,6 +56,22 @@
 
     scanner = new Html5QrcodeScanner("reader", config, false);
     scanner.render(onScanSuccess, onScanFailure);
+  }
+
+  async function startNativeScanner() {
+    try {
+      const { camera } = await BarcodeScanner.requestPermissions();
+    } catch (e) {
+      console.error("Failed to start native scanner", e);
+      isScanningNative = false;
+    }
+  }
+
+  async function stopNativeScanner() {
+    isScanningNative = false;
+    document.body.classList.remove("scanner-active");
+    await BarcodeScanner.stopScan();
+    await BarcodeScanner.removeAllListeners();
   }
 
   function onScanSuccess(decodedText: string, decodedResult: any) {
@@ -143,9 +171,9 @@
   }
 </script>
 
-<div class="flex flex-col h-full max-w-md mx-auto p-4 space-y-6">
+<div class="scan-page-container flex flex-col h-full max-w-md mx-auto p-4 space-y-6 transition-colors duration-300">
   <!-- Header / Direction Toggle -->
-  <div class="flex rounded-lg bg-gray-200 p-1">
+  <div class="flex rounded-lg bg-gray-200 p-1 hide-on-scan transition-opacity">
     <button
       class="flex-1 py-3 text-sm font-medium rounded-md transition-all {direction === 'in'
         ? 'bg-white shadow text-blue-600'
@@ -164,7 +192,9 @@
 
   <!-- Status Panel -->
   <div
-    class="flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed min-h-[200px] transition-colors {statusColor}">
+    class="flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed min-h-[200px] transition-all {statusColor} {isScanningNative
+      ? 'bg-transparent border-white/50 text-white'
+      : ''}">
     {#if lastResult}
       <div class="text-4xl mb-2">
         {lastResult.success ? "✅" : "❌"}
@@ -185,6 +215,13 @@
           {lastResult.error_code}
         </div>
       {/if}
+    {:else if isScanningNative}
+      <div class="text-white text-center">
+        <p class="text-lg font-bold mb-4">Scanning...</p>
+        <button class="bg-red-600 text-white px-6 py-2 rounded-full shadow-lg" onclick={stopNativeScanner}>
+          Stop Scanner
+        </button>
+      </div>
     {:else}
       <div class="text-4xl mb-2 text-gray-300">📷</div>
       <p class="text-center font-medium">Ready to Scan</p>
@@ -194,13 +231,22 @@
     {/if}
   </div>
 
-  <!-- Scanner -->
-  <div class="rounded-xl overflow-hidden bg-black">
-    <div id="reader" class="w-full"></div>
-  </div>
+  <!-- Scanner Area -->
+  {#if !isNative}
+    <div class="rounded-xl overflow-hidden bg-black hide-on-scan">
+      <div id="reader" class="w-full"></div>
+    </div>
+  {:else if !isScanningNative}
+    <button
+      class="w-full py-8 rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-blue-600 font-bold hover:bg-blue-100 transition-colors flex flex-col items-center gap-2"
+      onclick={startNativeScanner}>
+      <span class="text-3xl">📷</span>
+      Tap to Scan with Camera
+    </button>
+  {/if}
 
   <!-- Manual Entry Simulation -->
-  <div class="flex flex-col gap-4">
+  <div class="flex flex-col gap-4 hide-on-scan transition-opacity">
     <div class="flex gap-2">
       <input
         type="text"
@@ -255,3 +301,22 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /* Make background transparent when scanner is active */
+  :global(body.scanner-active) {
+    background: transparent !important;
+    --scanner-active: 1;
+  }
+  :global(html) {
+    background: #f3f4f6; /* Match default bg */
+  }
+  :global(body.scanner-active) .scan-page-container {
+    background: transparent !important;
+  }
+  /* Hide everything except the overlay controls when scanning */
+  :global(body.scanner-active) .hide-on-scan {
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
