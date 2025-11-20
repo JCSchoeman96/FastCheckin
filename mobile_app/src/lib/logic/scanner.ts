@@ -86,13 +86,14 @@ export async function processScan(
   const idempotencyKey = uuidv4();
   const scannedAt = new Date().toISOString();
 
-  await db.queue.add({
+  await import('$lib/db').then(m => m.addScanToQueue({
     idempotency_key: idempotencyKey,
     ticket_code: ticketCode,
     direction,
     scanned_at: scannedAt,
-    sync_status: 'pending'
-  });
+    entrance_name: 'Mobile', // Default
+    operator_name: 'Mobile Scanner' // Default
+  }));
 
   // 4. Optimistic Update
   await db.attendees.update(attendee.id, {

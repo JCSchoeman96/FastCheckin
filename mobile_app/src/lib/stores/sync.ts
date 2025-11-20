@@ -88,10 +88,7 @@ function createSyncStore() {
       if (!$auth.token) return;
 
       // Get pending scans
-      const pendingScans = await db.queue
-        .where('sync_status')
-        .equals('pending')
-        .toArray();
+      const pendingScans = await import('$lib/db').then(m => m.getPendingScans());
 
       if (pendingScans.length === 0) return 0;
 
@@ -112,24 +109,7 @@ function createSyncStore() {
         const data: ScanUploadResponse = await response.json();
 
         // Process results
-        await db.transaction('rw', db.queue, async () => {
-          for (const result of data.results) {
-            const status = result.status === 'error' ? 'error' : 'synced';
-            
-            // Find scan by idempotency_key
-            const scan = await db.queue
-              .where('idempotency_key')
-              .equals(result.idempotency_key)
-              .first();
-
-            if (scan && scan.id) {
-              await db.queue.update(scan.id, {
-                sync_status: status,
-                error_message: result.message
-              });
-            }
-          }
-        });
+        await import('$lib/db').then(m => m.processScanResults(data.results));
 
         // Update pending count
         const pendingCount = await db.queue.where('sync_status').equals('pending').count();

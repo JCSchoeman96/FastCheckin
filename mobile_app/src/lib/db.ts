@@ -78,3 +78,55 @@ export async function getCurrentEventId(): Promise<number | null> {
   const item = await db.kv_store.get('current_event_id');
   return item?.value || null;
 }
+
+/**
+ * Queue Helpers
+ * Encapsulates logic for adding scans, fetching pending items, and processing results.
+ */
+import { v4 as uuidv4 } from 'uuid';
+
+export async function addScanToQueue(
+  scan: Omit<ScanQueueItem, 'id' | 'sync_status' | 'idempotency_key'> & { idempotency_key?: string }
+): Promise<void> {
+  await db.queue.add({
+    ...scan,
+    idempotency_key: scan.idempotency_key || uuidv4(),
+    sync_status: 'pending'
+  });
+}
+
+export async function getPendingScans(): Promise<ScanQueueItem[]> {
+  return await db.queue
+    .where('sync_status')
+    .equals('pending')
+    .toArray();
+}
+
+export async function processScanResults(
+  results: { idempotency_key: string; status: string; message: string }[]
+): Promise<void> {
+  await db.transaction('rw', db.queue, async () => {
+    for (const result of results) {
+      const status = result.status === 'error' ? 'error' : 'synced';
+      
+      // Find scan by idempotency_key
+      const scan = await db.queue
+        .where('idempotency_key')
+        .equals(result.idempotency_key)
+        .first();
+
+      if (scan && scan.id) {
+        if (status === 'synced') {
+          // Success or duplicate - remove from queue
+          await db.queue.delete(scan.id);
+        } else {
+          // Error - mark as failed
+          await db.queue.update(scan.id, {
+            sync_status: 'error',
+            error_message: result.message
+          });
+        }
+      }
+    }
+  });
+}
