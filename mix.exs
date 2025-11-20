@@ -79,7 +79,12 @@ defmodule FastCheck.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
 
       # Security scanning
-      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false}
+      # Security scanning
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
+
+      # Mobile Extension
+      {:cors_plug, "~> 3.0"},
+      {:joken, "~> 2.6"}
     ]
   end
 

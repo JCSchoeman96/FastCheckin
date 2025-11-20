@@ -3,6 +3,26 @@ defmodule FastCheckWeb.Endpoint do
 
   @endpoint_config Application.compile_env(:fastcheck, __MODULE__, [])
 
+  @live_reload_options (case Keyword.get(@endpoint_config, :live_reload) do
+                          nil ->
+                            []
+
+                          live_reload ->
+                            {pattern_sources, live_reload} =
+                              Keyword.pop(live_reload, :pattern_sources, [])
+
+                            patterns =
+                              pattern_sources
+                              |> Enum.reject(&is_nil/1)
+                              |> Enum.map(&Regex.compile!(&1))
+
+                            if patterns == [] do
+                              live_reload
+                            else
+                              Keyword.put(live_reload, :patterns, patterns)
+                            end
+                        end)
+
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.
@@ -35,7 +55,7 @@ defmodule FastCheckWeb.Endpoint do
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-    plug Phoenix.LiveReloader, live_reload_options()
+    plug Phoenix.LiveReloader, @live_reload_options
     plug Phoenix.CodeReloader
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :fastcheck
   end
@@ -55,24 +75,9 @@ defmodule FastCheckWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+
+  # TODO: Tighten this for production. Currently permissive for dev.
+  plug CORSPlug, origin: "*"
+
   plug FastCheckWeb.Router
-
-  defp live_reload_options do
-    case Keyword.get(@endpoint_config, :live_reload) do
-      nil -> []
-      live_reload ->
-        {pattern_sources, live_reload} = Keyword.pop(live_reload, :pattern_sources, [])
-
-        patterns =
-          pattern_sources
-          |> Enum.reject(&is_nil/1)
-          |> Enum.map(&Regex.compile!(&1))
-
-        if patterns == [] do
-          live_reload
-        else
-          Keyword.put(live_reload, :patterns, patterns)
-        end
-    end
-  end
 end
