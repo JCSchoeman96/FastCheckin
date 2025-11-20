@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { browser } from '$app/environment';
 import { API_ENDPOINTS } from '$lib/config';
+import { getJWT, setJWT } from '$lib/db';
 
 // Types for the auth state
 export interface AuthState {
@@ -30,12 +31,12 @@ function createAuthStore() {
   return {
     subscribe,
 
-    // Initialize from localStorage if available
-    init: () => {
+    // Initialize from storage (async)
+    init: async () => {
       if (browser) {
-        const storedToken = localStorage.getItem('fastcheck_token');
-        if (storedToken) {
-          try {
+        try {
+          const storedToken = await getJWT();
+          if (storedToken) {
             const payload = JSON.parse(atob(storedToken.split('.')[1]));
             // Check expiration
             if (payload.exp * 1000 > Date.now()) {
@@ -48,11 +49,12 @@ function createAuthStore() {
                 role: payload.role
               }));
             } else {
-              localStorage.removeItem('fastcheck_token');
+              await setJWT(null);
             }
-          } catch (e) {
-            localStorage.removeItem('fastcheck_token');
           }
+        } catch (e) {
+          console.error('Auth init error:', e);
+          await setJWT(null);
         }
       }
     },
@@ -78,7 +80,7 @@ function createAuthStore() {
         const payload = JSON.parse(atob(token.split('.')[1]));
 
         if (browser) {
-          localStorage.setItem('fastcheck_token', token);
+          await setJWT(token);
         }
 
         update(s => ({
@@ -103,9 +105,9 @@ function createAuthStore() {
     },
 
     // Logout action
-    logout: () => {
+    logout: async () => {
       if (browser) {
-        localStorage.removeItem('fastcheck_token');
+        await setJWT(null);
       }
       set(initialState);
     }

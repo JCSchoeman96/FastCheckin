@@ -52,31 +52,61 @@ export async function saveSyncData(attendees: Attendee[], serverTime: string): P
  * Abstracts storage of auth state (JWT, Event ID) to allow easy swapping
  * of storage engines (Dexie vs Capacitor Preferences) later.
  */
+import { Capacitor } from '@capacitor/core';
+import { Preferences } from '@capacitor/preferences';
 
 export async function setJWT(token: string | null): Promise<void> {
-  if (token) {
-    await db.kv_store.put({ key: 'jwt', value: token });
+  if (Capacitor.isNativePlatform()) {
+    if (token) {
+      await Preferences.set({ key: 'jwt', value: token });
+    } else {
+      await Preferences.remove({ key: 'jwt' });
+    }
   } else {
-    await db.kv_store.delete('jwt');
+    if (token) {
+      await db.kv_store.put({ key: 'jwt', value: token });
+    } else {
+      await db.kv_store.delete('jwt');
+    }
   }
 }
 
 export async function getJWT(): Promise<string | null> {
-  const item = await db.kv_store.get('jwt');
-  return item?.value || null;
+  if (Capacitor.isNativePlatform()) {
+    const { value } = await Preferences.get({ key: 'jwt' });
+    return value;
+  } else {
+    const item = await db.kv_store.get('jwt');
+    return item?.value || null;
+  }
 }
 
 export async function setCurrentEventId(eventId: number | null): Promise<void> {
-  if (eventId) {
-    await db.kv_store.put({ key: 'current_event_id', value: eventId });
+  const value = eventId ? eventId.toString() : null;
+  
+  if (Capacitor.isNativePlatform()) {
+    if (value) {
+      await Preferences.set({ key: 'current_event_id', value });
+    } else {
+      await Preferences.remove({ key: 'current_event_id' });
+    }
   } else {
-    await db.kv_store.delete('current_event_id');
+    if (eventId) {
+      await db.kv_store.put({ key: 'current_event_id', value: eventId });
+    } else {
+      await db.kv_store.delete('current_event_id');
+    }
   }
 }
 
 export async function getCurrentEventId(): Promise<number | null> {
-  const item = await db.kv_store.get('current_event_id');
-  return item?.value || null;
+  if (Capacitor.isNativePlatform()) {
+    const { value } = await Preferences.get({ key: 'current_event_id' });
+    return value ? parseInt(value, 10) : null;
+  } else {
+    const item = await db.kv_store.get('current_event_id');
+    return item?.value || null;
+  }
 }
 
 /**
