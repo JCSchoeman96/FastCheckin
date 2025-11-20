@@ -62,16 +62,8 @@ function createSyncStore() {
 
         const data: SyncResponse = await response.json();
 
-        // Update DB in transaction
-        await db.transaction('rw', db.attendees, db.kv_store, async () => {
-          // Bulk put attendees (upsert)
-          if (data.attendees.length > 0) {
-            await db.attendees.bulkPut(data.attendees);
-          }
-          
-          // Update last sync time
-          await db.kv_store.put({ key: 'last_sync', value: data.server_time });
-        });
+        // Update DB using helper
+        await import('$lib/db').then(m => m.saveSyncData(data.attendees, data.server_time));
 
         update(s => ({
           ...s,

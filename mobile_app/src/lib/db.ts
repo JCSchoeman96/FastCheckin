@@ -30,3 +30,19 @@ export class FastCheckDB extends Dexie {
 }
 
 export const db = new FastCheckDB();
+
+/**
+ * Saves attendees from a sync response and updates the last sync time.
+ * Performed in a single transaction to ensure consistency.
+ */
+export async function saveSyncData(attendees: Attendee[], serverTime: string): Promise<void> {
+  await db.transaction('rw', db.attendees, db.kv_store, async () => {
+    // Bulk upsert attendees if any
+    if (attendees.length > 0) {
+      await db.attendees.bulkPut(attendees);
+    }
+    
+    // Update last sync timestamp
+    await db.kv_store.put({ key: 'last_sync', value: serverTime });
+  });
+}
