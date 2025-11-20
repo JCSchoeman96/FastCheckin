@@ -46,3 +46,35 @@ export async function saveSyncData(attendees: Attendee[], serverTime: string): P
     await db.kv_store.put({ key: 'last_sync', value: serverTime });
   });
 }
+
+/**
+ * Auth Persistence Helpers
+ * Abstracts storage of auth state (JWT, Event ID) to allow easy swapping
+ * of storage engines (Dexie vs Capacitor Preferences) later.
+ */
+
+export async function setJWT(token: string | null): Promise<void> {
+  if (token) {
+    await db.kv_store.put({ key: 'jwt', value: token });
+  } else {
+    await db.kv_store.delete('jwt');
+  }
+}
+
+export async function getJWT(): Promise<string | null> {
+  const item = await db.kv_store.get('jwt');
+  return item?.value || null;
+}
+
+export async function setCurrentEventId(eventId: number | null): Promise<void> {
+  if (eventId) {
+    await db.kv_store.put({ key: 'current_event_id', value: eventId });
+  } else {
+    await db.kv_store.delete('current_event_id');
+  }
+}
+
+export async function getCurrentEventId(): Promise<number | null> {
+  const item = await db.kv_store.get('current_event_id');
+  return item?.value || null;
+}
