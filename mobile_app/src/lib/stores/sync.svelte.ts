@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { API_ENDPOINTS } from '$lib/config';
-import { setJWT, setCurrentEventId } from '$lib/db';
+import { setJWT, setCurrentEventId, getJWT, saveSyncData, db } from '$lib/db';
+import type { SyncResponse } from '$lib/types';
 
 class SyncStore {
   // State using Svelte 5 Runes
@@ -54,11 +55,51 @@ class SyncStore {
   }
 
   async syncDown(): Promise<void> {
-    // TODO: Implement sync down logic
     if (!this.isOnline) return;
     this.isSyncing = true;
+
     try {
-      // ...
+      const token = await getJWT();
+      if (!token) {
+        throw new Error('No token found');
+      }
+
+      // Get last sync time
+      const lastSyncItem = await db.kv_store.get('last_sync');
+      const since = lastSyncItem?.value;
+
+      // Build URL
+      let url = API_ENDPOINTS.ATTENDEES;
+      if (since) {
+        url += `?since=${encodeURIComponent(since)}`;
+      }
+
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.status === 401) {
+        // Auth failed - clear state
+        await setJWT(null);
+        await setCurrentEventId(null);
+        throw new Error('Unauthorized');
+      }
+
+      if (!response.ok) {
+        throw new Error(`Sync down failed: ${response.statusText}`);
+      }
+
+      const data: SyncResponse = await response.json();
+
+      // Save data using helper
+      await saveSyncData(data.attendees, data.server_time);
+
+    } catch (error) {
+      console.error('Sync down error:', error);
+      // If unauthorized, we might want to trigger a redirect or state change in the UI
+      // For now, the error is logged and state is cleared above
     } finally {
       this.isSyncing = false;
     }
