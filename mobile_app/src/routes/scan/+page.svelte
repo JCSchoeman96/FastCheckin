@@ -1,5 +1,19 @@
 <script lang="ts">
   import { processScan, type ScanResult } from "$lib/logic/scanner";
+  import { auth } from "$lib/stores/auth";
+  import { syncStore } from "$lib/stores/sync.svelte";
+  import type { ScanDirection, Attendee } from "$lib/types";
+  import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
+  import { onMount, onDestroy } from "svelte";
+  import { db } from "$lib/db";
+  import { Capacitor } from "@capacitor/core";
+  import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
+  import { Haptics, NotificationType } from "@capacitor/haptics";
+
+  // State
+  let direction = $state<ScanDirection>("in");
+  let ticketCode = $state("");
+  let lastResult = $state<ScanResult | null>(null);
   let isProcessing = $state(false);
   let scanner: Html5QrcodeScanner | null = null;
   let lookupResult = $state<Attendee | null>(null);
