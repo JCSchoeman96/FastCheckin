@@ -1,7 +1,7 @@
 import { browser } from '$app/environment';
 import { API_ENDPOINTS } from '$lib/config';
-import { setJWT, setCurrentEventId, getJWT, saveSyncData, db } from '$lib/db';
-import type { SyncResponse } from '$lib/types';
+import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults } from '$lib/db';
+import type { SyncResponse, ScanUploadResponse } from '$lib/types';
 
 class SyncStore {
   // State using Svelte 5 Runes
@@ -106,11 +106,51 @@ class SyncStore {
   }
 
   async syncUp(): Promise<void> {
-    // TODO: Implement sync up logic
     if (!this.isOnline) return;
-    this.isSyncing = true;
+    
     try {
-      // ...
+      // 1. Get pending scans
+      const pendingScans = await getPendingScans();
+      if (pendingScans.length === 0) return;
+
+      this.isSyncing = true;
+
+      const token = await getJWT();
+      if (!token) {
+        throw new Error('No token found');
+      }
+
+      // 2. Upload scans
+      const response = await fetch(API_ENDPOINTS.SCANS, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ scans: pendingScans })
+      });
+
+      if (response.status === 401) {
+        await setJWT(null);
+        await setCurrentEventId(null);
+        throw new Error('Unauthorized');
+      }
+
+      if (!response.ok) {
+        throw new Error(`Sync up failed: ${response.statusText}`);
+      }
+
+      const data: ScanUploadResponse = await response.json();
+
+      // 3. Process results (cleanup queue)
+      await processScanResults(data.results);
+
+      // 4. Refresh queue length
+      const remaining = await getPendingScans();
+      this.queueLength = remaining.length;
+
+    } catch (error) {
+      console.error('Sync up error:', error);
     } finally {
       this.isSyncing = false;
     }
