@@ -2,9 +2,10 @@
   import { processScan, type ScanResult } from '$lib/logic/scanner';
   import { auth } from '$lib/stores/auth';
   import { syncStore } from '$lib/stores/sync.svelte';
-  import type { ScanDirection } from '$lib/types';
+  import type { ScanDirection, Attendee } from '$lib/types';
   import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
   import { onMount, onDestroy } from 'svelte';
+  import { db } from '$lib/db';
 
   // State
   let direction = $state<ScanDirection>('in');
@@ -164,21 +165,110 @@
     <div id="reader" class="w-full"></div>
   </div>
 
+  import { db } from '$lib/db';
+  import type { Attendee } from '$lib/types';
+
+  // ... (existing imports)
+
+  // State
+  // ... (existing state)
+  let lookupResult = $state<Attendee | null>(null);
+
+  // ... (existing derived)
+
+  // ... (existing methods)
+
+  async function handleLookup() {
+    if (!ticketCode.trim()) return;
+    
+    try {
+      const eventId = $auth.event_id;
+      if (!eventId) return;
+
+      const attendee = await db.attendees
+        .where({ event_id: eventId, ticket_code: ticketCode.trim() })
+        .first();
+
+      if (attendee) {
+        lookupResult = attendee;
+        lastResult = null; // Clear previous scan result
+      } else {
+        lookupResult = null;
+        lastResult = {
+          success: false,
+          message: 'Ticket not found',
+          error_code: 'NOT_FOUND'
+        };
+        triggerFeedback(false);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleScan(code: string = ticketCode) {
+    // Clear lookup on scan
+    lookupResult = null;
+    // ... (rest of existing handleScan)
+  }
+</script>
+
+<!-- ... (existing HTML) -->
+
   <!-- Manual Entry Simulation -->
-  <div class="flex gap-2">
-    <input
-      type="text"
-      bind:value={ticketCode}
-      placeholder="Enter ticket code..."
-      class="flex-1 px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-      onkeydown={(e) => e.key === 'Enter' && handleScan(ticketCode)}
-    />
-    <button
-      class="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      onclick={() => handleScan(ticketCode)}
-      disabled={!ticketCode || isProcessing}
-    >
-      {isProcessing ? '...' : 'Scan'}
-    </button>
+  <div class="flex flex-col gap-4">
+    <div class="flex gap-2">
+      <input
+        type="text"
+        bind:value={ticketCode}
+        placeholder="Enter ticket code..."
+        class="flex-1 px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+        onkeydown={(e) => e.key === 'Enter' && handleScan(ticketCode)}
+      />
+      <button
+        class="bg-gray-200 text-gray-700 px-4 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+        onclick={handleLookup}
+        disabled={!ticketCode}
+      >
+        🔍
+      </button>
+      <button
+        class="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        onclick={() => handleScan(ticketCode)}
+        disabled={!ticketCode || isProcessing}
+      >
+        {isProcessing ? '...' : 'Scan'}
+      </button>
+    </div>
+
+    {#if lookupResult}
+      <div class="bg-white p-4 rounded-lg shadow border border-gray-200 animate-in fade-in slide-in-from-top-2">
+        <div class="flex justify-between items-start mb-2">
+          <div>
+            <h3 class="font-bold text-lg">{lookupResult.first_name} {lookupResult.last_name}</h3>
+            <p class="text-sm text-gray-500">{lookupResult.ticket_code}</p>
+          </div>
+          <span class="px-2 py-1 text-xs font-bold rounded {lookupResult.payment_status === 'paid' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}">
+            {lookupResult.payment_status.toUpperCase()}
+          </span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-sm mt-2">
+          <div class="bg-gray-50 p-2 rounded">
+            <span class="block text-xs text-gray-500">Status</span>
+            <span class="font-medium">{lookupResult.is_currently_inside ? 'Inside' : 'Outside'}</span>
+          </div>
+          <div class="bg-gray-50 p-2 rounded">
+            <span class="block text-xs text-gray-500">Remaining</span>
+            <span class="font-medium">{lookupResult.checkins_remaining}</span>
+          </div>
+        </div>
+        <button
+          class="w-full mt-3 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700"
+          onclick={() => handleScan(lookupResult!.ticket_code)}
+        >
+          Confirm {direction === 'in' ? 'Check In' : 'Check Out'}
+        </button>
+      </div>
+    {/if}
   </div>
 </div>
