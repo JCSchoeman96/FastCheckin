@@ -16,10 +16,10 @@
   // Derived
   let statusColor = $derived(
     !lastResult 
-      ? 'bg-gray-100 text-gray-500' 
+      ? 'bg-gray-100 text-gray-500 border-gray-300' 
       : lastResult.success 
-        ? 'bg-green-100 text-green-800 border-green-200' 
-        : 'bg-red-100 text-red-800 border-red-200'
+        ? 'bg-green-500 text-white border-green-600 shadow-lg scale-105' 
+        : 'bg-red-500 text-white border-red-600 shadow-lg scale-105'
   );
 
   onMount(() => {
@@ -75,7 +75,9 @@
       
       if (result.success) {
         ticketCode = ''; // Clear input on success
-        // Optional: Pause scanner briefly on success?
+        triggerFeedback(true);
+      } else {
+        triggerFeedback(false);
       }
     } catch (e) {
       console.error(e);
@@ -84,11 +86,23 @@
         message: 'Unexpected error processing scan',
         error_code: 'UNKNOWN_ERROR'
       };
+      triggerFeedback(false);
     } finally {
       // Add a small delay before allowing next scan to prevent double-scans
       setTimeout(() => {
         isProcessing = false;
       }, 1000);
+    }
+  }
+
+  function triggerFeedback(success: boolean) {
+    // Haptic Feedback
+    if (navigator.vibrate) {
+      if (success) {
+        navigator.vibrate(200); // Single short buzz
+      } else {
+        navigator.vibrate([100, 50, 100, 50, 100]); // Error pattern (buzz-pause-buzz...)
+      }
     }
   }
 
