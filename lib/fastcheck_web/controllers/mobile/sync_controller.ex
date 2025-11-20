@@ -135,19 +135,312 @@ defmodule FastCheckWeb.Mobile.SyncController do
   @doc """
   Accepts a batch of scanned check-ins from mobile clients (sync up).
 
-  This endpoint will be implemented in a future step to handle:
-  - Batch upload of offline scans
-  - Idempotency checking via idempotency_key
-  - Processing check-ins through the Attendees context
-  - Returning results for each scan in the batch
+  This endpoint processes scans that were queued on mobile devices (typically
+  during offline operation) and ensures idempotent processing so duplicate
+  uploads don't cause double check-ins.
 
-  Currently returns a placeholder response.
+  ## Request Body
+
+  JSON payload with a `scans` array, where each scan contains:
+  - `idempotency_key` (required) - Client-generated unique ID for this scan
+  - `ticket_code` (required) - The ticket that was scanned
+  - `direction` (required) - Either "in" or "out"
+  - `scanned_at` (optional) - ISO 8601 timestamp of when scan occurred
+  - `entrance_name` (optional) - Entrance where scan occurred (default: "Mobile")
+  - `operator_name` (optional) - Name of operator (default: "Mobile Scanner")
+
+  ## Success Response (200 OK)
+
+  ```json
+  {
+    "results": [
+      {
+        "idempotency_key": "abc123",
+        "status": "success",
+        "message": "Check-in successful"
+      },
+      {
+        "idempotency_key": "def456",
+        "status": "duplicate",
+        "message": "Already processed"
+      },
+      {
+        "idempotency_key": "ghi789",
+        "status": "error",
+        "message": "Ticket not found"
+      }
+    ],
+    "processed": 3
+  }
+  ```
+
+  ## Error Responses
+
+  **400 Bad Request** - Invalid request format:
+  ```json
+  {
+    "error": "invalid_request",
+    "message": "Request body must contain 'scans' array"
+  }
+  ```
+
+  **500 Internal Server Error** - Processing failed
+
+  ## Examples
+
+      POST /api/mobile/scans
+      {
+        "scans": [
+          {
+            "idempotency_key": "mobile-1234-5678",
+            "ticket_code": "ABC123",
+            "direction": "in",
+            "scanned_at": "2025-11-20T10:15:00Z",
+            "entrance_name": "Main Gate"
+          }
+        ]
+      }
   """
-  def upload_scans(conn, _params) do
-    # Placeholder for future implementation
+  def upload_scans(conn, %{"scans" => scans}) when is_list(scans) do
+    # current_event_id is set by MobileAuth plug from verified JWT token
+    event_id = conn.assigns.current_event_id
+
+    Logger.info("Mobile scan upload started",
+      event_id: event_id,
+      scan_count: length(scans),
+      ip: get_peer_ip(conn)
+    )
+
+    results = Enum.map(scans, fn scan -> process_scan(event_id, scan) end)
+
+    success_count = Enum.count(results, &(&1.status == "success"))
+    duplicate_count = Enum.count(results, &(&1.status == "duplicate"))
+    error_count = Enum.count(results, &(&1.status == "error"))
+
+    Logger.info("Mobile scan upload completed",
+      event_id: event_id,
+      total: length(results),
+      success: success_count,
+      duplicate: duplicate_count,
+      error: error_count,
+      ip: get_peer_ip(conn)
+    )
+
     json(conn, %{
-      error: "not_implemented",
-      message: "Scan upload endpoint not yet implemented"
+      results: results,
+      processed: length(results)
+    })
+  end
+
+  def upload_scans(conn, _params) do
+    bad_request(conn, "invalid_request", "Request body must contain 'scans' array")
+  end
+
+  # ========================================================================
+  # Scan Processing Helpers
+  # ========================================================================
+
+  # Processes a single scan with idempotency checking.
+  #
+  # Flow:
+  # 1. Validate scan structure
+  # 2. Check idempotency log (have we seen this before?)
+  # 3. If duplicate → return stored result
+  # 4. If new → delegate to check-in/out logic
+  # 5. Record result in idempotency log
+  # 6. Return result to client
+  defp process_scan(event_id, scan) do
+    with {:ok, validated_scan} <- validate_scan(scan),
+         {:ok, result} <- check_or_process_scan(event_id, validated_scan) do
+      result
+    else
+      {:error, reason} ->
+        %{
+          idempotency_key: scan["idempotency_key"] || "unknown",
+          status: "error",
+          message: reason
+        }
+    end
+  end
+
+  # Validates that a scan has all required fields.
+  defp validate_scan(scan) when is_map(scan) do
+    with {:ok, key} <- extract_field(scan, "idempotency_key"),
+         {:ok, ticket_code} <- extract_field(scan, "ticket_code"),
+         {:ok, direction} <- extract_field(scan, "direction"),
+         :ok <- validate_direction(direction) do
+      {:ok,
+       %{
+         idempotency_key: key,
+         ticket_code: ticket_code,
+         direction: direction,
+         entrance_name: scan["entrance_name"] || "Mobile",
+         operator_name: scan["operator_name"] || "Mobile Scanner",
+         scanned_at: scan["scanned_at"]
+       }}
+    end
+  end
+
+  defp validate_scan(_), do: {:error, "Invalid scan format"}
+
+  # Extracts a required field from the scan map.
+  defp extract_field(scan, field) do
+    case Map.get(scan, field) do
+      nil -> {:error, "Missing required field: #{field}"}
+      "" -> {:error, "Empty value for required field: #{field}"}
+      value -> {:ok, value}
+    end
+  end
+
+  # Validates that direction is either "in" or "out".
+  defp validate_direction("in"), do: :ok
+  defp validate_direction("out"), do: :ok
+
+  defp validate_direction(invalid),
+    do: {:error, "Invalid direction: #{invalid}. Must be 'in' or 'out'"}
+
+  # Checks idempotency log and either returns cached result or processes scan.
+  defp check_or_process_scan(event_id, scan) do
+    case check_idempotency(event_id, scan.idempotency_key) do
+      {:cached, stored_result} ->
+        # This scan was already processed - return stored result
+        {:ok,
+         %{
+           idempotency_key: scan.idempotency_key,
+           status: "duplicate",
+           message: "Already processed: #{stored_result}"
+         }}
+
+      :new ->
+        # First time seeing this scan - process it
+        execute_scan(event_id, scan)
+    end
+  end
+
+  # Checks if a scan has been processed before via idempotency log.
+  #
+  # Returns:
+  # - {:cached, result} if scan was already processed
+  # - :new if this is the first time seeing this scan
+  defp check_idempotency(event_id, idempotency_key) do
+    query =
+      from l in FastCheck.Mobile.MobileIdempotencyLog,
+        where: l.event_id == ^event_id and l.idempotency_key == ^idempotency_key,
+        select: l.result
+
+    case Repo.one(query) do
+      nil -> :new
+      result -> {:cached, result}
+    end
+  end
+
+  # Executes the actual scan processing (check-in or check-out).
+  defp execute_scan(event_id, scan) do
+    # Delegate to appropriate domain function
+    domain_result =
+      case scan.direction do
+        "in" ->
+          FastCheck.Attendees.check_in(
+            event_id,
+            scan.ticket_code,
+            scan.entrance_name,
+            scan.operator_name
+          )
+
+        "out" ->
+          # Check-out functionality to be implemented in future
+          {:error, "NOT_IMPLEMENTED", "Check-out functionality not yet available"}
+      end
+
+    # Map domain result to API response and record in idempotency log
+    api_result = map_domain_result(scan.idempotency_key, domain_result)
+    record_idempotency(event_id, scan, api_result)
+
+    {:ok, api_result}
+  end
+
+  # Maps domain function results to API response format.
+  defp map_domain_result(key, {:ok, _attendee, "SUCCESS"}) do
+    %{
+      idempotency_key: key,
+      status: "success",
+      message: "Check-in successful"
+    }
+  end
+
+  defp map_domain_result(key, {:error, "INVALID", message}) do
+    %{
+      idempotency_key: key,
+      status: "error",
+      message: "Ticket not found: #{message}"
+    }
+  end
+
+  defp map_domain_result(key, {:error, "DUPLICATE", message}) do
+    %{
+      idempotency_key: key,
+      status: "error",
+      message: "Already checked in: #{message}"
+    }
+  end
+
+  defp map_domain_result(key, {:error, "NOT_IMPLEMENTED", message}) do
+    %{
+      idempotency_key: key,
+      status: "error",
+      message: message
+    }
+  end
+
+  defp map_domain_result(key, {:error, _code, message}) do
+    %{
+      idempotency_key: key,
+      status: "error",
+      message: message
+    }
+  end
+
+  # Records the scan result in the idempotency log for future duplicate detection.
+  defp record_idempotency(event_id, scan, result) do
+    attrs = %{
+      event_id: event_id,
+      idempotency_key: scan.idempotency_key,
+      ticket_code: scan.ticket_code,
+      result: result.status,
+      metadata: %{
+        message: result.message,
+        direction: scan.direction,
+        scanned_at: scan.scanned_at,
+        processed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+    }
+
+    %FastCheck.Mobile.MobileIdempotencyLog{}
+    |> FastCheck.Mobile.MobileIdempotencyLog.changeset(attrs)
+    |> Repo.insert()
+
+    # We ignore errors here because:
+    # 1. The scan has already been processed
+    # 2. If insert fails due to duplicate key, that's fine (race condition)
+    # 3. Next upload will still check the log first
+    :ok
+  rescue
+    _error ->
+      Logger.warning("Failed to record idempotency log",
+        event_id: event_id,
+        idempotency_key: scan.idempotency_key
+      )
+
+      :ok
+  end
+
+  # Sends a 400 Bad Request response with structured JSON error
+  defp bad_request(conn, error_code, message) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{
+      error: error_code,
+      message: message
     })
   end
 
