@@ -1669,31 +1669,27 @@ defmodule FastCheck.Attendees do
   # These functions ensure tickets with invalid payment states are rejected
   # at the domain level for both web and mobile check-ins.
 
-  @doc """
-  Checks if a payment status allows check-in.
-
-  Valid statuses (allow check-in):
-  - "paid" - Ticket has been paid for
-  - "completed" - Payment processed and completed
-  - "free" - Free ticket (no payment required)
-  - nil - Assume valid if status not set
-
-  Invalid statuses (reject check-in):
-  - "refunded" - Payment was returned to customer
-  - "cancelled" - Order was cancelled
-  - "pending" - Payment not yet confirmed
-  - Any other unrecognized status - Treated as invalid for safety
-  """
+  # Checks if a payment status allows check-in.
+  #
+  # Valid statuses (allow check-in):
+  # - "paid" - Ticket has been paid for
+  # - "completed" - Payment processed and completed
+  # - "free" - Free ticket (no payment required)
+  # - nil - Assume valid if status not set
+  #
+  # Invalid statuses (reject check-in):
+  # - "refunded" - Payment was returned to customer
+  # - "cancelled" - Order was cancelled
+  # - "pending" - Payment not yet confirmed
+  # - Any other unrecognized status - Treated as invalid for safety
   defp is_payment_status_valid?(status) when status in [nil, "paid", "completed", "free"],
     do: true
 
   defp is_payment_status_valid?(_status), do: false
 
-  @doc """
-  Normalizes payment status for error messages.
-
-  Returns a human-readable version of the payment status.
-  """
+  # Normalizes payment status for error messages.
+  #
+  # Returns a human-readable version of the payment status.
   defp normalize_payment_status(nil), do: "unknown"
   defp normalize_payment_status(status) when is_binary(status), do: status
   defp normalize_payment_status(_), do: "unknown"

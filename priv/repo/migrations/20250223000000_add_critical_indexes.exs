@@ -32,6 +32,19 @@ defmodule FastCheck.Repo.Migrations.AddCriticalIndexes do
       )
     )
 
+    # ADD THIS MISSING TABLE DEFINITION:
+    # It must be placed BEFORE the create index command that is failing.
+    create_if_not_exists table(:check_in_sessions) do
+      add :attendee_id, references(:attendees, on_delete: :delete_all), null: false
+      add :event_id, references(:events, on_delete: :delete_all), null: false
+      add :entry_time, :utc_datetime, null: false
+      add :exit_time, :utc_datetime
+      add :status, :string, default: "active"
+      add :session_length_minutes, :integer
+
+      timestamps()
+    end
+
     create_if_not_exists(
       index(:check_in_sessions, [:attendee_id, :exit_time],
         name: :idx_check_in_sessions_attendee_exit_time
