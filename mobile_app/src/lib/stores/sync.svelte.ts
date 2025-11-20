@@ -19,12 +19,36 @@ class SyncStore {
 
   handleOnline = () => {
     this.isOnline = true;
-    this.syncUp(); // Auto-trigger sync when back online
+    // Debounce slightly to avoid rapid toggling
+    setTimeout(() => {
+      if (this.isOnline) {
+        this.syncAll();
+      }
+    }, 1000);
   };
 
   handleOffline = () => {
     this.isOnline = false;
   };
+
+  /**
+   * Orchestrates a full sync: uploads pending scans, then downloads updates.
+   */
+  async syncAll(): Promise<void> {
+    if (this.isSyncing || !this.isOnline) return;
+    
+    try {
+      // We don't set isSyncing here because syncUp/syncDown manage it individually.
+      // However, we might want to prevent overlap if called multiple times.
+      // Since JS is single-threaded, the check above protects us if we await.
+      
+      await this.syncUp();
+      await this.syncDown();
+    } catch (error) {
+      console.error('Sync sequence failed:', error);
+    }
+  }
+
 
   async login(eventId: string, deviceName: string): Promise<boolean> {
     if (!this.isOnline) return false;
