@@ -2,6 +2,7 @@ import { db } from '$lib/db';
 import { sync } from '$lib/stores/sync';
 import { v4 as uuidv4 } from 'uuid';
 import type { ScanDirection } from '$lib/types';
+import { validateScan } from './validation';
 
 export interface ScanResult {
   success: boolean;
@@ -39,47 +40,14 @@ export async function processScan(
   }
 
   // 2. Validate Scan (Business Logic)
-  if (direction === 'in') {
-    // Payment Check
-    const invalidPayments = ['refunded', 'cancelled', 'pending'];
-    if (invalidPayments.includes(attendee.payment_status)) {
-      return {
-        success: false,
-        message: `Payment ${attendee.payment_status}`,
-        attendee,
-        error_code: 'PAYMENT_INVALID'
-      };
-    }
-
-    // Already Inside Check (optional, depending on strictness)
-    if (attendee.is_currently_inside) {
-      return {
-        success: false,
-        message: 'Already checked in',
-        attendee,
-        error_code: 'ALREADY_CHECKED_IN'
-      };
-    }
-
-    // Check-in Limit Check
-    if (attendee.checkins_remaining <= 0) {
-      return {
-        success: false,
-        message: 'No check-ins remaining',
-        attendee,
-        error_code: 'NO_CHECKINS_REMAINING'
-      };
-    }
-  } else if (direction === 'out') {
-    // Not Inside Check
-    if (!attendee.is_currently_inside) {
-      return {
-        success: false,
-        message: 'Not checked in',
-        attendee,
-        error_code: 'NOT_CHECKED_IN'
-      };
-    }
+  const validation = validateScan(attendee, direction);
+  if (!validation.valid) {
+    return {
+      success: false,
+      message: validation.message,
+      attendee,
+      error_code: validation.errorCode
+    };
   }
 
   // 3. Queue Scan
