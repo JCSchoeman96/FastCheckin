@@ -3,7 +3,7 @@ import Config
 # Configure your database
 config :fastcheck, FastCheck.Repo,
   username: "postgres",
-  password: "3S2MFp8s5b3xye8YQ2rJ",
+  password: "#@PostgreSQL",
   hostname: "localhost",
   database: "fastcheck_dev",
   stacktrace: true,
