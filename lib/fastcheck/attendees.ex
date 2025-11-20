@@ -8,6 +8,7 @@ defmodule FastCheck.Attendees do
 
   alias FastCheck.Repo
   alias Phoenix.PubSub
+
   alias FastCheck.{
     Attendees.Attendee,
     Attendees.CheckIn,
@@ -16,6 +17,7 @@ defmodule FastCheck.Attendees do
     Events,
     TickeraClient
   }
+
   alias FastCheck.Events.Event
 
   @ticket_code_min 3
@@ -39,7 +41,8 @@ defmodule FastCheck.Attendees do
   Returns `{:ok, count}` where `count` is the number of new attendees stored.
   """
   @spec create_bulk(integer(), list()) :: {:ok, non_neg_integer()} | {:error, String.t()}
-  def create_bulk(event_id, attendees_data) when is_integer(event_id) and is_list(attendees_data) do
+  def create_bulk(event_id, attendees_data)
+      when is_integer(event_id) and is_list(attendees_data) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     entries =
@@ -78,7 +81,10 @@ defmodule FastCheck.Attendees do
       end
     rescue
       exception ->
-        Logger.error("Bulk attendee insert failed for event #{event_id}: #{Exception.message(exception)}")
+        Logger.error(
+          "Bulk attendee insert failed for event #{event_id}: #{Exception.message(exception)}"
+        )
+
         {:error, "Failed to store attendees"}
     end
   end
@@ -115,7 +121,15 @@ defmodule FastCheck.Attendees do
           case Repo.one(query) do
             nil ->
               Logger.warning("Invalid ticket #{sanitized_code} for event #{event_id}")
-              record_check_in(%{ticket_code: sanitized_code}, event_id, "invalid", sanitized_entrance, operator_name)
+
+              record_check_in(
+                %{ticket_code: sanitized_code},
+                event_id,
+                "invalid",
+                sanitized_entrance,
+                operator_name
+              )
+
               broadcast_event_stats_async(event_id)
               {:error, "INVALID", "Ticket not found"}
 
@@ -123,11 +137,43 @@ defmodule FastCheck.Attendees do
               remaining = attendee.checkins_remaining || attendee.allowed_checkins || 0
 
               cond do
+                # Reject tickets with invalid payment status
+                not is_payment_status_valid?(attendee.payment_status) ->
+                  Logger.warning(
+                    "Check-in rejected due to invalid payment status: #{attendee.payment_status}",
+                    ticket_code: sanitized_code,
+                    event_id: event_id,
+                    payment_status: attendee.payment_status
+                  )
+
+                  record_check_in(
+                    attendee,
+                    event_id,
+                    "payment_invalid",
+                    sanitized_entrance,
+                    operator_name
+                  )
+
+                  broadcast_event_stats_async(event_id)
+
+                  {:error, "PAYMENT_INVALID",
+                   "Ticket payment status is invalid: #{normalize_payment_status(attendee.payment_status)}"}
+
                 attendee.checked_in_at && remaining <= 0 ->
                   Logger.warning("Duplicate ticket #{sanitized_code} for event #{event_id}")
-                  record_check_in(attendee, event_id, "duplicate", sanitized_entrance, operator_name)
+
+                  record_check_in(
+                    attendee,
+                    event_id,
+                    "duplicate",
+                    sanitized_entrance,
+                    operator_name
+                  )
+
                   broadcast_event_stats_async(event_id)
-                  {:error, "DUPLICATE", "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
+
+                  {:error, "DUPLICATE",
+                   "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
 
                 true ->
                   now = DateTime.utc_now() |> DateTime.truncate(:second)
@@ -143,8 +189,17 @@ defmodule FastCheck.Attendees do
                     {:ok, updated} ->
                       invalidate_check_in_caches(updated, event_id, sanitized_code)
                       refresh_event_occupancy(event_id)
-                      record_check_in(updated, event_id, "success", sanitized_entrance, operator_name)
+
+                      record_check_in(
+                        updated,
+                        event_id,
+                        "success",
+                        sanitized_entrance,
+                        operator_name
+                      )
+
                       broadcast_event_stats_async(event_id)
+
                       log_check_in(:success, %{
                         event_id: event_id,
                         attendee_id: updated.id,
@@ -154,6 +209,7 @@ defmodule FastCheck.Attendees do
                         remaining_checkins: new_remaining,
                         operator_name: operator_name
                       })
+
                       {:ok, updated, "SUCCESS"}
 
                     {:error, changeset} ->
@@ -165,16 +221,22 @@ defmodule FastCheck.Attendees do
                         ticket_code: sanitized_code,
                         error: inspect(changeset.errors)
                       })
+
                       Repo.rollback({:changeset, "Failed to update attendee"})
                   end
               end
           end
         end)
         |> case do
-          {:ok, result} -> result
-          {:error, {:changeset, message}} -> {:error, "ERROR", message}
+          {:ok, result} ->
+            result
+
+          {:error, {:changeset, message}} ->
+            {:error, "ERROR", message}
+
           {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} ->
             {:error, "TICKET_IN_USE_ELSEWHERE", "Ticket is currently being processed"}
+
           {:error, reason} ->
             log_check_in(:transaction_failed, %{
               event_id: event_id,
@@ -184,6 +246,7 @@ defmodule FastCheck.Attendees do
               ticket_code: sanitized_code,
               error: inspect(reason)
             })
+
             {:error, "ERROR", "Unable to process check-in"}
         end
       rescue
@@ -196,6 +259,7 @@ defmodule FastCheck.Attendees do
             ticket_code: sanitized_code,
             error: Exception.message(exception)
           })
+
           {:error, "ERROR", "Unexpected error"}
       end
     else
@@ -372,7 +436,8 @@ defmodule FastCheck.Attendees do
         select: %{
           total: count(a.id),
           checked_in: fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_in_at),
-          checked_out: fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_out_at),
+          checked_out:
+            fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_out_at),
           currently_inside:
             fragment("sum(case when ? = true then 1 else 0 end)", a.is_currently_inside)
         }
@@ -409,8 +474,12 @@ defmodule FastCheck.Attendees do
   defp fetch_cached_occupancy_breakdown(cache_key) do
     if occupancy_cache_available?() do
       case Cachex.get(@cache_name, cache_key) do
-        {:ok, %{} = cached} -> {:ok, cached}
-        {:ok, nil} -> :miss
+        {:ok, %{} = cached} ->
+          {:ok, cached}
+
+        {:ok, nil} ->
+          :miss
+
         {:error, reason} ->
           Logger.warning("Occupancy cache lookup failed for #{cache_key}: #{inspect(reason)}")
           :miss
@@ -420,7 +489,10 @@ defmodule FastCheck.Attendees do
     end
   rescue
     exception ->
-      Logger.warning("Occupancy cache lookup failed for #{cache_key}: #{Exception.message(exception)}")
+      Logger.warning(
+        "Occupancy cache lookup failed for #{cache_key}: #{Exception.message(exception)}"
+      )
+
       :miss
   end
 
@@ -433,7 +505,10 @@ defmodule FastCheck.Attendees do
     end
   rescue
     exception ->
-      Logger.warning("Unable to persist occupancy cache #{cache_key}: #{Exception.message(exception)}")
+      Logger.warning(
+        "Unable to persist occupancy cache #{cache_key}: #{Exception.message(exception)}"
+      )
+
       :ok
   end
 
@@ -449,7 +524,14 @@ defmodule FastCheck.Attendees do
   end
 
   defp default_occupancy_breakdown do
-    %{total: 0, checked_in: 0, checked_out: 0, currently_inside: 0, occupancy_percentage: 0.0, pending: 0}
+    %{
+      total: 0,
+      checked_in: 0,
+      checked_out: 0,
+      currently_inside: 0,
+      occupancy_percentage: 0.0,
+      pending: 0
+    }
   end
 
   defp fetch_attendee_with_cache(event_id, ticket_code, cache_key) do
@@ -470,10 +552,14 @@ defmodule FastCheck.Attendees do
         Logger.debug(
           "Stored attendee cache entry for #{cache_key} (ttl=#{inspect(@attendee_cache_hit_ttl)})"
         )
+
         :ok
 
       {:error, reason} ->
-        Logger.warning("Unable to store attendee cache entry for #{cache_key}: #{inspect(reason)}")
+        Logger.warning(
+          "Unable to store attendee cache entry for #{cache_key}: #{inspect(reason)}"
+        )
+
         :error
     end
   end
@@ -484,6 +570,7 @@ defmodule FastCheck.Attendees do
         Logger.debug(
           "Stored attendee cache miss sentinel for #{cache_key} (ttl=#{@attendee_cache_miss_ttl}ms)"
         )
+
         :ok
 
       {:error, reason} ->
@@ -522,12 +609,18 @@ defmodule FastCheck.Attendees do
         :ok
 
       {:error, reason} ->
-        Logger.warning("Unable to store attendee id cache entry for #{cache_key}: #{inspect(reason)}")
+        Logger.warning(
+          "Unable to store attendee id cache entry for #{cache_key}: #{inspect(reason)}"
+        )
+
         :error
     end
   rescue
     exception ->
-      Logger.warning("Attendee id cache write raised for #{cache_key}: #{Exception.message(exception)}")
+      Logger.warning(
+        "Attendee id cache write raised for #{cache_key}: #{Exception.message(exception)}"
+      )
+
       :error
   end
 
@@ -695,7 +788,10 @@ defmodule FastCheck.Attendees do
     end
   rescue
     exception ->
-      Logger.warning("Cache delete raised for #{description} (#{key}): #{Exception.message(exception)}")
+      Logger.warning(
+        "Cache delete raised for #{description} (#{key}): #{Exception.message(exception)}"
+      )
+
       :error
   end
 
@@ -704,7 +800,9 @@ defmodule FastCheck.Attendees do
 
     if occupancy_cache_available?() do
       case Cachex.del(@cache_name, cache_key) do
-        {:ok, _} -> :ok
+        {:ok, _} ->
+          :ok
+
         {:error, reason} ->
           Logger.warning(
             "Failed to purge occupancy breakdown cache for event #{event_id} (#{cache_key}): #{inspect(reason)}"
@@ -726,14 +824,19 @@ defmodule FastCheck.Attendees do
 
   defp refresh_event_occupancy(event_id) when is_integer(event_id) do
     case Events.update_occupancy(event_id, 1) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
         Logger.warning("Unable to refresh occupancy for event #{event_id}: #{inspect(reason)}")
         :ok
     end
   rescue
     exception ->
-      Logger.warning("Occupancy refresh raised for event #{event_id}: #{Exception.message(exception)}")
+      Logger.warning(
+        "Occupancy refresh raised for event #{event_id}: #{Exception.message(exception)}"
+      )
+
       :ok
   end
 
@@ -769,10 +872,17 @@ defmodule FastCheck.Attendees do
       fetch_and_cache_attendees_by_event(event_id, cache_key)
     else
       case CacheManager.get(cache_key) do
-        {:ok, nil} -> fetch_and_cache_attendees_by_event(event_id, cache_key)
-        {:ok, attendees} when is_list(attendees) -> attendees
+        {:ok, nil} ->
+          fetch_and_cache_attendees_by_event(event_id, cache_key)
+
+        {:ok, attendees} when is_list(attendees) ->
+          attendees
+
         {:error, reason} ->
-          Logger.warning("Attendee list cache read failed for event #{event_id}: #{inspect(reason)}")
+          Logger.warning(
+            "Attendee list cache read failed for event #{event_id}: #{inspect(reason)}"
+          )
+
           fetch_and_cache_attendees_by_event(event_id, cache_key)
       end
     end
@@ -796,9 +906,14 @@ defmodule FastCheck.Attendees do
     cache_key = attendees_by_event_cache_key(event_id)
 
     case CacheManager.delete(cache_key) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning("Failed to delete attendees cache for event #{event_id}: #{inspect(reason)}")
+        Logger.warning(
+          "Failed to delete attendees cache for event #{event_id}: #{inspect(reason)}"
+        )
+
         :error
     end
   rescue
@@ -816,9 +931,14 @@ defmodule FastCheck.Attendees do
     attendees = list_event_attendees(event_id)
 
     case CacheManager.put(cache_key, attendees, ttl: @event_attendees_cache_ttl) do
-      {:ok, true} -> :ok
+      {:ok, true} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning("Failed to store attendees cache for event #{event_id}: #{inspect(reason)}")
+        Logger.warning(
+          "Failed to store attendees cache for event #{event_id}: #{inspect(reason)}"
+        )
+
         :error
     end
 
@@ -830,7 +950,12 @@ defmodule FastCheck.Attendees do
   @doc """
   Computes aggregate statistics for an event's attendees.
   """
-  @spec get_event_stats(integer()) :: %{total: integer(), checked_in: integer(), pending: integer(), percentage: float()}
+  @spec get_event_stats(integer()) :: %{
+          total: integer(),
+          checked_in: integer(),
+          pending: integer(),
+          percentage: float()
+        }
   def get_event_stats(event_id) when is_integer(event_id) do
     try do
       total =
@@ -855,7 +980,10 @@ defmodule FastCheck.Attendees do
       %{total: total, checked_in: checked_in, pending: pending, percentage: percentage}
     rescue
       exception ->
-        Logger.error("Failed to compute stats for event #{event_id}: #{Exception.message(exception)}")
+        Logger.error(
+          "Failed to compute stats for event #{event_id}: #{Exception.message(exception)}"
+        )
+
         %{total: 0, checked_in: 0, pending: 0, percentage: 0.0}
     end
   end
@@ -894,7 +1022,10 @@ defmodule FastCheck.Attendees do
     end
   rescue
     exception ->
-      Logger.error("Attendee search failed for event #{event_id}: #{Exception.message(exception)}")
+      Logger.error(
+        "Attendee search failed for event #{event_id}: #{Exception.message(exception)}"
+      )
+
       []
   end
 
@@ -934,7 +1065,10 @@ defmodule FastCheck.Attendees do
               end
 
             {:error, changeset} ->
-              Logger.error("Advanced check-in update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+              Logger.error(
+                "Advanced check-in update failed for #{ticket_code}: #{inspect(changeset.errors)}"
+              )
+
               Repo.rollback({"UPDATE_FAILED", "Unable to process advanced check-in"})
           end
         else
@@ -978,7 +1112,10 @@ defmodule FastCheck.Attendees do
               end
 
             {:error, changeset} ->
-              Logger.error("Check-out update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+              Logger.error(
+                "Check-out update failed for #{ticket_code}: #{inspect(changeset.errors)}"
+              )
+
               Repo.rollback({"UPDATE_FAILED", "Unable to complete check-out"})
           end
         else
@@ -1008,7 +1145,10 @@ defmodule FastCheck.Attendees do
             %{attendee: updated, message: "SCAN_COUNTERS_RESET"}
 
           {:error, changeset} ->
-            Logger.error("Reset scan counters failed for #{ticket_code}: #{inspect(changeset.errors)}")
+            Logger.error(
+              "Reset scan counters failed for #{ticket_code}: #{inspect(changeset.errors)}"
+            )
+
             Repo.rollback({"UPDATE_FAILED", "Unable to reset scan counters"})
         end
       else
@@ -1046,7 +1186,10 @@ defmodule FastCheck.Attendees do
               end
 
             {:error, changeset} ->
-              Logger.error("Manual entry update failed for #{ticket_code}: #{inspect(changeset.errors)}")
+              Logger.error(
+                "Manual entry update failed for #{ticket_code}: #{inspect(changeset.errors)}"
+              )
+
               Repo.rollback({"UPDATE_FAILED", "Unable to mark manual entry"})
           end
         else
@@ -1150,7 +1293,8 @@ defmodule FastCheck.Attendees do
 
       %Event{} = event ->
         case Events.can_check_in?(event) do
-          {:ok, _state} -> :ok
+          {:ok, _state} ->
+            :ok
 
           {:error, {:event_archived, message}} ->
             Logger.warning("Scan attempt blocked for archived event #{event_id}")
@@ -1272,12 +1416,17 @@ defmodule FastCheck.Attendees do
 
   defp active_session_query(%Attendee{} = attendee) do
     from(s in CheckInSession,
-      where: s.attendee_id == ^attendee.id and s.event_id == ^attendee.event_id and is_nil(s.exit_time),
+      where:
+        s.attendee_id == ^attendee.id and s.event_id == ^attendee.event_id and is_nil(s.exit_time),
       lock: "FOR UPDATE"
     )
   end
 
-  defp handle_session_transaction({:ok, %{attendee: attendee, message: message}}, event_id, broadcast?) do
+  defp handle_session_transaction(
+         {:ok, %{attendee: attendee, message: message}},
+         event_id,
+         broadcast?
+       ) do
     if broadcast?, do: broadcast_occupancy_breakdown(event_id)
     {:ok, attendee, message}
   end
@@ -1294,6 +1443,7 @@ defmodule FastCheck.Attendees do
   defp broadcast_occupancy_breakdown(event_id) do
     Task.start(fn ->
       breakdown = get_occupancy_breakdown(event_id)
+
       PubSub.broadcast(
         FastCheck.PubSub,
         "event:#{event_id}:occupancy",
@@ -1322,13 +1472,13 @@ defmodule FastCheck.Attendees do
 
     json_payload = Jason.encode!(payload)
 
-    Logger.log(level, event_name, [
+    Logger.log(level, event_name,
       event_id: payload[:event_id],
       attendee_id: payload[:attendee_id],
       entrance_name: payload[:entrance_name],
       response_time_ms: payload[:response_time_ms],
       payload: json_payload
-    ])
+    )
   end
 
   defp log_level_for_check_in(result) do
@@ -1353,6 +1503,7 @@ defmodule FastCheck.Attendees do
   defp normalize_count(_value), do: 0
 
   defp maybe_trim(nil), do: nil
+
   defp maybe_trim(value) when is_binary(value) do
     value
     |> String.trim()
@@ -1381,9 +1532,14 @@ defmodule FastCheck.Attendees do
     |> CheckIn.changeset(attrs)
     |> Repo.insert()
     |> case do
-      {:ok, check_in} -> {:ok, check_in}
+      {:ok, check_in} ->
+        {:ok, check_in}
+
       {:error, changeset} ->
-        Logger.error("Failed to record check-in for #{ticket_code || "unknown"}: #{inspect(changeset.errors)}")
+        Logger.error(
+          "Failed to record check-in for #{ticket_code || "unknown"}: #{inspect(changeset.errors)}"
+        )
+
         {:error, changeset}
     end
   end
@@ -1430,8 +1586,14 @@ defmodule FastCheck.Attendees do
   defp broadcast_event_stats_async(event_id) when is_integer(event_id) do
     Task.start(fn ->
       stats = get_event_stats(event_id)
-      PubSub.broadcast(FastCheck.PubSub, "event:#{event_id}:stats", {:event_stats_updated, event_id, stats})
+
+      PubSub.broadcast(
+        FastCheck.PubSub,
+        "event:#{event_id}:stats",
+        {:event_stats_updated, event_id, stats}
+      )
     end)
+
     :ok
   end
 
@@ -1452,7 +1614,12 @@ defmodule FastCheck.Attendees do
   defp validate_ticket_code(value) when is_binary(value) do
     value
     |> String.trim()
-    |> validate_trimmed_value(@ticket_code_min, @ticket_code_max, @ticket_code_pattern, :ticket_code)
+    |> validate_trimmed_value(
+      @ticket_code_min,
+      @ticket_code_max,
+      @ticket_code_pattern,
+      :ticket_code
+    )
   end
 
   defp validate_ticket_code(_), do: invalid_error(:ticket_code, "is invalid")
@@ -1460,7 +1627,12 @@ defmodule FastCheck.Attendees do
   defp validate_entrance_name(value) when is_binary(value) do
     value
     |> String.trim()
-    |> validate_trimmed_value(@ticket_code_min, @ticket_code_max, @entrance_name_pattern, :entrance_name)
+    |> validate_trimmed_value(
+      @ticket_code_min,
+      @ticket_code_max,
+      @entrance_name_pattern,
+      :entrance_name
+    )
   end
 
   defp validate_entrance_name(_), do: invalid_error(:entrance_name, "is invalid")
@@ -1492,6 +1664,39 @@ defmodule FastCheck.Attendees do
 
   defp invalid_error(:entrance_name, message),
     do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
+
+  # Payment Status Validation
+  # These functions ensure tickets with invalid payment states are rejected
+  # at the domain level for both web and mobile check-ins.
+
+  @doc """
+  Checks if a payment status allows check-in.
+
+  Valid statuses (allow check-in):
+  - "paid" - Ticket has been paid for
+  - "completed" - Payment processed and completed
+  - "free" - Free ticket (no payment required)
+  - nil - Assume valid if status not set
+
+  Invalid statuses (reject check-in):
+  - "refunded" - Payment was returned to customer
+  - "cancelled" - Order was cancelled
+  - "pending" - Payment not yet confirmed
+  - Any other unrecognized status - Treated as invalid for safety
+  """
+  defp is_payment_status_valid?(status) when status in [nil, "paid", "completed", "free"],
+    do: true
+
+  defp is_payment_status_valid?(_status), do: false
+
+  @doc """
+  Normalizes payment status for error messages.
+
+  Returns a human-readable version of the payment status.
+  """
+  defp normalize_payment_status(nil), do: "unknown"
+  defp normalize_payment_status(status) when is_binary(status), do: status
+  defp normalize_payment_status(_), do: "unknown"
 
   defp occupancy_tasks_disabled? do
     Application.get_env(:fastcheck, :disable_occupancy_tasks, false)

@@ -384,6 +384,14 @@ defmodule FastCheckWeb.Mobile.SyncController do
     }
   end
 
+  defp map_domain_result(key, {:error, "PAYMENT_INVALID", message}) do
+    %{
+      idempotency_key: key,
+      status: "error",
+      message: "Payment invalid: #{message}"
+    }
+  end
+
   defp map_domain_result(key, {:error, "NOT_IMPLEMENTED", message}) do
     %{
       idempotency_key: key,
