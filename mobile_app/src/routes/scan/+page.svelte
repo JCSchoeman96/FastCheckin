@@ -1,18 +1,5 @@
 <script lang="ts">
   import { processScan, type ScanResult } from "$lib/logic/scanner";
-  import { auth } from "$lib/stores/auth";
-  import { syncStore } from "$lib/stores/sync.svelte";
-  import type { ScanDirection, Attendee } from "$lib/types";
-  import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
-  import { onMount, onDestroy } from "svelte";
-  import { db } from "$lib/db";
-  import { Capacitor } from "@capacitor/core";
-  import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
-
-  // State
-  let direction = $state<ScanDirection>("in");
-  let ticketCode = $state("");
-  let lastResult = $state<ScanResult | null>(null);
   let isProcessing = $state(false);
   let scanner: Html5QrcodeScanner | null = null;
   let lookupResult = $state<Attendee | null>(null);
@@ -154,13 +141,25 @@
     }
   }
 
-  function triggerFeedback(success: boolean) {
-    // Haptic Feedback
-    if (navigator.vibrate) {
-      if (success) {
-        navigator.vibrate(200); // Single short buzz
-      } else {
-        navigator.vibrate([100, 50, 100, 50, 100]); // Error pattern (buzz-pause-buzz...)
+  async function triggerFeedback(success: boolean) {
+    if (isNative) {
+      try {
+        if (success) {
+          await Haptics.notification({ type: NotificationType.Success });
+        } else {
+          await Haptics.notification({ type: NotificationType.Error });
+        }
+      } catch (e) {
+        console.error("Haptics error", e);
+      }
+    } else {
+      // Web Haptic Feedback
+      if (navigator.vibrate) {
+        if (success) {
+          navigator.vibrate(200); // Single short buzz
+        } else {
+          navigator.vibrate([100, 50, 100, 50, 100]); // Error pattern (buzz-pause-buzz...)
+        }
       }
     }
   }
