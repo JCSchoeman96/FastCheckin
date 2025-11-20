@@ -3,12 +3,15 @@
   import { auth } from '$lib/stores/auth';
   import { syncStore } from '$lib/stores/sync.svelte';
   import type { ScanDirection } from '$lib/types';
+  import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+  import { onMount, onDestroy } from 'svelte';
 
   // State
   let direction = $state<ScanDirection>('in');
   let ticketCode = $state('');
   let lastResult = $state<ScanResult | null>(null);
   let isProcessing = $state(false);
+  let scanner: Html5QrcodeScanner | null = null;
 
   // Derived
   let statusColor = $derived(
@@ -19,8 +22,39 @@
         : 'bg-red-100 text-red-800 border-red-200'
   );
 
-  async function handleScan() {
-    if (!ticketCode.trim() || isProcessing) return;
+  onMount(() => {
+    startScanner();
+  });
+
+  onDestroy(() => {
+    if (scanner) {
+      scanner.clear().catch(console.error);
+    }
+  });
+
+  function startScanner() {
+    const config = {
+      fps: 10,
+      qrbox: { width: 250, height: 250 },
+      aspectRatio: 1.0,
+      formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE ]
+    };
+
+    scanner = new Html5QrcodeScanner("reader", config, false);
+    scanner.render(onScanSuccess, onScanFailure);
+  }
+
+  function onScanSuccess(decodedText: string, decodedResult: any) {
+    // Debounce/Throttle could be added here if needed, but handleScan checks isProcessing
+    handleScan(decodedText);
+  }
+
+  function onScanFailure(error: any) {
+    // console.warn(`Code scan error = ${error}`);
+  }
+
+  async function handleScan(code: string = ticketCode) {
+    if (!code.trim() || isProcessing) return;
     
     isProcessing = true;
     lastResult = null;
@@ -36,11 +70,12 @@
         return;
       }
 
-      const result = await processScan(ticketCode, direction, eventId);
+      const result = await processScan(code, direction, eventId);
       lastResult = result;
       
       if (result.success) {
         ticketCode = ''; // Clear input on success
+        // Optional: Pause scanner briefly on success?
       }
     } catch (e) {
       console.error(e);
@@ -50,7 +85,10 @@
         error_code: 'UNKNOWN_ERROR'
       };
     } finally {
-      isProcessing = false;
+      // Add a small delay before allowing next scan to prevent double-scans
+      setTimeout(() => {
+        isProcessing = false;
+      }, 1000);
     }
   }
 
@@ -107,13 +145,9 @@
     {/if}
   </div>
 
-  <!-- Scanner Placeholder -->
-  <div class="aspect-square bg-black rounded-xl overflow-hidden relative">
-    <div class="absolute inset-0 flex items-center justify-center text-white/50">
-      <p>Scanner Camera View</p>
-    </div>
-    <!-- Overlay -->
-    <div class="absolute inset-0 border-2 border-white/30 m-8 rounded-lg pointer-events-none"></div>
+  <!-- Scanner -->
+  <div class="rounded-xl overflow-hidden bg-black">
+    <div id="reader" class="w-full"></div>
   </div>
 
   <!-- Manual Entry Simulation -->
@@ -123,11 +157,11 @@
       bind:value={ticketCode}
       placeholder="Enter ticket code..."
       class="flex-1 px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-      onkeydown={(e) => e.key === 'Enter' && handleScan()}
+      onkeydown={(e) => e.key === 'Enter' && handleScan(ticketCode)}
     />
     <button
       class="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      onclick={handleScan}
+      onclick={() => handleScan(ticketCode)}
       disabled={!ticketCode || isProcessing}
     >
       {isProcessing ? '...' : 'Scan'}
