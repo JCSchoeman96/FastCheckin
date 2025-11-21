@@ -32,14 +32,24 @@ export interface ScanQueueItem {
   error_message?: string;
 }
 
-export interface SyncResponse {
+export interface ApiResponse<T> {
+  data: T;
+  error: {
+    code: string;
+    message: string;
+  } | null;
+}
+
+export interface SyncData {
   server_time: string;
   attendees: Attendee[];
   count: number;
   sync_type: 'full' | 'incremental';
 }
 
-export interface ScanUploadResponse {
+export type SyncResponse = ApiResponse<SyncData>;
+
+export interface ScanUploadData {
   results: {
     idempotency_key: string;
     status: 'success' | 'duplicate' | 'error';
@@ -47,3 +57,5 @@ export interface ScanUploadResponse {
   }[];
   processed: number;
 }
+
+export type ScanUploadResponse = ApiResponse<ScanUploadData>;

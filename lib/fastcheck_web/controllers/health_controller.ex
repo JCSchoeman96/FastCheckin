@@ -16,14 +16,17 @@ defmodule FastCheckWeb.HealthController do
       {:ok, _result} ->
         conn
         |> put_status(:ok)
-        |> json(%{status: "healthy", timestamp: DateTime.utc_now()})
+        |> json(%{data: %{status: "healthy", timestamp: DateTime.utc_now()}, error: nil})
 
       {:error, reason} ->
         Logger.warning("pgBouncer health check failed: #{inspect(reason)}")
 
         conn
         |> put_status(:service_unavailable)
-        |> json(%{status: "unhealthy", timestamp: DateTime.utc_now()})
+        |> json(%{
+          data: %{status: "unhealthy", timestamp: DateTime.utc_now()},
+          error: %{code: "HEALTH_CHECK_FAILED", message: "Database unreachable"}
+        })
     end
   end
 end

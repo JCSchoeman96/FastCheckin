@@ -47,30 +47,33 @@ function createSyncStore() {
 
       if (!response.ok) throw new Error(`Sync up failed: ${response.statusText}`);
 
-      const data = await response.json();
+        const responseData = await response.json();
+        const { data, error } = responseData;
 
-      // Process results
-      await import('$lib/db').then(m => m.processScanResults(data.results));
+        if (error) throw new Error(error.message || 'Sync up failed');
 
-      // Update pending count
-      const pendingCount = await db.queue.where('sync_status').equals('pending').count();
+        // Process results
+        await import('$lib/db').then(m => m.processScanResults(data.results));
 
-      update(s => ({
-        ...s,
-        isSyncing: false,
-        pendingCount
-      }));
+        // Update pending count
+        const pendingCount = await db.queue.where('sync_status').equals('pending').count();
 
-      return data.results.length;
-    } catch (err: any) {
-      update(s => ({
-        ...s,
-        isSyncing: false,
-        error: err.message || 'Sync up failed'
-      }));
-      throw err;
-    }
-  };
+        update(s => ({
+          ...s,
+          isSyncing: false,
+          pendingCount
+        }));
+
+        return data.results.length;
+      } catch (err: any) {
+        update(s => ({
+          ...s,
+          isSyncing: false,
+          error: err.message || 'Sync up failed'
+        }));
+        throw err;
+      }
+    };
 
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
@@ -123,7 +126,10 @@ function createSyncStore() {
 
         if (!response.ok) throw new Error('Sync down failed');
 
-        const data: SyncResponse = await response.json();
+        const responseData: SyncResponse = await response.json();
+        const { data, error } = responseData;
+
+        if (error) throw new Error(error.message || 'Sync down failed');
 
         // Update DB using helper
         await import('$lib/db').then(m => m.saveSyncData(data.attendees, data.server_time));

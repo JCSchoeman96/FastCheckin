@@ -32,30 +32,21 @@ defmodule FastCheckWeb.Router do
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
   end
 
-  scope "/", FastCheckWeb do
+  scope "/api/v1", FastCheckWeb do
     pipe_through :api
 
     post "/check-in", CheckInController, :create
     get "/health", HealthController, :check
-  end
-
-  scope "/api/v1", FastCheckWeb do
-    pipe_through :api
-
     post "/check-in/batch", BulkCheckInController, :create
-  end
 
-  # Public mobile API routes (no authentication required)
-  # Scanners use this to obtain JWT tokens
-  scope "/api/mobile", FastCheckWeb.Mobile do
-    pipe_through :api
-
-    post "/login", AuthController, :login
+    # Public mobile API routes
+    scope "/mobile", Mobile do
+      post "/login", AuthController, :login
+    end
   end
 
   # Protected mobile API routes (JWT authentication required)
-  # All routes here have current_event_id assigned from the verified token
-  scope "/api/mobile", FastCheckWeb.Mobile do
+  scope "/api/v1/mobile", FastCheckWeb.Mobile do
     pipe_through :mobile_api
 
     # Download attendees for offline use

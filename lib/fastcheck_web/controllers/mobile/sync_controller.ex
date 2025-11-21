@@ -111,10 +111,13 @@ defmodule FastCheckWeb.Mobile.SyncController do
       )
 
       json(conn, %{
-        server_time: DateTime.to_iso8601(server_time),
-        attendees: Enum.map(attendees, &serialize_attendee/1),
-        count: length(attendees),
-        sync_type: sync_type
+        data: %{
+          server_time: DateTime.to_iso8601(server_time),
+          attendees: Enum.map(attendees, &serialize_attendee/1),
+          count: length(attendees),
+          sync_type: sync_type
+        },
+        error: nil
       })
     else
       {:error, reason} ->
@@ -153,24 +156,27 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   ```json
   {
-    "results": [
-      {
-        "idempotency_key": "abc123",
-        "status": "success",
-        "message": "Check-in successful"
-      },
-      {
-        "idempotency_key": "def456",
-        "status": "duplicate",
-        "message": "Already processed"
-      },
-      {
-        "idempotency_key": "ghi789",
-        "status": "error",
-        "message": "Ticket not found"
-      }
-    ],
-    "processed": 3
+    "data": {
+      "results": [
+        {
+          "idempotency_key": "abc123",
+          "status": "success",
+          "message": "Check-in successful"
+        },
+        {
+          "idempotency_key": "def456",
+          "status": "duplicate",
+          "message": "Already processed"
+        },
+        {
+          "idempotency_key": "ghi789",
+          "status": "error",
+          "message": "Ticket not found"
+        }
+      ],
+      "processed": 3
+    },
+    "error": null
   }
   ```
 
@@ -179,8 +185,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
   **400 Bad Request** - Invalid request format:
   ```json
   {
-    "error": "invalid_request",
-    "message": "Request body must contain 'scans' array"
+    "data": null,
+    "error": {
+      "code": "invalid_request",
+      "message": "Request body must contain 'scans' array"
+    }
   }
   ```
 
@@ -227,8 +236,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
     )
 
     json(conn, %{
-      results: results,
-      processed: length(results)
+      data: %{
+        results: results,
+        processed: length(results)
+      },
+      error: nil
     })
   end
 
@@ -447,8 +459,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
     conn
     |> put_status(:bad_request)
     |> json(%{
-      error: error_code,
-      message: message
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
     })
   end
 
@@ -562,8 +577,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
     conn
     |> put_status(:internal_server_error)
     |> json(%{
-      error: error_code,
-      message: message
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
     })
   end
 end

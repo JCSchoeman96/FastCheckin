@@ -71,7 +71,13 @@ class SyncStore {
         return false;
       }
 
-      const data = await response.json();
+      const responseData = await response.json();
+      const { data, error } = responseData;
+
+      if (error) {
+        console.error('Login failed:', error.message);
+        return false;
+      }
       
       // Persist auth state
       await setJWT(data.token);
@@ -121,7 +127,10 @@ class SyncStore {
         throw new Error(`Sync down failed: ${response.statusText}`);
       }
 
-      const data: SyncResponse = await response.json();
+      const responseData: SyncResponse = await response.json();
+      const { data, error } = responseData;
+
+      if (error) throw new Error(error.message || 'Sync down failed');
 
       // Save data using helper
       await saveSyncData(data.attendees, data.server_time);
@@ -179,7 +188,10 @@ class SyncStore {
         throw new Error(`Sync up failed: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const responseData = await response.json();
+      const { data, error } = responseData;
+
+      if (error) throw new Error(error.message || 'Sync up failed');
 
       // 3. Process results (cleanup queue)
       await processScanResults(data.results);

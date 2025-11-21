@@ -11,9 +11,9 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localho
 
 // API Endpoints
 export const API_ENDPOINTS = {
-  LOGIN: `${API_BASE_URL}/api/mobile/login`,
-  ATTENDEES: `${API_BASE_URL}/api/mobile/attendees`, // Sync Down
-  SCANS: `${API_BASE_URL}/api/mobile/scans`,         // Sync Up (Legacy)
+  LOGIN: `${API_BASE_URL}/api/v1/mobile/login`,
+  ATTENDEES: `${API_BASE_URL}/api/v1/mobile/attendees`, // Sync Down
+  SCANS: `${API_BASE_URL}/api/v1/mobile/scans`,         // Sync Up (Legacy)
   BATCH_CHECKIN: `${API_BASE_URL}/api/v1/check-in/batch`, // Batch Sync Up
 } as const;
 

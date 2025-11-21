@@ -15,19 +15,25 @@ defmodule FastCheckWeb.BulkCheckInController do
             process_scan(event_id, scan_params)
           end)
 
-        json(conn, %{results: results})
+        json(conn, %{data: %{results: results}, error: nil})
 
       {:error, _} ->
         conn
         |> put_status(:bad_request)
-        |> json(%{error: "INVALID_EVENT", message: "Valid event_id is required at top level"})
+        |> json(%{
+          data: nil,
+          error: %{code: "INVALID_EVENT", message: "Valid event_id is required at top level"}
+        })
     end
   end
 
   def create(conn, _params) do
     conn
     |> put_status(:bad_request)
-    |> json(%{error: "INVALID_PAYLOAD", message: "Request must include a 'scans' array"})
+    |> json(%{
+      data: nil,
+      error: %{code: "INVALID_PAYLOAD", message: "Request must include a 'scans' array"}
+    })
   end
 
   defp process_scan(event_id, scan_params) do

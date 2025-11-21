@@ -17,26 +17,35 @@ defmodule FastCheckWeb.CheckInController do
              Map.get(params, "operator_name")
            ) do
       json(conn, %{
-        status: status,
-        ticket_code: attendee.ticket_code,
-        attendee_id: attendee.id,
-        checkins_remaining: attendee.checkins_remaining
+        data: %{
+          status: status,
+          ticket_code: attendee.ticket_code,
+          attendee_id: attendee.id,
+          checkins_remaining: attendee.checkins_remaining
+        },
+        error: nil
       })
     else
       {:error, :invalid_event_id} ->
         conn
         |> put_status(:bad_request)
-        |> json(%{error: "INVALID_EVENT", message: "event_id must be an integer"})
+        |> json(%{
+          data: nil,
+          error: %{code: "INVALID_EVENT", message: "event_id must be an integer"}
+        })
 
       {:error, :missing_ticket_code} ->
         conn
         |> put_status(:bad_request)
-        |> json(%{error: "INVALID_TICKET", message: "ticket_code is required"})
+        |> json(%{
+          data: nil,
+          error: %{code: "INVALID_TICKET", message: "ticket_code is required"}
+        })
 
       {:error, code, message} ->
         conn
         |> put_status(:unprocessable_entity)
-        |> json(%{error: code, message: message})
+        |> json(%{data: nil, error: %{code: code, message: message}})
     end
   end
 

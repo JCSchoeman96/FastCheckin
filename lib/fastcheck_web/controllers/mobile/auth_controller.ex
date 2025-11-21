@@ -123,10 +123,13 @@ defmodule FastCheckWeb.Mobile.AuthController do
       )
 
       json(conn, %{
-        token: token,
-        event_id: event.id,
-        event_name: event.name,
-        expires_in: Token.token_ttl_seconds()
+        data: %{
+          token: token,
+          event_id: event.id,
+          event_name: event.name,
+          expires_in: Token.token_ttl_seconds()
+        },
+        error: nil
       })
     else
       {:error, :missing_event_id} ->
@@ -223,8 +226,11 @@ defmodule FastCheckWeb.Mobile.AuthController do
     conn
     |> put_status(:bad_request)
     |> json(%{
-      error: error_code,
-      message: message
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
     })
   end
 
@@ -233,8 +239,11 @@ defmodule FastCheckWeb.Mobile.AuthController do
     conn
     |> put_status(:not_found)
     |> json(%{
-      error: error_code,
-      message: message
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
     })
   end
 
@@ -243,8 +252,11 @@ defmodule FastCheckWeb.Mobile.AuthController do
     conn
     |> put_status(:internal_server_error)
     |> json(%{
-      error: error_code,
-      message: message
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
     })
   end
 end
