@@ -14,7 +14,7 @@ maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: [
 
 config :fastcheck, FastCheck.Repo,
   url: database_url,
-  pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+  pool_size: String.to_integer(System.get_env("POOL_SIZE") || "20"),
   socket_options: maybe_ipv6,
   # Require SSL/TLS at the database level to satisfy production security
   # requirements. You can point DB_SSL_CA at the CA bundle installed on the

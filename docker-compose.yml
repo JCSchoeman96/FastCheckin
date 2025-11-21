@@ -31,7 +31,7 @@ services:
       # Allow up to 500 concurrent client sockets from FastCheck instances.
       PGBOUNCER_MAX_CLIENT_CONN: 500
       # Maintain 10 upstream PostgreSQL connections that are reused from the pool.
-      PGBOUNCER_DEFAULT_POOL_SIZE: 10
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
       # Keep 5 upstream connections warm for immediate use.
       PGBOUNCER_MIN_POOL_SIZE: 5
       # Reserve 5 extra connections for bursty or priority queries.

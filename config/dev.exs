@@ -11,7 +11,9 @@ config :fastcheck, FastCheck.Repo,
   pool_size: 20,
   queue_target: 50,
   queue_interval: 1_000,
-  preallocate: true
+  preallocate: true,
+  # Log all queries with timing in development
+  log: :info
 
 # For development, we disable any cache and enable
 # debugging and code reloading.

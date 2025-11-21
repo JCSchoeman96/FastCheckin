@@ -17,7 +17,18 @@ defmodule FastCheck.Telemetry do
   """
   def setup do
     attach_rate_limit_handlers()
+    attach_slow_query_handler()
     :ok
+  end
+
+  defp attach_slow_query_handler do
+    # Monitor slow database queries
+    :telemetry.attach(
+      "fastcheck-slow-query-logger",
+      [:fastcheck, :repo, :query],
+      &handle_slow_query/4,
+      %{}
+    )
   end
 
   defp attach_rate_limit_handlers do
@@ -50,6 +61,72 @@ defmodule FastCheck.Telemetry do
       %{count: measurements.count},
       Map.take(metadata, [:path, :limit, :period])
     )
+  end
+
+  @doc """
+  Logs slow database queries that exceed configured thresholds.
+
+  Thresholds:
+  - Warning: 100ms (configurable via SLOW_QUERY_WARNING_MS)
+  - Critical: 500ms (configurable via SLOW_QUERY_CRITICAL_MS)
+  """
+  def handle_slow_query(_event, measurements, metadata, _config) do
+    # Get thresholds from environment (in milliseconds)
+    warning_threshold =
+      System.get_env("SLOW_QUERY_WARNING_MS", "100") |> (String.to_integer() * 1000)
+
+    critical_threshold =
+      System.get_env("SLOW_QUERY_CRITICAL_MS", "500") |> (String.to_integer() * 1000)
+
+    # Query time is in native units, convert to microseconds
+    query_time_us = System.convert_time_unit(measurements.query_time, :native, :microsecond)
+
+    cond do
+      query_time_us >= critical_threshold ->
+        Logger.error("CRITICAL: Slow database query detected",
+          query_time_ms: div(query_time_us, 1000),
+          query: truncate_query(metadata[:query]),
+          source: metadata[:source],
+          result: metadata[:result]
+        )
+
+        # Emit telemetry for alerting
+        :telemetry.execute(
+          [:fastcheck, :repo, :slow_query_critical],
+          %{count: 1, duration_us: query_time_us},
+          metadata
+        )
+
+      query_time_us >= warning_threshold ->
+        Logger.warning("Slow database query detected",
+          query_time_ms: div(query_time_us, 1000),
+          query: truncate_query(metadata[:query]),
+          source: metadata[:source]
+        )
+
+        # Emit telemetry for metrics
+        :telemetry.execute(
+          [:fastcheck, :repo, :slow_query_warning],
+          %{count: 1, duration_us: query_time_us},
+          metadata
+        )
+
+      true ->
+        :ok
+    end
+  end
+
+  # Truncate long queries for logging
+  defp truncate_query(nil), do: "N/A"
+
+  defp truncate_query(query) when is_binary(query) do
+    max_length = 200
+
+    if String.length(query) > max_length do
+      String.slice(query, 0, max_length) <> "..."
+    else
+      query
+    end
   end
 
   @doc """
@@ -130,28 +207,25 @@ defmodule FastCheck.Telemetry do
     now = DateTime.utc_now()
 
     # Remove expired bans (comparing DateTime in map)
-    expired_count = :ets.select_delete(:fastcheck_abuse_tracking, [
-      {{{:banned, :"$1"}, %{ban_until: :"$2"}},
-       [{:<, :"$2", {:const, now}}],
-       [true]}
-    ])
+    expired_count =
+      :ets.select_delete(:fastcheck_abuse_tracking, [
+        {{{:banned, :"$1"}, %{ban_until: :"$2"}}, [{:<, :"$2", {:const, now}}], [true]}
+      ])
 
     # Remove counter entries older than 5 minutes
     current_window = div(:erlang.system_time(:second), 60)
     old_window_threshold = current_window - 5
 
-    old_counters_count = :ets.select_delete(:fastcheck_abuse_tracking, [
-      {{{:abuse_counter, :"$1", :"$2"}, :"$3"},
-       [{:<, :"$2", old_window_threshold}],
-       [true]}
-    ])
+    old_counters_count =
+      :ets.select_delete(:fastcheck_abuse_tracking, [
+        {{{:abuse_counter, :"$1", :"$2"}, :"$3"}, [{:<, :"$2", old_window_threshold}], [true]}
+      ])
 
     # Remove ban history older than 7 days
     seven_days_ago = DateTime.add(now, -7 * 24 * 3600, :second)
+
     :ets.select_delete(:fastcheck_abuse_tracking, [
-      {{{:ban_history, :"$1"}, :"$2"},
-       [{:<, :"$2", seven_days_ago}],
-       [true]}
+      {{{:ban_history, :"$1"}, :"$2"}, [{:<, :"$2", seven_days_ago}], [true]}
     ])
 
     if expired_count > 0 or old_counters_count > 0 do
@@ -169,11 +243,10 @@ defmodule FastCheck.Telemetry do
     now = DateTime.utc_now()
 
     # Active bans (not expired)
-    active_bans = :ets.select(:fastcheck_abuse_tracking, [
-      {{{:banned, :"$1"}, %{ban_until: :"$2"}},
-       [{:>=, :"$2", {:const, now}}],
-       [:"$1"]}
-    ])
+    active_bans =
+      :ets.select(:fastcheck_abuse_tracking, [
+        {{{:banned, :"$1"}, %{ban_until: :"$2"}}, [{:>=, :"$2", {:const, now}}], [:"$1"]}
+      ])
 
     # Top violators in current window
     current_window = div(:erlang.system_time(:second), 60)

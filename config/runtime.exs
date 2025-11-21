@@ -48,9 +48,12 @@ if config_env() == :prod do
 
   config :fastcheck, FastCheck.Repo,
     url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "50"),
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "20"),
     queue_target: 5_000,
-    queue_interval: 1_000
+    queue_interval: 1_000,
+    # Log queries that exceed the threshold (in microseconds, default 100ms)
+    log: false,
+    telemetry_prefix: [:fastcheck, :repo]
 
   # The secret key base signs/encrypts cookies and tokens. Generate it with
   # `mix phx.gen.secret` and keep it outside of version control.
