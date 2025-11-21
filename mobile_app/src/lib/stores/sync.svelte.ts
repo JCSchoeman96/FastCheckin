@@ -14,6 +14,11 @@ class SyncStore {
       this.isOnline = navigator.onLine;
       window.addEventListener('online', this.handleOnline);
       window.addEventListener('offline', this.handleOffline);
+
+      // Initial sync check
+      if (this.isOnline) {
+        this.syncAll();
+      }
     }
   }
 
@@ -43,7 +48,8 @@ class SyncStore {
       // Since JS is single-threaded, the check above protects us if we await.
       
       await this.syncUp();
-      await this.syncDown();
+      await this.syncPendingScans();
+      await this.syncAttendees();
     } catch (error) {
       console.error('Sync sequence failed:', error);
     }
@@ -78,7 +84,7 @@ class SyncStore {
     }
   }
 
-  async syncDown(): Promise<void> {
+  async syncAttendees(): Promise<void> {
     if (!this.isOnline) return;
     this.isSyncing = true;
 
@@ -127,6 +133,10 @@ class SyncStore {
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  async syncDown(): Promise<void> {
+    return this.syncAttendees();
   }
 
   async syncPendingScans(): Promise<void> {

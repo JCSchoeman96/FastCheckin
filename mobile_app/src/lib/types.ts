@@ -21,6 +21,7 @@ export interface Attendee {
 
 export interface ScanQueueItem {
   id?: number; // Auto-incremented by Dexie
+  event_id: number;
   idempotency_key: string;
   ticket_code: string;
   direction: ScanDirection;

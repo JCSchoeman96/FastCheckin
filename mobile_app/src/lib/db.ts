@@ -137,7 +137,8 @@ export async function processScanResults(
 ): Promise<void> {
   await db.transaction('rw', db.queue, async () => {
     for (const result of results) {
-      const status = result.status === 'error' ? 'error' : 'synced';
+      // Backend returns "SUCCESS" for success, anything else is an error (e.g. "INVALID_TICKET")
+      const isSuccess = result.status.toUpperCase() === 'SUCCESS';
       
       // Find scan by idempotency_key
       const scan = await db.queue
@@ -146,14 +147,14 @@ export async function processScanResults(
         .first();
 
       if (scan && scan.id) {
-        if (status === 'synced') {
+        if (isSuccess) {
           // Success or duplicate - remove from queue
           await db.queue.delete(scan.id);
         } else {
-          // Error - mark as failed
+          // Error - mark as failed so it can be retried or inspected
           await db.queue.update(scan.id, {
             sync_status: 'error',
-            error_message: result.message
+            error_message: result.message || result.status
           });
         }
       }

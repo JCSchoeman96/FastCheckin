@@ -56,6 +56,7 @@ export async function processScan(
 
   await import('$lib/db').then(m => m.addScanToQueue({
     idempotency_key: idempotencyKey,
+    event_id: eventId,
     ticket_code: ticketCode,
     direction,
     scanned_at: scannedAt,
