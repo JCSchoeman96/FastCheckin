@@ -76,11 +76,13 @@ defmodule FastCheckWeb.OccupancyLive do
     ~H"""
     <Layouts.app flash={@flash}>
       <div class="min-h-screen bg-slate-950 text-slate-100">
-        <div class="mx-auto max-w-6xl space-y-8 px-4 py-10">
+        <div class="mx-auto max-w-6xl space-y-6 sm:space-y-8 px-2 sm:px-4 py-6 sm:py-10">
           <header class="rounded-3xl bg-gradient-to-br from-slate-900 to-slate-800 p-8 shadow-2xl">
             <p class="text-xs uppercase tracking-[0.35em] text-slate-400">Live occupancy feed</p>
             
-            <h1 class="mt-3 text-3xl font-semibold text-white sm:text-4xl">{@event.name}</h1>
+            <h1 class="mt-3 text-2xl font-semibold text-white sm:text-3xl md:text-4xl">
+              {@event.name}
+            </h1>
             
             <div class="mt-6 flex flex-col gap-4 text-sm text-slate-300 sm:flex-row sm:items-center sm:justify-between">
               <div class="flex flex-wrap items-center gap-4">
@@ -127,7 +129,9 @@ defmodule FastCheckWeb.OccupancyLive do
                 <p class="text-sm uppercase tracking-[0.3em] text-white/80">Occupancy</p>
                 
                 <div class="flex flex-wrap items-baseline gap-3">
-                  <p class="text-5xl font-semibold text-white">{format_percentage(@percentage)}</p>
+                  <p class="text-4xl sm:text-5xl font-semibold text-white">
+                    {format_percentage(@percentage)}
+                  </p>
                    <span class="text-lg text-white/80">live</span>
                 </div>
                 

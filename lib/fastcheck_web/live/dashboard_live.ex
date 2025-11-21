@@ -127,12 +127,12 @@ defmodule FastCheckWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="mx-auto max-w-7xl space-y-8 px-4 py-10">
+      <div class="mx-auto max-w-7xl space-y-6 sm:space-y-8 px-2 sm:px-4 py-6 sm:py-10">
         <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p class="text-sm uppercase tracking-widest text-slate-500">Control Center</p>
             
-            <h1 class="text-3xl font-semibold text-slate-900">FastCheck Dashboard</h1>
+            <h1 class="text-2xl sm:text-3xl font-semibold text-slate-900">FastCheck Dashboard</h1>
           </div>
           
           <div class="flex items-center gap-3">

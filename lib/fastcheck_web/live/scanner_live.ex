@@ -245,11 +245,13 @@ defmodule FastCheckWeb.ScannerLive do
     ~H"""
     <Layouts.app flash={@flash}>
       <div class="min-h-screen bg-slate-950 text-white">
-        <div class="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-8">
+        <div class="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 sm:gap-6 px-2 sm:px-4 py-6 sm:py-8">
           <header class="rounded-3xl bg-slate-900/80 px-6 py-8 shadow-2xl backdrop-blur">
             <p class="text-sm uppercase tracking-[0.3em] text-slate-400">Event check-in</p>
             
-            <h1 class="mt-2 text-3xl font-semibold text-white sm:text-4xl">{@event.name}</h1>
+            <h1 class="mt-2 text-2xl font-semibold text-white sm:text-3xl md:text-4xl">
+              {@event.name}
+            </h1>
             
             <p class="mt-1 text-base text-slate-300">
               Entrance:
@@ -289,12 +291,12 @@ defmodule FastCheckWeb.ScannerLive do
                 </p>
               </div>
               
-              <div class="flex flex-wrap gap-4 mt-4 mb-6">
+              <div class="flex flex-col gap-3 mt-4 mb-6 sm:flex-row sm:gap-4">
                 <button
                   phx-click="set_check_in_type"
                   phx-value-type="entry"
                   class={[
-                    "px-6 py-3 rounded-lg font-bold text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
+                    "px-4 py-2 sm:px-6 sm:py-3 rounded-lg font-bold text-base sm:text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
                     if @check_in_type == "entry" do
                       "bg-green-600 text-white shadow-lg"
                     else
@@ -309,7 +311,7 @@ defmodule FastCheckWeb.ScannerLive do
                   phx-click="set_check_in_type"
                   phx-value-type="exit"
                   class={[
-                    "px-6 py-3 rounded-lg font-bold text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
+                    "px-4 py-2 sm:px-6 sm:py-3 rounded-lg font-bold text-base sm:text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
                     if @check_in_type == "exit" do
                       "bg-orange-600 text-white shadow-lg"
                     else
@@ -327,7 +329,9 @@ defmodule FastCheckWeb.ScannerLive do
                   <div>
                     <p class="text-blue-300 text-sm font-semibold">CURRENT OCCUPANCY</p>
                     
-                    <p class="text-6xl font-bold text-blue-200 mt-2">{@current_occupancy}</p>
+                    <p class="text-4xl sm:text-5xl md:text-6xl font-bold text-blue-200 mt-2">
+                      {@current_occupancy}
+                    </p>
                     
                     <p class="text-blue-200 text-sm mt-2">Guests inside right now</p>
                   </div>
@@ -335,7 +339,7 @@ defmodule FastCheckWeb.ScannerLive do
                   <div class="text-right">
                     <p class="text-blue-300 text-sm">CAPACITY</p>
                     
-                    <p class="text-4xl font-bold text-blue-200">
+                    <p class="text-3xl sm:text-4xl font-bold text-blue-200">
                       {format_percentage(@occupancy_percentage)}%
                     </p>
                     
@@ -359,7 +363,7 @@ defmodule FastCheckWeb.ScannerLive do
             </div>
           </section>
           
-          <section class="rounded-3xl bg-slate-800/80 px-6 py-6 shadow-2xl backdrop-blur">
+          <section class="hidden sm:block rounded-3xl bg-slate-800/80 px-6 py-6 shadow-2xl backdrop-blur">
             <div class="grid gap-4 sm:grid-cols-3">
               <div class="rounded-2xl bg-slate-700/70 p-4">
                 <p class="text-xs uppercase tracking-widest text-slate-300">Total tickets</p>
@@ -566,12 +570,12 @@ defmodule FastCheckWeb.ScannerLive do
                 inputmode="text"
                 autofocus
                 aria-label="Ticket code input"
-                class="w-full rounded-2xl border-2 border-transparent bg-white px-6 py-5 text-xl font-semibold text-slate-900 shadow-lg focus:border-green-400 focus:outline-none focus:ring-4 focus:ring-green-500"
+                class="w-full rounded-2xl border-2 border-transparent bg-white px-4 sm:px-6 py-4 sm:py-5 text-base sm:text-xl font-semibold text-slate-900 shadow-lg focus:border-green-400 focus:outline-none focus:ring-4 focus:ring-green-500"
                 disabled={@scans_disabled?}
               />
               <button
                 type="submit"
-                class="mt-4 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                class="mt-4 w-full rounded-2xl bg-emerald-500 px-6 py-3 sm:py-4 text-base sm:text-lg font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={@scans_disabled?}
                 aria-disabled={@scans_disabled?}
               >
@@ -616,7 +620,7 @@ defmodule FastCheckWeb.ScannerLive do
             
             <div :if={@search_results != []} class="mt-6 space-y-3">
               <%= for attendee <- @search_results do %>
-                <div class="flex items-center justify-between rounded-xl bg-slate-800/80 px-5 py-4 shadow-md backdrop-blur transition hover:bg-slate-700/80">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl bg-slate-800/80 px-5 py-4 shadow-md backdrop-blur transition hover:bg-slate-700/80">
                   <div>
                     <p class="font-bold text-white">{attendee.first_name} {attendee.last_name}</p>
                     
@@ -628,7 +632,7 @@ defmodule FastCheckWeb.ScannerLive do
                   <button
                     phx-click="manual_check_in"
                     phx-value-ticket_code={attendee.ticket_code}
-                    class="rounded-lg bg-emerald-600/20 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-600/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    class="w-full sm:w-auto rounded-lg bg-emerald-600/20 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-600/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                     disabled={@scans_disabled?}
                   >
                     Check In
