@@ -73,10 +73,14 @@ defmodule FastCheck.Telemetry do
   def handle_slow_query(_event, measurements, metadata, _config) do
     # Get thresholds from environment (in milliseconds)
     warning_threshold =
-      System.get_env("SLOW_QUERY_WARNING_MS", "100") |> (String.to_integer() * 1000)
+      System.get_env("SLOW_QUERY_WARNING_MS", "100")
+      |> String.to_integer()
+      |> Kernel.*(1000)
 
     critical_threshold =
-      System.get_env("SLOW_QUERY_CRITICAL_MS", "500") |> (String.to_integer() * 1000)
+      System.get_env("SLOW_QUERY_CRITICAL_MS", "500")
+      |> String.to_integer()
+      |> Kernel.*(1000)
 
     # Query time is in native units, convert to microseconds
     query_time_us = System.convert_time_unit(measurements.query_time, :native, :microsecond)

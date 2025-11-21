@@ -3,6 +3,7 @@ import { sync } from '$lib/stores/sync';
 import { v4 as uuidv4 } from 'uuid';
 import type { ScanDirection } from '$lib/types';
 import { validateScan } from './validation';
+import { notifications } from '$lib/stores/notifications';
 
 export interface ScanResult {
   success: boolean;
@@ -32,6 +33,7 @@ export async function processScan(
     .first();
 
   if (!attendee) {
+    notifications.error('Ticket not found');
     return {
       success: false,
       message: 'Ticket not found',
@@ -42,6 +44,7 @@ export async function processScan(
   // 2. Validate Scan (Business Logic)
   const validation = validateScan(attendee, direction);
   if (!validation.valid) {
+    notifications.error(validation.message);
     return {
       success: false,
       message: validation.message,
@@ -78,9 +81,18 @@ export async function processScan(
   // 5. Trigger Sync (Fire and Forget)
   sync.syncUp().catch(console.error);
 
+  const successMessage = direction === 'in' ? 'Checked In' : 'Checked Out';
+  const attendeeName = attendee.first_name || attendee.last_name 
+    ? `${attendee.first_name || ''} ${attendee.last_name || ''}`.trim()
+    : null;
+  
+  notifications.success(
+    attendeeName ? `${successMessage}: ${attendeeName}` : successMessage
+  );
+
   return {
     success: true,
-    message: direction === 'in' ? 'Checked In' : 'Checked Out',
+    message: successMessage,
     attendee: {
       ...attendee,
       is_currently_inside: direction === 'in',

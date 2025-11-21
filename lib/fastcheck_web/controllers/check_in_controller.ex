@@ -1,6 +1,8 @@
 defmodule FastCheckWeb.CheckInController do
   use FastCheckWeb, :controller
 
+  action_fallback FastCheckWeb.FallbackController
+
   alias FastCheck.Attendees
 
   @doc """
@@ -25,27 +27,6 @@ defmodule FastCheckWeb.CheckInController do
         },
         error: nil
       })
-    else
-      {:error, :invalid_event_id} ->
-        conn
-        |> put_status(:bad_request)
-        |> json(%{
-          data: nil,
-          error: %{code: "INVALID_EVENT", message: "event_id must be an integer"}
-        })
-
-      {:error, :missing_ticket_code} ->
-        conn
-        |> put_status(:bad_request)
-        |> json(%{
-          data: nil,
-          error: %{code: "INVALID_TICKET", message: "ticket_code is required"}
-        })
-
-      {:error, code, message} ->
-        conn
-        |> put_status(:unprocessable_entity)
-        |> json(%{data: nil, error: %{code: code, message: message}})
     end
   end
 
@@ -54,21 +35,21 @@ defmodule FastCheckWeb.CheckInController do
   defp parse_event_id(value) when is_binary(value) do
     case Integer.parse(value) do
       {int, ""} when int > 0 -> {:ok, int}
-      _ -> {:error, :invalid_event_id}
+      _ -> {:error, "INVALID_EVENT", "event_id must be a positive integer"}
     end
   end
 
-  defp parse_event_id(_), do: {:error, :invalid_event_id}
+  defp parse_event_id(_), do: {:error, "INVALID_EVENT", "event_id must be a positive integer"}
 
   defp fetch_ticket_code(code) when is_binary(code) do
     trimmed = String.trim(code)
 
     if trimmed == "" do
-      {:error, :missing_ticket_code}
+      {:error, "INVALID_TICKET", "ticket_code is required"}
     else
       {:ok, trimmed}
     end
   end
 
-  defp fetch_ticket_code(_), do: {:error, :missing_ticket_code}
+  defp fetch_ticket_code(_), do: {:error, "INVALID_TICKET", "ticket_code is required"}
 end

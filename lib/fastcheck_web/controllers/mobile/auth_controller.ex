@@ -29,6 +29,9 @@ defmodule FastCheckWeb.Mobile.AuthController do
   """
 
   use FastCheckWeb, :controller
+
+  action_fallback FastCheckWeb.FallbackController
+
   require Logger
 
   alias FastCheck.Events

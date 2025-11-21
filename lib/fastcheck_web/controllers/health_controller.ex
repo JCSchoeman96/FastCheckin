@@ -6,6 +6,8 @@ defmodule FastCheckWeb.HealthController do
 
   use FastCheckWeb, :controller
 
+  action_fallback FastCheckWeb.FallbackController
+
   require Logger
 
   alias Ecto.Adapters.SQL

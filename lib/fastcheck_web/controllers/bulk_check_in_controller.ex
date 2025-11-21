@@ -1,39 +1,26 @@
 defmodule FastCheckWeb.BulkCheckInController do
   use FastCheckWeb, :controller
 
+  action_fallback FastCheckWeb.FallbackController
+
   alias FastCheck.Attendees
 
   @doc """
   Processes a batch of ticket scans via the JSON API.
   """
   def create(conn, %{"scans" => scans} = params) when is_list(scans) do
-    # Try to get event_id from top-level params first
-    case parse_event_id(params["event_id"]) do
-      {:ok, event_id} ->
-        results =
-          Enum.map(scans, fn scan_params ->
-            process_scan(event_id, scan_params)
-          end)
+    with {:ok, event_id} <- parse_event_id(params["event_id"]) do
+      results =
+        Enum.map(scans, fn scan_params ->
+          process_scan(event_id, scan_params)
+        end)
 
-        json(conn, %{data: %{results: results}, error: nil})
-
-      {:error, _} ->
-        conn
-        |> put_status(:bad_request)
-        |> json(%{
-          data: nil,
-          error: %{code: "INVALID_EVENT", message: "Valid event_id is required at top level"}
-        })
+      json(conn, %{data: %{results: results}, error: nil})
     end
   end
 
-  def create(conn, _params) do
-    conn
-    |> put_status(:bad_request)
-    |> json(%{
-      data: nil,
-      error: %{code: "INVALID_PAYLOAD", message: "Request must include a 'scans' array"}
-    })
+  def create(_conn, _params) do
+    {:error, "INVALID_PAYLOAD", "Request must include a 'scans' array"}
   end
 
   defp process_scan(event_id, scan_params) do
@@ -74,9 +61,9 @@ defmodule FastCheckWeb.BulkCheckInController do
   defp parse_event_id(value) when is_binary(value) do
     case Integer.parse(value) do
       {int, ""} when int > 0 -> {:ok, int}
-      _ -> {:error, :invalid_event_id}
+      _ -> {:error, "INVALID_EVENT", "Valid event_id is required at top level"}
     end
   end
 
-  defp parse_event_id(_), do: {:error, :invalid_event_id}
+  defp parse_event_id(_), do: {:error, "INVALID_EVENT", "Valid event_id is required at top level"}
 end

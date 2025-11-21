@@ -2,6 +2,7 @@ import { browser } from '$app/environment';
 import { API_ENDPOINTS } from '$lib/config';
 import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults } from '$lib/db';
 import type { SyncResponse, ScanUploadResponse } from '$lib/types';
+import { notifications } from './notifications';
 
 class SyncStore {
   // State using Svelte 5 Runes
@@ -67,7 +68,7 @@ class SyncStore {
       });
 
       if (!response.ok) {
-        console.error('Login failed:', response.statusText);
+        notifications.error(`Login failed: ${response.statusText}`);
         return false;
       }
 
@@ -75,7 +76,7 @@ class SyncStore {
       const { data, error } = responseData;
 
       if (error) {
-        console.error('Login failed:', error.message);
+        notifications.error(`Login failed: ${error.message}`);
         return false;
       }
       
@@ -83,9 +84,11 @@ class SyncStore {
       await setJWT(data.token);
       await setCurrentEventId(data.event_id);
       
+      notifications.success('Logged in successfully');
       return true;
     } catch (error) {
-      console.error('Login error:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      notifications.error(`Login error: ${message}`);
       return false;
     }
   }
@@ -120,25 +123,29 @@ class SyncStore {
         // Auth failed - clear state
         await setJWT(null);
         await setCurrentEventId(null);
+        notifications.error('Session expired. Please log in again.');
         throw new Error('Unauthorized');
       }
 
       if (!response.ok) {
+        notifications.error(`Sync failed: ${response.statusText}`);
         throw new Error(`Sync down failed: ${response.statusText}`);
       }
 
       const responseData: SyncResponse = await response.json();
       const { data, error } = responseData;
 
-      if (error) throw new Error(error.message || 'Sync down failed');
+      if (error) {
+        notifications.error(`Sync failed: ${error.message}`);
+        throw new Error(error.message || 'Sync down failed');
+      }
 
       // Save data using helper
       await saveSyncData(data.attendees, data.server_time);
 
     } catch (error) {
+      // Error notifications already shown above, no need to duplicate
       console.error('Sync down error:', error);
-      // If unauthorized, we might want to trigger a redirect or state change in the UI
-      // For now, the error is logged and state is cleared above
     } finally {
       this.isSyncing = false;
     }
@@ -181,17 +188,22 @@ class SyncStore {
       if (response.status === 401) {
         await setJWT(null);
         await setCurrentEventId(null);
+        notifications.error('Session expired. Please log in again.');
         throw new Error('Unauthorized');
       }
 
       if (!response.ok) {
+        notifications.error(`Upload failed: ${response.statusText}`);
         throw new Error(`Sync up failed: ${response.statusText}`);
       }
 
       const responseData = await response.json();
       const { data, error } = responseData;
 
-      if (error) throw new Error(error.message || 'Sync up failed');
+      if (error) {
+        notifications.error(`Upload failed: ${error.message}`);
+        throw new Error(error.message || 'Sync up failed');
+      }
 
       // 3. Process results (cleanup queue)
       await processScanResults(data.results);
@@ -201,6 +213,7 @@ class SyncStore {
       this.queueLength = remaining.length;
 
     } catch (error) {
+      // Error notifications already shown above, no need to duplicate
       console.error('Sync up error:', error);
     } finally {
       this.isSyncing = false;

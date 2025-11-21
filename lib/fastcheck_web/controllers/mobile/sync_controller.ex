@@ -23,6 +23,9 @@ defmodule FastCheckWeb.Mobile.SyncController do
   """
 
   use FastCheckWeb, :controller
+
+  action_fallback FastCheckWeb.FallbackController
+
   require Logger
 
   import Ecto.Query
