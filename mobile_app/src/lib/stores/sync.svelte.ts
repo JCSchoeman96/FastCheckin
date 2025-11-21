@@ -129,7 +129,7 @@ class SyncStore {
     }
   }
 
-  async syncUp(): Promise<void> {
+  async syncPendingScans(): Promise<void> {
     if (!this.isOnline) return;
     
     try {
@@ -144,14 +144,19 @@ class SyncStore {
         throw new Error('No token found');
       }
 
+      const currentEventId = await import('$lib/db').then(m => m.getCurrentEventId());
+
       // 2. Upload scans
-      const response = await fetch(API_ENDPOINTS.SCANS, {
+      const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ scans: pendingScans })
+        body: JSON.stringify({ 
+          event_id: currentEventId,
+          scans: pendingScans 
+        })
       });
 
       if (response.status === 401) {
@@ -164,7 +169,7 @@ class SyncStore {
         throw new Error(`Sync up failed: ${response.statusText}`);
       }
 
-      const data: ScanUploadResponse = await response.json();
+      const data = await response.json();
 
       // 3. Process results (cleanup queue)
       await processScanResults(data.results);
@@ -178,6 +183,10 @@ class SyncStore {
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  async syncUp(): Promise<void> {
+    return this.syncPendingScans();
   }
 
   destroy() {

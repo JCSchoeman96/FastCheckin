@@ -39,6 +39,12 @@ defmodule FastCheckWeb.Router do
     get "/health", HealthController, :check
   end
 
+  scope "/api/v1", FastCheckWeb do
+    pipe_through :api
+
+    post "/check-in/batch", BulkCheckInController, :create
+  end
+
   # Public mobile API routes (no authentication required)
   # Scanners use this to obtain JWT tokens
   scope "/api/mobile", FastCheckWeb.Mobile do

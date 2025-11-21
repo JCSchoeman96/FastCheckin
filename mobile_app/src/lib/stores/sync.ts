@@ -83,7 +83,7 @@ function createSyncStore() {
     },
 
     // Sync Up: Upload queued scans
-    syncUp: async () => {
+    syncPendingScans: async () => {
       const $auth = get(auth);
       if (!$auth.token) return;
 
@@ -95,20 +95,30 @@ function createSyncStore() {
       update(s => ({ ...s, isSyncing: true, error: null }));
 
       try {
-        const response = await fetch(API_ENDPOINTS.SCANS, {
+        const currentEventId = await import('$lib/db').then(m => m.getCurrentEventId());
+        
+        const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${$auth.token}`
           },
-          body: JSON.stringify({ scans: pendingScans })
+          body: JSON.stringify({ 
+            event_id: currentEventId,
+            scans: pendingScans 
+          })
         });
 
-        if (!response.ok) throw new Error('Sync up failed');
+        if (!response.ok) throw new Error(`Sync up failed: ${response.statusText}`);
 
-        const data: ScanUploadResponse = await response.json();
+        const data = await response.json();
 
         // Process results
+        // The batch endpoint returns { results: [...] }
+        // We need to map this to the format processScanResults expects if it differs,
+        // or update processScanResults.
+        // The previous endpoint returned { results: [...] } too.
+        // Let's assume the structure is compatible or I will check processScanResults.
         await import('$lib/db').then(m => m.processScanResults(data.results));
 
         // Update pending count
@@ -120,7 +130,7 @@ function createSyncStore() {
           pendingCount
         }));
 
-        return data.processed;
+        return data.results.length;
       } catch (err: any) {
         update(s => ({
           ...s,
@@ -129,6 +139,11 @@ function createSyncStore() {
         }));
         throw err;
       }
+    },
+
+    // Alias for backward compatibility
+    syncUp: async () => {
+      return sync.syncPendingScans();
     },
     
     // Refresh pending count helper

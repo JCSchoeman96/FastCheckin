@@ -280,6 +280,49 @@ defmodule FastCheck.Attendees do
   def check_in(_, _, _, _), do: {:error, "INVALID_CODE", "Invalid ticket code"}
 
   @doc """
+  Processes a list of check-in scans in a single transaction.
+
+  Returns `{:ok, results}` where `results` is a list of maps containing the outcome of each scan.
+  """
+  @spec bulk_check_in(integer(), list(map())) :: {:ok, list(map())} | {:error, any()}
+  def bulk_check_in(event_id, scans) when is_integer(event_id) and is_list(scans) do
+    Repo.transaction(fn ->
+      Enum.map(scans, fn scan ->
+        ticket_code = Map.get(scan, "ticket_code")
+        entrance = Map.get(scan, "entrance_name", "Main")
+        operator = Map.get(scan, "operator_name")
+
+        if is_binary(ticket_code) do
+          case check_in(event_id, ticket_code, entrance, operator) do
+            {:ok, attendee, status} ->
+              %{
+                ticket_code: ticket_code,
+                status: status,
+                attendee_id: attendee.id,
+                checkins_remaining: attendee.checkins_remaining
+              }
+
+            {:error, code, message} ->
+              %{
+                ticket_code: ticket_code,
+                status: "ERROR",
+                error_code: code,
+                message: message
+              }
+          end
+        else
+          %{
+            ticket_code: nil,
+            status: "ERROR",
+            error_code: "MISSING_TICKET_CODE",
+            message: "Ticket code is required"
+          }
+        end
+      end)
+    end)
+  end
+
+  @doc """
   Performs an advanced check-in that tracks the richer scan metadata and
   updates the attendee counters atomically.
 
