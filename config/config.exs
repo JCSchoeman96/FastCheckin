@@ -57,7 +57,16 @@ config :tailwind,
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [:request_id, :event_id, :user_id, :ip, :device_id]
+
+# Add Sentry backend to Logger for automatic error capture
+config :logger,
+  backends: [:console, Sentry.LoggerBackend]
+
+# Console logger configuration with metadata
+config :logger, :console,
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:request_id, :event_id, :user_id, :ip, :device_id]
 
 # Cache manager configuration
 config :fastcheck, FastCheck.Cache.CacheManager,
@@ -68,8 +77,7 @@ config :fastcheck, FastCheck.Cache.CacheManager,
   pubsub_topic: "fastcheck:cache:invalidate"
 
 # Rate limiting configuration
-config :fastcheck, FastCheck.RateLimiter,
-  storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+config :fastcheck, FastCheck.RateLimiter, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

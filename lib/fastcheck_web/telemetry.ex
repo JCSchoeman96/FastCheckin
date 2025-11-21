@@ -75,6 +75,52 @@ defmodule FastCheckWeb.Telemetry do
           "The time the connection spent waiting before being checked out for the query"
       ),
 
+      # Enhanced Phoenix Metrics
+      counter("phoenix.endpoint.stop.count",
+        tags: [:method, :status],
+        description: "Total HTTP requests by method and status code"
+      ),
+      distribution("phoenix.endpoint.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:route, :method],
+        buckets: [100, 500, 1_000, 5_000, 10_000],
+        description: "HTTP request latency distribution"
+      ),
+      last_value("fastcheck.phoenix.request.duration",
+        unit: {:native, :millisecond},
+        tags: [:route, :status],
+        description: "Last request duration"
+      ),
+
+      # Route-specific metrics
+      counter("fastcheck.phoenix.route_dispatch.count",
+        tags: [:route, :plug],
+        description: "Route dispatch count by route and plug"
+      ),
+      summary("fastcheck.phoenix.route_dispatch.duration",
+        unit: {:native, :millisecond},
+        tags: [:route],
+        description: "Route dispatch duration"
+      ),
+
+      # Exception tracking
+      counter("fastcheck.phoenix.exception.count",
+        tags: [:kind, :route],
+        description: "Request exceptions by type and route"
+      ),
+
+      # Database query counters
+      counter("fastcheck.repo.query.count",
+        tags: [:source],
+        description: "Total database queries by source"
+      ),
+      counter("fastcheck.repo.slow_query_warning.count",
+        description: "Total slow query warnings"
+      ),
+      counter("fastcheck.repo.slow_query_critical.count",
+        description: "Total critical slow queries"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

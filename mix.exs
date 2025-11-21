@@ -84,7 +84,14 @@ defmodule FastCheck.MixProject do
 
       # Mobile Extension
       {:cors_plug, "~> 3.0"},
-      {:joken, "~> 2.6"}
+      {:joken, "~> 2.6"},
+
+      # Error monitoring
+      {:sentry, "~> 10.0"},
+      {:hackney, "~> 1.20"},
+
+      # Metrics export
+      {:telemetry_metrics_prometheus_core, "~> 1.2"}
     ]
   end
 

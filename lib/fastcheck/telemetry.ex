@@ -3,11 +3,13 @@ defmodule FastCheck.Telemetry do
   Centralized telemetry event handlers for FastCheck observability.
 
   Handles:
+  - Phoenix endpoint metrics (request rates, durations, failures)
+  - Phoenix router dispatch metrics
+  - Database query performance monitoring
   - Rate limit violation tracking
   - High-frequency abuse detection
   - Automatic IP banning with rich metadata
-  - Aggregated metrics
-  - Manual operator interventions
+  - Aggregated metrics for monitoring systems
   """
 
   require Logger
@@ -16,9 +18,36 @@ defmodule FastCheck.Telemetry do
   Attaches all telemetry handlers. Called from application.ex start/2 AFTER supervision tree starts.
   """
   def setup do
+    attach_phoenix_handlers()
     attach_rate_limit_handlers()
     attach_slow_query_handler()
     :ok
+  end
+
+  defp attach_phoenix_handlers do
+    # Track Phoenix endpoint metrics (request count, duration, errors)
+    :telemetry.attach(
+      "fastcheck-phoenix-endpoint",
+      [:phoenix, :endpoint, :stop],
+      &handle_phoenix_endpoint/4,
+      %{}
+    )
+
+    # Track router dispatch metrics
+    :telemetry.attach(
+      "fastcheck-phoenix-router",
+      [:phoenix, :router_dispatch, :stop],
+      &handle_router_dispatch/4,
+      %{}
+    )
+
+    # Track Phoenix errors/exceptions
+    :telemetry.attach(
+      "fastcheck-phoenix-router-exception",
+      [:phoenix, :router_dispatch, :exception],
+      &handle_router_exception/4,
+      %{}
+    )
   end
 
   defp attach_slow_query_handler do
@@ -131,6 +160,83 @@ defmodule FastCheck.Telemetry do
     else
       query
     end
+  end
+
+  @doc """
+  Handles Phoenix endpoint stop events to track request metrics.
+
+  Emits metrics for:
+  - Request duration
+  - HTTP status codes
+  - Request counts per route
+  """
+  def handle_phoenix_endpoint(_event, measurements, metadata, _config) do
+    # Convert duration to milliseconds
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    # Emit aggregate metrics for monitoring
+    :telemetry.execute(
+      [:fastcheck, :phoenix, :request],
+      %{
+        duration: measurements.duration,
+        count: 1
+      },
+      %{
+        status: metadata[:status] || 200,
+        method: metadata[:method] || "UNKNOWN",
+        route: metadata[:route] || metadata[:request_path] || "unknown"
+      }
+    )
+
+    # Log slow requests (> 5 seconds)
+    if duration_ms > 5_000 do
+      Logger.warning("Slow HTTP request detected",
+        duration_ms: duration_ms,
+        method: metadata[:method],
+        path: metadata[:request_path],
+        status: metadata[:status]
+      )
+    end
+  end
+
+  @doc """
+  Handles Phoenix router dispatch stop events for route-level metrics.
+  """
+  def handle_router_dispatch(_event, measurements, metadata, _config) do
+    :telemetry.execute(
+      [:fastcheck, :phoenix, :route_dispatch],
+      %{
+        duration: measurements.duration,
+        count: 1
+      },
+      %{
+        route: metadata[:route] || "unknown",
+        plug: metadata[:plug] || "unknown",
+        plug_opts: inspect(metadata[:plug_opts])
+      }
+    )
+  end
+
+  @doc """
+  Handles Phoenix router exception events to track failures.
+  """
+  def handle_router_exception(_event, measurements, metadata, _config) do
+    Logger.error("Request exception",
+      kind: metadata[:kind],
+      reason: Exception.message(metadata[:reason]),
+      route: metadata[:route],
+      plug: metadata[:plug]
+    )
+
+    :telemetry.execute(
+      [:fastcheck, :phoenix, :exception],
+      %{count: 1, duration: measurements[:duration] || 0},
+      %{
+        kind: metadata[:kind],
+        route: metadata[:route] || "unknown",
+        plug: metadata[:plug] || "unknown"
+      }
+    )
   end
 
   @doc """

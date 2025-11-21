@@ -8,11 +8,13 @@ defmodule FastCheckWeb.Router do
     plug :put_root_layout, html: {FastCheckWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug FastCheckWeb.Plugs.LoggerMetadata
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug FastCheckWeb.Plugs.LoggerMetadata
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
@@ -20,6 +22,7 @@ defmodule FastCheckWeb.Router do
   # All routes using this pipeline will have current_event_id assigned from verified JWT
   pipeline :mobile_api do
     plug :accepts, ["json"]
+    plug FastCheckWeb.Plugs.LoggerMetadata
     plug FastCheckWeb.Plugs.MobileAuth
   end
 

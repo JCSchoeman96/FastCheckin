@@ -101,3 +101,23 @@ config :fastcheck, :rate_limit_alerts,
   abuse_threshold: String.to_integer(System.get_env("RATE_LIMIT_ABUSE_THRESHOLD") || "10"),
   abuse_window_seconds: 60,
   ets_size_alert_threshold: String.to_integer(System.get_env("ETS_SIZE_ALERT") || "1000")
+
+# Sentry error monitoring configuration
+# Only enabled in production when SENTRY_DSN is set
+sentry_dsn = System.get_env("SENTRY_DSN")
+
+if sentry_dsn do
+  config :sentry,
+    dsn: sentry_dsn,
+    environment_name: Atom.to_string(config_env()),
+    enable_source_code_context: true,
+    root_source_code_path: File.cwd!(),
+    tags: %{
+      env: Atom.to_string(config_env())
+    },
+    included_environments: [:prod],
+    # Filter sensitive data
+    filter: FastCheckWeb.SentryFilter,
+    # Sample rate for performance monitoring (0.0 to 1.0)
+    traces_sample_rate: 0.1
+end

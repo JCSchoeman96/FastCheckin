@@ -40,6 +40,10 @@ defmodule FastCheck.Application do
           start: {Task, :start_link, [fn -> FastCheck.Cache.EtsLayer.init() end]},
           restart: :transient
         },
+        # Prometheus metrics exporter - exposes /metrics endpoint
+        {TelemetryMetricsPrometheus.Core,
+         metrics: FastCheckWeb.Telemetry.metrics(),
+         port: String.to_integer(System.get_env("METRICS_PORT", "9568"))},
         # Start a worker by calling: FastCheck.Worker.start_link(arg)
         # {FastCheck.Worker, arg},
         # Start to serve requests, typically the last entry
