@@ -110,10 +110,17 @@ Bring the infrastructure online with:
 docker compose up -d postgres pgbouncer redis
 ```
 
-Point the Phoenix release at `DATABASE_URL=ecto://postgres:password@pgbouncer:6432/fastcheck_prod`
-so every Ecto connection flows through pgBouncer. The `/health` endpoint calls
-`Ecto.Adapters.SQL.query/3` via pgBouncer to give load balancers a simple
-readiness probe.
+Set `DB_PASSWORD` in your `.env` so `docker compose` seeds both PostgreSQL and
+pgBouncer with the same credentials, then point the Phoenix release at a
+matching `DATABASE_URL` (required for releases), for example:
+
+```
+DATABASE_URL=ecto://postgres:${DB_PASSWORD}@pgbouncer:6432/fastcheck_prod
+```
+
+This ensures every Ecto connection flows through pgBouncer. The `/health`
+endpoint calls `Ecto.Adapters.SQL.query/3` via pgBouncer to give load balancers
+a simple readiness probe.
 
 ### Monitoring pgBouncer
 Run the following commands from the host or via `docker exec fastcheck-pgbouncer`:

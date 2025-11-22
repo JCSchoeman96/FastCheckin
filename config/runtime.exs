@@ -87,7 +87,10 @@ if config_env() == :prod do
   # share a compact pool of upstream PostgreSQL connections.
   database_url =
     System.get_env("DATABASE_URL") ||
-      "ecto://postgres:password@pgbouncer:6432/fastcheck_prod"
+      raise """
+      environment variable DATABASE_URL is missing.
+      Provide the full Ecto URL (ecto://USER:PASS@HOST:PORT/DB) for releases.
+      """
 
   config :fastcheck, FastCheck.Repo,
     url: database_url,
