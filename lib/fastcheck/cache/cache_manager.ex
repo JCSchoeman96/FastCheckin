@@ -305,7 +305,6 @@ defmodule FastCheck.Cache.CacheManager do
       case Cachex.put(cache_name(), key, value, put_opts) do
         {:ok, true} = response ->
           maybe_persist(key, ttl)
-          maybe_enforce_limit()
 
           Logger.info(fn ->
             {"Cache write", cache_key: key, ttl: ttl, size: byte_size_safe(value)}
@@ -595,7 +594,6 @@ defmodule FastCheck.Cache.CacheManager do
            end) do
         {:ok, {:ok, updated}} ->
           broadcast_occupancy(event_id, updated.inside, change_type)
-          maybe_enforce_limit()
           {:ok, updated.inside}
 
         {:ok, {:error, reason}} ->
@@ -643,6 +641,7 @@ defmodule FastCheck.Cache.CacheManager do
     else
       cache_options = [
         stats: true,
+        limit: Cachex.Spec.limit(size: config.max_size, policy: Cachex.Policy.LRU),
         expiration:
           Cachex.Spec.expiration(
             default: config.default_ttl,
@@ -760,29 +759,6 @@ defmodule FastCheck.Cache.CacheManager do
 
   defp touch_entry(key) do
     Cachex.touch(cache_name(), key)
-  end
-
-  defp maybe_enforce_limit do
-    max = max_size()
-
-    case Cachex.size(cache_name()) do
-      {:ok, size} when size > max ->
-        case Cachex.purge(cache_name()) do
-          {:ok, true} ->
-            Logger.info(fn ->
-              {"Cache pruned to enforce limit", max_size: max, size: size}
-            end)
-
-            :ok
-
-          {:error, reason} ->
-            log_cache_error(:prune, :all, reason)
-            :error
-        end
-
-      _ ->
-        :ok
-    end
   end
 
   defp fetch_or_cache_event_configs(cache_key, event_id) do
