@@ -142,9 +142,38 @@ defmodule FastCheck.Events do
     :ok
   end
 
-  defp list_entrances(_event_id) do
-    # TODO: Implement entrance listing. Returning empty list for now as per minimal requirement.
-    []
+  defp list_entrances(event_id) when is_integer(event_id) do
+    [event_entrance_name(event_id) | fetch_distinct_entrance_names(event_id)]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> MapSet.new()
+    |> Enum.map(fn name -> %{id: name, entrance_name: name} end)
+  end
+
+  defp event_entrance_name(event_id) do
+    case Repo.get(Event, event_id) do
+      %Event{entrance_name: name} -> name
+      _ -> nil
+    end
+  end
+
+  defp fetch_distinct_entrance_names(event_id) do
+    attendee_entrances =
+      from(a in Attendee,
+        where: a.event_id == ^event_id and not is_nil(a.last_entrance) and a.last_entrance != "",
+        select: a.last_entrance
+      )
+      |> Repo.all()
+
+    check_in_entrances =
+      from(ci in CheckIn,
+        where: ci.event_id == ^event_id and not is_nil(ci.entrance_name) and ci.entrance_name != "",
+        select: ci.entrance_name
+      )
+      |> Repo.all()
+
+    attendee_entrances ++ check_in_entrances
   end
 
   @doc """
