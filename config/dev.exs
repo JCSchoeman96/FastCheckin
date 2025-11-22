@@ -1,19 +1,39 @@
 import Config
 
 # Configure your database
+database_url = System.get_env("DATABASE_URL")
+
+username = System.get_env("DB_USERNAME", "postgres")
+password = System.get_env("DB_PASSWORD", "postgres")
+hostname = System.get_env("DB_HOST", "localhost")
+port = String.to_integer(System.get_env("DB_PORT") || "6432")
+database = System.get_env("DB_NAME", "fastcheck_prod")
+
+repo_connection_opts =
+  if database_url do
+    [url: database_url]
+  else
+    [
+      username: username,
+      password: password,
+      hostname: hostname,
+      port: port,
+      database: database
+    ]
+  end
+
 config :fastcheck, FastCheck.Repo,
-  username: "postgres",
-  password: "#@PostgreSQL",
-  hostname: "localhost",
-  database: "fastcheck_dev",
-  stacktrace: true,
-  show_sensitive_data_on_connection_error: true,
-  pool_size: 20,
-  queue_target: 50,
-  queue_interval: 1_000,
-  preallocate: true,
-  # Log all queries with timing in development
-  log: :info
+  repo_connection_opts
+  |> Keyword.merge(
+    stacktrace: true,
+    show_sensitive_data_on_connection_error: true,
+    pool_size: 20,
+    queue_target: 50,
+    queue_interval: 1_000,
+    preallocate: true,
+    # Log all queries with timing in development
+    log: :info
+  )
 
 # For development, we disable any cache and enable
 # debugging and code reloading.
