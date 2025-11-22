@@ -193,18 +193,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
         )
 
         forbidden(conn, "invalid_credential", "credential is invalid")
-
-      {:error, reason} ->
-        Logger.error("Token generation failed during mobile login",
-          reason: inspect(reason),
-          ip: get_peer_ip(conn)
-        )
-
-        server_error(
-          conn,
-          "token_generation_failed",
-          "Unable to generate authentication token"
-        )
     end
   end
 
@@ -250,13 +238,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
   # - {:ok, event} if event exists
   # - {:error, :event_not_found, event_id} if event does not exist
   defp fetch_event(event_id) do
-    case Events.get_event!(event_id) do
-      nil ->
-        {:error, :event_not_found, event_id}
-
-      event ->
-        {:ok, event}
-    end
+    {:ok, Events.get_event!(event_id)}
   rescue
     Ecto.NoResultsError ->
       {:error, :event_not_found, event_id}
@@ -271,7 +253,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
       _ ->
         case Plug.Conn.get_peer_data(conn) do
           %{address: address} -> :inet.ntoa(address) |> to_string()
-          _ -> "unknown"
         end
     end
   end
@@ -317,19 +298,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
   defp not_found(conn, error_code, message) do
     conn
     |> put_status(:not_found)
-    |> json(%{
-      data: nil,
-      error: %{
-        code: error_code,
-        message: message
-      }
-    })
-  end
-
-  # Sends a 500 Internal Server Error response with structured JSON error
-  defp server_error(conn, error_code, message) do
-    conn
-    |> put_status(:internal_server_error)
     |> json(%{
       data: nil,
       error: %{

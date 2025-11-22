@@ -652,7 +652,6 @@ defmodule FastCheck.Cache.CacheManager do
 
       case Cachex.start_link(name, cache_options) do
         {:ok, _pid} -> :ok
-        {:error, {:already_started, _}} -> :ok
         {:error, reason} -> {:error, reason}
       end
     end
@@ -916,8 +915,6 @@ defmodule FastCheck.Cache.CacheManager do
       normalized -> normalized
     end
   end
-
-  defp normalize_ticket_label(_), do: nil
 
   defp normalize_occupancy(nil), do: @empty_occupancy
 

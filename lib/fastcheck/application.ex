@@ -80,7 +80,7 @@ defmodule FastCheck.Application do
     env_flag =
       System.get_env("ENABLE_METRICS", "")
       |> String.downcase()
-      |> Kernel.in?(["1", "true", "yes"])
+      |> then(&(&1 in ["1", "true", "yes"]))
 
     dev_enabled? || env_flag
   end

@@ -76,12 +76,11 @@ defmodule FastCheckWeb.Endpoint do
   plug Plug.Head
   plug Plug.Session, @session_options
 
-  @cors_origins
-  case Keyword.get(@endpoint_config, :cors_origins) do
-    nil -> ["https://example.com"]
-    origins when is_list(origins) -> origins
-    origin -> [origin]
-  end
+  @cors_origins (case Keyword.get(@endpoint_config, :cors_origins) do
+                   nil -> ["https://example.com"]
+                   origins when is_list(origins) -> origins
+                   origin -> [origin]
+                 end)
 
   plug CORSPlug, origin: @cors_origins
 

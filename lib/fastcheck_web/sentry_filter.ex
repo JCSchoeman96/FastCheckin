@@ -11,7 +11,6 @@ defmodule FastCheckWeb.SentryFilter do
   @impl true
   def exclude_exception?(_exception, _source), do: false
 
-  @impl true
   def filter_event(event) do
     event
     |> filter_request_data()

@@ -20,5 +20,5 @@ defmodule FastCheckWeb.Components.Helpers.ComponentClasses do
     do: Map.fetch!(class_map, key)
 
   def class_for(_class_map, key, _default) when is_binary(key), do: key
-  def class_for(_class_map, _key, default), do: default
+  def class_for(_class_map, _key, _default), do: _default
 end

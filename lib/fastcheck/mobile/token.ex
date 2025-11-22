@@ -157,7 +157,7 @@ defmodule FastCheck.Mobile.Token do
 
     signer = Joken.Signer.create(algorithm(), secret_key())
 
-    case Joken.generate_and_sign(claims, signer) do
+    case Joken.generate_and_sign(%{}, claims, signer) do
       {:ok, token, _claims} -> {:ok, token}
       {:error, reason} -> {:error, reason}
     end
@@ -211,7 +211,8 @@ defmodule FastCheck.Mobile.Token do
   """
   @spec verify_token(String.t()) ::
           {:ok, map()}
-          | {:error, :expired | :invalid_signature | :malformed | :missing_claims | :invalid_issuer}
+          | {:error,
+             :expired | :invalid_signature | :malformed | :missing_claims | :invalid_issuer}
   def verify_token(token) when is_binary(token) do
     signer = Joken.Signer.create(algorithm(), secret_key())
 

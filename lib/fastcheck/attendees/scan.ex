@@ -9,15 +9,12 @@ defmodule FastCheck.Attendees.Scan do
   alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
-  alias FastCheck.Events.CheckInConfiguration
   alias FastCheck.Attendees.CheckIn
   alias FastCheck.Attendees.CheckInSession
-  alias FastCheck.Attendees.Cache
   alias FastCheck.Attendees.Query
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Events
   alias FastCheck.Events.Stats
-  alias FastCheck.TickeraClient
   alias FastCheck.Application
   alias Phoenix.PubSub
 
@@ -904,7 +901,6 @@ defmodule FastCheck.Attendees.Scan do
 
   defp increment_counter(nil), do: 1
   defp increment_counter(value) when is_integer(value), do: value + 1
-  defp increment_counter(_value), do: 1
 
   defp upsert_active_session(%Attendee{} = attendee, entrance_name) do
     now = current_timestamp()
