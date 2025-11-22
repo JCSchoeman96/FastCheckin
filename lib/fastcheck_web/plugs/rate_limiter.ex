@@ -43,6 +43,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
                      [FastCheck.RateLimiter, :dashboard_limit],
                      100
                    )
+  @login_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :login_limit], 5)
 
   # Storage backend configured in application.ex
   # {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000}
@@ -109,6 +110,21 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       # Configurable limit per minute per event
       throttle(key,
         limit: @occupancy_limit,
+        period: 60_000,
+        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+      )
+    else
+      :next
+    end
+  end
+
+  # Tier 1.5: Security critical (Login)
+  rule "throttle_login", conn do
+    if login_operation?(conn) do
+      key = "login:#{get_peer_ip(conn)}"
+      # Strict limit per minute per IP to prevent brute force
+      throttle(key,
+        limit: @login_limit,
         period: 60_000,
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
@@ -235,6 +251,11 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   defp occupancy_operation?(conn) do
     conn.request_path =~ ~r/\/events\/\d+\/occupancy/ or
       conn.request_path =~ ~r/\/dashboard\/occupancy/
+  end
+
+  defp login_operation?(conn) do
+    conn.request_path == "/login" or
+      conn.request_path == "/api/v1/mobile/login"
   end
 
   defp check_in_operation?(conn) do

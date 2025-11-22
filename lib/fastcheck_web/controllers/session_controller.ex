@@ -52,7 +52,7 @@ defmodule FastCheckWeb.SessionController do
     |> redirect(to: ~p"/login")
   end
 
-  defp login_form(params \ %{"username" => "", "password" => ""}) do
+  defp login_form(params \\ %{"username" => "", "password" => ""}) do
     to_form(params, as: "session")
   end
 

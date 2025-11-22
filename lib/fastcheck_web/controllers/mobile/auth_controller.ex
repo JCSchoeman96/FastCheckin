@@ -182,7 +182,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
       {:error, :missing_secret} ->
         Logger.warning("Mobile login attempted without configured credential",
-          event_id: event_id,
           ip: get_peer_ip(conn)
         )
 
@@ -190,7 +189,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
       {:error, :invalid_credential} ->
         Logger.warning("Mobile login rejected: invalid credential",
-          event_id: event_id,
           ip: get_peer_ip(conn)
         )
 
