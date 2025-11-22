@@ -56,7 +56,7 @@ defmodule FastCheck.Events.Config do
 
         %Event{} = event ->
           case ensure_event_credentials(event) do
-            {:ok, _site_url, api_key} ->
+            {:ok, api_key} ->
               ticket_type_ids = load_ticket_type_ids(event.id)
 
               case persist_ticket_configs(event, ticket_type_ids, api_key) do
@@ -116,7 +116,7 @@ defmodule FastCheck.Events.Config do
 
       true ->
         case Sync.get_tickera_api_key(event) do
-          {:ok, api_key} -> {:ok, site_url, api_key}
+          {:ok, api_key} -> {:ok, api_key}
           {:error, :decryption_failed} -> {:error, :decryption_failed}
         end
     end
@@ -340,6 +340,4 @@ defmodule FastCheck.Events.Config do
       trimmed -> trimmed
     end
   end
-
-  defp presence(_), do: nil
 end
