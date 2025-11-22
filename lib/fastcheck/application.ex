@@ -39,16 +39,8 @@ defmodule FastCheck.Application do
           id: FastCheck.Cache.EtsInit,
           start: {Task, :start_link, [fn -> FastCheck.Cache.EtsLayer.init() end]},
           restart: :transient
-        },
-        # Prometheus metrics exporter - exposes /metrics endpoint
-        {TelemetryMetricsPrometheus.Core,
-         metrics: FastCheckWeb.Telemetry.metrics(),
-         port: String.to_integer(System.get_env("METRICS_PORT", "9568"))},
-        # Start a worker by calling: FastCheck.Worker.start_link(arg)
-        # {FastCheck.Worker, arg},
-        # Start to serve requests, typically the last entry
-        FastCheckWeb.Endpoint
-      ] ++ cache_children
+        }
+      ] ++ metrics_children() ++ cache_children
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -67,5 +59,29 @@ defmodule FastCheck.Application do
   def config_change(changed, _new, removed) do
     FastCheckWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp metrics_children do
+    if metrics_enabled?() do
+      [
+        {TelemetryMetricsPrometheus.Core,
+         metrics: FastCheckWeb.Telemetry.metrics(),
+         port: String.to_integer(System.get_env("METRICS_PORT", "9568")),
+         plug_cowboy_opts: [ip: {127, 0, 0, 1}]}
+      ]
+    else
+      []
+    end
+  end
+
+  defp metrics_enabled? do
+    dev_enabled? = Application.get_env(:fastcheck, :enable_metrics, false)
+
+    env_flag =
+      System.get_env("ENABLE_METRICS", "")
+      |> String.downcase()
+      |> Kernel.in?(["1", "true", "yes"])
+
+    dev_enabled? || env_flag
   end
 end

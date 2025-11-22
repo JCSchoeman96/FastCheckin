@@ -35,6 +35,8 @@ config :fastcheck, FastCheckWeb.Endpoint,
     tailwind: {Tailwind, :install_and_run, [:fastcheck, ~w(--watch)]}
   ]
 
+config :fastcheck, :enable_metrics, true
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed
