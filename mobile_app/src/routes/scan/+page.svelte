@@ -5,6 +5,7 @@
   import type { ScanDirection, Attendee } from "$lib/types";
   import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
   import { onMount, onDestroy } from "svelte";
+  import { goto } from "$app/navigation";
   import { db } from "$lib/db";
   import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
   import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
@@ -31,6 +32,11 @@
   );
 
   onMount(() => {
+    if (!$auth.token) {
+      goto("/");
+      return;
+    }
+
     if (!isNative) {
       startWebScanner();
     } else {

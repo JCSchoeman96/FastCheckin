@@ -64,6 +64,7 @@ defmodule FastCheck.Events do
     "api_key" => :api_key,
     "tickera_api_key_encrypted" => :tickera_api_key_encrypted,
     "tickera_api_key_last4" => :tickera_api_key_last4,
+    "mobile_access_code" => :mobile_access_code,
     "mobile_access_secret_encrypted" => :mobile_access_secret_encrypted,
     "name" => :name,
     "status" => :status,
@@ -81,6 +82,7 @@ defmodule FastCheck.Events do
     :tickera_site_url,
     :tickera_api_key_encrypted,
     :tickera_api_key_last4,
+    :mobile_access_secret_encrypted,
     :tickera_start_date,
     :tickera_end_date,
     :status
@@ -273,11 +275,16 @@ defmodule FastCheck.Events do
       fetch_attr(attrs, "tickera_api_key_encrypted") ||
         fetch_attr(attrs, "api_key")
 
+    mobile_access_code =
+      fetch_attr(attrs, "mobile_access_code") || fetch_attr(attrs, "mobile_access_secret")
+
     with :ok <- ensure_credentials(site_url, api_key),
          {:ok, essentials} <- TickeraClient.get_event_essentials(site_url, api_key),
          {:ok, {start_date, end_date}} <- {:ok, resolve_tickera_window(attrs, essentials)},
          {:ok, credential_struct} <-
            set_tickera_credentials(%Event{}, site_url, api_key, start_date, end_date),
+         {:ok, credential_struct} <-
+           set_mobile_access_secret(credential_struct, mobile_access_code),
          credential_attrs <- credential_attrs_from_struct(credential_struct),
          event_attrs <- credential_attrs |> Map.merge(build_event_attrs(attrs, essentials)),
          {:ok, %Event{} = event} <- %Event{} |> Event.changeset(event_attrs) |> Repo.insert() do
@@ -296,6 +303,9 @@ defmodule FastCheck.Events do
       {:error, :encryption_failed} ->
         Logger.error("Unable to store credentials for #{site_url}: encryption failed")
         {:error, "Unable to store Tickera credentials"}
+
+      {:error, :invalid_mobile_secret} ->
+        {:error, "Mobile access code can't be blank"}
 
       {:error, reason} ->
         Logger.error("Unable to create event: #{inspect(reason)}")
