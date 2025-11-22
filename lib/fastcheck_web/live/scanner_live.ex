@@ -160,10 +160,6 @@ defmodule FastCheckWeb.ScannerLive do
      })}
   end
 
-  def handle_event("camera_permission_sync", _params, socket) do
-    {:noreply, socket}
-  end
-
   @impl true
   def handle_info({:event_stats_updated, event_id, stats}, socket) do
     if socket.assigns.event_id == event_id do

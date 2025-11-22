@@ -582,6 +582,13 @@ defmodule FastCheck.TickeraClient do
           {:ok, normalized}
         end
 
+      {:ok, %Response{status: code, body: body}} when code >= 500 ->
+        Logger.error(
+          "TickeraClient: submit_advanced_check_in HTTP #{code} – #{String.slice(body || "", 0, 200)}"
+        )
+
+        {:error, "HTTP_#{code}", "Tickera returned status #{code}"}
+
       {:ok, %Response{status: code, body: body}} ->
         Logger.error(
           "TickeraClient: submit_advanced_check_in HTTP #{code} – #{String.slice(body || "", 0, 200)}"
