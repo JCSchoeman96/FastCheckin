@@ -594,8 +594,8 @@ defmodule FastCheck.Events.Stats do
 
     case Event |> where([e], e.id == ^event_id) |> Repo.update_all(set: updates) do
       {count, _} when count > 0 ->
-        Events.invalidate_event_cache(event_id)
-        Events.invalidate_events_list_cache()
+        Cache.invalidate_event_cache(event_id)
+        Cache.invalidate_events_list_cache()
         :ok
 
       _ ->
