@@ -187,6 +187,7 @@ production.
 ### API authentication for check-ins
 - `/api/v1/check-in` and `/api/v1/check-in/batch` now require a `Bearer` token issued by `/api/v1/mobile/login`.
 - The authenticated token sets `current_event_id`; handlers ignore `event_id` parameters and reject missing/invalid tokens with `401`.
+- Tokens include an `iss` claim that must match the configured `MOBILE_JWT_ISSUER`; mobile clients should use tokens as issued without altering the issuer.
 - Client example:
   ```bash
   TOKEN=$(curl -s -X POST https://fastcheck.example.com/api/v1/mobile/login -d '{"event_id":123,"credential":"secret"}' | jq -r '.data.token')

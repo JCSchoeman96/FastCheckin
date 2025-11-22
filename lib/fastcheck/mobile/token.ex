@@ -30,6 +30,7 @@ defmodule FastCheck.Mobile.Token do
   - `:invalid_signature` - Token signature does not match (tampered or wrong key)
   - `:malformed` - Token structure is invalid or cannot be decoded
   - `:missing_claims` - Required claims (event_id, role) are missing
+  - `:invalid_issuer` - Issuer claim is missing or does not match configuration
 
   ## Examples
 
@@ -178,6 +179,7 @@ defmodule FastCheck.Mobile.Token do
   2. Verifies the signature using the configured secret key
   3. Checks token expiration
   4. Validates required claims (event_id, role)
+  5. Confirms the issuer matches the configured value
 
   ## Parameters
 
@@ -208,13 +210,15 @@ defmodule FastCheck.Mobile.Token do
       {:error, :invalid_signature}
   """
   @spec verify_token(String.t()) ::
-          {:ok, map()} | {:error, :expired | :invalid_signature | :malformed | :missing_claims}
+          {:ok, map()}
+          | {:error, :expired | :invalid_signature | :malformed | :missing_claims | :invalid_issuer}
   def verify_token(token) when is_binary(token) do
     signer = Joken.Signer.create(algorithm(), secret_key())
 
     with {:ok, claims} <- Joken.verify(token, signer),
          :ok <- validate_expiration(claims),
-         :ok <- validate_required_claims(claims) do
+         :ok <- validate_required_claims(claims),
+         :ok <- validate_issuer(claims) do
       {:ok, claims}
     else
       {:error, :token_expired} ->
@@ -224,7 +228,7 @@ defmodule FastCheck.Mobile.Token do
         {:error, :invalid_signature}
 
       {:error, reason}
-      when reason in [:expired, :invalid_signature, :malformed, :missing_claims] ->
+      when reason in [:expired, :invalid_signature, :malformed, :missing_claims, :invalid_issuer] ->
         {:error, reason}
 
       {:error, _reason} ->
@@ -259,6 +263,16 @@ defmodule FastCheck.Mobile.Token do
   end
 
   defp validate_required_claims(_claims), do: {:error, :missing_claims}
+
+  defp validate_issuer(%{"iss" => iss}) when is_binary(iss) do
+    if iss == issuer() do
+      :ok
+    else
+      {:error, :invalid_issuer}
+    end
+  end
+
+  defp validate_issuer(_claims), do: {:error, :invalid_issuer}
 
   @doc """
   Extracts the event_id from a token's claims.
