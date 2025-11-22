@@ -18,9 +18,33 @@ defmodule FastCheckWeb.Components.Combobox do
 
   use Phoenix.Component
   use Gettext, backend: FastCheckWeb.Gettext
+  alias FastCheckWeb.Components.Helpers.ComponentClasses
   import FastCheckWeb.Components.ScrollArea, only: [scroll_area: 1]
   import Phoenix.LiveView.Utils, only: [random_id: 0]
   import FastCheckWeb.Components.Icon, only: [icon: 1]
+
+  @size_classes %{
+    "extra_small" => [
+      "[&_.combobox-trigger]:min-h-7 [&_.combobox-icon]:size-3 text-[12px]",
+      "[&_.combobox-option]:text-[12px]"
+    ],
+    "small" => [
+      "[&_.combobox-trigger]:min-h-8 [&_.combobox-icon]:size-3.5 text-[13px]",
+      "[&_.combobox-option]:text-[13px]"
+    ],
+    "medium" => [
+      "[&_.combobox-trigger]:min-h-9 [&_.combobox-icon]:size-4 text-[14px]",
+      "[&_.combobox-option]:text-[14px]"
+    ],
+    "large" => [
+      "[&_.combobox-trigger]:min-h-10 [&_.combobox-icon]:size-[18px] text-[15px]",
+      "[&_.combobox-option]:text-[15px]"
+    ],
+    "extra_large" => [
+      "[&_.combobox-trigger]:min-h-11 [&_.combobox-icon]:size-5 text-[16px]",
+      "[&_.combobox-option]:text-[16px]"
+    ]
+  }
 
   @doc """
   The `combobox` component is a customizable select/dropdown element with advanced features
@@ -610,42 +634,7 @@ defmodule FastCheckWeb.Components.Combobox do
     """
   end
 
-  defp size_class("extra_small") do
-    [
-      "[&_.combobox-trigger]:min-h-7 [&_.combobox-icon]:size-3 text-[12px]",
-      "[&_.combobox-option]:text-[12px]"
-    ]
-  end
-
-  defp size_class("small") do
-    [
-      "[&_.combobox-trigger]:min-h-8 [&_.combobox-icon]:size-3.5 text-[13px]",
-      "[&_.combobox-option]:text-[13px]"
-    ]
-  end
-
-  defp size_class("medium") do
-    [
-      "[&_.combobox-trigger]:min-h-9 [&_.combobox-icon]:size-4 text-[14px]",
-      "[&_.combobox-option]:text-[14px]"
-    ]
-  end
-
-  defp size_class("large") do
-    [
-      "[&_.combobox-trigger]:min-h-10 [&_.combobox-icon]:size-[18px] text-[15px]",
-      "[&_.combobox-option]:text-[15px]"
-    ]
-  end
-
-  defp size_class("extra_large") do
-    [
-      "[&_.combobox-trigger]:min-h-11 [&_.combobox-icon]:size-5 text-[16px]",
-      "[&_.combobox-option]:text-[16px]"
-    ]
-  end
-
-  defp size_class(params) when is_binary(params), do: params
+  defp size_class(value), do: ComponentClasses.class_for(@size_classes, value)
 
   defp rounded_size("extra_small") do
     [

@@ -14,6 +14,18 @@ defmodule FastCheckWeb.Components.Typography do
   **Documentation:** https://mishka.tools/chelekom/docs/typography
   """
   use Phoenix.Component
+  alias FastCheckWeb.Components.Helpers.ComponentClasses
+
+  @size_classes %{
+    "extra_small" => "text-xs",
+    "small" => "text-sm",
+    "medium" => "text-base",
+    "large" => "text-lg",
+    "extra_large" => "text-xl",
+    "double_large" => "text-2xl",
+    "triple_large" => "text-3xl",
+    "quadruple_large" => "text-4xl"
+  }
 
   @doc """
   The `h1` component renders a large header text with customizable size, color, and other styling options.
@@ -1208,21 +1220,5 @@ defmodule FastCheckWeb.Components.Typography do
 
   defp color(params) when is_binary(params), do: params
 
-  defp size_class("extra_small"), do: "text-xs"
-
-  defp size_class("small"), do: "text-sm"
-
-  defp size_class("medium"), do: "text-base"
-
-  defp size_class("large"), do: "text-lg"
-
-  defp size_class("extra_large"), do: "text-xl"
-
-  defp size_class("double_large"), do: "text-2xl"
-
-  defp size_class("triple_large"), do: "text-3xl"
-
-  defp size_class("quadruple_large"), do: "text-4xl"
-
-  defp size_class(params) when is_binary(params), do: params
+  defp size_class(value), do: ComponentClasses.class_for(@size_classes, value)
 end
