@@ -8,8 +8,8 @@ defmodule FastCheckWeb.BulkCheckInController do
   @doc """
   Processes a batch of ticket scans via the JSON API.
   """
-  def create(conn, %{"scans" => scans} = params) when is_list(scans) do
-    with {:ok, event_id} <- parse_event_id(params["event_id"]) do
+  def create(conn, %{"scans" => scans}) when is_list(scans) do
+    with {:ok, event_id} <- fetch_event_id(conn) do
       results =
         Enum.map(scans, fn scan_params ->
           process_scan(event_id, scan_params)
@@ -56,14 +56,8 @@ defmodule FastCheckWeb.BulkCheckInController do
     end
   end
 
-  defp parse_event_id(value) when is_integer(value) and value > 0, do: {:ok, value}
+  defp fetch_event_id(%{assigns: %{current_event_id: event_id}}) when is_integer(event_id) and event_id > 0,
+    do: {:ok, event_id}
 
-  defp parse_event_id(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} when int > 0 -> {:ok, int}
-      _ -> {:error, "INVALID_EVENT", "Valid event_id is required at top level"}
-    end
-  end
-
-  defp parse_event_id(_), do: {:error, "INVALID_EVENT", "Valid event_id is required at top level"}
+  defp fetch_event_id(_), do: {:error, :unauthorized}
 end
