@@ -9,8 +9,47 @@ defmodule FastCheckWeb.Components.Accordion do
   **Documentation:** https://mishka.tools/chelekom/docs/accordion
   """
   use Phoenix.Component
+  alias FastCheckWeb.Components.Helpers.ComponentClasses
   import Phoenix.LiveView.Utils, only: [random_id: 0]
   import FastCheckWeb.Components.Icon, only: [icon: 1]
+
+  @size_classes %{
+    "extra_small" => [
+      "text-[10px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-3",
+      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-3",
+      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[10px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[8px]"
+    ],
+    "small" => [
+      "text-[12px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-4",
+      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-4",
+      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[12px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[10px]"
+    ],
+    "medium" => [
+      "text-[14px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-5",
+      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-5",
+      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[14px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[12px]"
+    ],
+    "large" => [
+      "text-[16px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-6",
+      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-6",
+      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[16px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[14px]"
+    ],
+    "extra_large" => [
+      "text-[18px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-7",
+      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-7",
+      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[18px]",
+      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[16px]"
+    ]
+  }
 
   @doc type: :component
   attr :id, :string,
@@ -1070,57 +1109,7 @@ defmodule FastCheckWeb.Components.Accordion do
 
   defp padding_size(params) when is_binary(params), do: params
 
-  defp size_class("extra_small") do
-    [
-      "text-[10px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-3",
-      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-3",
-      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[10px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[8px]"
-    ]
-  end
-
-  defp size_class("small") do
-    [
-      "text-[12px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-4",
-      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-4",
-      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[12px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[10px]"
-    ]
-  end
-
-  defp size_class("medium") do
-    [
-      "text-[14px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-5",
-      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-5",
-      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[14px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[12px]"
-    ]
-  end
-
-  defp size_class("large") do
-    [
-      "text-[16px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-6",
-      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-6",
-      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[16px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[14px]"
-    ]
-  end
-
-  defp size_class("extra_large") do
-    [
-      "text-[18px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-chevron]:size-7",
-      "[&>.accordion-item>.accordion-trigger_.accordion-icon]:size-7",
-      "[&>.accordion-item>.accordion-trigger_.accordion-title]:text-[18px]",
-      "[&>.accordion-item>.accordion-trigger_.accordion-description]:text-[16px]"
-    ]
-  end
-
-  defp size_class(params) when is_binary(params), do: params
+  defp size_class(value), do: ComponentClasses.class_for(@size_classes, value)
 
   defp chevron_visible?(assigns) do
     !assigns.hide_chevron
