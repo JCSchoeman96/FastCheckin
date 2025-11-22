@@ -30,6 +30,32 @@ config :fastcheck, FastCheck.Mobile.Token,
   issuer: System.get_env("MOBILE_JWT_ISSUER") || "fastcheck",
   algorithm: System.get_env("MOBILE_JWT_ALGORITHM") || "HS256"
 
+dashboard_username =
+  System.get_env("DASHBOARD_USERNAME") ||
+    if config_env() == :prod do
+      raise """
+      environment variable DASHBOARD_USERNAME is missing.
+      Set dashboard credentials before booting FastCheck.
+      """
+    else
+      "admin"
+    end
+
+dashboard_password =
+  System.get_env("DASHBOARD_PASSWORD") ||
+    if config_env() == :prod do
+      raise """
+      environment variable DASHBOARD_PASSWORD is missing.
+      Set dashboard credentials before booting FastCheck.
+      """
+    else
+      "fastcheck"
+    end
+
+config :fastcheck, :dashboard_auth,
+  username: dashboard_username,
+  password: dashboard_password
+
 # Cache defaults shared across all environments. The values can be overridden
 # via environment variables without recompiling the release.
 cache_enabled = System.get_env("CACHE_ENABLED", "true") == "true"

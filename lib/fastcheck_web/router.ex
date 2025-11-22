@@ -12,6 +12,10 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  pipeline :dashboard_auth do
+    plug FastCheckWeb.Plugs.BrowserAuth
+  end
+
   pipeline :api do
     plug :accepts, ["json"]
     plug FastCheckWeb.Plugs.LoggerMetadata
@@ -35,12 +39,20 @@ defmodule FastCheckWeb.Router do
   end
 
   scope "/", FastCheckWeb do
-    pipe_through :browser
+    pipe_through [:browser, :dashboard_auth]
 
     live "/", DashboardLive, :index
     live "/dashboard", DashboardLive, :index
     live "/scan/:event_id", ScannerLive, :index
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
+    delete "/logout", SessionController, :delete
+  end
+
+  scope "/", FastCheckWeb do
+    pipe_through :browser
+
+    get "/login", SessionController, :new
+    post "/login", SessionController, :create
   end
 
   scope "/api/v1", FastCheckWeb do
