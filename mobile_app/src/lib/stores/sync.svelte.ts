@@ -57,26 +57,33 @@ class SyncStore {
   }
 
 
-  async login(eventId: string, deviceName: string): Promise<boolean> {
+  async login(eventId: string, deviceName: string, credential: string): Promise<boolean> {
     if (!this.isOnline) return false;
 
     try {
       const response = await fetch(API_ENDPOINTS.LOGIN, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: parseInt(eventId), device_name: deviceName })
+        body: JSON.stringify({ event_id: parseInt(eventId), device_name: deviceName, credential })
       });
 
+      const responseData = await response.json();
+
       if (!response.ok) {
-        notifications.error(`Login failed: ${response.statusText}`);
+        const message = responseData?.error?.message || response.statusText;
+        notifications.error(`Login failed: ${message}`);
         return false;
       }
 
-      const responseData = await response.json();
       const { data, error } = responseData;
 
       if (error) {
         notifications.error(`Login failed: ${error.message}`);
+        return false;
+      }
+
+      if (!data?.token) {
+        notifications.error('Login failed: missing token');
         return false;
       }
       

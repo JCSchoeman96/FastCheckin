@@ -21,6 +21,7 @@ defmodule FastCheck.Events do
 
   alias FastCheck.TickeraClient
   alias FastCheck.Cache.EtsLayer
+  alias Plug.Crypto, as: PlugCrypto
   alias Postgrex.Range
 
   @compile {:nowarn_unused_function,
@@ -63,6 +64,7 @@ defmodule FastCheck.Events do
     "api_key" => :api_key,
     "tickera_api_key_encrypted" => :tickera_api_key_encrypted,
     "tickera_api_key_last4" => :tickera_api_key_last4,
+    "mobile_access_secret_encrypted" => :mobile_access_secret_encrypted,
     "name" => :name,
     "status" => :status,
     "entrance_name" => :entrance_name,
@@ -914,6 +916,61 @@ defmodule FastCheck.Events do
   def set_tickera_credentials(_event, _site_url, _api_key, _start_date, _end_date),
     do: {:error, :invalid_credentials}
 
+  @doc """
+  Encrypts and stores the per-event mobile access credential.
+
+  Returns the updated event or an error when the credential is blank or encryption fails.
+  """
+  @spec set_mobile_access_secret(Event.t(), String.t()) :: {:ok, Event.t()} | {:error, term()}
+  def set_mobile_access_secret(%Event{} = event, secret) when is_binary(secret) do
+    case String.trim(secret) do
+      "" ->
+        {:error, :invalid_mobile_secret}
+
+      trimmed ->
+        with {:ok, encrypted} <- Crypto.encrypt(trimmed) do
+          apply_credential_attrs(event, %{mobile_access_secret_encrypted: encrypted})
+        end
+    end
+  end
+
+  def set_mobile_access_secret(_event, _secret), do: {:error, :invalid_mobile_secret}
+
+  @doc """
+  Validates a provided credential against the stored encrypted value.
+  """
+  @spec verify_mobile_access_secret(Event.t(), String.t()) ::
+          :ok | {:error, :missing_secret | :invalid_credential | :missing_credential}
+  def verify_mobile_access_secret(%Event{} = event, credential) when is_binary(credential) do
+    trimmed = String.trim(credential)
+
+    cond do
+      trimmed == "" ->
+        {:error, :missing_credential}
+
+      is_nil(event.mobile_access_secret_encrypted) ->
+        {:error, :missing_secret}
+
+      true ->
+        with {:ok, stored} <- Crypto.decrypt(event.mobile_access_secret_encrypted),
+             true <- secure_compare?(stored, trimmed) do
+          :ok
+        else
+          {:error, reason} ->
+            Logger.warning(fn ->
+              {"failed to decrypt mobile access secret", event_id: event.id, reason: inspect(reason)}
+            end)
+
+            {:error, :invalid_credential}
+
+          false ->
+            {:error, :invalid_credential}
+        end
+    end
+  end
+
+  def verify_mobile_access_secret(_event, _credential), do: {:error, :missing_credential}
+
   defp refresh_event_window_from_tickera(%Event{} = event, api_key) when is_binary(api_key) do
     case TickeraClient.get_event_essentials(event.tickera_site_url, api_key) do
       {:ok, essentials} ->
@@ -1645,6 +1702,12 @@ defmodule FastCheck.Events do
   end
 
   defp presence(value), do: value
+
+  defp secure_compare?(left, right) when is_binary(left) and is_binary(right) do
+    byte_size(left) == byte_size(right) and PlugCrypto.secure_compare(left, right)
+  end
+
+  defp secure_compare?(_left, _right), do: false
 
   defp derive_last4(value) when is_binary(value) do
     trimmed = String.trim(value)
