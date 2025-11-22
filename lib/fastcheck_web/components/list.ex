@@ -23,7 +23,43 @@ defmodule FastCheckWeb.Components.List do
   """
 
   use Phoenix.Component
+  alias FastCheckWeb.Components.Helpers.ComponentClasses
   import FastCheckWeb.Components.Icon, only: [icon: 1]
+
+  @rounded_sizes %{
+    "extra_small" => "[&:not(.list-items-gap)]:rounded-sm [&.list-items-gap>li]:rounded-sm",
+    "small" => "[&:not(.list-items-gap)]:rounded [&.list-items-gap>li]:rounded",
+    "medium" => "[&:not(.list-items-gap)]:rounded-md [&.list-items-gap>li]:rounded-md",
+    "large" => "[&:not(.list-items-gap)]:rounded-lg [&.list-items-gap>li]:rounded-lg",
+    "extra_large" => "[&:not(.list-items-gap)]:rounded-xl [&.list-items-gap>li]:rounded-xl",
+    "full" => "[&:not(.list-items-gap)]:rounded-full [&.list-items-gap>li]:rounded-full",
+    "none" => "[&:not(.list-items-gap)]:rounded-none [&.list-items-gap>li]:rounded-none"
+  }
+
+  @width_classes %{
+    "extra_small" => "w-60",
+    "small" => "w-64",
+    "medium" => "w-72",
+    "large" => "w-80",
+    "extra_large" => "w-96",
+    "full" => "w-full"
+  }
+
+  @size_classes %{
+    "extra_small" => "text-xs [&_.list-item-icon]:size-4",
+    "small" => "text-sm [&_.list-item-icon]:size-5",
+    "medium" => "text-base [&_.list-item-icon]:size-6",
+    "large" => "text-lg [&_.list-item-icon]:size-7",
+    "extra_large" => "text-xl [&_.list-item-icon]:size-8"
+  }
+
+  @padding_sizes %{
+    "extra_small" => "p-1",
+    "small" => "p-2",
+    "medium" => "p-3",
+    "large" => "p-4",
+    "extra_large" => "p-5"
+  }
 
   @doc """
   Renders a `list` component that supports both ordered and unordered lists with customizable styles,
@@ -402,25 +438,7 @@ defmodule FastCheckWeb.Components.List do
 
   defp content_position(params) when is_binary(params), do: params
 
-  defp rounded_size("extra_small"),
-    do: "[&:not(.list-items-gap)]:rounded-sm [&.list-items-gap>li]:rounded-sm"
-
-  defp rounded_size("small"), do: "[&:not(.list-items-gap)]:rounded [&.list-items-gap>li]:rounded"
-
-  defp rounded_size("medium"),
-    do: "[&:not(.list-items-gap)]:rounded-md [&.list-items-gap>li]:rounded-md"
-
-  defp rounded_size("large"),
-    do: "[&:not(.list-items-gap)]:rounded-lg [&.list-items-gap>li]:rounded-lg"
-
-  defp rounded_size("extra_large"),
-    do: "[&:not(.list-items-gap)]:rounded-xl [&.list-items-gap>li]:rounded-xl"
-
-  defp rounded_size("full"),
-    do: "[&:not(.list-items-gap)]:rounded-full [&.list-items-gap>li]:rounded-full"
-
-  defp rounded_size("none"),
-    do: "[&:not(.list-items-gap)]:rounded-none [&.list-items-gap>li]:rounded-none"
+  defp rounded_size(value), do: ComponentClasses.class_for(@rounded_sizes, value)
 
   defp variant_space(_, variant)
        when variant not in ["outline_separated", "bordered_separated", "base_separated"],
@@ -438,37 +456,11 @@ defmodule FastCheckWeb.Components.List do
 
   defp variant_space(params, _) when is_binary(params), do: params
 
-  defp width_class("extra_small"), do: "w-60"
-  defp width_class("small"), do: "w-64"
-  defp width_class("medium"), do: "w-72"
-  defp width_class("large"), do: "w-80"
-  defp width_class("extra_large"), do: "w-96"
-  defp width_class("full"), do: "w-full"
-  defp width_class(params) when is_binary(params), do: params
+  defp width_class(value), do: ComponentClasses.class_for(@width_classes, value)
 
-  defp size_class("extra_small"), do: "text-xs [&_.list-item-icon]:size-4"
+  defp size_class(value), do: ComponentClasses.class_for(@size_classes, value)
 
-  defp size_class("small"), do: "text-sm [&_.list-item-icon]:size-5"
-
-  defp size_class("medium"), do: "text-base [&_.list-item-icon]:size-6"
-
-  defp size_class("large"), do: "text-lg [&_.list-item-icon]:size-7"
-
-  defp size_class("extra_large"), do: "text-xl [&_.list-item-icon]:size-8"
-
-  defp size_class(params) when is_binary(params), do: params
-
-  defp padding_size("extra_small"), do: "p-1"
-
-  defp padding_size("small"), do: "p-2"
-
-  defp padding_size("medium"), do: "p-3"
-
-  defp padding_size("large"), do: "p-4"
-
-  defp padding_size("extra_large"), do: "p-5"
-
-  defp padding_size(params) when is_binary(params), do: params
+  defp padding_size(value), do: ComponentClasses.class_for(@padding_sizes, value)
 
   defp border_class(_, variant) when variant in ["default", "shadow", "transparent", "gradient"],
     do: nil
