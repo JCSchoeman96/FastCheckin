@@ -73,12 +73,23 @@ defmodule FastCheck.Events do
   end
 
   defp list_entrances(event_id) when is_integer(event_id) do
-    [event_entrance_name(event_id) | fetch_distinct_entrance_names(event_id)]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> MapSet.new()
-    |> Enum.map(fn name -> %{id: name, entrance_name: name} end)
+    case EtsLayer.list_entrances(event_id) do
+      [] ->
+        entrances =
+          [event_entrance_name(event_id) | fetch_distinct_entrance_names(event_id)]
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+          |> MapSet.new()
+          |> Enum.map(fn name -> %{id: name, entrance_name: name} end)
+
+        EtsLayer.put_entrances(event_id, entrances)
+
+        entrances
+
+      entrances ->
+        entrances
+    end
   end
 
   defp event_entrance_name(event_id) do

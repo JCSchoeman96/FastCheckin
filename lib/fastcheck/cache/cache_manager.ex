@@ -148,6 +148,7 @@ defmodule FastCheck.Cache.CacheManager do
   alias Phoenix.PubSub
   alias FastCheck.Repo
   alias FastCheck.Events.CheckInConfiguration
+  alias FastCheck.Cache.EtsLayer
 
   @typedoc """
   Describes the cache key used within Cachex. Keys are typically binaries but
@@ -467,6 +468,7 @@ defmodule FastCheck.Cache.CacheManager do
   @spec put_event_config(integer(), list() | map()) :: cache_result(true)
   def put_event_config(event_id, config) when is_integer(event_id) do
     normalized = ensure_ticket_config_cache_entry(config)
+    EtsLayer.put_event_config(event_id, normalized)
     put(event_config_key(event_id), normalized, ttl: :timer.hours(1))
   end
 
@@ -762,24 +764,46 @@ defmodule FastCheck.Cache.CacheManager do
   end
 
   defp fetch_or_cache_event_configs(cache_key, event_id) do
-    case get(cache_key) do
-      {:ok, nil} ->
-        load_event_configs_from_db(cache_key, event_id)
-
+    case EtsLayer.get_event_config(event_id) do
       {:ok, %{records: _records, by_id: _by_id, by_label: _by_label} = entry} ->
         {:ok, entry}
 
-      {:ok, entry} ->
-        {:ok, ensure_ticket_config_cache_entry(entry)}
+      {:ok, _other} ->
+        case get(cache_key) do
+          {:ok, nil} ->
+            load_event_configs_from_db(cache_key, event_id)
 
-      {:error, reason} ->
-        {:error, reason}
+          {:ok, %{records: _records, by_id: _by_id, by_label: _by_label} = entry} ->
+            {:ok, entry}
+
+          {:ok, entry} ->
+            {:ok, ensure_ticket_config_cache_entry(entry)}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      :not_found ->
+        case get(cache_key) do
+          {:ok, nil} ->
+            load_event_configs_from_db(cache_key, event_id)
+
+          {:ok, %{records: _records, by_id: _by_id, by_label: _by_label} = entry} ->
+            {:ok, entry}
+
+          {:ok, entry} ->
+            {:ok, ensure_ticket_config_cache_entry(entry)}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 
   defp load_event_configs_from_db(cache_key, event_id) do
     with {:ok, configs} <- fetch_ticket_configs_from_db(event_id) do
       entry = build_ticket_config_cache_entry(configs)
+      EtsLayer.put_event_config(event_id, entry)
       _ = put(cache_key, entry, ttl: :timer.hours(1))
       {:ok, entry}
     end
