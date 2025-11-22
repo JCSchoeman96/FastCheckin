@@ -89,6 +89,8 @@ fastcheck/
 4. Terminate TLS using OpenLiteSpeed or Nginx with Let’s Encrypt certificates.
 5. Enable database backups and monitoring dashboards (Prometheus/Grafana optional).
 
+When you need Phoenix to terminate TLS directly (no reverse proxy), set `ENABLE_HTTPS=true` and optionally `HTTPS_PORT`, `SSL_CERT_PATH`, and `SSL_KEY_PATH` (defaults assume Let’s Encrypt). Leave `ENABLE_HTTPS=false` behind a proxy to skip binding the HTTPS listener entirely.
+
 ### Metrics exporter hardening
 - The TelemetryMetricsPrometheus.Core reporter only starts in development or when `ENABLE_METRICS=true` is set.
 - Metrics listen on `127.0.0.1` by default; expose them in production only behind authentication or a reverse proxy with IP whitelisting.
