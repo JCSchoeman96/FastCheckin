@@ -60,23 +60,29 @@ function createAuthStore() {
     },
 
     // Login action
-    login: async (event_id: string, device_name: string) => {
+    login: async (event_id: string, device_name: string, credential: string) => {
       update(s => ({ ...s, isLoading: true, error: null }));
 
       try {
         const response = await fetch(API_ENDPOINTS.LOGIN, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event_id, device_name })
+          body: JSON.stringify({ event_id, device_name, credential })
         });
 
         const data = await response.json();
 
         if (!response.ok) {
-          throw new Error(data.message || 'Login failed');
+          const message = data?.error?.message || data?.message || 'Login failed';
+          throw new Error(message);
         }
 
-        const token = data.token;
+        const responseBody = data.data ?? data;
+        const token = responseBody.token;
+
+        if (!token) {
+          throw new Error('Login failed: missing token');
+        }
         const payload = JSON.parse(atob(token.split('.')[1]));
 
         if (browser) {

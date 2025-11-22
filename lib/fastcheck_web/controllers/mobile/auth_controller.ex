@@ -8,10 +8,11 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
   ## Authentication Mechanism
 
-  Mobile devices authenticate by providing an event_id. The controller:
-  1. Validates the event exists and is accessible
-  2. Generates a JWT token scoped to that event
-  3. Returns the token along with event metadata
+  Mobile devices authenticate by providing an event_id and credential. The controller:
+  1. Validates the request includes both identifiers
+  2. Ensures the event exists and the credential matches the stored secret
+  3. Generates a JWT token scoped to that event
+  4. Returns the token along with event metadata
 
   This approach keeps authentication simple while ensuring devices can
   only access data for the specific event they're authenticated against.
@@ -48,6 +49,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
   JSON payload with the following fields:
   - `event_id` (required) - The ID of the event to authenticate against
+  - `credential` (required) - Access code/password for the event
 
   ## Success Response (200 OK)
 
@@ -67,6 +69,22 @@ defmodule FastCheckWeb.Mobile.AuthController do
   {
     "error": "invalid_request",
     "message": "event_id is required and must be a positive integer"
+  }
+  ```
+
+  **401 Unauthorized** - Credential missing or malformed:
+  ```json
+  {
+    "error": "missing_credential",
+    "message": "credential is required"
+  }
+  ```
+
+  **403 Forbidden** - Credential invalid for the event:
+  ```json
+  {
+    "error": "invalid_credential",
+    "message": "credential is invalid"
   }
   ```
 
@@ -91,7 +109,8 @@ defmodule FastCheckWeb.Mobile.AuthController do
       # Valid authentication
       POST /api/mobile/login
       {
-        "event_id": 123
+        "event_id": 123,
+        "credential": "secret-code"
       }
 
       # Response
@@ -116,7 +135,9 @@ defmodule FastCheckWeb.Mobile.AuthController do
   """
   def login(conn, params) do
     with {:ok, event_id} <- extract_event_id(params),
+         {:ok, credential} <- extract_credential(params),
          {:ok, event} <- fetch_event(event_id),
+         :ok <- Events.verify_mobile_access_secret(event, credential),
          {:ok, token} <- Token.issue_scanner_token(event_id) do
       # Authentication successful - return token and event metadata
       Logger.info("Mobile scanner authenticated",
@@ -145,6 +166,12 @@ defmodule FastCheckWeb.Mobile.AuthController do
           "event_id must be a positive integer"
         )
 
+      {:error, :missing_credential} ->
+        unauthorized(conn, "missing_credential", "credential is required")
+
+      {:error, :invalid_credential_format} ->
+        unauthorized(conn, "invalid_credential", "credential must be a non-empty string")
+
       {:error, :event_not_found, event_id} ->
         Logger.warning("Mobile login attempted for non-existent event",
           event_id: event_id,
@@ -152,6 +179,22 @@ defmodule FastCheckWeb.Mobile.AuthController do
         )
 
         not_found(conn, "event_not_found", "Event with ID #{event_id} does not exist")
+
+      {:error, :missing_secret} ->
+        Logger.warning("Mobile login attempted without configured credential",
+          event_id: event_id,
+          ip: get_peer_ip(conn)
+        )
+
+        unauthorized(conn, "missing_credential", "Event requires credential for mobile access")
+
+      {:error, :invalid_credential} ->
+        Logger.warning("Mobile login rejected: invalid credential",
+          event_id: event_id,
+          ip: get_peer_ip(conn)
+        )
+
+        forbidden(conn, "invalid_credential", "credential is invalid")
 
       {:error, reason} ->
         Logger.error("Token generation failed during mobile login",
@@ -192,6 +235,17 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
   defp extract_event_id(_params), do: {:error, :missing_event_id}
 
+  defp extract_credential(%{"credential" => credential}) when is_binary(credential) do
+    case String.trim(credential) do
+      "" -> {:error, :missing_credential}
+      trimmed -> {:ok, trimmed}
+    end
+  end
+
+  defp extract_credential(%{"credential" => _}), do: {:error, :invalid_credential_format}
+
+  defp extract_credential(_params), do: {:error, :missing_credential}
+
   # Fetches the event from the database.
   #
   # Returns:
@@ -228,6 +282,30 @@ defmodule FastCheckWeb.Mobile.AuthController do
   defp bad_request(conn, error_code, message) do
     conn
     |> put_status(:bad_request)
+    |> json(%{
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
+    })
+  end
+
+  defp unauthorized(conn, error_code, message) do
+    conn
+    |> put_status(:unauthorized)
+    |> json(%{
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
+    })
+  end
+
+  defp forbidden(conn, error_code, message) do
+    conn
+    |> put_status(:forbidden)
     |> json(%{
       data: nil,
       error: %{
