@@ -104,6 +104,11 @@ defmodule FastCheck.Events.Event do
       :last_sync_at,
       :last_soft_sync_at
     ])
-    |> validate_required([:name, :tickera_api_key_encrypted, :tickera_site_url])
+    |> validate_required([
+      :name,
+      :tickera_api_key_encrypted,
+      :tickera_site_url,
+      :mobile_access_secret_encrypted
+    ])
   end
 end

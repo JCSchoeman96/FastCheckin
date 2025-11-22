@@ -211,6 +211,12 @@ defmodule FastCheckWeb.DashboardLive do
               placeholder="••••••"
             />
             <.input
+              field={@form[:mobile_access_code]}
+              type="password"
+              label="Mobile access code"
+              placeholder="Required for scanner login"
+            />
+            <.input
               field={@form[:location]}
               type="text"
               label="Location"
