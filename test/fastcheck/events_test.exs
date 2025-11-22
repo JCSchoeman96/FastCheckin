@@ -5,6 +5,7 @@ defmodule FastCheck.EventsTest do
   alias FastCheck.Events
   alias FastCheck.Events.{Event, CheckInConfiguration}
   alias FastCheck.Attendees.{Attendee, CheckIn}
+  alias FastCheck.Cache.EtsLayer
   alias FastCheck.Repo
 
   describe "list_events/0" do
@@ -121,6 +122,36 @@ defmodule FastCheck.EventsTest do
     test "returns error when event is missing" do
       assert {:error, :event_not_found} = Events.broadcast_occupancy_update(123_456, 10)
       refute_receive {:occupancy_update, _payload}
+    end
+  end
+
+  describe "warm_event_cache/1" do
+    setup do
+      EtsLayer.flush_all()
+      on_exit(fn -> EtsLayer.flush_all() end)
+      :ok
+    end
+
+    test "stores attendees and discovered entrances" do
+      event = insert_event!("Cacheable")
+
+      attendee =
+        insert_attendee(%{
+          event_id: event.id,
+          last_entrance: "VIP Gate"
+        })
+
+      insert_check_in!(event, attendee, "South", "success", DateTime.utc_now())
+
+      :ok = Events.warm_event_cache(event)
+
+      assert {:ok, cached} = EtsLayer.get_attendee(event.id, attendee.ticket_code)
+      assert cached.id == attendee.id
+
+      entrances = EtsLayer.list_entrances(event.id)
+
+      assert Enum.any?(entrances, &(&1.entrance_name == "VIP Gate"))
+      assert Enum.any?(entrances, &(&1.entrance_name == "South"))
     end
   end
 
