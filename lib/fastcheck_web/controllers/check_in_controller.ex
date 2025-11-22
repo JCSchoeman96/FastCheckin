@@ -9,12 +9,12 @@ defmodule FastCheckWeb.CheckInController do
   Processes a ticket scan via the JSON API.
   """
   def create(conn, params) do
-    with {:ok, event_id} <- parse_event_id(Map.get(params, "event_id")),
+    with {:ok, event_id} <- fetch_event_id(conn),
          {:ok, ticket_code} <- fetch_ticket_code(Map.get(params, "ticket_code")),
          {:ok, attendee, status} <-
            Attendees.check_in(
              event_id,
-             ticket_code,
+              ticket_code,
              Map.get(params, "entrance_name", "Main"),
              Map.get(params, "operator_name")
            ) do
@@ -30,16 +30,10 @@ defmodule FastCheckWeb.CheckInController do
     end
   end
 
-  defp parse_event_id(value) when is_integer(value) and value > 0, do: {:ok, value}
+  defp fetch_event_id(%{assigns: %{current_event_id: event_id}}) when is_integer(event_id) and event_id > 0,
+    do: {:ok, event_id}
 
-  defp parse_event_id(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} when int > 0 -> {:ok, int}
-      _ -> {:error, "INVALID_EVENT", "event_id must be a positive integer"}
-    end
-  end
-
-  defp parse_event_id(_), do: {:error, "INVALID_EVENT", "event_id must be a positive integer"}
+  defp fetch_event_id(_), do: {:error, :unauthorized}
 
   defp fetch_ticket_code(code) when is_binary(code) do
     trimmed = String.trim(code)

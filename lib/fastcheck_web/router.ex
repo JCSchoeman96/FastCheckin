@@ -18,6 +18,13 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  pipeline :api_authenticated do
+    plug :accepts, ["json"]
+    plug FastCheckWeb.Plugs.LoggerMetadata
+    plug FastCheckWeb.Plugs.MobileAuth
+    plug FastCheckWeb.Plugs.RateLimiter
+  end
+
   # Mobile scanner API pipeline with JWT authentication
   # All routes using this pipeline will have current_event_id assigned from verified JWT
   pipeline :mobile_api do
@@ -38,14 +45,19 @@ defmodule FastCheckWeb.Router do
   scope "/api/v1", FastCheckWeb do
     pipe_through :api
 
-    post "/check-in", CheckInController, :create
     get "/health", HealthController, :check
-    post "/check-in/batch", BulkCheckInController, :create
 
     # Public mobile API routes
     scope "/mobile", Mobile do
       post "/login", AuthController, :login
     end
+  end
+
+  scope "/api/v1", FastCheckWeb do
+    pipe_through :api_authenticated
+
+    post "/check-in", CheckInController, :create
+    post "/check-in/batch", BulkCheckInController, :create
   end
 
   # Protected mobile API routes (JWT authentication required)

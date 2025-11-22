@@ -246,9 +246,19 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   # Helper: Extract event ID from path or params
   defp get_event_id(conn) do
-    case Regex.run(~r/\/events\/(\d+)/, conn.request_path) do
-      [_, id] -> id
-      _ -> conn.params["event_id"] || "unknown"
+    cond do
+      is_integer(conn.assigns[:current_event_id]) ->
+        conn.assigns[:current_event_id]
+
+      is_map(conn.assigns[:token_claims]) ->
+        conn.assigns[:token_claims]["event_id"]
+
+      match = Regex.run(~r/\/events\/(\d+)/, conn.request_path) ->
+        [_full, id] = match
+        id
+
+      true ->
+        conn.params["event_id"] || "unknown"
     end
   end
 

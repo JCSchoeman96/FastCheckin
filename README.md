@@ -178,6 +178,16 @@ production.
 - Database constraints prevent duplicate scans and orphaned attendees.
 - Role-based LiveView guards to restrict entrances and admin actions.
 
+### API authentication for check-ins
+- `/api/v1/check-in` and `/api/v1/check-in/batch` now require a `Bearer` token issued by `/api/v1/mobile/login`.
+- The authenticated token sets `current_event_id`; handlers ignore `event_id` parameters and reject missing/invalid tokens with `401`.
+- Client example:
+  ```bash
+  TOKEN=$(curl -s -X POST https://fastcheck.example.com/api/v1/mobile/login -d '{"event_id":123,"credential":"secret"}' | jq -r '.data.token')
+  curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"ticket_code":"ABC-123"}' https://fastcheck.example.com/api/v1/check-in
+  ```
+
 ## 📋 Status & Next Steps
 - **Status:** Pre-development (scaffold + planning only).
 - **Next Step:** Run **TASK 0B – Project Scaffold** to create the folder hierarchy and placeholder modules.

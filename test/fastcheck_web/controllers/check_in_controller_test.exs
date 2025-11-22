@@ -1,4 +1,4 @@
-defmodule FastCheckWeb.BulkCheckInControllerTest do
+defmodule FastCheckWeb.CheckInControllerTest do
   use FastCheckWeb.ConnCase
 
   alias FastCheck.Repo
@@ -19,33 +19,26 @@ defmodule FastCheckWeb.BulkCheckInControllerTest do
     {:ok, conn: authed_conn, event: event, attendee: attendee}
   end
 
-  describe "create batch check-in" do
-    test "processes valid scans", %{conn: conn, attendee: attendee} do
+  describe "create" do
+    test "processes check-in using authenticated event context", %{conn: conn, attendee: attendee} do
       conn =
-        post(conn, ~p"/api/v1/check-in/batch", %{
-          "scans" => [
-            %{"ticket_code" => attendee.ticket_code, "entrance_name" => "Main"}
-          ]
+        post(conn, ~p"/api/v1/check-in", %{
+          "ticket_code" => attendee.ticket_code,
+          "entrance_name" => "Gate A"
         })
 
-      assert %{"results" => results} = json_response(conn, 200)
-      assert length(results) == 1
-      result = List.first(results)
-      assert result["status"] == "SUCCESS"
-      assert result["ticket_code"] == attendee.ticket_code
+      assert %{"data" => data, "error" => nil} = json_response(conn, 200)
+      assert data["status"] == "SUCCESS"
+      assert data["ticket_code"] == attendee.ticket_code
+      assert data["attendee_id"] == attendee.id
     end
 
     test "rejects unauthenticated requests", %{conn: conn} do
       conn = delete_req_header(conn, "authorization")
 
-      conn = post(conn, ~p"/api/v1/check-in/batch", %{ "scans" => [] })
+      conn = post(conn, ~p"/api/v1/check-in", %{ "ticket_code" => "CODE" })
 
       assert json_response(conn, 401)["error"] == "missing_authorization_header"
-    end
-
-    test "handles missing scans", %{conn: conn} do
-      conn = post(conn, ~p"/api/v1/check-in/batch", %{})
-      assert json_response(conn, 400)["error"] == "INVALID_PAYLOAD"
     end
   end
 
