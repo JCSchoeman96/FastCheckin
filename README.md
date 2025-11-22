@@ -84,7 +84,7 @@ fastcheck/
 
 ## ☁️ Deployment Checklist
 1. Provision Ubuntu/Debian VPS with PostgreSQL 12+.
-2. Configure environment variables via `.env` and `systemd` unit.
+2. Configure environment variables via `.env` and `systemd` unit (at minimum: `SECRET_KEY_BASE`, `ENCRYPTION_KEY`, `DATABASE_URL`, `MOBILE_JWT_SECRET`).
 3. Build release (`MIX_ENV=prod mix release`) and run under systemd for auto-restart.
 4. Terminate TLS using OpenLiteSpeed or Nginx with Let’s Encrypt certificates.
 5. Enable database backups and monitoring dashboards (Prometheus/Grafana optional).

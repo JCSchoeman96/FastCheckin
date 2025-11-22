@@ -13,6 +13,23 @@ encryption_key =
 
 config :fastcheck, :encryption_key, encryption_key
 
+mobile_token_secret =
+  System.get_env("MOBILE_JWT_SECRET") ||
+    if config_env() == :prod do
+      raise """
+      environment variable MOBILE_JWT_SECRET is missing.
+      Generate a strong shared secret and export it before booting FastCheck.
+      """
+    else
+      "dev fastcheck mobile jwt secret key"
+    end
+
+config :fastcheck, FastCheck.Mobile.Token,
+  secret_key: mobile_token_secret,
+  token_ttl_seconds: String.to_integer(System.get_env("MOBILE_JWT_TTL_SECONDS") || "86400"),
+  issuer: System.get_env("MOBILE_JWT_ISSUER") || "fastcheck",
+  algorithm: System.get_env("MOBILE_JWT_ALGORITHM") || "HS256"
+
 # Cache defaults shared across all environments. The values can be overridden
 # via environment variables without recompiling the release.
 cache_enabled = System.get_env("CACHE_ENABLED", "true") == "true"
