@@ -76,8 +76,14 @@ defmodule FastCheckWeb.Endpoint do
   plug Plug.Head
   plug Plug.Session, @session_options
 
-  # TODO: Tighten this for production. Currently permissive for dev.
-  plug CORSPlug, origin: "*"
+  @cors_origins
+  case Keyword.get(@endpoint_config, :cors_origins) do
+    nil -> ["https://example.com"]
+    origins when is_list(origins) -> origins
+    origin -> [origin]
+  end
+
+  plug CORSPlug, origin: @cors_origins
 
   plug FastCheckWeb.Router
 end
