@@ -31,7 +31,7 @@ FastCheck is a Phoenix-powered PETAL stack application that enables lightning-fa
 ## ⚡ Quick Start
 ```bash
 # Prerequisites
-elixir --version  # 1.14+
+elixir --version  # 1.17+
 mix archive.install hex phx_new
 psql --version    # 12+
 
