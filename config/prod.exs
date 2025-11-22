@@ -30,6 +30,12 @@ config :fastcheck, FastCheck.Repo,
 # still needs Phoenix to know about the canonical host.
 domain = System.get_env("DOMAIN") || "example.com"
 port = String.to_integer(System.get_env("PORT") || "8080")
+mobile_app_origin = System.get_env("MOBILE_APP_ORIGIN")
+dashboard_origin = "https://#{domain}"
+
+cors_origins =
+  [mobile_app_origin, dashboard_origin]
+  |> Enum.reject(&is_nil/1)
 
 # Default to Let's Encrypt locations so operators only need to override the
 # paths when their certificates live elsewhere.
@@ -50,6 +56,7 @@ config :fastcheck, FastCheckWeb.Endpoint,
   force_ssl: [hsts: true, rewrite_on: [:x_forwarded_proto]],
   # Lock down websocket/origin checks to the production host.
   check_origin: ["https://#{domain}"],
+  cors_origins: cors_origins,
   # Bind to all interfaces. The reverse proxy forwards requests to this port.
   http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
   # Provide Phoenix with TLS paths when it needs to terminate HTTPS directly
