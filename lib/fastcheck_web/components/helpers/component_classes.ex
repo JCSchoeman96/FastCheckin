@@ -14,7 +14,7 @@ defmodule FastCheckWeb.Components.Helpers.ComponentClasses do
   allow callers to pass custom classes. Otherwise `default` is returned.
   """
   @spec class_for(map(), term(), binary() | nil) :: binary() | nil
-  def class_for(class_map, key, default \ nil)
+  def class_for(class_map, key, default \\ nil)
 
   def class_for(class_map, key, default) when is_map_key(class_map, key),
     do: Map.fetch!(class_map, key)
