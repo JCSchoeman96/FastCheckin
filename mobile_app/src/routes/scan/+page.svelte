@@ -6,7 +6,7 @@
   import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
   import { onMount, onDestroy } from "svelte";
   import { db } from "$lib/db";
-  import { Capacitor } from "@capacitor/core";
+  import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
   import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
   import { Haptics, NotificationType } from "@capacitor/haptics";
 
@@ -19,6 +19,7 @@
   let lookupResult = $state<Attendee | null>(null);
   let isNative = Capacitor.isNativePlatform();
   let isScanningNative = $state(false);
+  let barcodeListener: PluginListenerHandle | null = null;
 
   // Derived
   let statusColor = $derived(
@@ -42,7 +43,7 @@
     if (scanner) {
       scanner.clear().catch(console.error);
     }
-    if (isNative && isScanningNative) {
+    if (isNative) {
       stopNativeScanner();
     }
   });
@@ -60,17 +61,54 @@
   }
 
   async function startNativeScanner() {
+    if (isScanningNative) return;
+
     try {
       const { camera } = await BarcodeScanner.requestPermissions();
+
+      if (camera !== "granted" && camera !== "limited") {
+        isScanningNative = false;
+        return;
+      }
+
+      document.body.classList.add("scanner-active");
+      isScanningNative = true;
+
+      if (barcodeListener) {
+        await barcodeListener.remove();
+        barcodeListener = null;
+      }
+
+      barcodeListener = await BarcodeScanner.addListener("barcodeScanned", async (event) => {
+        const code = event.barcode?.displayValue || event.barcode?.rawValue;
+
+        if (code) {
+          handleScan(code);
+        }
+      });
+
+      await BarcodeScanner.startScan({
+        formats: [BarcodeFormat.QrCode],
+        lensFacing: LensFacing.Back,
+      });
     } catch (e) {
       console.error("Failed to start native scanner", e);
       isScanningNative = false;
+      document.body.classList.remove("scanner-active");
+      await BarcodeScanner.stopScan();
+      await BarcodeScanner.removeAllListeners();
     }
   }
 
   async function stopNativeScanner() {
+    if (!isScanningNative) return;
+
     isScanningNative = false;
     document.body.classList.remove("scanner-active");
+    if (barcodeListener) {
+      await barcodeListener.remove();
+      barcodeListener = null;
+    }
     await BarcodeScanner.stopScan();
     await BarcodeScanner.removeAllListeners();
   }
