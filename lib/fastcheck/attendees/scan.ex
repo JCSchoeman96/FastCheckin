@@ -13,6 +13,7 @@ defmodule FastCheck.Attendees.Scan do
   alias FastCheck.Attendees.CheckInSession
   alias FastCheck.Attendees.Query
   alias FastCheck.Cache.CacheManager
+  alias FastCheck.Cache.EtsLayer
   alias FastCheck.Events
   alias FastCheck.Events.Stats
   alias Phoenix.PubSub
@@ -652,6 +653,8 @@ defmodule FastCheck.Attendees.Scan do
   defp invalidate_check_in_caches(_, _, _), do: :ok
 
   defp delete_attendee_cache_entry(event_id, ticket_code) do
+    EtsLayer.delete_attendee(event_id, ticket_code)
+
     case CacheManager.delete_attendee(event_id, ticket_code) do
       {:ok, true} ->
         :ok

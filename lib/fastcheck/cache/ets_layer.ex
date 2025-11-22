@@ -82,6 +82,15 @@ defmodule FastCheck.Cache.EtsLayer do
     :ok
   end
 
+  @doc """
+  Remove a single attendee cache entry when invalidating check-ins.
+  """
+  def delete_attendee(event_id, ticket_code) do
+    key = {event_id, ticket_code}
+    :ets.delete(@attendee_table, key)
+    :ok
+  end
+
   # ----- Events -----
 
   @doc """
