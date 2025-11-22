@@ -787,9 +787,17 @@ defmodule FastCheck.Cache.CacheManager do
 
   defp fetch_or_cache_event_configs(cache_key, event_id) do
     case get(cache_key) do
-      {:ok, nil} -> load_event_configs_from_db(cache_key, event_id)
-      {:ok, entry} -> {:ok, ensure_ticket_config_cache_entry(entry)}
-      {:error, reason} -> {:error, reason}
+      {:ok, nil} ->
+        load_event_configs_from_db(cache_key, event_id)
+
+      {:ok, %{records: _records, by_id: _by_id, by_label: _by_label} = entry} ->
+        {:ok, entry}
+
+      {:ok, entry} ->
+        {:ok, ensure_ticket_config_cache_entry(entry)}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -888,21 +896,13 @@ defmodule FastCheck.Cache.CacheManager do
   defp parse_ticket_type_id(value) when is_integer(value) and value > 0, do: value
 
   defp parse_ticket_type_id(value) when is_binary(value) do
-    value
-    |> String.trim()
-    |> case do
-      "" ->
-        nil
-
-      trimmed ->
-        case Integer.parse(trimmed) do
-          {number, ""} when number > 0 -> number
-          _ -> nil
-        end
+    case Integer.parse(String.trim(value)) do
+      {number, ""} when number > 0 -> number
+      _ -> nil
     end
   end
 
-  defp parse_ticket_type_id(_), do: nil
+  defp parse_ticket_type_id(_value), do: nil
 
   defp normalize_ticket_label(nil), do: nil
 

@@ -577,7 +577,8 @@ defmodule FastCheck.Attendees.Scan do
     )
   end
 
-  defp validate_ticket_code(_), do: invalid_error(:ticket_code, "is invalid")
+  defp validate_ticket_code(_value) when true,
+    do: invalid_error(:ticket_code, "is invalid")
 
   defp validate_entrance_name(value) when is_binary(value) do
     value
@@ -590,9 +591,10 @@ defmodule FastCheck.Attendees.Scan do
     )
   end
 
-  defp validate_entrance_name(_), do: invalid_error(:entrance_name, "is invalid")
+  defp validate_entrance_name(_value) when true,
+    do: invalid_error(:entrance_name, "is invalid")
 
-  defp validate_trimmed_value(value, min, max, pattern, field) do
+  defp validate_trimmed_value(value, min, max, pattern, field) when is_binary(value) do
     if value == "" do
       invalid_error(field, "is required")
     else
