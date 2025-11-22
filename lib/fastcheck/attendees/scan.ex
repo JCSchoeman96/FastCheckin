@@ -15,7 +15,6 @@ defmodule FastCheck.Attendees.Scan do
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Events
   alias FastCheck.Events.Stats
-  alias FastCheck.Application
   alias Phoenix.PubSub
 
   @ticket_code_min 3
@@ -741,7 +740,7 @@ defmodule FastCheck.Attendees.Scan do
   defp occupancy_cache_key(event_id), do: "occupancy:event:#{event_id}:breakdown"
 
   defp occupancy_cache_available? do
-    Application.get_env(:fastcheck, :cache_enabled, true) and
+    Elixir.Application.get_env(:fastcheck, :cache_enabled, true) and
       match?(pid when is_pid(pid), Process.whereis(@cache_name))
   end
 
@@ -986,7 +985,7 @@ defmodule FastCheck.Attendees.Scan do
   defp maybe_increment_occupancy(_, _), do: :ok
 
   defp occupancy_tasks_disabled? do
-    Application.get_env(:fastcheck, :disable_occupancy_tasks, false)
+    Elixir.Application.get_env(:fastcheck, :disable_occupancy_tasks, false)
   end
 
   defp handle_session_transaction(
