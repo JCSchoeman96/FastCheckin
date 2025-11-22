@@ -31,6 +31,7 @@ defmodule FastCheckWeb.Router do
     plug :accepts, ["json"]
     plug FastCheckWeb.Plugs.LoggerMetadata
     plug FastCheckWeb.Plugs.MobileAuth
+    plug FastCheckWeb.Plugs.RateLimiter
   end
 
   scope "/", FastCheckWeb do

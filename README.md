@@ -188,6 +188,11 @@ production.
     -d '{"ticket_code":"ABC-123"}' https://fastcheck.example.com/api/v1/check-in
   ```
 
+### Mobile API rate limiting
+- `/api/v1/mobile/attendees` and `/api/v1/mobile/scans` run through the shared rate limiter in `FastCheckWeb.Plugs.RateLimiter`.
+- Attendee syncs use the strict sync tier (default `RATE_LIMIT_SYNC=3` requests per event per five minutes); scan uploads use the
+  scan tier (default `RATE_LIMIT_SCAN=50` requests per IP per minute).
+
 ## 📋 Status & Next Steps
 - **Status:** Pre-development (scaffold + planning only).
 - **Next Step:** Run **TASK 0B – Project Scaffold** to create the folder hierarchy and placeholder modules.
