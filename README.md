@@ -89,6 +89,10 @@ fastcheck/
 4. Terminate TLS using OpenLiteSpeed or Nginx with Let’s Encrypt certificates.
 5. Enable database backups and monitoring dashboards (Prometheus/Grafana optional).
 
+### Metrics exporter hardening
+- The TelemetryMetricsPrometheus.Core reporter only starts in development or when `ENABLE_METRICS=true` is set.
+- Metrics listen on `127.0.0.1` by default; expose them in production only behind authentication or a reverse proxy with IP whitelisting.
+
 ## 🧊 pgBouncer Connection Pooling
 FastCheck now relies on pgBouncer to collapse hundreds of scanner connections into a
 small number of PostgreSQL sessions. The new `docker-compose.yml` ships
