@@ -228,7 +228,8 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   # Helper: Detect operation types
   defp sync_operation?(conn) do
-    conn.request_path =~ ~r/\/events\/\d+\/sync/
+    conn.request_path =~ ~r{/events/\d+/sync} or
+      conn.request_path =~ ~r{/api/v1/mobile/attendees}
   end
 
   defp occupancy_operation?(conn) do
