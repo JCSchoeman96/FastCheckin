@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { auth } from "$lib/stores/auth";
+  import { syncStore } from "$lib/stores/sync";
   import { onMount } from "svelte";
 
   let eventId = "";
@@ -21,6 +22,7 @@
     const success = await auth.login(eventId.trim(), deviceName.trim(), credential.trim());
 
     if (success) {
+      await syncStore.syncAll();
       goto("/scan");
       return;
     }

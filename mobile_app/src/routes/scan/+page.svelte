@@ -2,7 +2,7 @@
   import { createScanService, type ScanResult, type ScanServiceOutcome } from "$lib/logic/scanner";
   import { createDeviceScanner } from "$lib/logic/device-scanner";
   import { auth } from "$lib/stores/auth";
-  import { syncStore } from "$lib/stores/sync.svelte";
+  import { syncStore } from "$lib/stores/sync";
   import { scanSettings, DEFAULT_SCAN_METADATA, type ScanMetadata } from "$lib/stores/scan-settings";
   import type { ScanDirection, Attendee } from "$lib/types";
   import { onMount, onDestroy } from "svelte";
@@ -10,12 +10,11 @@
   import { db } from "$lib/db";
   import { Capacitor } from "@capacitor/core";
   import { notifications } from "$lib/stores/notifications";
-  import { sync } from "$lib/stores/sync";
 
   const scanService = createScanService({
     notifier: notifications,
     triggerSync: async () => {
-      await sync.syncUp();
+      await syncStore.syncUp();
     }
   });
   const deviceScanner = createDeviceScanner();
