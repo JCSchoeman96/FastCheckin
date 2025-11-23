@@ -31,40 +31,47 @@ function createSyncStore() {
     update(s => ({ ...s, isSyncing: true, error: null }));
 
     try {
-      const currentEventId = await import('$lib/db').then(m => m.getCurrentEventId());
-      
+      const batches = pendingScans.reduce((acc, scan) => {
+        const scanVersion = scan.scan_version || scan.scanned_at;
+        const normalized = { ...scan, scan_version: scanVersion };
+
+        if (!acc[scan.event_id]) {
+          acc[scan.event_id] = { event_id: scan.event_id, scans: [] as ScanQueueItem[] };
+        }
+
+        acc[scan.event_id].scans.push(normalized);
+        return acc;
+      }, {} as Record<number, { event_id: number; scans: ScanQueueItem[] }>);
+
       const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${$auth.token}`
         },
-        body: JSON.stringify({ 
-          event_id: currentEventId,
-          scans: pendingScans 
-        })
+        body: JSON.stringify({ batches: Object.values(batches) })
       });
 
       if (!response.ok) throw new Error(`Sync up failed: ${response.statusText}`);
 
-        const responseData = await response.json();
-        const { data, error } = responseData;
+      const responseData = await response.json();
+      const { data, error } = responseData;
 
-        if (error) throw new Error(error.message || 'Sync up failed');
+      if (error) throw new Error(error.message || 'Sync up failed');
 
-        // Process results
-        await import('$lib/db').then(m => m.processScanResults(data.results));
+      // Process results
+      await import('$lib/db').then(m => m.processScanResults(data.results));
 
-        // Update pending count
-        const pendingCount = await db.queue.where('sync_status').equals('pending').count();
+      // Update pending count
+      const pendingCount = await db.queue.where('sync_status').equals('pending').count();
 
-        update(s => ({
-          ...s,
-          isSyncing: false,
-          pendingCount
-        }));
+      update(s => ({
+        ...s,
+        isSyncing: false,
+        pendingCount
+      }));
 
-        return data.results.length;
+      return data.results.length;
       } catch (err: any) {
         update(s => ({
           ...s,

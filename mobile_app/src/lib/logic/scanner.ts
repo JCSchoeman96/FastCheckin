@@ -1,6 +1,5 @@
-import { db, hasRecentReplay, markReplay, pruneReplayCache } from '$lib/db';
+import { db, hasRecentReplay, markReplay, pruneReplayCache, deriveScanSlot, buildIdempotencyKey, getNextDeviceClock } from '$lib/db';
 import { sync } from '$lib/stores/sync';
-import { v4 as uuidv4 } from 'uuid';
 import type { ScanDirection } from '$lib/types';
 import { validateScan } from './validation';
 import { notifications } from '$lib/stores/notifications';
@@ -68,8 +67,10 @@ export async function processScan(
   }
 
   // 3. Queue Scan
-  const idempotencyKey = uuidv4();
   const scannedAt = new Date().toISOString();
+  const scanSlot = deriveScanSlot(scannedAt);
+  const deviceClock = await getNextDeviceClock();
+  const idempotencyKey = buildIdempotencyKey(eventId, ticketCode, direction, scanSlot);
 
   await import('$lib/db').then(m => m.addScanToQueue({
     idempotency_key: idempotencyKey,
@@ -77,6 +78,8 @@ export async function processScan(
     ticket_code: ticketCode,
     direction,
     scanned_at: scannedAt,
+    scan_slot: scanSlot,
+    device_clock: deviceClock,
     entrance_name: 'Mobile', // Default
     operator_name: 'Mobile Scanner' // Default
   }));

@@ -31,8 +31,10 @@ export interface ScanQueueItem {
   direction: ScanDirection;
   scanned_at: string; // ISO 8601
   scan_version?: string;
+  scan_slot?: string;
   entrance_name?: string;
   operator_name?: string;
+  device_clock?: number;
   sync_status: SyncStatus;
   error_message?: string;
   server_state?: Record<string, any>;
@@ -59,10 +61,11 @@ export type SyncResponse = ApiResponse<SyncData>;
 export interface ScanUploadData {
   results: {
     idempotency_key: string;
-    status: 'success' | 'duplicate' | 'error' | 'conflict';
+    status: 'success' | 'duplicate' | 'error' | 'conflict' | 'already_processed' | 'stale';
     message: string;
     server_state?: Record<string, any>;
     server_version?: string;
+    device_clock?: number;
   }[];
   processed: number;
 }
