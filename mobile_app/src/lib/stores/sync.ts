@@ -56,6 +56,7 @@ export class SyncStore {
 
   private deps: SyncDependencies;
   private attachNetworkHandlers: boolean;
+  private authReadyUnsubscribe?: () => void;
 
   constructor(deps: Partial<SyncDependencies> = {}, options: SyncOptions = {}) {
     this.deps = { ...defaultDeps, ...deps };
@@ -73,7 +74,7 @@ export class SyncStore {
     this.refreshCounts();
 
     if (browser && this.isOnline) {
-      this.syncAll();
+      this.ensureInitialSync();
     }
   }
 
@@ -81,6 +82,11 @@ export class SyncStore {
     if (browser && this.attachNetworkHandlers) {
       window.removeEventListener('online', this.handleOnline);
       window.removeEventListener('offline', this.handleOffline);
+    }
+
+    if (this.authReadyUnsubscribe) {
+      this.authReadyUnsubscribe();
+      this.authReadyUnsubscribe = undefined;
     }
   }
 
@@ -96,6 +102,22 @@ export class SyncStore {
   private handleOffline = () => {
     this.isOnline = false;
   };
+
+  private ensureInitialSync(): void {
+    if (this.deps.getAuthToken() && this.deps.getAuthEventId()) {
+      this.syncAll();
+      return;
+    }
+
+    this.authReadyUnsubscribe?.();
+    this.authReadyUnsubscribe = auth.subscribe(state => {
+      if (state.token && state.event_id) {
+        this.authReadyUnsubscribe?.();
+        this.authReadyUnsubscribe = undefined;
+        this.syncAll();
+      }
+    });
+  }
 
   private async refreshCounts(): Promise<void> {
     const [attendeeCount, queueItems, conflicts] = await Promise.all([
