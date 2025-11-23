@@ -20,6 +20,9 @@ export const API_ENDPOINTS = {
 // Local cache TTL (e.g., 12 hours)
 export const CACHE_TTL_MS = Number(import.meta.env.VITE_CACHE_TTL_MS) || 12 * 60 * 60 * 1000;
 
+// Prevents rapid duplicate scans within this window
+export const REPLAY_CACHE_WINDOW_MS = Number(import.meta.env.VITE_REPLAY_CACHE_WINDOW_MS) || 10_000;
+
 /**
  * Helper to construct full API URLs if needed for dynamic paths
  */

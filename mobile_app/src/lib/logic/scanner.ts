@@ -1,9 +1,10 @@
-import { db } from '$lib/db';
+import { db, hasRecentReplay, markReplay, pruneReplayCache } from '$lib/db';
 import { sync } from '$lib/stores/sync';
 import { v4 as uuidv4 } from 'uuid';
 import type { ScanDirection } from '$lib/types';
 import { validateScan } from './validation';
 import { notifications } from '$lib/stores/notifications';
+import { REPLAY_CACHE_WINDOW_MS } from '$lib/config';
 
 export interface ScanResult {
   success: boolean;
@@ -53,6 +54,19 @@ export async function processScan(
     };
   }
 
+  await pruneReplayCache(REPLAY_CACHE_WINDOW_MS);
+
+  const isReplay = await hasRecentReplay(eventId, ticketCode, direction, REPLAY_CACHE_WINDOW_MS);
+  if (isReplay) {
+    notifications.error('Duplicate scan');
+    return {
+      success: false,
+      message: 'Duplicate scan',
+      attendee,
+      error_code: 'DUPLICATE_SCAN'
+    };
+  }
+
   // 3. Queue Scan
   const idempotencyKey = uuidv4();
   const scannedAt = new Date().toISOString();
@@ -66,6 +80,8 @@ export async function processScan(
     entrance_name: 'Mobile', // Default
     operator_name: 'Mobile Scanner' // Default
   }));
+
+  await markReplay(eventId, ticketCode, direction, new Date(scannedAt));
 
   // 4. Optimistic Update
   await db.attendees.update(attendee.id, {
