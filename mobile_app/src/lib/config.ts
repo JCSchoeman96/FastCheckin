@@ -17,6 +17,9 @@ export const API_ENDPOINTS = {
   BATCH_CHECKIN: `${API_BASE_URL}/api/v1/check-in/batch`, // Batch Sync Up
 } as const;
 
+// Local cache TTL (e.g., 12 hours)
+export const CACHE_TTL_MS = Number(import.meta.env.VITE_CACHE_TTL_MS) || 12 * 60 * 60 * 1000;
+
 /**
  * Helper to construct full API URLs if needed for dynamic paths
  */

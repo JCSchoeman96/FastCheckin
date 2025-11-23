@@ -30,12 +30,20 @@
         ? "bg-green-500 text-white border-green-600 shadow-lg scale-105"
         : "bg-red-500 text-white border-red-600 shadow-lg scale-105"
   );
+  let cacheBlocked = $derived(syncStore.attendeeCount === 0);
+  let cacheWarning = $derived(syncStore.cacheNotice);
+
+  const refreshCache = async () => {
+    await syncStore.syncAll();
+  };
 
   onMount(() => {
     if (!$auth.token) {
       goto("/");
       return;
     }
+
+    syncStore.refreshCacheState();
 
     if (!isNative) {
       startWebScanner();
@@ -129,7 +137,14 @@
   }
 
   async function handleLookup() {
-    if (!ticketCode.trim()) return;
+    if (!ticketCode.trim() || syncStore.attendeeCount === 0) {
+      lastResult = {
+        success: false,
+        message: "Cache empty. Please sync before scanning.",
+        error_code: "CACHE_EMPTY",
+      };
+      return;
+    }
 
     try {
       const eventId = $auth.event_id;
@@ -156,6 +171,15 @@
 
   async function handleScan(code: string = ticketCode) {
     if (!code.trim() || isProcessing) return;
+
+    if (syncStore.attendeeCount === 0) {
+      lastResult = {
+        success: false,
+        message: "Cache empty. Please sync attendees before scanning.",
+        error_code: "CACHE_EMPTY",
+      };
+      return;
+    }
 
     // Clear lookup on scan
     lookupResult = null;
@@ -247,6 +271,20 @@
     </button>
   </div>
 
+  {#if syncStore.cacheNeedsRefresh}
+    <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+      <div class="flex items-center justify-between gap-2">
+        <p>{cacheWarning || "Cache refresh required. Please sync attendees."}</p>
+        <button
+          class="rounded-md bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 disabled:opacity-50"
+          onclick={refreshCache}
+          disabled={syncStore.isSyncing || !syncStore.isOnline}>
+          {syncStore.isSyncing ? "Syncing..." : "Refresh"}
+        </button>
+      </div>
+    </div>
+  {/if}
+
   <!-- Status Panel -->
   <div
     class="flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed min-h-[200px] transition-all {statusColor} {isScanningNative
@@ -272,6 +310,17 @@
           {lastResult.error_code}
         </div>
       {/if}
+    {:else if cacheBlocked}
+      <div class="text-center space-y-2">
+        <p class="text-lg font-semibold">Sync required</p>
+        <p class="text-sm opacity-80">{cacheWarning || "Attendee cache is empty. Please refresh to continue."}</p>
+        <button
+          class="rounded-md bg-blue-600 px-4 py-2 text-white font-semibold disabled:opacity-50"
+          onclick={refreshCache}
+          disabled={syncStore.isSyncing || !syncStore.isOnline}>
+          {syncStore.isSyncing ? "Syncing..." : "Sync attendees"}
+        </button>
+      </div>
     {:else if isScanningNative}
       <div class="text-white text-center">
         <p class="text-lg font-bold mb-4">Scanning...</p>
@@ -283,7 +332,7 @@
       <div class="text-4xl mb-2 text-gray-300">📷</div>
       <p class="text-center font-medium">Ready to Scan</p>
       <p class="text-xs text-center mt-1">
-        Queue: {syncStore.queueLength} | {syncStore.isOnline ? "Online" : "Offline"}
+        Queue: {syncStore.queueLength} | {syncStore.isOnline ? "Online" : "Offline"} | Attendees: {syncStore.attendeeCount}
       </p>
     {/if}
   </div>
@@ -296,7 +345,8 @@
   {:else if !isScanningNative}
     <button
       class="w-full py-8 rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-blue-600 font-bold hover:bg-blue-100 transition-colors flex flex-col items-center gap-2"
-      onclick={startNativeScanner}>
+      onclick={startNativeScanner}
+      disabled={cacheBlocked}>
       <span class="text-3xl">📷</span>
       Tap to Scan with Camera
     </button>
@@ -314,13 +364,13 @@
       <button
         class="bg-gray-200 text-gray-700 px-4 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
         onclick={handleLookup}
-        disabled={!ticketCode}>
+        disabled={!ticketCode || cacheBlocked}>
         🔍
       </button>
       <button
         class="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         onclick={() => handleScan(ticketCode)}
-        disabled={!ticketCode || isProcessing}>
+        disabled={!ticketCode || isProcessing || cacheBlocked}>
         {isProcessing ? "..." : "Scan"}
       </button>
     </div>

@@ -1,6 +1,6 @@
 import { browser } from '$app/environment';
-import { API_ENDPOINTS } from '$lib/config';
-import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults } from '$lib/db';
+import { API_ENDPOINTS, CACHE_TTL_MS } from '$lib/config';
+import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults, expireCache } from '$lib/db';
 import type { SyncResponse, ScanUploadResponse } from '$lib/types';
 import { notifications } from './notifications';
 
@@ -9,6 +9,9 @@ class SyncStore {
   isOnline = $state(false);
   isSyncing = $state(false);
   queueLength = $state(0);
+  attendeeCount = $state(0);
+  cacheNeedsRefresh = $state(false);
+  cacheNotice: string | null = $state(null);
 
   constructor() {
     if (browser) {
@@ -20,6 +23,8 @@ class SyncStore {
       if (this.isOnline) {
         this.syncAll();
       }
+
+      this.refreshCacheState();
     }
   }
 
@@ -37,6 +42,25 @@ class SyncStore {
     this.isOnline = false;
   };
 
+  async refreshCacheState(): Promise<void> {
+    const { attendeesExpired, kvExpired } = await expireCache(CACHE_TTL_MS);
+    const expired = attendeesExpired + kvExpired;
+
+    this.attendeeCount = await db.attendees.count();
+
+    if (expired > 0) {
+      this.cacheNeedsRefresh = true;
+      this.cacheNotice = 'Cached data expired. Please sync attendees to continue.';
+      notifications.info('Cache expired. Refreshing data is required.');
+    } else if (this.attendeeCount === 0) {
+      this.cacheNeedsRefresh = true;
+      this.cacheNotice = 'No attendee data found. Please sync before scanning.';
+    } else {
+      this.cacheNeedsRefresh = false;
+      this.cacheNotice = null;
+    }
+  }
+
   /**
    * Orchestrates a full sync: uploads pending scans, then downloads updates.
    */
@@ -47,10 +71,14 @@ class SyncStore {
       // We don't set isSyncing here because syncUp/syncDown manage it individually.
       // However, we might want to prevent overlap if called multiple times.
       // Since JS is single-threaded, the check above protects us if we await.
-      
+
       await this.syncUp();
       await this.syncPendingScans();
       await this.syncAttendees();
+
+      if (!this.isSyncing) {
+        await this.refreshCacheState();
+      }
     } catch (error) {
       console.error('Sync sequence failed:', error);
     }
@@ -149,6 +177,10 @@ class SyncStore {
 
       // Save data using helper
       await saveSyncData(data.attendees, data.server_time);
+
+      this.cacheNeedsRefresh = false;
+      this.cacheNotice = null;
+      this.attendeeCount = await db.attendees.count();
 
     } catch (error) {
       // Error notifications already shown above, no need to duplicate
