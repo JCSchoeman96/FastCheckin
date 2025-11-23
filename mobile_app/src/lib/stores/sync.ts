@@ -52,8 +52,16 @@ function createSyncStore() {
 
       if (error) throw new Error(error.message || 'Sync up failed');
 
-      // Process results
-      await import('$lib/db').then(m => m.processScanResults(data.results));
+      // Process results with idempotency keys from the queued scans
+      const normalizedResults = data.results
+        .map((result: any, index: number) => ({
+          ...result,
+          idempotency_key: pendingScans[index]?.idempotency_key,
+          message: result.message || result.status
+        }))
+        .filter(result => Boolean(result.idempotency_key));
+
+      await import('$lib/db').then(m => m.processScanResults(normalizedResults));
 
       // Update pending count
       const pendingCount = await db.queue.where('sync_status').equals('pending').count();
