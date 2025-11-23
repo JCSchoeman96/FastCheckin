@@ -277,20 +277,19 @@ export async function resolveConflictTasks(overrideWithServer: boolean): Promise
   await db.transaction('rw', db.queue, db.attendees, async () => {
     for (const task of tasks) {
       if (task.type === 'scan' && task.queue_id) {
-        const updates: Partial<ScanQueueItem> = {
-          sync_status: 'pending',
-          error_message: undefined,
-          scan_version: now,
-          server_state: overrideWithServer ? undefined : task.server_state,
-          local_state: overrideWithServer ? undefined : task.local_state
-        };
+        if (overrideWithServer) {
+          await db.queue.delete(task.queue_id);
+        } else {
+          const updates: Partial<ScanQueueItem> = {
+            sync_status: 'pending',
+            error_message: undefined,
+            scan_version: now,
+            server_state: task.server_state,
+            local_state: task.local_state
+          };
 
-        if (overrideWithServer && task.server_state) {
-          updates.server_state = undefined;
-          updates.local_state = undefined;
+          await db.queue.update(task.queue_id, updates);
         }
-
-        await db.queue.update(task.queue_id, updates);
       }
 
       if (task.type === 'attendee') {
