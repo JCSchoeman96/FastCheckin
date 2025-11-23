@@ -1,7 +1,9 @@
-import { writable, derived } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { browser } from '$app/environment';
 import { API_ENDPOINTS } from '$lib/config';
 import { getJWT, setJWT } from '$lib/db';
+import type { LoginResponse } from '$lib/types';
+import { notifications } from './notifications';
 
 // Types for the auth state
 export interface AuthState {
@@ -26,10 +28,23 @@ const initialState: AuthState = {
 
 // Create the store
 function createAuthStore() {
-  const { subscribe, set, update } = writable<AuthState>(initialState);
+  const store = writable<AuthState>(initialState);
+  const { subscribe, set, update } = store;
 
   return {
     subscribe,
+
+    getToken: () => get(store).token,
+    getEventId: () => get(store).event_id,
+
+    handleUnauthorized: async (message = 'Session expired. Please log in again.') => {
+      if (browser) {
+        await setJWT(null);
+      }
+
+      set({ ...initialState, error: message });
+      notifications.error(message);
+    },
 
     // Initialize from storage (async)
     init: async () => {
@@ -70,15 +85,15 @@ function createAuthStore() {
           body: JSON.stringify({ event_id, device_name, credential })
         });
 
-        const data = await response.json();
+        const data: LoginResponse = await response.json();
 
         if (!response.ok) {
-          const message = data?.error?.message || data?.message || 'Login failed';
+          const message = data.error?.message || 'Login failed';
           throw new Error(message);
         }
 
-        const responseBody = data.data ?? data;
-        const token = responseBody.token;
+        const responseBody = data.data ?? null;
+        const token = responseBody?.token;
 
         if (!token) {
           throw new Error('Login failed: missing token');
@@ -100,22 +115,23 @@ function createAuthStore() {
         }));
 
         return true;
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'An unexpected error occurred';
         update(s => ({
           ...s,
           isLoading: false,
-          error: err.message || 'An unexpected error occurred'
+          error: message
         }));
         return false;
       }
     },
 
     // Logout action
-    logout: async () => {
+    logout: async (message?: string) => {
       if (browser) {
         await setJWT(null);
       }
-      set(initialState);
+      set({ ...initialState, error: message ?? null });
     }
   };
 }

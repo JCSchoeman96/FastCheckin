@@ -10,6 +10,7 @@ defmodule FastCheck.Events.Cache do
   alias FastCheck.Events.Event
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Cache.CacheManager
+  alias FastCheck.Cache.EtsLayer
 
   @event_config_ttl :timer.hours(1)
   @events_list_ttl :timer.minutes(15)
@@ -20,27 +21,15 @@ defmodule FastCheck.Events.Cache do
   """
   @spec get_event!(integer()) :: Event.t()
   def get_event!(event_id) when is_integer(event_id) and event_id > 0 do
-    case CacheManager.get(event_config_cache_key(event_id)) do
+    case EtsLayer.get_event_config(event_id) do
       {:ok, %Event{} = event} ->
         event
 
-      {:ok, nil} ->
-        Logger.debug(fn -> {"event cache miss", event_id: event_id} end)
-        fetch_and_cache_event!(event_id)
+      {:ok, _other} ->
+        cache_fallback(event_id)
 
-      {:ok, other} ->
-        Logger.debug(fn ->
-          {"event cache miss due to unexpected payload", payload: inspect(other)}
-        end)
-
-        fetch_and_cache_event!(event_id)
-
-      {:error, reason} ->
-        Logger.warning(fn ->
-          {"event cache unavailable", event_id: event_id, reason: inspect(reason)}
-        end)
-
-        Repo.get!(Event, event_id)
+      :not_found ->
+        cache_fallback(event_id)
     end
   end
 
@@ -81,6 +70,8 @@ defmodule FastCheck.Events.Cache do
   end
 
   def invalidate_event_cache(event_id) do
+    EtsLayer.invalidate_event_config(event_id)
+
     case CacheManager.delete(event_config_cache_key(event_id)) do
       {:ok, _} ->
         Logger.debug(fn -> {"event cache invalidated", event_id: event_id} end)
@@ -113,6 +104,7 @@ defmodule FastCheck.Events.Cache do
   def persist_event_cache(%Event{} = event) do
     case CacheManager.put(event_config_cache_key(event.id), event, ttl: @event_config_ttl) do
       {:ok, true} ->
+        EtsLayer.put_event_config(event.id, event)
         :ok
 
       {:error, reason} ->
@@ -125,6 +117,32 @@ defmodule FastCheck.Events.Cache do
   end
 
   # Private Helpers
+
+  defp cache_fallback(event_id) do
+    case CacheManager.get(event_config_cache_key(event_id)) do
+      {:ok, %Event{} = event} ->
+        EtsLayer.put_event_config(event_id, event)
+        event
+
+      {:ok, nil} ->
+        Logger.debug(fn -> {"event cache miss", event_id: event_id} end)
+        fetch_and_cache_event!(event_id)
+
+      {:ok, other} ->
+        Logger.debug(fn ->
+          {"event cache miss due to unexpected payload", payload: inspect(other)}
+        end)
+
+        fetch_and_cache_event!(event_id)
+
+      {:error, reason} ->
+        Logger.warning(fn ->
+          {"event cache unavailable", event_id: event_id, reason: inspect(reason)}
+        end)
+
+        Repo.get!(Event, event_id)
+    end
+  end
 
   defp fetch_and_cache_event!(event_id) do
     event = Repo.get!(Event, event_id)

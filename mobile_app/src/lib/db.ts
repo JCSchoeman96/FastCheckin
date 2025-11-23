@@ -1,50 +1,208 @@
 import Dexie, { type Table } from 'dexie';
-import type { Attendee, ScanQueueItem } from './types';
+import type { Attendee, ConflictTask, ScanQueueItem, ScanUploadData } from './types';
+import { CACHE_TTL_MS, REPLAY_CACHE_WINDOW_MS } from './config';
 
 export interface KVItem {
   key: string;
   value: any;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ReplayCacheEntry {
+  key: string;
+  timestamp: string;
 }
 
 export class FastCheckDB extends Dexie {
   attendees!: Table<Attendee, number>;
   queue!: Table<ScanQueueItem, number>;
   kv_store!: Table<KVItem, string>;
+  replay_cache!: Table<ReplayCacheEntry, string>;
 
   constructor() {
     super('FastCheckDB');
-    
+
     this.version(1).stores({
-      // Compound index for fast lookups by event+code (critical for scanning)
-      // ticket_code and event_id indexed separately for flexibility
       attendees: '++id, [event_id+ticket_code], ticket_code, event_id',
-      
-      // Queue needs to be ordered by time (scanned_at) or id
-      // idempotency_key must be unique to prevent double-processing
       queue: '++id, idempotency_key, [event_id+sync_status]',
-      
-      // Simple key-value store for config/state
       kv_store: 'key'
+    });
+
+    this.version(2)
+      .stores({
+        // Compound index for fast lookups by event+code (critical for scanning)
+        // ticket_code and event_id indexed separately for flexibility
+        attendees: '++id, [event_id+ticket_code], ticket_code, event_id, updated_at',
+
+        // Queue needs to be ordered by time (scanned_at) or id
+        // idempotency_key must be unique to prevent double-processing
+        queue: '++id, idempotency_key, [event_id+sync_status]',
+
+        // Simple key-value store for config/state
+        kv_store: 'key, updated_at'
+      })
+      .upgrade(async tx => {
+        const now = new Date().toISOString();
+
+        await tx.table('attendees').toCollection().modify((record: any) => {
+          record.created_at = record.created_at || now;
+          record.updated_at = record.updated_at || now;
+        });
+
+        await tx.table('kv_store').toCollection().modify((record: any) => {
+          record.created_at = record.created_at || now;
+          record.updated_at = record.updated_at || now;
+        });
+      });
+
+    this.version(3)
+      .stores({
+        attendees: '++id, [event_id+ticket_code], ticket_code, event_id, updated_at',
+        queue: '++id, idempotency_key, [event_id+sync_status]',
+        kv_store: 'key, updated_at'
+      })
+      .upgrade(async tx => {
+        const now = new Date().toISOString();
+
+        await tx.table('queue').toCollection().modify((record: any) => {
+          record.scan_version = record.scan_version || record.scanned_at || now;
+          record.sync_status = record.sync_status || 'pending';
+        });
+
+        await tx.table('attendees').toCollection().modify((record: any) => {
+          record.conflict = record.conflict || false;
+        });
+      });
+
+    this.version(4).stores({
+      attendees: '++id, [event_id+ticket_code], ticket_code, event_id, updated_at',
+      queue: '++id, idempotency_key, [event_id+sync_status]',
+      kv_store: 'key, updated_at',
+      replay_cache: 'key, timestamp'
     });
   }
 }
 
 export const db = new FastCheckDB();
 
+function withTimestamps<T extends Record<string, any>>(item: T, now: string): T & { created_at: string; updated_at: string } {
+  return {
+    ...item,
+    created_at: (item as any).created_at || now,
+    updated_at: (item as any).updated_at || now
+  };
+}
+
+export async function expireCache(ttlMs: number): Promise<{ attendeesExpired: number; kvExpired: number }> {
+  const cutoffIso = new Date(Date.now() - ttlMs).toISOString();
+
+  const [attendeesExpired, kvExpired] = await db.transaction('rw', db.attendees, db.kv_store, async () => {
+    const attendeesExpired = await db.attendees.where('updated_at').below(cutoffIso).delete();
+    const kvExpired = await db.kv_store.where('updated_at').below(cutoffIso).delete();
+
+    return [attendeesExpired, kvExpired];
+  });
+
+  return { attendeesExpired, kvExpired };
+}
+
+const replayCacheKey = (eventId: number, ticketCode: string, direction: string) =>
+  `${eventId}:${ticketCode}:${direction}`;
+
+export async function markReplay(eventId: number, ticketCode: string, direction: string, timestamp = new Date()): Promise<void> {
+  await db.replay_cache.put({
+    key: replayCacheKey(eventId, ticketCode, direction),
+    timestamp: timestamp.toISOString()
+  });
+}
+
+export async function hasRecentReplay(
+  eventId: number,
+  ticketCode: string,
+  direction: string,
+  windowMs: number
+): Promise<boolean> {
+  const entry = await db.replay_cache.get(replayCacheKey(eventId, ticketCode, direction));
+  if (!entry) return false;
+
+  const delta = Date.now() - Date.parse(entry.timestamp);
+  return delta >= 0 && delta <= windowMs;
+}
+
+export async function clearReplay(eventId: number, ticketCode: string, direction: string): Promise<void> {
+  await db.replay_cache.delete(replayCacheKey(eventId, ticketCode, direction));
+}
+
+export async function pruneReplayCache(windowMs: number): Promise<number> {
+  const cutoff = new Date(Date.now() - windowMs).toISOString();
+  return await db.replay_cache.where('timestamp').below(cutoff).delete();
+}
+
 /**
  * Saves attendees from a sync response and updates the last sync time.
  * Performed in a single transaction to ensure consistency.
  */
 export async function saveSyncData(attendees: Attendee[], serverTime: string): Promise<void> {
+  await expireCache(CACHE_TTL_MS);
+
+  const conflictTasks: ConflictTask[] = [];
+
   await db.transaction('rw', db.attendees, db.kv_store, async () => {
-    // Bulk upsert attendees if any
+    const now = new Date().toISOString();
+
     if (attendees.length > 0) {
-      await db.attendees.bulkPut(attendees);
+      const stampedAttendees: Attendee[] = [];
+
+      for (const attendee of attendees) {
+        const existing = await db.attendees
+          .where('[event_id+ticket_code]')
+          .equals([attendee.event_id, attendee.ticket_code])
+          .first();
+
+        const incoming = withTimestamps({ ...attendee, conflict: false, server_state: undefined, local_state: undefined }, now);
+
+        if (existing) {
+          const incomingUpdated = attendee.updated_at ? Date.parse(attendee.updated_at) : 0;
+          const localUpdated = existing.updated_at ? Date.parse(existing.updated_at) : 0;
+          const hasMismatch =
+            existing.is_currently_inside !== attendee.is_currently_inside ||
+            existing.checkins_remaining !== attendee.checkins_remaining ||
+            existing.checked_in_at !== attendee.checked_in_at ||
+            existing.checked_out_at !== attendee.checked_out_at;
+
+          if (hasMismatch && incomingUpdated !== localUpdated) {
+            conflictTasks.push({
+              type: 'attendee',
+              attendee_id: existing.id,
+              ticket_code: attendee.ticket_code,
+              event_id: attendee.event_id,
+              local_state: existing,
+              server_state: attendee,
+              detected_at: now
+            });
+
+            stampedAttendees.push(
+              withTimestamps({ ...existing, conflict: true, server_state: attendee, local_state: existing }, now)
+            );
+            continue;
+          }
+        }
+
+        stampedAttendees.push(incoming);
+      }
+
+      if (stampedAttendees.length > 0) {
+        await db.attendees.bulkPut(stampedAttendees);
+      }
     }
-    
-    // Update last sync timestamp
-    await db.kv_store.put({ key: 'last_sync', value: serverTime });
+
+    await db.kv_store.put(withTimestamps({ key: 'last_sync', value: serverTime }, now));
   });
+
+  if (conflictTasks.length > 0) {
+    await appendConflictTasks(conflictTasks);
+  }
 }
 
 /**
@@ -63,8 +221,9 @@ export async function setJWT(token: string | null): Promise<void> {
       await Preferences.remove({ key: 'jwt' });
     }
   } else {
+    const now = new Date().toISOString();
     if (token) {
-      await db.kv_store.put({ key: 'jwt', value: token });
+      await db.kv_store.put(withTimestamps({ key: 'jwt', value: token }, now));
     } else {
       await db.kv_store.delete('jwt');
     }
@@ -91,8 +250,9 @@ export async function setCurrentEventId(eventId: number | null): Promise<void> {
       await Preferences.remove({ key: 'current_event_id' });
     }
   } else {
+    const now = new Date().toISOString();
     if (eventId) {
-      await db.kv_store.put({ key: 'current_event_id', value: eventId });
+      await db.kv_store.put(withTimestamps({ key: 'current_event_id', value: eventId }, now));
     } else {
       await db.kv_store.delete('current_event_id');
     }
@@ -113,45 +273,207 @@ export async function getCurrentEventId(): Promise<number | null> {
  * Queue Helpers
  * Encapsulates logic for adding scans, fetching pending items, and processing results.
  */
-import { v4 as uuidv4 } from 'uuid';
+export const deriveScanSlot = (scannedAt: string): string => {
+  const parsed = Date.parse(scannedAt);
+  if (Number.isNaN(parsed)) return '0';
+
+  return Math.floor(parsed / 1000).toString();
+};
+
+export const buildIdempotencyKey = (
+  eventId: number,
+  ticketCode: string,
+  direction: string,
+  slot: string | number
+): string => `scan:${eventId}:${ticketCode}:${direction}:${slot}`;
+
+export async function getNextDeviceClock(): Promise<number> {
+  const now = new Date().toISOString();
+
+  return await db.transaction('rw', db.kv_store, async () => {
+    const existing = await db.kv_store.get('device_clock');
+    const current = typeof existing?.value === 'number'
+      ? existing.value
+      : existing?.value
+        ? parseInt(existing.value, 10)
+        : 0;
+
+    const next = Number.isFinite(current) ? current + 1 : 1;
+    await db.kv_store.put(withTimestamps({ key: 'device_clock', value: next }, now));
+
+    return next;
+  });
+}
 
 export async function addScanToQueue(
-  scan: Omit<ScanQueueItem, 'id' | 'sync_status' | 'idempotency_key'> & { idempotency_key?: string }
+  scan: Omit<ScanQueueItem, 'id' | 'sync_status' | 'idempotency_key' | 'scan_slot' | 'device_clock'> & {
+    idempotency_key?: string;
+    scan_slot?: string;
+    device_clock?: number;
+  }
 ): Promise<void> {
+  const scan_slot = scan.scan_slot || deriveScanSlot(scan.scanned_at);
+  const scan_version = scan.scan_version || scan.scanned_at || new Date().toISOString();
+  const device_clock = scan.device_clock ?? (await getNextDeviceClock());
+  const idempotency_key = scan.idempotency_key || buildIdempotencyKey(
+    scan.event_id,
+    scan.ticket_code,
+    scan.direction,
+    scan_slot
+  );
+
   await db.queue.add({
     ...scan,
-    idempotency_key: scan.idempotency_key || uuidv4(),
+    idempotency_key,
+    scan_slot,
+    device_clock,
+    scan_version,
     sync_status: 'pending'
   });
 }
 
 export async function getPendingScans(): Promise<ScanQueueItem[]> {
-  return await db.queue
-    .where('sync_status')
-    .equals('pending')
-    .toArray();
+  const pending = await db.queue.where('sync_status').equals('pending').toArray();
+  const updates: { id: number; changes: Partial<ScanQueueItem> }[] = [];
+
+  for (const scan of pending) {
+    if (!scan.scan_slot) {
+      scan.scan_slot = deriveScanSlot(scan.scanned_at);
+      if (scan.id) {
+        updates.push({ id: scan.id, changes: { scan_slot: scan.scan_slot } });
+      }
+    }
+
+    if (typeof scan.device_clock !== 'number') {
+      scan.device_clock = await getNextDeviceClock();
+
+      if (scan.id) {
+        updates.push({ id: scan.id, changes: { device_clock: scan.device_clock } });
+      }
+    }
+  }
+
+  if (updates.length > 0) {
+    await db.transaction('rw', db.queue, async () => {
+      for (const update of updates) {
+        await db.queue.update(update.id, update.changes);
+      }
+    });
+  }
+
+  return pending;
+}
+
+export async function getConflictTasks(): Promise<ConflictTask[]> {
+  const record = await db.kv_store.get('conflict_tasks');
+  return record?.value || [];
+}
+
+export async function appendConflictTasks(tasks: ConflictTask[]): Promise<void> {
+  if (tasks.length === 0) return;
+
+  const now = new Date().toISOString();
+  const existing = await getConflictTasks();
+  await db.kv_store.put(withTimestamps({ key: 'conflict_tasks', value: [...existing, ...tasks] }, now));
+}
+
+export async function clearConflictTasks(): Promise<void> {
+  const now = new Date().toISOString();
+  await db.kv_store.put(withTimestamps({ key: 'conflict_tasks', value: [] }, now));
+}
+
+export async function resolveConflictTasks(overrideWithServer: boolean): Promise<void> {
+  const tasks = await getConflictTasks();
+  if (tasks.length === 0) return;
+
+  const now = new Date().toISOString();
+
+  await db.transaction('rw', db.queue, db.attendees, async () => {
+    for (const task of tasks) {
+      if (task.type === 'scan' && task.queue_id) {
+        const updates: Partial<ScanQueueItem> = {
+          sync_status: 'pending',
+          error_message: undefined,
+          scan_version: now,
+          server_state: overrideWithServer ? undefined : task.server_state,
+          local_state: overrideWithServer ? undefined : task.local_state
+        };
+
+        if (overrideWithServer && task.server_state) {
+          updates.server_state = undefined;
+          updates.local_state = undefined;
+        }
+
+        await db.queue.update(task.queue_id, updates);
+      }
+
+      if (task.type === 'attendee') {
+        const baseState = overrideWithServer ? task.server_state || task.local_state : task.local_state || task.server_state;
+
+        if (baseState) {
+          const normalized = withTimestamps(
+            { ...(baseState as Attendee), conflict: false, server_state: undefined, local_state: undefined },
+            now
+          ) as Attendee;
+
+          await db.attendees.put(normalized);
+        }
+      }
+    }
+  });
+
+  await clearConflictTasks();
 }
 
 export async function processScanResults(
-  results: { idempotency_key: string; status: string; message: string }[]
+  results: ScanUploadData['results']
 ): Promise<void> {
-  await db.transaction('rw', db.queue, async () => {
+  const conflictTasks: ConflictTask[] = [];
+  const now = new Date().toISOString();
+
+  await db.transaction('rw', db.queue, db.attendees, async () => {
     for (const result of results) {
-      // Backend returns "SUCCESS" for success, anything else is an error (e.g. "INVALID_TICKET")
-      const isSuccess = result.status.toUpperCase() === 'SUCCESS';
-      
-      // Find scan by idempotency_key
+      const status = result.status.toLowerCase();
+      const isSuccess = status === 'success' || status === 'duplicate';
+      const isConflict = status === 'conflict';
+      const isAlreadyProcessed = status === 'already_processed';
+      const isStale = status === 'stale';
+
       const scan = await db.queue
         .where('idempotency_key')
         .equals(result.idempotency_key)
         .first();
 
       if (scan && scan.id) {
-        if (isSuccess) {
-          // Success or duplicate - remove from queue
+        if (isSuccess || isAlreadyProcessed) {
+          await reconcileAttendeeState(scan, result.server_state, now);
+          await clearReplay(scan.event_id, scan.ticket_code, scan.direction);
           await db.queue.delete(scan.id);
+        } else if (isStale) {
+          await db.queue.update(scan.id, {
+            sync_status: 'pending',
+            error_message: result.message || result.status,
+            scan_version: result.server_version || new Date().toISOString()
+          });
+        } else if (isConflict) {
+          await db.queue.update(scan.id, {
+            sync_status: 'conflict',
+            error_message: result.message || result.status,
+            server_state: result.server_state,
+            local_state: scan
+          });
+
+          conflictTasks.push({
+            type: 'scan',
+            queue_id: scan.id,
+            event_id: scan.event_id,
+            ticket_code: scan.ticket_code,
+            idempotency_key: scan.idempotency_key,
+            server_state: result.server_state,
+            local_state: scan,
+            detected_at: now
+          });
         } else {
-          // Error - mark as failed so it can be retried or inspected
           await db.queue.update(scan.id, {
             sync_status: 'error',
             error_message: result.message || result.status
@@ -160,4 +482,54 @@ export async function processScanResults(
       }
     }
   });
+
+  if (conflictTasks.length > 0) {
+    await appendConflictTasks(conflictTasks);
+  }
+
+  await pruneReplayCache(REPLAY_CACHE_WINDOW_MS);
+}
+
+async function reconcileAttendeeState(scan: ScanQueueItem, serverState: any, now: string): Promise<void> {
+  const payloadState = serverState?.attendee || serverState;
+  const existing = await db.attendees
+    .where('[event_id+ticket_code]')
+    .equals([scan.event_id, scan.ticket_code])
+    .first();
+
+  if (payloadState && payloadState.ticket_code && payloadState.event_id) {
+    const merged = withTimestamps(
+      {
+        ...(existing || {}),
+        ...(payloadState as Partial<Attendee>),
+        conflict: false,
+        server_state: undefined,
+        local_state: undefined
+      },
+      now
+    ) as Attendee;
+
+    await db.attendees.put(merged);
+    return;
+  }
+
+  if (existing) {
+    const isCheckIn = scan.direction === 'in';
+
+    const updated = withTimestamps(
+      {
+        ...existing,
+        is_currently_inside: isCheckIn,
+        checkins_remaining: existing.checkins_remaining,
+        checked_in_at: isCheckIn ? scan.scanned_at : existing.checked_in_at,
+        checked_out_at: isCheckIn ? existing.checked_out_at : scan.scanned_at,
+        conflict: false,
+        server_state: undefined,
+        local_state: undefined
+      },
+      now
+    ) as Attendee;
+
+    await db.attendees.put(updated);
+  }
 }

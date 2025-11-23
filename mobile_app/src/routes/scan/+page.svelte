@@ -1,26 +1,35 @@
 <script lang="ts">
-  import { processScan, type ScanResult } from "$lib/logic/scanner";
+  import { createScanService, type ScanResult, type ScanServiceOutcome } from "$lib/logic/scanner";
+  import { createDeviceScanner } from "$lib/logic/device-scanner";
   import { auth } from "$lib/stores/auth";
-  import { syncStore } from "$lib/stores/sync.svelte";
+  import { syncStore } from "$lib/stores/sync";
+  import { scanSettings, DEFAULT_SCAN_METADATA, type ScanMetadata } from "$lib/stores/scan-settings";
   import type { ScanDirection, Attendee } from "$lib/types";
-  import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { db } from "$lib/db";
-  import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
-  import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
-  import { Haptics, NotificationType } from "@capacitor/haptics";
+  import { Capacitor } from "@capacitor/core";
+  import { notifications } from "$lib/stores/notifications";
+
+  const scanService = createScanService({
+    notifier: notifications,
+    triggerSync: async () => {
+      await syncStore.syncUp();
+    }
+  });
+  const deviceScanner = createDeviceScanner();
 
   // State
   let direction = $state<ScanDirection>("in");
   let ticketCode = $state("");
   let lastResult = $state<ScanResult | null>(null);
   let isProcessing = $state(false);
-  let scanner: Html5QrcodeScanner | null = null;
   let lookupResult = $state<Attendee | null>(null);
   let isNative = Capacitor.isNativePlatform();
-  let isScanningNative = $state(false);
-  let barcodeListener: PluginListenerHandle | null = null;
+  let isScannerActive = $state(false);
+  let scanMetadata = $state<ScanMetadata>(DEFAULT_SCAN_METADATA);
+  let unsubscribeScanner: (() => void) | null = null;
+  let unsubscribeSettings: (() => void) | null = null;
 
   // Derived
   let statusColor = $derived(
@@ -30,6 +39,13 @@
         ? "bg-green-500 text-white border-green-600 shadow-lg scale-105"
         : "bg-red-500 text-white border-red-600 shadow-lg scale-105"
   );
+  let cacheBlocked = $derived(syncStore.attendeeCount === 0);
+  let cacheWarning = $derived(syncStore.cacheNotice);
+  let isNativeActive = $derived(isNative && isScannerActive);
+
+  const refreshCache = async () => {
+    await syncStore.syncAll();
+  };
 
   onMount(() => {
     if (!$auth.token) {
@@ -37,99 +53,43 @@
       return;
     }
 
+    syncStore.refreshCacheState();
+
+    unsubscribeScanner = deviceScanner.subscribe(code => handleScan(code));
+    unsubscribeSettings = scanSettings.subscribe(value => (scanMetadata = value));
+
     if (!isNative) {
-      startWebScanner();
+      startScanner();
     } else {
-      // Request permissions on mount for native
-      BarcodeScanner.requestPermissions();
+      scanSettings.load();
     }
   });
 
   onDestroy(() => {
-    if (scanner) {
-      scanner.clear().catch(console.error);
-    }
-    if (isNative) {
-      stopNativeScanner();
-    }
+    unsubscribeScanner?.();
+    unsubscribeSettings?.();
+    deviceScanner.stop();
   });
 
-  function startWebScanner() {
-    const config = {
-      fps: 10,
-      qrbox: { width: 250, height: 250 },
-      aspectRatio: 1.0,
-      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-    };
-
-    scanner = new Html5QrcodeScanner("reader", config, false);
-    scanner.render(onScanSuccess, onScanFailure);
+  async function startScanner() {
+    await deviceScanner.start();
+    isScannerActive = deviceScanner.isActive();
   }
 
-  async function startNativeScanner() {
-    if (isScanningNative) return;
-
-    try {
-      const { camera } = await BarcodeScanner.requestPermissions();
-
-      if (camera !== "granted" && camera !== "limited") {
-        isScanningNative = false;
-        return;
-      }
-
-      document.body.classList.add("scanner-active");
-      isScanningNative = true;
-
-      if (barcodeListener) {
-        await barcodeListener.remove();
-        barcodeListener = null;
-      }
-
-      barcodeListener = await BarcodeScanner.addListener("barcodeScanned", async (event) => {
-        const code = event.barcode?.displayValue || event.barcode?.rawValue;
-
-        if (code) {
-          handleScan(code);
-        }
-      });
-
-      await BarcodeScanner.startScan({
-        formats: [BarcodeFormat.QrCode],
-        lensFacing: LensFacing.Back,
-      });
-    } catch (e) {
-      console.error("Failed to start native scanner", e);
-      isScanningNative = false;
-      document.body.classList.remove("scanner-active");
-      await BarcodeScanner.stopScan();
-      await BarcodeScanner.removeAllListeners();
-    }
-  }
-
-  async function stopNativeScanner() {
-    if (!isScanningNative) return;
-
-    isScanningNative = false;
-    document.body.classList.remove("scanner-active");
-    if (barcodeListener) {
-      await barcodeListener.remove();
-      barcodeListener = null;
-    }
-    await BarcodeScanner.stopScan();
-    await BarcodeScanner.removeAllListeners();
-  }
-
-  function onScanSuccess(decodedText: string, decodedResult: any) {
-    // Debounce/Throttle could be added here if needed, but handleScan checks isProcessing
-    handleScan(decodedText);
-  }
-
-  function onScanFailure(error: any) {
-    // console.warn(`Code scan error = ${error}`);
+  async function stopScanner() {
+    await deviceScanner.stop();
+    isScannerActive = deviceScanner.isActive();
   }
 
   async function handleLookup() {
-    if (!ticketCode.trim()) return;
+    if (!ticketCode.trim() || syncStore.attendeeCount === 0) {
+      lastResult = {
+        success: false,
+        message: "Cache empty. Please sync before scanning.",
+        error_code: "CACHE_EMPTY",
+      };
+      return;
+    }
 
     try {
       const eventId = $auth.event_id;
@@ -147,15 +107,26 @@
           message: "Ticket not found",
           error_code: "NOT_FOUND",
         };
-        triggerFeedback(false);
+        await deviceScanner.handleResult?.(false);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
     }
   }
 
   async function handleScan(code: string = ticketCode) {
-    if (!code.trim() || isProcessing) return;
+    const trimmed = code.trim();
+    if (!trimmed || isProcessing) return;
+
+    if (syncStore.attendeeCount === 0) {
+      lastResult = {
+        success: false,
+        message: "Cache empty. Please sync attendees before scanning.",
+        error_code: "CACHE_EMPTY",
+      };
+      await deviceScanner.handleResult?.(false);
+      return;
+    }
 
     // Clear lookup on scan
     lookupResult = null;
@@ -166,59 +137,47 @@
     try {
       const eventId = $auth.event_id;
       if (!eventId) {
-        lastResult = {
+        const noEvent: ScanServiceOutcome = {
           success: false,
           message: "No event selected. Please login.",
           error_code: "NO_EVENT",
+          notifications: [{ type: "error", message: "No event selected. Please login." }],
+          syncRequested: false,
         };
+        lastResult = noEvent;
+        await scanService.applyEffects(noEvent);
+        await deviceScanner.handleResult?.(false);
         return;
       }
 
-      const result = await processScan(code, direction, eventId);
-      lastResult = result;
+      const outcome = await scanService.processScan(trimmed, direction, eventId, {
+        metadata: scanMetadata,
+      });
+      lastResult = outcome;
 
-      if (result.success) {
+      await scanService.applyEffects(outcome);
+      await deviceScanner.handleResult?.(outcome.success);
+
+      if (outcome.success) {
         ticketCode = ""; // Clear input on success
-        triggerFeedback(true);
-      } else {
-        triggerFeedback(false);
       }
     } catch (e) {
       console.error(e);
-      lastResult = {
+      const unknown: ScanServiceOutcome = {
         success: false,
         message: "Unexpected error processing scan",
         error_code: "UNKNOWN_ERROR",
+        notifications: [{ type: "error", message: "Unexpected error processing scan" }],
+        syncRequested: false,
       };
-      triggerFeedback(false);
+      lastResult = unknown;
+      await scanService.applyEffects(unknown);
+      await deviceScanner.handleResult?.(false);
     } finally {
       // Add a small delay before allowing next scan to prevent double-scans
       setTimeout(() => {
         isProcessing = false;
       }, 1000);
-    }
-  }
-
-  async function triggerFeedback(success: boolean) {
-    if (isNative) {
-      try {
-        if (success) {
-          await Haptics.notification({ type: NotificationType.Success });
-        } else {
-          await Haptics.notification({ type: NotificationType.Error });
-        }
-      } catch (e) {
-        console.error("Haptics error", e);
-      }
-    } else {
-      // Web Haptic Feedback
-      if (navigator.vibrate) {
-        if (success) {
-          navigator.vibrate(200); // Single short buzz
-        } else {
-          navigator.vibrate([100, 50, 100, 50, 100]); // Error pattern (buzz-pause-buzz...)
-        }
-      }
     }
   }
 
@@ -247,9 +206,23 @@
     </button>
   </div>
 
+  {#if syncStore.cacheNeedsRefresh}
+    <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+      <div class="flex items-center justify-between gap-2">
+        <p>{cacheWarning || "Cache refresh required. Please sync attendees."}</p>
+        <button
+          class="rounded-md bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 disabled:opacity-50"
+          onclick={refreshCache}
+          disabled={syncStore.isSyncing || !syncStore.isOnline}>
+          {syncStore.isSyncing ? "Syncing..." : "Refresh"}
+        </button>
+      </div>
+    </div>
+  {/if}
+
   <!-- Status Panel -->
   <div
-    class="flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed min-h-[200px] transition-all {statusColor} {isScanningNative
+    class="flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed min-h-[200px] transition-all {statusColor} {isNativeActive
       ? 'bg-transparent border-white/50 text-white'
       : ''}">
     {#if lastResult}
@@ -272,10 +245,21 @@
           {lastResult.error_code}
         </div>
       {/if}
-    {:else if isScanningNative}
+    {:else if cacheBlocked}
+      <div class="text-center space-y-2">
+        <p class="text-lg font-semibold">Sync required</p>
+        <p class="text-sm opacity-80">{cacheWarning || "Attendee cache is empty. Please refresh to continue."}</p>
+        <button
+          class="rounded-md bg-blue-600 px-4 py-2 text-white font-semibold disabled:opacity-50"
+          onclick={refreshCache}
+          disabled={syncStore.isSyncing || !syncStore.isOnline}>
+          {syncStore.isSyncing ? "Syncing..." : "Sync attendees"}
+        </button>
+      </div>
+    {:else if isNativeActive}
       <div class="text-white text-center">
         <p class="text-lg font-bold mb-4">Scanning...</p>
-        <button class="bg-red-600 text-white px-6 py-2 rounded-full shadow-lg" onclick={stopNativeScanner}>
+        <button class="bg-red-600 text-white px-6 py-2 rounded-full shadow-lg" onclick={stopScanner}>
           Stop Scanner
         </button>
       </div>
@@ -283,7 +267,7 @@
       <div class="text-4xl mb-2 text-gray-300">📷</div>
       <p class="text-center font-medium">Ready to Scan</p>
       <p class="text-xs text-center mt-1">
-        Queue: {syncStore.queueLength} | {syncStore.isOnline ? "Online" : "Offline"}
+        Queue: {syncStore.queueLength} | {syncStore.isOnline ? "Online" : "Offline"} | Attendees: {syncStore.attendeeCount}
       </p>
     {/if}
   </div>
@@ -293,10 +277,11 @@
     <div class="rounded-xl overflow-hidden bg-black hide-on-scan">
       <div id="reader" class="w-full"></div>
     </div>
-  {:else if !isScanningNative}
+  {:else if !isScannerActive}
     <button
       class="w-full py-8 rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-blue-600 font-bold hover:bg-blue-100 transition-colors flex flex-col items-center gap-2"
-      onclick={startNativeScanner}>
+      onclick={startScanner}
+      disabled={cacheBlocked}>
       <span class="text-3xl">📷</span>
       Tap to Scan with Camera
     </button>
@@ -314,13 +299,13 @@
       <button
         class="bg-gray-200 text-gray-700 px-4 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
         onclick={handleLookup}
-        disabled={!ticketCode}>
+        disabled={!ticketCode || cacheBlocked}>
         🔍
       </button>
       <button
         class="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         onclick={() => handleScan(ticketCode)}
-        disabled={!ticketCode || isProcessing}>
+        disabled={!ticketCode || isProcessing || cacheBlocked}>
         {isProcessing ? "..." : "Scan"}
       </button>
     </div>

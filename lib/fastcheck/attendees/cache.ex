@@ -10,6 +10,7 @@ defmodule FastCheck.Attendees.Cache do
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Attendees.Query
   alias FastCheck.Cache.CacheManager
+  alias FastCheck.Cache.EtsLayer
 
   @attendee_cache_namespace "attendee"
   @attendee_cache_hit_ttl :infinity
@@ -27,37 +28,45 @@ defmodule FastCheck.Attendees.Cache do
   @spec get_attendee_by_ticket_code(integer(), String.t()) :: Attendee.t() | nil
   def get_attendee_by_ticket_code(event_id, ticket_code)
       when is_integer(event_id) and is_binary(ticket_code) do
-    cache_key = attendee_cache_key(event_id, ticket_code)
+    case EtsLayer.get_attendee(event_id, ticket_code) do
+      {:ok, %Attendee{} = attendee} ->
+        Logger.debug("ETS attendee cache hit for #{event_id}:#{ticket_code}")
+        attendee
 
-    try do
-      case CacheManager.get_attendee(event_id, ticket_code) do
-        {:ok, %Attendee{} = attendee} ->
-          Logger.debug("Attendee cache hit for #{cache_key}")
-          attendee
+      :not_found ->
+        cache_key = attendee_cache_key(event_id, ticket_code)
 
-        {:ok, @attendee_cache_not_found} ->
-          Logger.debug("Attendee cache hit (not found) for #{cache_key}")
-          nil
+        try do
+          case CacheManager.get_attendee(event_id, ticket_code) do
+            {:ok, %Attendee{} = attendee} ->
+              Logger.debug("Attendee cache hit for #{cache_key}")
+              EtsLayer.put_attendee(event_id, ticket_code, attendee)
+              attendee
 
-        {:ok, nil} ->
-          Logger.debug("Attendee cache miss for #{cache_key}")
-          fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+            {:ok, @attendee_cache_not_found} ->
+              Logger.debug("Attendee cache hit (not found) for #{cache_key}")
+              nil
 
-        {:error, :cache_unavailable} ->
-          Logger.debug("Cache unavailable for #{cache_key}, skipping cache")
-          Repo.get_by(Attendee, event_id: event_id, ticket_code: ticket_code)
+            {:ok, nil} ->
+              Logger.debug("Attendee cache miss for #{cache_key}")
+              fetch_attendee_with_cache(event_id, ticket_code, cache_key)
 
-        {:error, reason} ->
-          Logger.warning("Attendee cache lookup failed for #{cache_key}: #{inspect(reason)}")
-          fetch_attendee_with_cache(event_id, ticket_code, cache_key)
-      end
-    rescue
-      exception ->
-        Logger.warning(
-          "Attendee cache lookup raised for #{cache_key}: #{Exception.message(exception)}"
-        )
+            {:error, :cache_unavailable} ->
+              Logger.debug("Cache unavailable for #{cache_key}, skipping cache")
+              Repo.get_by(Attendee, event_id: event_id, ticket_code: ticket_code)
 
-        fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+            {:error, reason} ->
+              Logger.warning("Attendee cache lookup failed for #{cache_key}: #{inspect(reason)}")
+              fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+          end
+        rescue
+          exception ->
+            Logger.warning(
+              "Attendee cache lookup raised for #{cache_key}: #{Exception.message(exception)}"
+            )
+
+            fetch_attendee_with_cache(event_id, ticket_code, cache_key)
+        end
     end
   end
 
@@ -185,6 +194,8 @@ defmodule FastCheck.Attendees.Cache do
   def invalidate_attendees_by_event_cache(event_id) when is_integer(event_id) do
     cache_key = attendees_by_event_cache_key(event_id)
 
+    EtsLayer.invalidate_attendees(event_id)
+
     case CacheManager.delete(cache_key) do
       {:ok, _} ->
         :ok
@@ -235,6 +246,8 @@ defmodule FastCheck.Attendees.Cache do
         Logger.debug(
           "Stored attendee cache entry for #{cache_key} (ttl=#{inspect(@attendee_cache_hit_ttl)})"
         )
+
+        EtsLayer.put_attendee(event_id, ticket_code, attendee)
 
         :ok
 
