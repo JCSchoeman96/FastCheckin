@@ -73,23 +73,46 @@ defmodule FastCheck.Events do
   end
 
   defp list_entrances(event_id) when is_integer(event_id) do
-    case EtsLayer.list_entrances(event_id) do
-      [] ->
-        entrances =
-          [event_entrance_name(event_id) | fetch_distinct_entrance_names(event_id)]
-          |> Enum.reject(&is_nil/1)
-          |> Enum.map(&String.trim/1)
-          |> Enum.reject(&(&1 == ""))
-          |> MapSet.new()
-          |> Enum.map(fn name -> %{id: name, entrance_name: name} end)
+    cached = EtsLayer.list_entrances(event_id)
+    computed = compute_entrances(event_id)
 
-        EtsLayer.put_entrances(event_id, entrances)
+    cond do
+      cached == [] ->
+        EtsLayer.put_entrances(event_id, computed)
+        computed
 
-        entrances
+      cache_missing_new_entrances?(cached, computed) ->
+        merged = merge_cached_and_computed(cached, computed)
+        EtsLayer.put_entrances(event_id, merged)
+        merged
 
-      entrances ->
-        entrances
+      true ->
+        cached
     end
+  end
+
+  defp compute_entrances(event_id) do
+    [event_entrance_name(event_id) | fetch_distinct_entrance_names(event_id)]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> MapSet.new()
+    |> Enum.map(fn name -> %{id: name, entrance_name: name} end)
+  end
+
+  defp cache_missing_new_entrances?(cached, computed) do
+    cached_ids = MapSet.new(Enum.map(cached, & &1.id))
+    computed_ids = MapSet.new(Enum.map(computed, & &1.id))
+
+    not MapSet.equal?(cached_ids, computed_ids)
+  end
+
+  defp merge_cached_and_computed(cached, computed) do
+    cached_by_id = Map.new(cached, &{&1.id, &1})
+
+    Enum.map(computed, fn %{id: id} = entrance ->
+      Map.get(cached_by_id, id, entrance)
+    end)
   end
 
   defp event_entrance_name(event_id) do
