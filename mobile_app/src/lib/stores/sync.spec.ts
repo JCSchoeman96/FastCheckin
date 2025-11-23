@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('$app/environment', () => ({ browser: true }));
+
 import { createSyncStore } from './sync';
 import type { ScanQueueItem } from '$lib/types';
 
@@ -154,5 +157,36 @@ describe('sync store', () => {
     expect(deps.resolveConflictTasks).toHaveBeenCalledWith(false);
     expect(syncUpSpy).toHaveBeenCalled();
     expect(syncDownSpy).toHaveBeenCalled();
+  });
+
+  it('attaches and cleans up network listeners when enabled', () => {
+    const deps = createMockDeps();
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+
+    const originalWindow = (globalThis as any).window;
+    const originalNavigator = (globalThis as any).navigator;
+
+    (globalThis as any).window = {
+      addEventListener,
+      removeEventListener,
+      navigator: { onLine: true }
+    } as any;
+    (globalThis as any).navigator = (globalThis as any).window.navigator;
+
+    try {
+      const store = createSyncStore(deps, { attachNetworkHandlers: true, initialOnline: true });
+
+      expect(addEventListener).toHaveBeenCalledWith('online', expect.any(Function));
+      expect(addEventListener).toHaveBeenCalledWith('offline', expect.any(Function));
+
+      store.destroy();
+
+      expect(removeEventListener).toHaveBeenCalledWith('online', expect.any(Function));
+      expect(removeEventListener).toHaveBeenCalledWith('offline', expect.any(Function));
+    } finally {
+      (globalThis as any).window = originalWindow;
+      (globalThis as any).navigator = originalNavigator;
+    }
   });
 });
