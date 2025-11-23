@@ -23,6 +23,21 @@ export interface Attendee {
   local_state?: Partial<Attendee>;
 }
 
+export type ValidationErrorCode =
+  | 'INVALID_TICKET'
+  | 'PAYMENT_INVALID'
+  | 'ALREADY_CHECKED_IN'
+  | 'NO_CHECKINS_REMAINING'
+  | 'NOT_CHECKED_IN';
+
+export type ScanErrorCode =
+  | ValidationErrorCode
+  | 'DUPLICATE_SCAN'
+  | 'CACHE_EMPTY'
+  | 'NOT_FOUND'
+  | 'NO_EVENT'
+  | 'UNKNOWN_ERROR';
+
 export interface ScanQueueItem {
   id?: number; // Auto-incremented by Dexie
   event_id: number;
@@ -49,6 +64,15 @@ export interface ApiResponse<T> {
   } | null;
 }
 
+export interface LoginResponseData {
+  token: string;
+  event_id: number;
+  device_name?: string;
+  role?: string;
+}
+
+export type LoginResponse = ApiResponse<LoginResponseData>;
+
 export interface SyncData {
   server_time: string;
   attendees: Attendee[];
@@ -57,6 +81,7 @@ export interface SyncData {
 }
 
 export type SyncResponse = ApiResponse<SyncData>;
+export type AttendeeSyncResponse = SyncResponse;
 
 export interface ScanUploadData {
   results: {
@@ -71,6 +96,7 @@ export interface ScanUploadData {
 }
 
 export type ScanUploadResponse = ApiResponse<ScanUploadData>;
+export type BatchCheckinResponse = ScanUploadResponse;
 
 export interface ConflictTask {
   type: 'scan' | 'attendee';

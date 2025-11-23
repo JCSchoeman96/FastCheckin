@@ -3,7 +3,7 @@
   import { auth } from "$lib/stores/auth";
   import { syncStore } from "$lib/stores/sync.svelte";
   import type { ScanDirection, Attendee } from "$lib/types";
-  import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
+  import { Html5QrcodeScanner, Html5QrcodeSupportedFormats, type Html5QrcodeResult } from "html5-qrcode";
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { db } from "$lib/db";
@@ -128,12 +128,12 @@
     await BarcodeScanner.removeAllListeners();
   }
 
-  function onScanSuccess(decodedText: string, decodedResult: any) {
+  function onScanSuccess(decodedText: string, decodedResult: Html5QrcodeResult) {
     // Debounce/Throttle could be added here if needed, but handleScan checks isProcessing
     handleScan(decodedText);
   }
 
-  function onScanFailure(error: any) {
+  function onScanFailure(error: unknown) {
     // console.warn(`Code scan error = ${error}`);
   }
 
@@ -165,8 +165,8 @@
         };
         triggerFeedback(false);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
     }
   }
 
