@@ -2,6 +2,7 @@ import { writable, derived } from 'svelte/store';
 import { browser } from '$app/environment';
 import { API_ENDPOINTS } from '$lib/config';
 import { getJWT, setJWT } from '$lib/db';
+import type { LoginResponse } from '$lib/types';
 
 // Types for the auth state
 export interface AuthState {
@@ -70,15 +71,15 @@ function createAuthStore() {
           body: JSON.stringify({ event_id, device_name, credential })
         });
 
-        const data = await response.json();
+        const data: LoginResponse = await response.json();
 
         if (!response.ok) {
-          const message = data?.error?.message || data?.message || 'Login failed';
+          const message = data.error?.message || 'Login failed';
           throw new Error(message);
         }
 
-        const responseBody = data.data ?? data;
-        const token = responseBody.token;
+        const responseBody = data.data ?? null;
+        const token = responseBody?.token;
 
         if (!token) {
           throw new Error('Login failed: missing token');
@@ -100,11 +101,12 @@ function createAuthStore() {
         }));
 
         return true;
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'An unexpected error occurred';
         update(s => ({
           ...s,
           isLoading: false,
-          error: err.message || 'An unexpected error occurred'
+          error: message
         }));
         return false;
       }

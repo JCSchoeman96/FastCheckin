@@ -1,6 +1,6 @@
 import { db, hasRecentReplay, markReplay, pruneReplayCache, deriveScanSlot, buildIdempotencyKey, getNextDeviceClock } from '$lib/db';
 import { sync } from '$lib/stores/sync';
-import type { ScanDirection } from '$lib/types';
+import type { Attendee, ScanDirection, ScanErrorCode } from '$lib/types';
 import { validateScan } from './validation';
 import { notifications } from '$lib/stores/notifications';
 import { REPLAY_CACHE_WINDOW_MS } from '$lib/config';
@@ -8,8 +8,8 @@ import { REPLAY_CACHE_WINDOW_MS } from '$lib/config';
 export interface ScanResult {
   success: boolean;
   message: string;
-  attendee?: any;
-  error_code?: string;
+  attendee?: Attendee;
+  error_code?: ScanErrorCode;
 }
 
 /**

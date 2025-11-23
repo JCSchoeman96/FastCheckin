@@ -1,9 +1,9 @@
-import type { Attendee, ScanDirection } from '$lib/types';
+import type { Attendee, ScanDirection, ValidationErrorCode } from '$lib/types';
 
 export interface ValidationResult {
   valid: boolean;
   message: string;
-  errorCode?: string;
+  errorCode?: ValidationErrorCode;
 }
 
 /**

@@ -31,17 +31,17 @@ function createSyncStore() {
     update(s => ({ ...s, isSyncing: true, error: null }));
 
     try {
-      const batches = pendingScans.reduce((acc, scan) => {
+      const batches = pendingScans.reduce<Record<number, { event_id: number; scans: ScanQueueItem[] }>>((acc, scan) => {
         const scanVersion = scan.scan_version || scan.scanned_at;
-        const normalized = { ...scan, scan_version: scanVersion };
+        const normalized: ScanQueueItem = { ...scan, scan_version: scanVersion };
 
         if (!acc[scan.event_id]) {
-          acc[scan.event_id] = { event_id: scan.event_id, scans: [] as ScanQueueItem[] };
+          acc[scan.event_id] = { event_id: scan.event_id, scans: [] };
         }
 
         acc[scan.event_id].scans.push(normalized);
         return acc;
-      }, {} as Record<number, { event_id: number; scans: ScanQueueItem[] }>);
+      }, {});
 
       const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
         method: 'POST',
@@ -54,7 +54,7 @@ function createSyncStore() {
 
       if (!response.ok) throw new Error(`Sync up failed: ${response.statusText}`);
 
-      const responseData = await response.json();
+      const responseData: ScanUploadResponse = await response.json();
       const { data, error } = responseData;
 
       if (error) throw new Error(error.message || 'Sync up failed');
@@ -72,11 +72,12 @@ function createSyncStore() {
       }));
 
       return data.results.length;
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Sync up failed';
         update(s => ({
           ...s,
           isSyncing: false,
-          error: err.message || 'Sync up failed'
+          error: message
         }));
         throw err;
       }
@@ -148,11 +149,12 @@ function createSyncStore() {
         }));
 
         return data.count;
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Sync down failed';
         update(s => ({
           ...s,
           isSyncing: false,
-          error: err.message || 'Sync down failed'
+          error: message
         }));
         throw err;
       }

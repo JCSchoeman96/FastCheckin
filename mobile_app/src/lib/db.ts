@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { Attendee, ConflictTask, ScanQueueItem } from './types';
+import type { Attendee, ConflictTask, ScanQueueItem, ScanUploadData } from './types';
 import { CACHE_TTL_MS, REPLAY_CACHE_WINDOW_MS } from './config';
 
 export interface KVItem {
@@ -426,7 +426,7 @@ export async function resolveConflictTasks(overrideWithServer: boolean): Promise
 }
 
 export async function processScanResults(
-  results: { idempotency_key: string; status: string; message: string; server_state?: any }[]
+  results: ScanUploadData['results']
 ): Promise<void> {
   const conflictTasks: ConflictTask[] = [];
   const now = new Date().toISOString();
