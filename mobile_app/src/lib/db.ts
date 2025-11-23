@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { Attendee, ConflictTask, ScanQueueItem } from './types';
-import { CACHE_TTL_MS } from './config';
+import { CACHE_TTL_MS, REPLAY_CACHE_WINDOW_MS } from './config';
 
 export interface KVItem {
   key: string;
@@ -9,10 +9,16 @@ export interface KVItem {
   updated_at?: string;
 }
 
+export interface ReplayCacheEntry {
+  key: string;
+  timestamp: string;
+}
+
 export class FastCheckDB extends Dexie {
   attendees!: Table<Attendee, number>;
   queue!: Table<ScanQueueItem, number>;
   kv_store!: Table<KVItem, string>;
+  replay_cache!: Table<ReplayCacheEntry, string>;
 
   constructor() {
     super('FastCheckDB');
@@ -68,6 +74,13 @@ export class FastCheckDB extends Dexie {
           record.conflict = record.conflict || false;
         });
       });
+
+    this.version(4).stores({
+      attendees: '++id, [event_id+ticket_code], ticket_code, event_id, updated_at',
+      queue: '++id, idempotency_key, [event_id+sync_status]',
+      kv_store: 'key, updated_at',
+      replay_cache: 'key, timestamp'
+    });
   }
 }
 
@@ -92,6 +105,38 @@ export async function expireCache(ttlMs: number): Promise<{ attendeesExpired: nu
   });
 
   return { attendeesExpired, kvExpired };
+}
+
+const replayCacheKey = (eventId: number, ticketCode: string, direction: string) =>
+  `${eventId}:${ticketCode}:${direction}`;
+
+export async function markReplay(eventId: number, ticketCode: string, direction: string, timestamp = new Date()): Promise<void> {
+  await db.replay_cache.put({
+    key: replayCacheKey(eventId, ticketCode, direction),
+    timestamp: timestamp.toISOString()
+  });
+}
+
+export async function hasRecentReplay(
+  eventId: number,
+  ticketCode: string,
+  direction: string,
+  windowMs: number
+): Promise<boolean> {
+  const entry = await db.replay_cache.get(replayCacheKey(eventId, ticketCode, direction));
+  if (!entry) return false;
+
+  const delta = Date.now() - Date.parse(entry.timestamp);
+  return delta >= 0 && delta <= windowMs;
+}
+
+export async function clearReplay(eventId: number, ticketCode: string, direction: string): Promise<void> {
+  await db.replay_cache.delete(replayCacheKey(eventId, ticketCode, direction));
+}
+
+export async function pruneReplayCache(windowMs: number): Promise<number> {
+  const cutoff = new Date(Date.now() - windowMs).toISOString();
+  return await db.replay_cache.where('timestamp').below(cutoff).delete();
 }
 
 /**
@@ -330,6 +375,7 @@ export async function processScanResults(
 
       if (scan && scan.id) {
         if (isSuccess) {
+          await clearReplay(scan.event_id, scan.ticket_code, scan.direction);
           await db.queue.delete(scan.id);
         } else if (isConflict) {
           await db.queue.update(scan.id, {
@@ -362,4 +408,6 @@ export async function processScanResults(
   if (conflictTasks.length > 0) {
     await appendConflictTasks(conflictTasks);
   }
+
+  await pruneReplayCache(REPLAY_CACHE_WINDOW_MS);
 }
