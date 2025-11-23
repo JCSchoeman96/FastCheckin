@@ -5,6 +5,8 @@ export interface Notification {
   type: 'error' | 'success' | 'info' | 'warning';
   message: string;
   duration?: number; // ms, default 5000
+  persistent?: boolean;
+  actions?: { label: string; handler: () => void }[];
 }
 
 function createNotificationStore() {
@@ -14,7 +16,7 @@ function createNotificationStore() {
 
   function add(notification: Omit<Notification, 'id'>): string {
     const id = `notification-${nextId++}`;
-    const duration = notification.duration ?? 5000;
+    const duration = notification.persistent ? 0 : notification.duration ?? 5000;
     const fullNotification: Notification = {
       ...notification,
       id,
@@ -58,6 +60,10 @@ function createNotificationStore() {
     return add({ type: 'warning', message, duration });
   }
 
+  function conflict(message: string, actions?: { label: string; handler: () => void }[]) {
+    return add({ type: 'warning', message, actions, persistent: true, duration: 0 });
+  }
+
   return {
     subscribe,
     add,
@@ -66,7 +72,8 @@ function createNotificationStore() {
     error,
     success,
     info,
-    warning
+    warning,
+    conflict
   };
 }
 
