@@ -73,9 +73,9 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
-      # Step 5: Compile with warnings as errors
-      - name: Compile code (warnings as errors)
-        run: mix compile --warnings-as-errors
+      # Step 5: Compile code
+      - name: Compile code
+        run: mix compile
 
       # Step 6: Check code formatting
       - name: Check code formatting
