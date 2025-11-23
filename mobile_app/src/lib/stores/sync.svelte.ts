@@ -1,6 +1,6 @@
 import { browser } from '$app/environment';
 import { API_ENDPOINTS, CACHE_TTL_MS } from '$lib/config';
-import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults, expireCache } from '$lib/db';
+import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults, expireCache, getConflictTasks, resolveConflictTasks } from '$lib/db';
 import type { SyncResponse, ScanUploadResponse } from '$lib/types';
 import { notifications } from './notifications';
 
@@ -10,8 +10,10 @@ class SyncStore {
   isSyncing = $state(false);
   queueLength = $state(0);
   attendeeCount = $state(0);
+  conflictCount = $state(0);
   cacheNeedsRefresh = $state(false);
   cacheNotice: string | null = $state(null);
+  conflictNoticeId: string | null = $state(null);
 
   constructor() {
     if (browser) {
@@ -25,6 +27,7 @@ class SyncStore {
       }
 
       this.refreshCacheState();
+      this.refreshConflicts();
     }
   }
 
@@ -61,6 +64,43 @@ class SyncStore {
     }
   }
 
+  async refreshConflicts(): Promise<void> {
+    const conflicts = await getConflictTasks();
+    this.conflictCount = conflicts.length;
+
+    if (conflicts.length === 0) {
+      if (this.conflictNoticeId) {
+        notifications.remove(this.conflictNoticeId);
+        this.conflictNoticeId = null;
+      }
+      return;
+    }
+
+    const message = conflicts.length === 1
+      ? '1 sync conflict requires attention'
+      : `${conflicts.length} sync conflicts require attention`;
+
+    if (this.conflictNoticeId) {
+      notifications.remove(this.conflictNoticeId);
+    }
+
+    this.conflictNoticeId = notifications.conflict(message, [
+      { label: 'Retry', handler: () => this.retryConflicts(false) },
+      { label: 'Override', handler: () => this.retryConflicts(true) }
+    ]);
+  }
+
+  retryConflicts = async (overrideWithServer: boolean): Promise<void> => {
+    await resolveConflictTasks(overrideWithServer);
+    await this.refreshConflicts();
+
+    if (!overrideWithServer) {
+      await this.syncPendingScans();
+    }
+
+    await this.syncAttendees();
+  };
+
   /**
    * Orchestrates a full sync: uploads pending scans, then downloads updates.
    */
@@ -78,6 +118,7 @@ class SyncStore {
 
       if (!this.isSyncing) {
         await this.refreshCacheState();
+        await this.refreshConflicts();
       }
     } catch (error) {
       console.error('Sync sequence failed:', error);
@@ -181,6 +222,7 @@ class SyncStore {
       this.cacheNeedsRefresh = false;
       this.cacheNotice = null;
       this.attendeeCount = await db.attendees.count();
+      await this.refreshConflicts();
 
     } catch (error) {
       // Error notifications already shown above, no need to duplicate
@@ -200,7 +242,13 @@ class SyncStore {
     try {
       // 1. Get pending scans
       const pendingScans = await getPendingScans();
-      if (pendingScans.length === 0) return;
+      if (pendingScans.length === 0) {
+        const conflicts = await getConflictTasks();
+        const blockedScans = conflicts.filter(task => task.type === 'scan').length;
+        this.queueLength = blockedScans;
+        await this.refreshConflicts();
+        return;
+      }
 
       this.isSyncing = true;
 
@@ -210,6 +258,7 @@ class SyncStore {
       }
 
       const currentEventId = await import('$lib/db').then(m => m.getCurrentEventId());
+      const payloadScans = pendingScans.map(scan => ({ ...scan, scan_version: scan.scan_version || scan.scanned_at }));
 
       // 2. Upload scans
       const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
@@ -218,9 +267,9 @@ class SyncStore {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           event_id: currentEventId,
-          scans: pendingScans 
+          scans: payloadScans
         })
       });
 
@@ -249,7 +298,10 @@ class SyncStore {
 
       // 4. Refresh queue length
       const remaining = await getPendingScans();
-      this.queueLength = remaining.length;
+      await this.refreshConflicts();
+      const conflicts = await getConflictTasks();
+      const blockedScans = conflicts.filter(task => task.type === 'scan').length;
+      this.queueLength = remaining.length + blockedScans;
 
     } catch (error) {
       // Error notifications already shown above, no need to duplicate

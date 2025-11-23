@@ -19,6 +19,21 @@
             : 'bg-blue-600 text-white'}">
       <div class="flex-1">
         <p class="text-sm font-medium">{notification.message}</p>
+
+        {#if notification.actions?.length}
+          <div class="mt-2 flex flex-wrap gap-2">
+            {#each notification.actions as action}
+              <button
+                class="text-xs font-semibold rounded bg-white/20 px-2 py-1 hover:bg-white/30"
+                on:click={() => {
+                  action.handler?.();
+                  notifications.remove(notification.id);
+                }}>
+                {action.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
       <button
         on:click={() => notifications.remove(notification.id)}

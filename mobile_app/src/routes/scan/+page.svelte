@@ -8,7 +8,7 @@
   import { goto } from "$app/navigation";
   import { db } from "$lib/db";
   import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
-  import { BarcodeScanner, BarcodeFormat, LensFacing } from "@capacitor-mlkit/barcode-scanning";
+  import { BarcodeScanner, BarcodeFormat, LensFacing, type BarcodesScannedEvent } from "@capacitor-mlkit/barcode-scanning";
   import { Haptics, NotificationType } from "@capacitor/haptics";
 
   // State
@@ -93,8 +93,9 @@
         barcodeListener = null;
       }
 
-      barcodeListener = await BarcodeScanner.addListener("barcodeScanned", async (event) => {
-        const code = event.barcode?.displayValue || event.barcode?.rawValue;
+      barcodeListener = await BarcodeScanner.addListener("barcodesScanned", async (event: BarcodesScannedEvent) => {
+        const firstBarcode = event.barcodes?.[0];
+        const code = firstBarcode?.displayValue || firstBarcode?.rawValue;
 
         if (code) {
           handleScan(code);

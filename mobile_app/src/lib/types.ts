@@ -1,6 +1,6 @@
 export type PaymentStatus = 'paid' | 'free' | 'pending' | 'refunded' | 'cancelled';
 export type ScanDirection = 'in' | 'out';
-export type SyncStatus = 'pending' | 'synced' | 'error';
+export type SyncStatus = 'pending' | 'synced' | 'error' | 'conflict';
 
 export interface Attendee {
   id: number;
@@ -18,6 +18,9 @@ export interface Attendee {
   checked_out_at: string | null;
   created_at?: string;
   updated_at: string;
+  conflict?: boolean;
+  server_state?: Partial<Attendee>;
+  local_state?: Partial<Attendee>;
 }
 
 export interface ScanQueueItem {
@@ -27,10 +30,13 @@ export interface ScanQueueItem {
   ticket_code: string;
   direction: ScanDirection;
   scanned_at: string; // ISO 8601
+  scan_version?: string;
   entrance_name?: string;
   operator_name?: string;
   sync_status: SyncStatus;
   error_message?: string;
+  server_state?: Record<string, any>;
+  local_state?: Record<string, any>;
 }
 
 export interface ApiResponse<T> {
@@ -53,10 +59,24 @@ export type SyncResponse = ApiResponse<SyncData>;
 export interface ScanUploadData {
   results: {
     idempotency_key: string;
-    status: 'success' | 'duplicate' | 'error';
+    status: 'success' | 'duplicate' | 'error' | 'conflict';
     message: string;
+    server_state?: Record<string, any>;
+    server_version?: string;
   }[];
   processed: number;
 }
 
 export type ScanUploadResponse = ApiResponse<ScanUploadData>;
+
+export interface ConflictTask {
+  type: 'scan' | 'attendee';
+  queue_id?: number;
+  attendee_id?: number;
+  ticket_code?: string;
+  event_id?: number;
+  idempotency_key?: string;
+  local_state?: Record<string, any>;
+  server_state?: Record<string, any>;
+  detected_at: string;
+}
