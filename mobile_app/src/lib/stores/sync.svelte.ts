@@ -1,11 +1,58 @@
 import { browser } from '$app/environment';
 import { API_ENDPOINTS, CACHE_TTL_MS } from '$lib/config';
-import { setJWT, setCurrentEventId, getJWT, saveSyncData, db, getPendingScans, processScanResults, expireCache, getConflictTasks, resolveConflictTasks } from '$lib/db';
-import type { SyncResponse, ScanUploadResponse, LoginResponse, ScanQueueItem } from '$lib/types';
+import {
+  db,
+  expireCache,
+  getConflictTasks,
+  getJWT,
+  getPendingScans,
+  processScanResults,
+  resolveConflictTasks,
+  saveSyncData,
+  setCurrentEventId,
+  setJWT
+} from '$lib/db';
+import type { LoginResponse, ScanQueueItem, ScanUploadResponse, SyncResponse } from '$lib/types';
 import { notifications } from './notifications';
 
-class SyncStore {
-  // State using Svelte 5 Runes
+type SyncDependencies = {
+  fetch: typeof fetch;
+  db: typeof db;
+  expireCache: typeof expireCache;
+  getConflictTasks: typeof getConflictTasks;
+  getJWT: typeof getJWT;
+  getPendingScans: typeof getPendingScans;
+  processScanResults: typeof processScanResults;
+  resolveConflictTasks: typeof resolveConflictTasks;
+  saveSyncData: typeof saveSyncData;
+  setCurrentEventId: typeof setCurrentEventId;
+  setJWT: typeof setJWT;
+  notifications: typeof notifications;
+  cacheTtlMs: number;
+};
+
+const defaultDeps: SyncDependencies = {
+  fetch,
+  db,
+  expireCache,
+  getConflictTasks,
+  getJWT,
+  getPendingScans,
+  processScanResults,
+  resolveConflictTasks,
+  saveSyncData,
+  setCurrentEventId,
+  setJWT,
+  notifications,
+  cacheTtlMs: CACHE_TTL_MS
+};
+
+interface SyncOptions {
+  attachNetworkHandlers?: boolean;
+  initialOnline?: boolean;
+}
+
+export class SyncStore {
   isOnline = $state(false);
   isSyncing = $state(false);
   queueLength = $state(0);
@@ -14,47 +61,74 @@ class SyncStore {
   cacheNeedsRefresh = $state(false);
   cacheNotice: string | null = $state(null);
   conflictNoticeId: string | null = $state(null);
+  lastSync: string | null = $state(null);
 
-  constructor() {
-    if (browser) {
-      this.isOnline = navigator.onLine;
+  private deps: SyncDependencies;
+  private attachNetworkHandlers: boolean;
+
+  constructor(deps: Partial<SyncDependencies> = {}, options: SyncOptions = {}) {
+    this.deps = { ...defaultDeps, ...deps };
+    this.isOnline = options.initialOnline ?? (browser ? navigator.onLine : true);
+    this.attachNetworkHandlers = options.attachNetworkHandlers ?? browser;
+
+    if (browser && this.attachNetworkHandlers) {
       window.addEventListener('online', this.handleOnline);
       window.addEventListener('offline', this.handleOffline);
+    }
 
-      // Initial sync check
-      if (this.isOnline) {
-        this.syncAll();
-      }
+    // Prime state
+    this.refreshCacheState();
+    this.refreshConflicts();
+    this.refreshCounts();
 
-      this.refreshCacheState();
-      this.refreshConflicts();
+    if (browser && this.isOnline) {
+      this.syncAll();
     }
   }
 
-  handleOnline = () => {
+  destroy() {
+    if (browser && this.attachNetworkHandlers) {
+      window.removeEventListener('online', this.handleOnline);
+      window.removeEventListener('offline', this.handleOffline);
+    }
+  }
+
+  private handleOnline = () => {
     this.isOnline = true;
-    // Debounce slightly to avoid rapid toggling
     setTimeout(() => {
       if (this.isOnline) {
         this.syncAll();
       }
-    }, 1000);
+    }, 500);
   };
 
-  handleOffline = () => {
+  private handleOffline = () => {
     this.isOnline = false;
   };
 
+  private async refreshCounts(): Promise<void> {
+    const [attendeeCount, queueItems, conflicts] = await Promise.all([
+      this.deps.db.attendees.count(),
+      this.deps.getPendingScans(),
+      this.deps.getConflictTasks()
+    ]);
+
+    this.attendeeCount = attendeeCount;
+    const blockedScans = conflicts.filter(task => task.type === 'scan').length;
+    this.queueLength = queueItems.length + blockedScans;
+    this.conflictCount = conflicts.length;
+  }
+
   async refreshCacheState(): Promise<void> {
-    const { attendeesExpired, kvExpired } = await expireCache(CACHE_TTL_MS);
+    const { attendeesExpired, kvExpired } = await this.deps.expireCache(this.deps.cacheTtlMs);
     const expired = attendeesExpired + kvExpired;
 
-    this.attendeeCount = await db.attendees.count();
+    this.attendeeCount = await this.deps.db.attendees.count();
 
     if (expired > 0) {
       this.cacheNeedsRefresh = true;
       this.cacheNotice = 'Cached data expired. Please sync attendees to continue.';
-      notifications.info('Cache expired. Refreshing data is required.');
+      this.deps.notifications.info('Cache expired. Refreshing data is required.');
     } else if (this.attendeeCount === 0) {
       this.cacheNeedsRefresh = true;
       this.cacheNotice = 'No attendee data found. Please sync before scanning.';
@@ -65,12 +139,12 @@ class SyncStore {
   }
 
   async refreshConflicts(): Promise<void> {
-    const conflicts = await getConflictTasks();
+    const conflicts = await this.deps.getConflictTasks();
     this.conflictCount = conflicts.length;
 
     if (conflicts.length === 0) {
       if (this.conflictNoticeId) {
-        notifications.remove(this.conflictNoticeId);
+        this.deps.notifications.remove(this.conflictNoticeId);
         this.conflictNoticeId = null;
       }
       return;
@@ -81,17 +155,17 @@ class SyncStore {
       : `${conflicts.length} sync conflicts require attention`;
 
     if (this.conflictNoticeId) {
-      notifications.remove(this.conflictNoticeId);
+      this.deps.notifications.remove(this.conflictNoticeId);
     }
 
-    this.conflictNoticeId = notifications.conflict(message, [
+    this.conflictNoticeId = this.deps.notifications.conflict(message, [
       { label: 'Retry', handler: () => this.retryConflicts(false) },
       { label: 'Override', handler: () => this.retryConflicts(true) }
     ]);
   }
 
   retryConflicts = async (overrideWithServer: boolean): Promise<void> => {
-    await resolveConflictTasks(overrideWithServer);
+    await this.deps.resolveConflictTasks(overrideWithServer);
     await this.refreshConflicts();
 
     if (!overrideWithServer) {
@@ -101,71 +175,57 @@ class SyncStore {
     await this.syncAttendees();
   };
 
-  /**
-   * Orchestrates a full sync: uploads pending scans, then downloads updates.
-   */
-  async syncAll(): Promise<void> {
-    if (this.isSyncing || !this.isOnline) return;
-    
-    try {
-      // We don't set isSyncing here because syncUp/syncDown manage it individually.
-      // However, we might want to prevent overlap if called multiple times.
-      // Since JS is single-threaded, the check above protects us if we await.
-
-      await this.syncUp();
-      await this.syncPendingScans();
-      await this.syncAttendees();
-
-      if (!this.isSyncing) {
-        await this.refreshCacheState();
-        await this.refreshConflicts();
-      }
-    } catch (error) {
-      console.error('Sync sequence failed:', error);
-    }
-  }
-
-
   async login(eventId: string, deviceName: string, credential: string): Promise<boolean> {
     if (!this.isOnline) return false;
 
     try {
-      const response = await fetch(API_ENDPOINTS.LOGIN, {
+      const response = await this.deps.fetch(API_ENDPOINTS.LOGIN, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: parseInt(eventId), device_name: deviceName, credential })
+        body: JSON.stringify({ event_id: parseInt(eventId, 10), device_name: deviceName, credential })
       });
 
       const responseData: LoginResponse = await response.json();
 
       if (!response.ok) {
         const message = responseData.error?.message || response.statusText;
-        notifications.error(`Login failed: ${message}`);
+        this.deps.notifications.error(`Login failed: ${message}`);
         return false;
       }
 
       const { data, error } = responseData;
 
-      if (error) {
-        notifications.error(`Login failed: ${error.message}`);
+      if (error || !data?.token) {
+        const message = error?.message || 'Login failed: missing token';
+        this.deps.notifications.error(message);
         return false;
       }
 
-      if (!data?.token) {
-        notifications.error('Login failed: missing token');
-        return false;
-      }
-      
-      // Persist auth state
-      await setJWT(data.token);
-      await setCurrentEventId(data.event_id);
-      
-      notifications.success('Logged in successfully');
+      await this.deps.setJWT(data.token);
+      await this.deps.setCurrentEventId(data.event_id);
+
+      this.deps.notifications.success('Logged in successfully');
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      notifications.error(`Login error: ${message}`);
+      this.deps.notifications.error(`Login error: ${message}`);
       return false;
+    }
+  }
+
+  async syncAll(): Promise<void> {
+    if (this.isSyncing || !this.isOnline) return;
+
+    this.isSyncing = true;
+    try {
+      await this.syncUp();
+      await this.syncAttendees();
+      await this.refreshCacheState();
+      await this.refreshConflicts();
+    } catch (error) {
+      console.error('Sync sequence failed:', error);
+    } finally {
+      this.isSyncing = false;
     }
   }
 
@@ -174,58 +234,46 @@ class SyncStore {
     this.isSyncing = true;
 
     try {
-      const token = await getJWT();
+      const token = await this.deps.getJWT();
       if (!token) {
         throw new Error('No token found');
       }
 
-      // Get last sync time
-      const lastSyncItem = await db.kv_store.get('last_sync');
+      const lastSyncItem = await this.deps.db.kv_store.get('last_sync');
       const since = lastSyncItem?.value;
 
-      // Build URL
       let url = API_ENDPOINTS.ATTENDEES;
       if (since) {
         url += `?since=${encodeURIComponent(since)}`;
       }
 
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const response = await this.deps.fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (response.status === 401) {
-        // Auth failed - clear state
-        await setJWT(null);
-        await setCurrentEventId(null);
-        notifications.error('Session expired. Please log in again.');
+        await this.deps.setJWT(null);
+        await this.deps.setCurrentEventId(null);
+        this.deps.notifications.error('Session expired. Please log in again.');
         throw new Error('Unauthorized');
       }
 
-      if (!response.ok) {
-        notifications.error(`Sync failed: ${response.statusText}`);
-        throw new Error(`Sync down failed: ${response.statusText}`);
-      }
-
       const responseData: SyncResponse = await response.json();
-      const { data, error } = responseData;
 
-      if (error) {
-        notifications.error(`Sync failed: ${error.message}`);
-        throw new Error(error.message || 'Sync down failed');
+      if (!response.ok || responseData.error) {
+        const message = responseData.error?.message || response.statusText;
+        this.deps.notifications.error(`Sync failed: ${message}`);
+        throw new Error(`Sync down failed: ${message}`);
       }
 
-      // Save data using helper
-      await saveSyncData(data.attendees, data.server_time);
+      await this.deps.saveSyncData(responseData.data.attendees, responseData.data.server_time);
 
       this.cacheNeedsRefresh = false;
       this.cacheNotice = null;
-      this.attendeeCount = await db.attendees.count();
+      this.lastSync = responseData.data.server_time;
+      await this.refreshCounts();
       await this.refreshConflicts();
-
     } catch (error) {
-      // Error notifications already shown above, no need to duplicate
       console.error('Sync down error:', error);
     } finally {
       this.isSyncing = false;
@@ -238,12 +286,11 @@ class SyncStore {
 
   async syncPendingScans(): Promise<void> {
     if (!this.isOnline) return;
-    
+
     try {
-      // 1. Get pending scans
-      const pendingScans = await getPendingScans();
+      const pendingScans = await this.deps.getPendingScans();
       if (pendingScans.length === 0) {
-        const conflicts = await getConflictTasks();
+        const conflicts = await this.deps.getConflictTasks();
         const blockedScans = conflicts.filter(task => task.type === 'scan').length;
         this.queueLength = blockedScans;
         await this.refreshConflicts();
@@ -252,7 +299,7 @@ class SyncStore {
 
       this.isSyncing = true;
 
-      const token = await getJWT();
+      const token = await this.deps.getJWT();
       if (!token) {
         throw new Error('No token found');
       }
@@ -268,8 +315,7 @@ class SyncStore {
         return acc;
       }, {});
 
-      // 2. Upload scans
-      const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
+      const response = await this.deps.fetch(API_ENDPOINTS.BATCH_CHECKIN, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -279,37 +325,24 @@ class SyncStore {
       });
 
       if (response.status === 401) {
-        await setJWT(null);
-        await setCurrentEventId(null);
-        notifications.error('Session expired. Please log in again.');
+        await this.deps.setJWT(null);
+        await this.deps.setCurrentEventId(null);
+        this.deps.notifications.error('Session expired. Please log in again.');
         throw new Error('Unauthorized');
       }
 
-      if (!response.ok) {
-        notifications.error(`Upload failed: ${response.statusText}`);
-        throw new Error(`Sync up failed: ${response.statusText}`);
-      }
-
       const responseData: ScanUploadResponse = await response.json();
-      const { data, error } = responseData;
 
-      if (error) {
-        notifications.error(`Upload failed: ${error.message}`);
-        throw new Error(error.message || 'Sync up failed');
+      if (!response.ok || responseData.error) {
+        const message = responseData.error?.message || response.statusText;
+        this.deps.notifications.error(`Upload failed: ${message}`);
+        throw new Error(`Sync up failed: ${message}`);
       }
 
-      // 3. Process results (cleanup queue)
-      await processScanResults(data.results);
-
-      // 4. Refresh queue length
-      const remaining = await getPendingScans();
+      await this.deps.processScanResults(responseData.data.results);
+      await this.refreshCounts();
       await this.refreshConflicts();
-      const conflicts = await getConflictTasks();
-      const blockedScans = conflicts.filter(task => task.type === 'scan').length;
-      this.queueLength = remaining.length + blockedScans;
-
     } catch (error) {
-      // Error notifications already shown above, no need to duplicate
       console.error('Sync up error:', error);
     } finally {
       this.isSyncing = false;
@@ -319,13 +352,11 @@ class SyncStore {
   async syncUp(): Promise<void> {
     return this.syncPendingScans();
   }
-
-  destroy() {
-    if (browser) {
-      window.removeEventListener('online', this.handleOnline);
-      window.removeEventListener('offline', this.handleOffline);
-    }
-  }
 }
 
-export const syncStore = new SyncStore();
+export const createSyncStore = (
+  deps: Partial<SyncDependencies> = {},
+  options: SyncOptions = {}
+): SyncStore => new SyncStore(deps, options);
+
+export const syncStore = createSyncStore();
