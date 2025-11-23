@@ -257,8 +257,16 @@ class SyncStore {
         throw new Error('No token found');
       }
 
-      const currentEventId = await import('$lib/db').then(m => m.getCurrentEventId());
-      const payloadScans = pendingScans.map(scan => ({ ...scan, scan_version: scan.scan_version || scan.scanned_at }));
+      const batches = pendingScans.reduce((acc, scan) => {
+        const normalized = { ...scan, scan_version: scan.scan_version || scan.scanned_at };
+
+        if (!acc[scan.event_id]) {
+          acc[scan.event_id] = { event_id: scan.event_id, scans: [] as any[] };
+        }
+
+        acc[scan.event_id].scans.push(normalized);
+        return acc;
+      }, {} as Record<number, { event_id: number; scans: any[] }>);
 
       // 2. Upload scans
       const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
@@ -267,10 +275,7 @@ class SyncStore {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          event_id: currentEventId,
-          scans: payloadScans
-        })
+        body: JSON.stringify({ batches: Object.values(batches) })
       });
 
       if (response.status === 401) {

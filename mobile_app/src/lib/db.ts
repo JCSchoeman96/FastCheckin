@@ -273,26 +273,95 @@ export async function getCurrentEventId(): Promise<number | null> {
  * Queue Helpers
  * Encapsulates logic for adding scans, fetching pending items, and processing results.
  */
-import { v4 as uuidv4 } from 'uuid';
+export const deriveScanSlot = (scannedAt: string): string => {
+  const parsed = Date.parse(scannedAt);
+  if (Number.isNaN(parsed)) return '0';
+
+  return Math.floor(parsed / 1000).toString();
+};
+
+export const buildIdempotencyKey = (
+  eventId: number,
+  ticketCode: string,
+  direction: string,
+  slot: string | number
+): string => `scan:${eventId}:${ticketCode}:${direction}:${slot}`;
+
+export async function getNextDeviceClock(): Promise<number> {
+  const now = new Date().toISOString();
+
+  return await db.transaction('rw', db.kv_store, async () => {
+    const existing = await db.kv_store.get('device_clock');
+    const current = typeof existing?.value === 'number'
+      ? existing.value
+      : existing?.value
+        ? parseInt(existing.value, 10)
+        : 0;
+
+    const next = Number.isFinite(current) ? current + 1 : 1;
+    await db.kv_store.put(withTimestamps({ key: 'device_clock', value: next }, now));
+
+    return next;
+  });
+}
 
 export async function addScanToQueue(
-  scan: Omit<ScanQueueItem, 'id' | 'sync_status' | 'idempotency_key'> & { idempotency_key?: string }
+  scan: Omit<ScanQueueItem, 'id' | 'sync_status' | 'idempotency_key' | 'scan_slot' | 'device_clock'> & {
+    idempotency_key?: string;
+    scan_slot?: string;
+    device_clock?: number;
+  }
 ): Promise<void> {
+  const scan_slot = scan.scan_slot || deriveScanSlot(scan.scanned_at);
   const scan_version = scan.scan_version || scan.scanned_at || new Date().toISOString();
+  const device_clock = scan.device_clock ?? (await getNextDeviceClock());
+  const idempotency_key = scan.idempotency_key || buildIdempotencyKey(
+    scan.event_id,
+    scan.ticket_code,
+    scan.direction,
+    scan_slot
+  );
 
   await db.queue.add({
     ...scan,
-    idempotency_key: scan.idempotency_key || uuidv4(),
+    idempotency_key,
+    scan_slot,
+    device_clock,
     scan_version,
     sync_status: 'pending'
   });
 }
 
 export async function getPendingScans(): Promise<ScanQueueItem[]> {
-  return await db.queue
-    .where('sync_status')
-    .equals('pending')
-    .toArray();
+  const pending = await db.queue.where('sync_status').equals('pending').toArray();
+  const updates: { id: number; changes: Partial<ScanQueueItem> }[] = [];
+
+  for (const scan of pending) {
+    if (!scan.scan_slot) {
+      scan.scan_slot = deriveScanSlot(scan.scanned_at);
+      if (scan.id) {
+        updates.push({ id: scan.id, changes: { scan_slot: scan.scan_slot } });
+      }
+    }
+
+    if (typeof scan.device_clock !== 'number') {
+      scan.device_clock = await getNextDeviceClock();
+
+      if (scan.id) {
+        updates.push({ id: scan.id, changes: { device_clock: scan.device_clock } });
+      }
+    }
+  }
+
+  if (updates.length > 0) {
+    await db.transaction('rw', db.queue, async () => {
+      for (const update of updates) {
+        await db.queue.update(update.id, update.changes);
+      }
+    });
+  }
+
+  return pending;
 }
 
 export async function getConflictTasks(): Promise<ConflictTask[]> {
@@ -362,11 +431,13 @@ export async function processScanResults(
   const conflictTasks: ConflictTask[] = [];
   const now = new Date().toISOString();
 
-  await db.transaction('rw', db.queue, async () => {
+  await db.transaction('rw', db.queue, db.attendees, async () => {
     for (const result of results) {
       const status = result.status.toLowerCase();
       const isSuccess = status === 'success' || status === 'duplicate';
       const isConflict = status === 'conflict';
+      const isAlreadyProcessed = status === 'already_processed';
+      const isStale = status === 'stale';
 
       const scan = await db.queue
         .where('idempotency_key')
@@ -374,9 +445,16 @@ export async function processScanResults(
         .first();
 
       if (scan && scan.id) {
-        if (isSuccess) {
+        if (isSuccess || isAlreadyProcessed) {
+          await reconcileAttendeeState(scan, result.server_state, now);
           await clearReplay(scan.event_id, scan.ticket_code, scan.direction);
           await db.queue.delete(scan.id);
+        } else if (isStale) {
+          await db.queue.update(scan.id, {
+            sync_status: 'pending',
+            error_message: result.message || result.status,
+            scan_version: result.server_version || new Date().toISOString()
+          });
         } else if (isConflict) {
           await db.queue.update(scan.id, {
             sync_status: 'conflict',
@@ -410,4 +488,48 @@ export async function processScanResults(
   }
 
   await pruneReplayCache(REPLAY_CACHE_WINDOW_MS);
+}
+
+async function reconcileAttendeeState(scan: ScanQueueItem, serverState: any, now: string): Promise<void> {
+  const payloadState = serverState?.attendee || serverState;
+  const existing = await db.attendees
+    .where('[event_id+ticket_code]')
+    .equals([scan.event_id, scan.ticket_code])
+    .first();
+
+  if (payloadState && payloadState.ticket_code && payloadState.event_id) {
+    const merged = withTimestamps(
+      {
+        ...(existing || {}),
+        ...(payloadState as Partial<Attendee>),
+        conflict: false,
+        server_state: undefined,
+        local_state: undefined
+      },
+      now
+    ) as Attendee;
+
+    await db.attendees.put(merged);
+    return;
+  }
+
+  if (existing) {
+    const isCheckIn = scan.direction === 'in';
+
+    const updated = withTimestamps(
+      {
+        ...existing,
+        is_currently_inside: isCheckIn,
+        checkins_remaining: existing.checkins_remaining,
+        checked_in_at: isCheckIn ? scan.scanned_at : existing.checked_in_at,
+        checked_out_at: isCheckIn ? existing.checked_out_at : scan.scanned_at,
+        conflict: false,
+        server_state: undefined,
+        local_state: undefined
+      },
+      now
+    ) as Attendee;
+
+    await db.attendees.put(updated);
+  }
 }
