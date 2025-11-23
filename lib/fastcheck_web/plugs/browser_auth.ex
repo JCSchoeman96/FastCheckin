@@ -35,18 +35,17 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
   redirected to the login page with a `redirect_to` return path.
   """
   def call(conn, _opts) do
-    cond do
-      authenticated_session?(conn) ->
+    case {authenticated_session?(conn), credentials_from_header(conn)} do
+      {true, _credentials} ->
         assign_current_user(conn)
 
-      {:ok, username, password} <- credentials_from_header(conn),
-        valid_credentials?(username, password) ->
+      {false, {:ok, username, password}} when valid_credentials?(username, password) ->
         conn
         |> put_session(@session_key, true)
         |> put_session(@session_username_key, username)
         |> assign(:current_user, %{id: username, username: username})
 
-      true ->
+      _ ->
         conn
         |> redirect(to: login_redirect_path(conn))
         |> halt()
