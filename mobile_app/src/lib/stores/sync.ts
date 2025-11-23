@@ -1,18 +1,9 @@
 import { browser } from '$app/environment';
 import { API_ENDPOINTS, CACHE_TTL_MS } from '$lib/config';
-import {
-  db,
-  expireCache,
-  getConflictTasks,
-  getJWT,
-  getPendingScans,
-  processScanResults,
-  resolveConflictTasks,
-  saveSyncData,
-  setCurrentEventId,
-  setJWT
-} from '$lib/db';
-import type { LoginResponse, ScanQueueItem, ScanUploadResponse, SyncResponse } from '$lib/types';
+import { db, expireCache, getConflictTasks, getPendingScans, processScanResults, resolveConflictTasks, saveSyncData } from '$lib/db';
+import type { ScanQueueItem, ScanUploadResponse, SyncResponse } from '$lib/types';
+import { get } from 'svelte/store';
+import { auth } from './auth';
 import { notifications } from './notifications';
 
 type SyncDependencies = {
@@ -20,14 +11,14 @@ type SyncDependencies = {
   db: typeof db;
   expireCache: typeof expireCache;
   getConflictTasks: typeof getConflictTasks;
-  getJWT: typeof getJWT;
   getPendingScans: typeof getPendingScans;
   processScanResults: typeof processScanResults;
   resolveConflictTasks: typeof resolveConflictTasks;
   saveSyncData: typeof saveSyncData;
-  setCurrentEventId: typeof setCurrentEventId;
-  setJWT: typeof setJWT;
   notifications: typeof notifications;
+  getAuthToken: () => string | null;
+  getAuthEventId: () => number | null;
+  handleAuthError: (message: string) => Promise<void> | void;
   cacheTtlMs: number;
 };
 
@@ -36,14 +27,14 @@ const defaultDeps: SyncDependencies = {
   db,
   expireCache,
   getConflictTasks,
-  getJWT,
   getPendingScans,
   processScanResults,
   resolveConflictTasks,
   saveSyncData,
-  setCurrentEventId,
-  setJWT,
   notifications,
+  getAuthToken: () => get(auth).token,
+  getAuthEventId: () => get(auth).event_id,
+  handleAuthError: message => auth.handleUnauthorized(message),
   cacheTtlMs: CACHE_TTL_MS
 };
 
@@ -175,46 +166,8 @@ export class SyncStore {
     await this.syncAttendees();
   };
 
-  async login(eventId: string, deviceName: string, credential: string): Promise<boolean> {
-    if (!this.isOnline) return false;
-
-    try {
-      const response = await this.deps.fetch(API_ENDPOINTS.LOGIN, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: parseInt(eventId, 10), device_name: deviceName, credential })
-      });
-
-      const responseData: LoginResponse = await response.json();
-
-      if (!response.ok) {
-        const message = responseData.error?.message || response.statusText;
-        this.deps.notifications.error(`Login failed: ${message}`);
-        return false;
-      }
-
-      const { data, error } = responseData;
-
-      if (error || !data?.token) {
-        const message = error?.message || 'Login failed: missing token';
-        this.deps.notifications.error(message);
-        return false;
-      }
-
-      await this.deps.setJWT(data.token);
-      await this.deps.setCurrentEventId(data.event_id);
-
-      this.deps.notifications.success('Logged in successfully');
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      this.deps.notifications.error(`Login error: ${message}`);
-      return false;
-    }
-  }
-
   async syncAll(): Promise<void> {
-    if (this.isSyncing || !this.isOnline) return;
+    if (this.isSyncing || !this.isOnline || !this.deps.getAuthToken() || !this.deps.getAuthEventId()) return;
 
     this.isSyncing = true;
     try {
@@ -234,9 +187,15 @@ export class SyncStore {
     this.isSyncing = true;
 
     try {
-      const token = await this.deps.getJWT();
+      const token = this.deps.getAuthToken();
       if (!token) {
-        throw new Error('No token found');
+        await this.deps.handleAuthError('No active session. Please log in again.');
+        return;
+      }
+
+      if (!this.deps.getAuthEventId()) {
+        await this.deps.handleAuthError('No event selected. Please log in again.');
+        return;
       }
 
       const lastSyncItem = await this.deps.db.kv_store.get('last_sync');
@@ -252,9 +211,7 @@ export class SyncStore {
       });
 
       if (response.status === 401) {
-        await this.deps.setJWT(null);
-        await this.deps.setCurrentEventId(null);
-        this.deps.notifications.error('Session expired. Please log in again.');
+        await this.deps.handleAuthError('Session expired. Please log in again.');
         throw new Error('Unauthorized');
       }
 
@@ -288,8 +245,22 @@ export class SyncStore {
     if (!this.isOnline) return;
 
     try {
+      const token = this.deps.getAuthToken();
+      if (!token) {
+        await this.deps.handleAuthError('No active session. Please log in again.');
+        return;
+      }
+
+      const eventId = this.deps.getAuthEventId();
+      if (!eventId) {
+        await this.deps.handleAuthError('No event selected. Please log in again.');
+        return;
+      }
+
       const pendingScans = await this.deps.getPendingScans();
-      if (pendingScans.length === 0) {
+      const eventScans = pendingScans.filter(scan => scan.event_id === eventId);
+
+      if (eventScans.length === 0) {
         const conflicts = await this.deps.getConflictTasks();
         const blockedScans = conflicts.filter(task => task.type === 'scan').length;
         this.queueLength = blockedScans;
@@ -299,12 +270,7 @@ export class SyncStore {
 
       this.isSyncing = true;
 
-      const token = await this.deps.getJWT();
-      if (!token) {
-        throw new Error('No token found');
-      }
-
-      const batches = pendingScans.reduce<Record<number, { event_id: number; scans: ScanQueueItem[] }>>((acc, scan) => {
+      const batches = eventScans.reduce<Record<number, { event_id: number; scans: ScanQueueItem[] }>>((acc, scan) => {
         const normalized: ScanQueueItem = { ...scan, scan_version: scan.scan_version || scan.scanned_at };
 
         if (!acc[scan.event_id]) {
@@ -325,9 +291,7 @@ export class SyncStore {
       });
 
       if (response.status === 401) {
-        await this.deps.setJWT(null);
-        await this.deps.setCurrentEventId(null);
-        this.deps.notifications.error('Session expired. Please log in again.');
+        await this.deps.handleAuthError('Session expired. Please log in again.');
         throw new Error('Unauthorized');
       }
 
