@@ -14,6 +14,7 @@ defmodule FastCheck.Events.Event do
           name: String.t() | nil,
           tickera_api_key_encrypted: String.t() | nil,
           tickera_api_key_last4: String.t() | nil,
+          mobile_access_code: String.t() | nil,
           tickera_site_url: String.t() | nil,
           tickera_start_date: DateTime.t() | nil,
           tickera_end_date: DateTime.t() | nil,
@@ -42,6 +43,7 @@ defmodule FastCheck.Events.Event do
     # API key provided by Tickera (stored encrypted in the database)
     field :tickera_api_key_encrypted, :string
     field :tickera_api_key_last4, :string
+    field :mobile_access_code, :string, virtual: true
     field :mobile_access_secret_encrypted, :string
     # URL of the WordPress site hosting Tickera
     field :tickera_site_url, :string
@@ -92,6 +94,7 @@ defmodule FastCheck.Events.Event do
       :name,
       :tickera_api_key_encrypted,
       :tickera_api_key_last4,
+      :mobile_access_code,
       :mobile_access_secret_encrypted,
       :tickera_site_url,
       :tickera_start_date,
