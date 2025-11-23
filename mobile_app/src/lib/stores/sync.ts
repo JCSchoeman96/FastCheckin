@@ -31,17 +31,10 @@ function createSyncStore() {
     update(s => ({ ...s, isSyncing: true, error: null }));
 
     try {
-      const batches = pendingScans.reduce((acc, scan) => {
-        const scanVersion = scan.scan_version || scan.scanned_at;
-        const normalized = { ...scan, scan_version: scanVersion };
-
-        if (!acc[scan.event_id]) {
-          acc[scan.event_id] = { event_id: scan.event_id, scans: [] as ScanQueueItem[] };
-        }
-
-        acc[scan.event_id].scans.push(normalized);
-        return acc;
-      }, {} as Record<number, { event_id: number; scans: ScanQueueItem[] }>);
+      const scans = pendingScans.map(scan => ({
+        ...scan,
+        scan_version: scan.scan_version || scan.scanned_at
+      } satisfies ScanQueueItem));
 
       const response = await fetch(API_ENDPOINTS.BATCH_CHECKIN, {
         method: 'POST',
@@ -49,7 +42,7 @@ function createSyncStore() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${$auth.token}`
         },
-        body: JSON.stringify({ batches: Object.values(batches) })
+        body: JSON.stringify({ scans })
       });
 
       if (!response.ok) throw new Error(`Sync up failed: ${response.statusText}`);
