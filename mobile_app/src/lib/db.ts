@@ -1,9 +1,12 @@
 import Dexie, { type Table } from 'dexie';
 import type { Attendee, ScanQueueItem } from './types';
+import { CACHE_TTL_MS } from './config';
 
 export interface KVItem {
   key: string;
   value: any;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export class FastCheckDB extends Dexie {
@@ -13,37 +16,86 @@ export class FastCheckDB extends Dexie {
 
   constructor() {
     super('FastCheckDB');
-    
+
     this.version(1).stores({
-      // Compound index for fast lookups by event+code (critical for scanning)
-      // ticket_code and event_id indexed separately for flexibility
       attendees: '++id, [event_id+ticket_code], ticket_code, event_id',
-      
-      // Queue needs to be ordered by time (scanned_at) or id
-      // idempotency_key must be unique to prevent double-processing
       queue: '++id, idempotency_key, [event_id+sync_status]',
-      
-      // Simple key-value store for config/state
       kv_store: 'key'
     });
+
+    this.version(2)
+      .stores({
+        // Compound index for fast lookups by event+code (critical for scanning)
+        // ticket_code and event_id indexed separately for flexibility
+        attendees: '++id, [event_id+ticket_code], ticket_code, event_id, updated_at',
+
+        // Queue needs to be ordered by time (scanned_at) or id
+        // idempotency_key must be unique to prevent double-processing
+        queue: '++id, idempotency_key, [event_id+sync_status]',
+
+        // Simple key-value store for config/state
+        kv_store: 'key, updated_at'
+      })
+      .upgrade(async tx => {
+        const now = new Date().toISOString();
+
+        await tx.table('attendees').toCollection().modify((record: any) => {
+          record.created_at = record.created_at || now;
+          record.updated_at = record.updated_at || now;
+        });
+
+        await tx.table('kv_store').toCollection().modify((record: any) => {
+          record.created_at = record.created_at || now;
+          record.updated_at = record.updated_at || now;
+        });
+      });
   }
 }
 
 export const db = new FastCheckDB();
+
+function withTimestamps<T extends { created_at?: string; updated_at?: string }>(
+  item: T,
+  now: string
+): T {
+  return {
+    ...item,
+    created_at: item.created_at || now,
+    updated_at: now
+  };
+}
+
+export async function expireCache(ttlMs: number): Promise<{ attendeesExpired: number; kvExpired: number }> {
+  const cutoffIso = new Date(Date.now() - ttlMs).toISOString();
+
+  const [attendeesExpired, kvExpired] = await db.transaction('rw', db.attendees, db.kv_store, async () => {
+    const attendeesExpired = await db.attendees.where('updated_at').below(cutoffIso).delete();
+    const kvExpired = await db.kv_store.where('updated_at').below(cutoffIso).delete();
+
+    return [attendeesExpired, kvExpired];
+  });
+
+  return { attendeesExpired, kvExpired };
+}
 
 /**
  * Saves attendees from a sync response and updates the last sync time.
  * Performed in a single transaction to ensure consistency.
  */
 export async function saveSyncData(attendees: Attendee[], serverTime: string): Promise<void> {
+  await expireCache(CACHE_TTL_MS);
+
   await db.transaction('rw', db.attendees, db.kv_store, async () => {
+    const now = new Date().toISOString();
+
     // Bulk upsert attendees if any
     if (attendees.length > 0) {
-      await db.attendees.bulkPut(attendees);
+      const stampedAttendees = attendees.map(attendee => withTimestamps(attendee, now));
+      await db.attendees.bulkPut(stampedAttendees);
     }
-    
+
     // Update last sync timestamp
-    await db.kv_store.put({ key: 'last_sync', value: serverTime });
+    await db.kv_store.put(withTimestamps({ key: 'last_sync', value: serverTime }, now));
   });
 }
 
@@ -63,8 +115,9 @@ export async function setJWT(token: string | null): Promise<void> {
       await Preferences.remove({ key: 'jwt' });
     }
   } else {
+    const now = new Date().toISOString();
     if (token) {
-      await db.kv_store.put({ key: 'jwt', value: token });
+      await db.kv_store.put(withTimestamps({ key: 'jwt', value: token }, now));
     } else {
       await db.kv_store.delete('jwt');
     }
@@ -91,8 +144,9 @@ export async function setCurrentEventId(eventId: number | null): Promise<void> {
       await Preferences.remove({ key: 'current_event_id' });
     }
   } else {
+    const now = new Date().toISOString();
     if (eventId) {
-      await db.kv_store.put({ key: 'current_event_id', value: eventId });
+      await db.kv_store.put(withTimestamps({ key: 'current_event_id', value: eventId }, now));
     } else {
       await db.kv_store.delete('current_event_id');
     }

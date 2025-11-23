@@ -16,7 +16,8 @@ export interface Attendee {
   is_currently_inside: boolean;
   checked_in_at: string | null;
   checked_out_at: string | null;
-  updated_at: string | null;
+  created_at?: string;
+  updated_at: string;
 }
 
 export interface ScanQueueItem {
