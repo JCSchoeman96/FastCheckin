@@ -44,7 +44,12 @@ defmodule FastCheck.AttendeesTest do
 
     test "scopes results to the provided event", %{event: event, other_event: other_event} do
       create_attendee(event, %{ticket_code: "VIP-123", first_name: "Caleb", last_name: "Snow"})
-      create_attendee(other_event, %{ticket_code: "VIP-123", first_name: "Caleb", last_name: "Snow"})
+
+      create_attendee(other_event, %{
+        ticket_code: "VIP-123",
+        first_name: "Caleb",
+        last_name: "Snow"
+      })
 
       assert length(ids_for_search(event.id, "VIP")) == 1
     end
@@ -61,6 +66,7 @@ defmodule FastCheck.AttendeesTest do
   describe "check_in/4" do
     test "broadcasts stats updates when a scan completes" do
       event = insert_event!("Conference")
+
       attendee =
         create_attendee(event, %{
           ticket_code: "VIP-999",
@@ -101,6 +107,7 @@ defmodule FastCheck.AttendeesTest do
   describe "check_in_advanced/5" do
     test "prevents concurrent check-ins on the same ticket" do
       event = insert_event!("Concurrent")
+
       attendee =
         create_attendee(event, %{
           allowed_checkins: 1,
@@ -115,7 +122,14 @@ defmodule FastCheck.AttendeesTest do
         |> Enum.map(fn _ ->
           Task.async(fn ->
             Sandbox.allow(FastCheck.Repo, parent, self())
-            Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "North Gate", "Scanner")
+
+            Attendees.check_in_advanced(
+              event.id,
+              attendee.ticket_code,
+              "success",
+              "North Gate",
+              "Scanner"
+            )
           end)
         end)
         |> Enum.map(&Task.await(&1, 1_500))
@@ -126,6 +140,7 @@ defmodule FastCheck.AttendeesTest do
 
     test "respects allowed_checkins limit across reentries" do
       event = insert_event!("Limited")
+
       attendee =
         create_attendee(event, %{
           allowed_checkins: 2,
@@ -133,7 +148,13 @@ defmodule FastCheck.AttendeesTest do
         })
 
       assert {:ok, %Attendee{} = first_pass, "SUCCESS"} =
-               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "Main Gate", "Ops")
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "success",
+                 "Main Gate",
+                 "Ops"
+               )
 
       assert first_pass.checkins_remaining == 1
 
@@ -141,7 +162,13 @@ defmodule FastCheck.AttendeesTest do
                Attendees.check_out(event.id, attendee.ticket_code, "Main Gate", "Ops")
 
       assert {:ok, %Attendee{} = second_pass, "SUCCESS"} =
-               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "Main Gate", "Ops")
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "success",
+                 "Main Gate",
+                 "Ops"
+               )
 
       assert second_pass.checkins_remaining == 0
 
@@ -149,7 +176,13 @@ defmodule FastCheck.AttendeesTest do
                Attendees.check_out(event.id, attendee.ticket_code, "Main Gate", "Ops")
 
       assert {:error, "LIMIT_EXCEEDED", _} =
-               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "Main Gate", "Ops")
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "success",
+                 "Main Gate",
+                 "Ops"
+               )
     end
 
     test "resets daily scan counters when a new day starts" do
@@ -165,7 +198,13 @@ defmodule FastCheck.AttendeesTest do
         })
 
       assert {:ok, updated, "SUCCESS"} =
-               Attendees.check_in_advanced(event.id, attendee.ticket_code, "success", "South Gate", "Ops")
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "success",
+                 "South Gate",
+                 "Ops"
+               )
 
       assert updated.daily_scan_count == 1
       assert updated.last_checked_in_date == Date.utc_today()
@@ -178,10 +217,22 @@ defmodule FastCheck.AttendeesTest do
       _pending_attendee = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
 
       assert {:ok, _inside, "SUCCESS"} =
-               Attendees.check_in_advanced(event.id, stay_inside.ticket_code, "entry", "West Gate", "Ops")
+               Attendees.check_in_advanced(
+                 event.id,
+                 stay_inside.ticket_code,
+                 "entry",
+                 "West Gate",
+                 "Ops"
+               )
 
       assert {:ok, _entered, "SUCCESS"} =
-               Attendees.check_in_advanced(event.id, come_and_go.ticket_code, "entry", "West Gate", "Ops")
+               Attendees.check_in_advanced(
+                 event.id,
+                 come_and_go.ticket_code,
+                 "entry",
+                 "West Gate",
+                 "Ops"
+               )
 
       assert {:ok, _exited, "CHECKED_OUT"} =
                Attendees.check_out(event.id, come_and_go.ticket_code, "West Gate", "Ops")
@@ -213,7 +264,13 @@ defmodule FastCheck.AttendeesTest do
       assert ttl > 0
 
       assert {:ok, %Attendee{}, "SUCCESS"} =
-               Attendees.check_in_advanced(event.id, attendee.ticket_code, "entry", "Main Gate", nil)
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "entry",
+                 "Main Gate",
+                 nil
+               )
 
       cached_breakdown = Attendees.get_occupancy_breakdown(event.id)
       assert cached_breakdown.currently_inside == 0

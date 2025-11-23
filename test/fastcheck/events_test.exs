@@ -66,7 +66,14 @@ defmodule FastCheck.EventsTest do
       insert_check_in!(event, attendee_inside, "North Gate", "entry", inside_check_in)
       insert_check_in!(event, attendee_inside, "North Gate", "exit", exit_time)
       insert_check_in!(event, attendee_inside, "South Gate", "success", inside_check_in)
-      insert_check_in!(event, attendee_inside, "South Gate", "inside", DateTime.add(inside_check_in, 120, :second))
+
+      insert_check_in!(
+        event,
+        attendee_inside,
+        "South Gate",
+        "inside",
+        DateTime.add(inside_check_in, 120, :second)
+      )
 
       stats = Events.get_event_advanced_stats(event.id)
 
@@ -224,6 +231,7 @@ defmodule FastCheck.EventsTest do
   describe "Tickera credential helpers" do
     test "set_tickera_credentials encrypts and returns struct" do
       api_key = "new-key-#{System.unique_integer([:positive])}"
+
       {:ok, cred_struct} =
         Events.set_tickera_credentials(
           %Event{},

@@ -56,8 +56,9 @@ defmodule FastCheckWeb.BulkCheckInController do
     end
   end
 
-  defp fetch_event_id(%{assigns: %{current_event_id: event_id}}) when is_integer(event_id) and event_id > 0,
-    do: {:ok, event_id}
+  defp fetch_event_id(%{assigns: %{current_event_id: event_id}})
+       when is_integer(event_id) and event_id > 0,
+       do: {:ok, event_id}
 
   defp fetch_event_id(_), do: {:error, :unauthorized}
 end

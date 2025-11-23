@@ -13,8 +13,12 @@ defmodule FastCheck.TickeraClient.Fallback do
   @no_cached "NO_CACHED_DATA"
   @timeout_reasons [:timeout, :connect_timeout, :closed, :nxdomain, :enetunreach, :econnrefused]
 
-  @type reason :: {:server_error, integer(), any()} | {:http_error, integer(), any()} |
-          {:network_timeout, term()} | {:network_error, term()} | term()
+  @type reason ::
+          {:server_error, integer(), any()}
+          | {:http_error, integer(), any()}
+          | {:network_timeout, term()}
+          | {:network_error, term()}
+          | term()
 
   @doc """
   Returns cached attendees for the event tied to the provided credentials when the
@@ -22,7 +26,8 @@ defmodule FastCheck.TickeraClient.Fallback do
   timestamp.
   """
   @spec maybe_use_cached(String.t(), String.t(), reason()) :: {:ok, list()} | {:error, String.t()}
-  def maybe_use_cached(site_url, api_key, reason) when is_binary(site_url) and is_binary(api_key) do
+  def maybe_use_cached(site_url, api_key, reason)
+      when is_binary(site_url) and is_binary(api_key) do
     if unreachable?(reason) do
       timestamp = DateTime.utc_now() |> DateTime.truncate(:second)
 

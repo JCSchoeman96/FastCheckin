@@ -181,7 +181,6 @@ defmodule FastCheckWeb.Components.Progress do
           stroke-dasharray={@circumference}
           stroke-dashoffset={@circumference}
         />
-
         <circle
           cx={@coordinate}
           cy={@coordinate}
@@ -198,7 +197,6 @@ defmodule FastCheckWeb.Components.Progress do
           ]}
         />
       </svg>
-
       <div
         :if={@label || @value}
         class={[
@@ -435,7 +433,7 @@ defmodule FastCheckWeb.Components.Progress do
         >
           {tooltip[:label]}
         </div>
-
+        
         <div
           id={"#{@id}-tooltip"}
           role="tooltip"
@@ -456,8 +454,7 @@ defmodule FastCheckWeb.Components.Progress do
             "block absolute size-[8px] bg-inherit rotate-45 -z-[1] tooltip-arrow",
             position_class(tooltip[:position])
           ]}>
-          </span>
-          {render_slot(tooltip)}
+          </span> {render_slot(tooltip)}
         </div>
       </div>
     </div>

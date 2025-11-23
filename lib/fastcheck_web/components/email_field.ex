@@ -144,9 +144,8 @@ defmodule FastCheckWeb.Components.EmailField do
       @ring && "[&_.email-field-wrapper]:focus-within:ring-[0.03rem] leading-6",
       @class
     ]}>
-      <div :if={@description} class={@description_class}>
-        {@description}
-      </div>
+      <div :if={@description} class={@description_class}>{@description}</div>
+      
       <div class={[
         "email-field-wrapper transition-all ease-in-out duration-200 w-full flex flex-nowrap",
         @errors != [] && "email-field-error",
@@ -161,6 +160,7 @@ defmodule FastCheckWeb.Components.EmailField do
         >
           {render_slot(@start_section)}
         </div>
+        
         <div class="relative w-full z-[2]">
           <input
             type="email"
@@ -175,7 +175,6 @@ defmodule FastCheckWeb.Components.EmailField do
             placeholder=" "
             {@rest}
           />
-
           <label
             class={[
               "floating-label px-1 start-1 -z-[1] absolute text-xs duration-300 transform scale-75 origin-[0]",
@@ -187,7 +186,7 @@ defmodule FastCheckWeb.Components.EmailField do
             {@label}
           </label>
         </div>
-
+        
         <div
           :if={@end_section}
           class={["flex items-center justify-center shrink-0 pe-2", @end_section[:class]]}
@@ -195,7 +194,7 @@ defmodule FastCheckWeb.Components.EmailField do
           {render_slot(@end_section)}
         </div>
       </div>
-
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -217,11 +216,10 @@ defmodule FastCheckWeb.Components.EmailField do
         class={["email-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        <div :if={@description} class={@description_class}>
-          {@description}
-        </div>
+        
+        <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-
+      
       <div class={[
         "email-field-wrapper overflow-hidden transition-all ease-in-out duration-200 flex items-center flex-nowrap",
         @errors != [] && "email-field-error",
@@ -236,7 +234,7 @@ defmodule FastCheckWeb.Components.EmailField do
         >
           {render_slot(@start_section)}
         </div>
-
+        
         <input
           type="email"
           name={@name}
@@ -250,7 +248,6 @@ defmodule FastCheckWeb.Components.EmailField do
           ]}
           {@rest}
         />
-
         <div
           :if={@end_section}
           class={["flex items-center justify-center shrink-0 pe-2", @end_section[:class]]}
@@ -258,7 +255,7 @@ defmodule FastCheckWeb.Components.EmailField do
           {render_slot(@end_section)}
         </div>
       </div>
-
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -270,9 +267,7 @@ defmodule FastCheckWeb.Components.EmailField do
 
   defp label(assigns) do
     ~H"""
-    <label for={@for} class={["font-semibold", @class]}>
-      {render_slot(@inner_block)}
-    </label>
+    <label for={@for} class={["font-semibold", @class]}>{render_slot(@inner_block)}</label>
     """
   end
 
@@ -282,8 +277,7 @@ defmodule FastCheckWeb.Components.EmailField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

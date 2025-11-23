@@ -123,10 +123,8 @@ defmodule FastCheckWeb.Components.List do
   def list(%{rest: %{ordered: true}} = assigns) do
     ~H"""
     <.ol {assigns}>
-      <.li :for={item <- @item} {item}>
-        {render_slot(item)}
-      </.li>
-      {render_slot(@inner_block)}
+      <.li :for={item <- @item} {item}>{render_slot(item)}</.li>
+       {render_slot(@inner_block)}
     </.ol>
     """
   end
@@ -141,12 +139,10 @@ defmodule FastCheckWeb.Components.List do
         }
         {item}
       >
-        <div :if={!is_nil(Map.get(item, :title))} class="font-semibold me-2">
-          {item.title}
-        </div>
-        {render_slot(item)}
+        <div :if={!is_nil(Map.get(item, :title))} class="font-semibold me-2">{item.title}</div>
+         {render_slot(item)}
       </.li>
-      {render_slot(@inner_block)}
+       {render_slot(@inner_block)}
     </.ul>
     """
   end
@@ -209,9 +205,7 @@ defmodule FastCheckWeb.Components.List do
       ]}>
         <.icon :if={!is_nil(@icon)} name={@icon} class={@icon_class} />
         <span :if={is_integer(@count)}>{@count}{@count_separator}</span>
-        <div class={["w-full list-content", @content_class]}>
-          {render_slot(@inner_block)}
-        </div>
+        <div class={["w-full list-content", @content_class]}>{render_slot(@inner_block)}</div>
       </div>
     </li>
     """

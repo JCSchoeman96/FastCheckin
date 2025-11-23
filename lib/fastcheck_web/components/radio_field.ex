@@ -126,10 +126,9 @@ defmodule FastCheckWeb.Components.RadioField do
             @radio_class
           ]}
           {@rest}
-        />
-        <span :if={@label} class={@label_class}>{@label}</span>
+        /> <span :if={@label} class={@label_class}>{@label}</span>
       </.label>
-
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -247,11 +246,11 @@ defmodule FastCheckWeb.Components.RadioField do
             checked={radio[:checked]}
             class={["bg-white dark:bg-base-bg-dark radio-input rounded-full", @radio_class]}
             {@rest}
-          />
-          <span class={@label_class}>{render_slot(radio)}</span>
+          /> <span class={@label_class}>{render_slot(radio)}</span>
         </.label>
       </div>
     </div>
+
     <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     """
   end
@@ -293,8 +292,7 @@ defmodule FastCheckWeb.Components.RadioField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm leading-6 text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

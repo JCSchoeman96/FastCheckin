@@ -137,22 +137,19 @@ defmodule FastCheckWeb.Components.Badge do
         type={@type}
         class={@dismiss_class}
         params={@params}
-      />
-      <.badge_indicator position="left" size={@indicator_size} class={@indicator_class} {@rest} />
+      /> <.badge_indicator position="left" size={@indicator_size} class={@indicator_class} {@rest} />
       <.icon
         :if={icon_position(@icon, @rest) == "left"}
         name={@icon}
         class={["badge-icon", @icon_class]}
       />
-      <div class={["leading-5", @content_class]}>
-        {render_slot(@inner_block)}
-      </div>
+      <div class={["leading-5", @content_class]}>{render_slot(@inner_block)}</div>
+      
       <.icon
         :if={icon_position(@icon, @rest) == "right"}
         name={@icon}
         class={["badge-icon", @icon_class]}
-      />
-      <.badge_indicator size={@indicator_size} class={@indicator_class} {@rest} />
+      /> <.badge_indicator size={@indicator_size} class={@indicator_class} {@rest} />
       <.badge_dismiss
         :if={dismiss_position(@rest) == "right"}
         id={@id}

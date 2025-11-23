@@ -131,8 +131,7 @@ defmodule FastCheckWeb.Components.Gallery do
         src={@src}
         alt={@alt}
         {@rest}
-      />
-      {render_slot(@inner_block)}
+      /> {render_slot(@inner_block)}
     </div>
     """
   end
@@ -196,9 +195,8 @@ defmodule FastCheckWeb.Components.Gallery do
         aria-label={gettext("Filter options")}
       >
         <div :if={not Enum.member?(@filters, @default_filter)}>
-          <div :if={@filter != []}>
-            {render_slot(@filter, @default_filter)}
-          </div>
+          <div :if={@filter != []}>{render_slot(@filter, @default_filter)}</div>
+          
           <button
             :if={@filter == []}
             data-gallery-filter
@@ -208,12 +206,10 @@ defmodule FastCheckWeb.Components.Gallery do
             {@default_filter}
           </button>
         </div>
-
+        
         <div :for={filter <- @filters}>
-          <div :for={entry <- @filter}>
-            {render_slot(entry, filter)}
-          </div>
-
+          <div :for={entry <- @filter}>{render_slot(entry, filter)}</div>
+          
           <button
             :if={@filter == []}
             data-gallery-filter
@@ -224,6 +220,7 @@ defmodule FastCheckWeb.Components.Gallery do
           </button>
         </div>
       </div>
+      
       <div class={["grid", grid_gap(@gap), grid_cols(@cols), @content_class]}>
         <div
           :for={media <- @media}
@@ -233,11 +230,8 @@ defmodule FastCheckWeb.Components.Gallery do
           }
           class="transition-all duration-300 ease-in-out transform opacity-100 scale-100"
         >
-          <div :if={@media_block != []}>
-            {render_slot(@media_block, media)}
-          </div>
-
-          <.gallery_media :if={@media_block == []} src={media.src} alt={media.alt} />
+          <div :if={@media_block != []}>{render_slot(@media_block, media)}</div>
+           <.gallery_media :if={@media_block == []} src={media.src} alt={media.alt} />
         </div>
       </div>
     </div>

@@ -154,7 +154,7 @@ defmodule FastCheckWeb.Components.Divider do
       >
         <.icon name={icon[:name]} class={icon[:icon_class] || size_class(@size, :icon, "")} />
       </div>
-
+      
       <div
         :for={text <- @text}
         aria-hidden="true"
@@ -266,7 +266,7 @@ defmodule FastCheckWeb.Components.Divider do
       >
         <.icon name={icon[:name]} class={icon[:icon_class] || ""} />
       </div>
-
+      
       <div
         :for={text <- @text}
         class={[

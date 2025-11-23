@@ -177,19 +177,19 @@ defmodule FastCheckWeb.Components.Table do
                     :if={header[:icon]}
                     name={header[:icon]}
                     class={["table-header-icon block me-2", header[:icon_class]]}
-                  />
-                  {render_slot(header)}
+                  /> {render_slot(header)}
                 </.th>
               </.tr>
-
+              
               <.tr :if={@col}>
                 <.th :for={col <- @col} class={["font-normal", col[:label_class]]}>{col[:label]}</.th>
+                
                 <.th :if={@action != []} class="relative">
                   <span class="sr-only">{gettext("Actions")}</span>
                 </.th>
               </.tr>
             </thead>
-
+            
             <tbody
               id={@id}
               phx-update={match?(%Phoenix.LiveView.LiveStream{}, @rows) && "stream"}
@@ -197,7 +197,6 @@ defmodule FastCheckWeb.Components.Table do
               aria-live="polite"
             >
               {render_slot(@inner_block)}
-
               <.tr :for={row <- @rows} :if={@rows != []} id={@row_id && @row_id.(row)}>
                 <.td
                   :for={{col, i} <- Enum.with_index(@col)}
@@ -211,7 +210,7 @@ defmodule FastCheckWeb.Components.Table do
                     </span>
                   </div>
                 </.td>
-
+                
                 <.td :if={@action} class="relative w-14 p-0">
                   <div class="relative whitespace-nowrap py-4 text-right text-sm font-medium">
                     <span class="absolute -inset-y-px -right-4 left-0" />
@@ -222,7 +221,7 @@ defmodule FastCheckWeb.Components.Table do
                 </.td>
               </.tr>
             </tbody>
-
+            
             <tfoot :if={length(@footer) > 0} class={@footer_class}>
               <.tr>
                 <.td
@@ -235,8 +234,7 @@ defmodule FastCheckWeb.Components.Table do
                       :if={footer[:icon]}
                       name={footer[:icon]}
                       class={["table-footer-icon block me-2", footer[:icon_class]]}
-                    />
-                    {render_slot(footer)}
+                    /> {render_slot(footer)}
                   </div>
                 </.td>
               </.tr>
@@ -308,9 +306,7 @@ defmodule FastCheckWeb.Components.Table do
 
   def tr(assigns) do
     ~H"""
-    <tr id={@id} class={["table-row", @class]} {@rest}>
-      {render_slot(@inner_block)}
-    </tr>
+    <tr id={@id} class={["table-row", @class]} {@rest}>{render_slot(@inner_block)}</tr>
     """
   end
 
@@ -338,9 +334,7 @@ defmodule FastCheckWeb.Components.Table do
 
   def td(assigns) do
     ~H"""
-    <td id={@id} class={["table-data-cell", @class]} {@rest}>
-      {render_slot(@inner_block)}
-    </td>
+    <td id={@id} class={["table-data-cell", @class]} {@rest}>{render_slot(@inner_block)}</td>
     """
   end
 

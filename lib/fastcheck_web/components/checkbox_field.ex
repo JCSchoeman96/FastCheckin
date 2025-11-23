@@ -119,7 +119,7 @@ defmodule FastCheckWeb.Components.CheckboxField do
         <% else %>
           <input type="hidden" name={@name} value="" disabled={@rest[:disabled]} />
         <% end %>
-
+        
         <input
           type="checkbox"
           name={@name}
@@ -128,10 +128,9 @@ defmodule FastCheckWeb.Components.CheckboxField do
           checked={@checked}
           class={["bg-white dark:bg-base-bg-dark checkbox-input", @checkbox_class]}
           {@rest}
-        />
-        <span :if={@label} class={@label_class}>{@label}</span>
+        /> <span :if={@label} class={@label_class}>{@label}</span>
       </.label>
-
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -253,11 +252,11 @@ defmodule FastCheckWeb.Components.CheckboxField do
             checked={checkbox[:checked]}
             class={["bg-white dark:bg-base-bg-dark checkbox-input", @checkbox_class]}
             {@rest}
-          />
-          <span class={@label_class}>{render_slot(checkbox)}</span>
+          /> <span class={@label_class}>{render_slot(checkbox)}</span>
         </.label>
       </div>
     </div>
+
     <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     """
   end
@@ -301,8 +300,7 @@ defmodule FastCheckWeb.Components.CheckboxField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm leading-6 text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

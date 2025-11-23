@@ -197,7 +197,6 @@ defmodule FastCheckWeb.Components.MegaMenu do
         <.icon :if={!is_nil(@icon)} name={@icon} class={["mega-menu-icon", @icon_class]} />
         <span>{@title}</span>
       </button>
-
       <div
         :if={@trigger}
         phx-click={@id && JS.exec("phx-open-mega", to: "##{@id}")}
@@ -205,7 +204,7 @@ defmodule FastCheckWeb.Components.MegaMenu do
       >
         {render_slot(@trigger)}
       </div>
-
+      
       <div
         id={@id && "#{@id}-mega-menu-content"}
         phx-click-away={

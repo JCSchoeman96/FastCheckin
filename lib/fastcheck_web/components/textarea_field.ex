@@ -146,9 +146,8 @@ defmodule FastCheckWeb.Components.TextareaField do
       @ring && "[&_.textarea-field-wrapper]:focus-within:ring-[0.03rem] leading-6",
       @class
     ]}>
-      <div :if={@description} class={@description_class}>
-        {@description}
-      </div>
+      <div :if={@description} class={@description_class}>{@description}</div>
+      
       <div class={[
         "textarea-field-wrapper transition-all ease-in-out duration-200 relative w-full z-[2]",
         @errors != [] && "textarea-field-error",
@@ -169,7 +168,6 @@ defmodule FastCheckWeb.Components.TextareaField do
           placeholder=" "
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
-
         <label
           class={[
             "floating-label px-1 start-1 -z-[1] absolute text-xs duration-300 transform scale-75 origin-[0]",
@@ -181,7 +179,7 @@ defmodule FastCheckWeb.Components.TextareaField do
           {@label}
         </label>
       </div>
-
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -203,11 +201,10 @@ defmodule FastCheckWeb.Components.TextareaField do
         class={["textarea-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        <div :if={@description} class={@description_class}>
-          {@description}
-        </div>
+        
+        <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-
+      
       <div class={[
         "textarea-field-wrapper overflow-hidden transition-all ease-in-out duration-200 flex flex-nowrap",
         @errors != [] && "textarea-field-error",
@@ -229,7 +226,7 @@ defmodule FastCheckWeb.Components.TextareaField do
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
       </div>
-
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -241,9 +238,7 @@ defmodule FastCheckWeb.Components.TextareaField do
 
   defp label(assigns) do
     ~H"""
-    <label for={@for} class={["font-semibold", @class]}>
-      {render_slot(@inner_block)}
-    </label>
+    <label for={@for} class={["font-semibold", @class]}>{render_slot(@inner_block)}</label>
     """
   end
 
@@ -253,8 +248,7 @@ defmodule FastCheckWeb.Components.TextareaField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

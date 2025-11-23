@@ -100,9 +100,7 @@ defmodule FastCheckWeb.Components.Footer do
       ]}
       {@rest}
     >
-      <div class={@wrapper_class}>
-        {render_slot(@inner_block)}
-      </div>
+      <div class={@wrapper_class}>{render_slot(@inner_block)}</div>
     </footer>
     """
   end

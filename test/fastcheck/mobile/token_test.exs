@@ -99,7 +99,9 @@ defmodule FastCheck.Mobile.TokenTest do
 
       missing_issuer_claims = Map.delete(wrong_issuer_claims, "iss")
 
-      assert {:ok, missing_issuer_token, _} = Joken.generate_and_sign(missing_issuer_claims, signer)
+      assert {:ok, missing_issuer_token, _} =
+               Joken.generate_and_sign(missing_issuer_claims, signer)
+
       assert {:error, :invalid_issuer} = Token.verify_token(missing_issuer_token)
     end
   end

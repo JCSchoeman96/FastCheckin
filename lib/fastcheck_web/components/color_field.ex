@@ -121,11 +121,10 @@ defmodule FastCheckWeb.Components.ColorField do
         class={["color-field-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        <div :if={@description} class={@description_class}>
-          {@description}
-        </div>
+        
+        <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-
+      
       <div class="color-field-wrapper">
         <input
           type="color"
@@ -136,6 +135,7 @@ defmodule FastCheckWeb.Components.ColorField do
           {@rest}
         />
       </div>
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -147,9 +147,7 @@ defmodule FastCheckWeb.Components.ColorField do
 
   defp label(assigns) do
     ~H"""
-    <label for={@for} class={["leading-5 font-semibold", @class]}>
-      {render_slot(@inner_block)}
-    </label>
+    <label for={@for} class={["leading-5 font-semibold", @class]}>{render_slot(@inner_block)}</label>
     """
   end
 
@@ -159,8 +157,7 @@ defmodule FastCheckWeb.Components.ColorField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm leading-6 text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

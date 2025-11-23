@@ -22,18 +22,19 @@ repo_connection_opts =
     ]
   end
 
-config :fastcheck, FastCheck.Repo,
-  repo_connection_opts
-  |> Keyword.merge(
-    stacktrace: true,
-    show_sensitive_data_on_connection_error: true,
-    pool_size: 20,
-    queue_target: 50,
-    queue_interval: 1_000,
-    preallocate: true,
-    # Log all queries with timing in development
-    log: :info
-  )
+config :fastcheck,
+       FastCheck.Repo,
+       repo_connection_opts
+       |> Keyword.merge(
+         stacktrace: true,
+         show_sensitive_data_on_connection_error: true,
+         pool_size: 20,
+         queue_target: 50,
+         queue_interval: 1_000,
+         preallocate: true,
+         # Log all queries with timing in development
+         log: :info
+       )
 
 # For development, we disable any cache and enable
 # debugging and code reloading.

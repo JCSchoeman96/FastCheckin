@@ -59,6 +59,7 @@ defmodule FastCheck.RateLimiterMonitor do
 
     # Log abuse tracking stats
     abuse_stats = FastCheck.Telemetry.get_abuse_stats()
+
     if abuse_stats.active_bans > 0 do
       Logger.info("Abuse tracking stats",
         active_bans: abuse_stats.active_bans,

@@ -1,15 +1,19 @@
 <div class="mx-auto max-w-md space-y-6 py-10">
   <div class="text-center space-y-2">
     <h1 class="text-2xl font-semibold">Sign in to FastCheck</h1>
+    
     <p class="text-sm text-gray-500">Enter your dashboard credentials to continue.</p>
   </div>
-
+  
   <.form for={@form} action={~p"/login"} id="login-form" method="post" class="space-y-4">
     <.input field={@form[:username]} label="Username" required autocomplete="username" />
-    <.input field={@form[:password]} type="password" label="Password" required autocomplete="current-password" />
-
-    <input type="hidden" name="redirect_to" value={@redirect_to} />
-
+    <.input
+      field={@form[:password]}
+      type="password"
+      label="Password"
+      required
+      autocomplete="current-password"
+    /> <input type="hidden" name="redirect_to" value={@redirect_to} />
     <div class="flex items-center justify-between">
       <.button class="btn btn-primary" type="submit">Sign in</.button>
       <p :if={@error_message} class="text-sm text-error">{@error_message}</p>

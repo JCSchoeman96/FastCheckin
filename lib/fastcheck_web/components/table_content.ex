@@ -128,7 +128,7 @@ defmodule FastCheckWeb.Components.TableContent do
       >
         {@title}
       </h5>
-
+      
       <div
         :for={item <- @item}
         class={[
@@ -139,6 +139,7 @@ defmodule FastCheckWeb.Components.TableContent do
         ]}
       >
         <div :if={!is_nil(item[:title])} class={item[:title_class]}>{item[:title]}</div>
+        
         <div class={[
           "flex items-center transition-all hover:font-bold hover:opacity-90",
           item[:wrapper_class]
@@ -151,13 +152,10 @@ defmodule FastCheckWeb.Components.TableContent do
           <.link :if={item[:link_title] && item[:link]} patch={item[:link]} class={item[:link_class]}>
             {item[:link_title]}
           </.link>
-          <div class={item[:content_class]}>
-            {render_slot(item)}
-          </div>
+          <div class={item[:content_class]}>{render_slot(item)}</div>
         </div>
       </div>
-
-      {render_slot(@inner_block)}
+       {render_slot(@inner_block)}
     </div>
     """
   end
@@ -290,6 +288,7 @@ defmodule FastCheckWeb.Components.TableContent do
       {@rest}
     >
       <div :if={!is_nil(@title)} class={@title_class}>{@title}</div>
+      
       <div class={[
         "flex items-center transition-all hover:font-bold hover:opacity-90",
         @wrapper_content_class
@@ -298,11 +297,8 @@ defmodule FastCheckWeb.Components.TableContent do
           :if={!is_nil(@icon)}
           name={@icon}
           class={["content-icon me-2 inline-block", @icon_class]}
-        />
-        <.link :if={@link_title && @link} patch={@link} class={@link_class}>{@link_title}</.link>
-        <div class={@content_class}>
-          {render_slot(@inner_block)}
-        </div>
+        /> <.link :if={@link_title && @link} patch={@link} class={@link_class}>{@link_title}</.link>
+        <div class={@content_class}>{render_slot(@inner_block)}</div>
       </div>
     </div>
     """

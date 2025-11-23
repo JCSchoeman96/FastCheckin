@@ -176,13 +176,11 @@ defmodule FastCheckWeb.Components.SpeedDial do
             item[:class]
           ]}
         >
-          <.speed_dial_content id={@id} index={index} {item}>
-            {render_slot(item)}
-          </.speed_dial_content>
+          <.speed_dial_content id={@id} index={index} {item}>{render_slot(item)}</.speed_dial_content>
         </div>
-        {render_slot(@inner_block)}
+         {render_slot(@inner_block)}
       </div>
-
+      
       <button
         type="button"
         aria-haspopup="menu"
@@ -206,8 +204,7 @@ defmodule FastCheckWeb.Components.SpeedDial do
         />
         <span :if={is_nil(@icon)} class={@trigger_content[:class]}>
           {render_slot(@trigger_content)}
-        </span>
-        <span class="sr-only">{gettext("Open actions menu")}</span>
+        </span> <span class="sr-only">{gettext("Open actions menu")}</span>
       </button>
     </div>
     """

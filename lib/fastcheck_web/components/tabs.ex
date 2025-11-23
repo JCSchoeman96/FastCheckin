@@ -199,12 +199,10 @@ defmodule FastCheckWeb.Components.Tabs do
           >
             {tab[:badge]}
           </.badge>
-          <span class="block tab-button_content">
-            {render_slot(tab)}
-          </span>
+           <span class="block tab-button_content">{render_slot(tab)}</span>
         </button>
       </div>
-
+      
       <div class="ms-2 flex-1">
         <div
           :for={{panel, index} <- Enum.with_index(@panel, 1)}
@@ -294,12 +292,10 @@ defmodule FastCheckWeb.Components.Tabs do
           >
             {tab[:badge]}
           </.badge>
-          <span class="block tab-button_content">
-            {render_slot(tab)}
-          </span>
+           <span class="block tab-button_content">{render_slot(tab)}</span>
         </button>
       </div>
-
+      
       <div class="mt-2">
         <div
           :for={{panel, index} <- Enum.with_index(@panel, 1)}

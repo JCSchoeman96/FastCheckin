@@ -127,7 +127,6 @@ defmodule FastCheckWeb.Components.Video do
       {@rest}
     >
       <source :for={source <- @source} src={source.src} type={source.type} />
-
       <track
         :for={track <- @track}
         src={track.src}
@@ -135,9 +134,7 @@ defmodule FastCheckWeb.Components.Video do
         kind={track.kind || "subtitles"}
         srclang={track.srclang || "en"}
         default={track.default}
-      />
-
-      {gettext("Your browser does not support the video tag.")}
+      /> {gettext("Your browser does not support the video tag.")}
     </video>
     """
   end

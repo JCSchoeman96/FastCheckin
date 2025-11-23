@@ -106,8 +106,7 @@ defmodule FastCheckWeb.Components.Avatar do
           @class
         ]}
         {@rest}
-      />
-      {render_slot(@inner_block)}
+      /> {render_slot(@inner_block)}
     </div>
     """
   end
@@ -130,7 +129,7 @@ defmodule FastCheckWeb.Components.Avatar do
         <div :for={icon <- @icon} class={[icon[:size], icon[:color], icon[:class]]}>
           <.icon name={icon[:name]} class={icon[:icon_class] || size_class(@size, :icon)} />
         </div>
-        {render_slot(@inner_block)}
+         {render_slot(@inner_block)}
       </div>
     </div>
     """
@@ -151,8 +150,7 @@ defmodule FastCheckWeb.Components.Avatar do
           @class
         ]}
         {@rest}
-      />
-      {render_slot(@inner_block)}
+      /> {render_slot(@inner_block)}
     </div>
     """
   end
@@ -175,7 +173,7 @@ defmodule FastCheckWeb.Components.Avatar do
         <div :for={icon <- @icon} class={[icon[:size], icon[:color], icon[:class]]}>
           <.icon name={icon[:name]} class={icon[:icon_class] || size_class(@size, :icon)} />
         </div>
-        {render_slot(@inner_block)}
+         {render_slot(@inner_block)}
       </div>
     </div>
     """

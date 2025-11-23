@@ -142,11 +142,10 @@ defmodule FastCheckWeb.Components.NativeSelect do
         class={["select-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        <div :if={@description} class={@description_class}>
-          {@description}
-        </div>
+        
+        <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-
+      
       <select
         name={@name}
         id={@id}
@@ -170,7 +169,6 @@ defmodule FastCheckWeb.Components.NativeSelect do
           {render_slot(option)}
         </option>
       </select>
-
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -226,9 +224,7 @@ defmodule FastCheckWeb.Components.NativeSelect do
 
   defp label(assigns) do
     ~H"""
-    <label for={@for} class={["font-semibold", @class]}>
-      {render_slot(@inner_block)}
-    </label>
+    <label for={@for} class={["font-semibold", @class]}>{render_slot(@inner_block)}</label>
     """
   end
 
@@ -238,8 +234,7 @@ defmodule FastCheckWeb.Components.NativeSelect do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

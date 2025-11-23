@@ -159,9 +159,8 @@ defmodule FastCheckWeb.Components.Toast do
           padding_size(@padding),
           @content_wrapper_class
         ]}>
-          <div class={[space_class(@space), @content_class]}>
-            {render_slot(@inner_block)}
-          </div>
+          <div class={[space_class(@space), @content_class]}>{render_slot(@inner_block)}</div>
+          
           <.toast_dismiss
             id={@id}
             params={@params}

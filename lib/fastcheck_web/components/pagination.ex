@@ -165,7 +165,6 @@ defmodule FastCheckWeb.Components.Pagination do
       {@rest}
     >
       {render_slot(@start_items)}
-
       <.item_button
         :if={@rest[:show_edges]}
         on_action={{"first", @on_first}}
@@ -176,7 +175,6 @@ defmodule FastCheckWeb.Components.Pagination do
         aria_label={gettext("First page")}
         disabled={@active <= 1}
       />
-
       <.item_button
         :if={is_nil(@rest[:hide_controls])}
         on_action={{"previous", @on_previous}}
@@ -187,7 +185,6 @@ defmodule FastCheckWeb.Components.Pagination do
         aria_label={gettext("Previous page")}
         disabled={@active <= 1}
       />
-
       <div :for={range <- @siblings.range}>
         <%= if is_integer(range) do %>
           <.item_button
@@ -215,7 +212,7 @@ defmodule FastCheckWeb.Components.Pagination do
           </div>
         <% end %>
       </div>
-
+      
       <.item_button
         :if={is_nil(@rest[:hide_controls])}
         on_action={{"next", @on_next}}
@@ -226,7 +223,6 @@ defmodule FastCheckWeb.Components.Pagination do
         aria_label={gettext("Next page")}
         disabled={@active >= @total}
       />
-
       <.item_button
         :if={@rest[:show_edges]}
         on_action={{"last", @on_last}}
@@ -236,9 +232,7 @@ defmodule FastCheckWeb.Components.Pagination do
         class={@last_label_class}
         aria_label={gettext("Last page")}
         disabled={@active >= @total}
-      />
-
-      {render_slot(@end_items)}
+      /> {render_slot(@end_items)}
     </nav>
     """
   end

@@ -98,6 +98,7 @@ defmodule FastCheckWeb.Components.Spinner do
             repeatCount="indefinite"
           >
           </animate>
+          
           <animate
             attributeName="stroke-opacity"
             begin="1.5s"
@@ -107,6 +108,7 @@ defmodule FastCheckWeb.Components.Spinner do
             repeatCount="indefinite"
           >
           </animate>
+          
           <animate
             attributeName="stroke-width"
             begin="1.5s"
@@ -117,6 +119,7 @@ defmodule FastCheckWeb.Components.Spinner do
           >
           </animate>
         </circle>
+        
         <circle cx="22" cy="22" r="6" stroke-opacity="0">
           <animate
             attributeName="r"
@@ -127,6 +130,7 @@ defmodule FastCheckWeb.Components.Spinner do
             repeatCount="indefinite"
           >
           </animate>
+          
           <animate
             attributeName="stroke-opacity"
             begin="3s"
@@ -136,6 +140,7 @@ defmodule FastCheckWeb.Components.Spinner do
             repeatCount="indefinite"
           >
           </animate>
+          
           <animate
             attributeName="stroke-width"
             begin="3s"
@@ -146,6 +151,7 @@ defmodule FastCheckWeb.Components.Spinner do
           >
           </animate>
         </circle>
+        
         <circle cx="22" cy="22" r="8">
           <animate
             attributeName="r"

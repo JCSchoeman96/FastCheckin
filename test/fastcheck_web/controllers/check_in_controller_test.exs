@@ -36,7 +36,7 @@ defmodule FastCheckWeb.CheckInControllerTest do
     test "rejects unauthenticated requests", %{conn: conn} do
       conn = delete_req_header(conn, "authorization")
 
-      conn = post(conn, ~p"/api/v1/check-in", %{ "ticket_code" => "CODE" })
+      conn = post(conn, ~p"/api/v1/check-in", %{"ticket_code" => "CODE"})
 
       assert json_response(conn, 401)["error"] == "missing_authorization_header"
     end

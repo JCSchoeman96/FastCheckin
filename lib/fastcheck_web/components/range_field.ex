@@ -117,6 +117,7 @@ defmodule FastCheckWeb.Components.RangeField do
       @class
     ]}>
       <.label for={@id}>{@label}</.label>
+      
       <div class="relative mb-8">
         <input
           type="range"
@@ -138,6 +139,7 @@ defmodule FastCheckWeb.Components.RangeField do
           {render_slot(range_value)}
         </span>
       </div>
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -152,6 +154,7 @@ defmodule FastCheckWeb.Components.RangeField do
       @class
     ]}>
       <.label for={@id}>{@label}</.label>
+      
       <div class="relative mb-8">
         <input
           type="range"
@@ -186,6 +189,7 @@ defmodule FastCheckWeb.Components.RangeField do
           {render_slot(range_value)}
         </span>
       </div>
+      
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -211,8 +215,7 @@ defmodule FastCheckWeb.Components.RangeField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm leading-6 text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

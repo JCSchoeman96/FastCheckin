@@ -181,15 +181,14 @@ defmodule FastCheckWeb.Components.Chat do
       {render_slot(@inner_block)}
       <div :for={status <- @status} class="flex items-center justify-between gap-2 text-xs">
         <div :if={status[:time]} class={status[:time_class]}>
-          <span class="sr-only">{gettext("Time:")}</span>
-          {status[:time]}
+          <span class="sr-only">{gettext("Time:")}</span> {status[:time]}
         </div>
+        
         <div :if={status[:deliver]} class={["font-semibold", status[:deliver_class]]}>
-          <span class="sr-only">{gettext("Status:")}</span>
-          {status[:deliver]}
+          <span class="sr-only">{gettext("Status:")}</span> {status[:deliver]}
         </div>
       </div>
-
+      
       <div :for={meta <- @meta} aria-hidden="true">{render_slot(meta)}</div>
     </div>
     """

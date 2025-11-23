@@ -226,8 +226,7 @@ defmodule FastCheckWeb.Components.Stepper do
             @icon_wrapper_class
           ]}
         >
-          <.icon name={@icon} class="step-symbol stepper-icon" />
-          <.loader :if={@step == "loading"} />
+          <.icon name={@icon} class="step-symbol stepper-icon" /> <.loader :if={@step == "loading"} />
           <.icon
             :if={@step == "completed"}
             name="hero-check-solid"
@@ -237,7 +236,6 @@ defmodule FastCheckWeb.Components.Stepper do
             ]}
           />
         </span>
-
         <span
           :if={!@icon}
           class={[
@@ -246,8 +244,7 @@ defmodule FastCheckWeb.Components.Stepper do
             @number_wrapper_class
           ]}
         >
-          <span class="step-symbol">{@step_number}</span>
-          <.loader :if={@step == "loading"} />
+          <span class="step-symbol">{@step_number}</span> <.loader :if={@step == "loading"} />
           <.icon
             :if={@step == "completed"}
             name="hero-check-solid"
@@ -258,17 +255,11 @@ defmodule FastCheckWeb.Components.Stepper do
           />
         </span>
       </span>
-
       <span class={["stepper-content block", @content_class]}>
-        <span :if={@title} class={["block font-bold text-wrap", @title_class]}>
-          {@title}
-        </span>
-
+        <span :if={@title} class={["block font-bold text-wrap", @title_class]}>{@title}</span>
         <span :if={@description} class={["block text-xs text-wrap", @description_class]}>
           {@description}
-        </span>
-
-        {render_slot(@inner_block)}
+        </span> {render_slot(@inner_block)}
       </span>
     </div>
     """
@@ -301,8 +292,7 @@ defmodule FastCheckWeb.Components.Stepper do
           @icon_wrapper_class
         ]}
       >
-        <.icon name={@icon} class="step-symbol stepper-icon" />
-        <.loader :if={@step == "loading"} />
+        <.icon name={@icon} class="step-symbol stepper-icon" /> <.loader :if={@step == "loading"} />
         <.icon
           :if={@step == "completed"}
           name="hero-check-solid"
@@ -312,7 +302,6 @@ defmodule FastCheckWeb.Components.Stepper do
           ]}
         />
       </span>
-
       <span
         :if={!@icon}
         class={[
@@ -321,8 +310,7 @@ defmodule FastCheckWeb.Components.Stepper do
           @number_wrapper_class
         ]}
       >
-        <span class="step-symbol">{@step_number}</span>
-        <.loader :if={@step == "loading"} />
+        <span class="step-symbol">{@step_number}</span> <.loader :if={@step == "loading"} />
         <.icon
           :if={@step == "completed"}
           name="hero-check-solid"
@@ -332,20 +320,14 @@ defmodule FastCheckWeb.Components.Stepper do
           ]}
         />
       </span>
-
       <span class={[
         "stepper-content block",
         @content_class
       ]}>
-        <span :if={@title} class={["block font-bold text-wrap", @title_class]}>
-          {@title}
-        </span>
-
+        <span :if={@title} class={["block font-bold text-wrap", @title_class]}>{@title}</span>
         <span :if={@description} class={["block text-xs text-wrap", @description_class]}>
           {@description}
-        </span>
-
-        {render_slot(@inner_block)}
+        </span> {render_slot(@inner_block)}
       </span>
     </div>
 

@@ -121,7 +121,7 @@ defmodule FastCheckWeb.Components.Drawer do
         aria-hidden="true"
       >
       </div>
-
+      
       <div
         phx-click-away={hide_drawer(@on_hide_away, @id, @position)}
         phx-window-keydown={hide_drawer(@on_hide, @id, @position)}
@@ -144,10 +144,8 @@ defmodule FastCheckWeb.Components.Drawer do
             aria-label={gettext("Close menu")}
             class={@close_class}
           >
-            <.icon name="hero-x-mark" />
-            <span class="sr-only">{gettext("Close menu")}</span>
+            <.icon name="hero-x-mark" /> <span class="sr-only">{gettext("Close menu")}</span>
           </button>
-
           <h5
             :if={title = @title || render_slot(@header)}
             id={"#{@id}-#{@position}-title"}
@@ -156,14 +154,10 @@ defmodule FastCheckWeb.Components.Drawer do
             {title}
           </h5>
         </div>
-
-        <div id={"#{@id}-#{@position}-desc"} class="sr-only">
-          {gettext("Drawer content")}
-        </div>
-
-        <div class={@content_class}>
-          {render_slot(@inner_block)}
-        </div>
+        
+        <div id={"#{@id}-#{@position}-desc"} class="sr-only">{gettext("Drawer content")}</div>
+        
+        <div class={@content_class}>{render_slot(@inner_block)}</div>
       </div>
     </div>
     """

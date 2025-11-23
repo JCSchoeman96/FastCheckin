@@ -201,7 +201,7 @@ defmodule FastCheckWeb.Components.Card do
         <.icon :if={@icon} name={@icon} class="card-title-icon" />
         <h3 :if={@title}>{@title}</h3>
       </div>
-      {render_slot(@inner_block)}
+       {render_slot(@inner_block)}
     </div>
     """
   end

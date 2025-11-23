@@ -5,7 +5,11 @@ defmodule FastCheckWeb.BrowserAuthTest do
   @valid_password "fastcheck"
 
   setup do
-    Application.put_env(:fastcheck, :dashboard_auth, %{username: @valid_username, password: @valid_password})
+    Application.put_env(:fastcheck, :dashboard_auth, %{
+      username: @valid_username,
+      password: @valid_password
+    })
+
     :ok
   end
 
@@ -19,7 +23,10 @@ defmodule FastCheckWeb.BrowserAuthTest do
     test "allow access with authenticated session", %{conn: conn} do
       conn =
         conn
-        |> init_test_session(%{dashboard_authenticated: true, dashboard_username: @valid_username})
+        |> init_test_session(%{
+          dashboard_authenticated: true,
+          dashboard_username: @valid_username
+        })
         |> get(~p"/")
 
       assert html_response(conn, 200)

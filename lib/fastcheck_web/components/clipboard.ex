@@ -203,7 +203,6 @@ defmodule FastCheckWeb.Components.Clipboard do
       <span :if={@text_description} id={"#{@id}-description"} class="sr-only">
         {@text_description}
       </span>
-
       <span
         :if={@text == nil && @target_selector == nil && Enum.count(@content) > 0}
         id={@content_id}
@@ -211,7 +210,6 @@ defmodule FastCheckWeb.Components.Clipboard do
       >
         {render_slot(@content)}
       </span>
-
       <span
         class={["clipboard-trigger", @trigger_class]}
         role="button"
@@ -221,7 +219,6 @@ defmodule FastCheckWeb.Components.Clipboard do
       >
         {render_slot(@trigger)}
       </span>
-
       <span
         :if={@show_status_text}
         id={@status_id}
@@ -230,9 +227,7 @@ defmodule FastCheckWeb.Components.Clipboard do
         aria-hidden="true"
         aria-atomic="true"
       >
-      </span>
-
-      {render_slot(@inner_block)}
+      </span> {render_slot(@inner_block)}
     </span>
     """
   end

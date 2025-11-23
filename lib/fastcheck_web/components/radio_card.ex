@@ -116,14 +116,12 @@ defmodule FastCheckWeb.Components.RadioCard do
     ~H"""
     <div class={["leading-5", space_class(@space), @class]} {@rest}>
       <input type="hidden" name={@name} value="" disabled={@rest[:disabled]} />
-
       <div :if={@label || @description} class={["radio-card-label-wrapper", @field_label_wrapper]}>
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        <div :if={@description} class={@description_class}>
-          {@description}
-        </div>
+        
+        <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-
+      
       <div
         class={["grid", grid_cols(@cols), grid_gap(@cols_gap), @wrapper_class]}
         role="radiogroup"
@@ -183,7 +181,7 @@ defmodule FastCheckWeb.Components.RadioCard do
               >
                 {radio[:title]}
               </div>
-
+              
               <p
                 :if={radio[:description]}
                 class={["radio-card-description", radio[:description_class]]}
@@ -191,6 +189,7 @@ defmodule FastCheckWeb.Components.RadioCard do
                 {radio[:description]}
               </p>
             </div>
+            
             <div
               :if={Map.get(radio, :inner_block)}
               class={["radio-card-content leading-[17px]", radio[:content_class]]}

@@ -117,9 +117,8 @@ defmodule FastCheckWeb.Components.Breadcrumb do
           >
             {render_slot(item)}
           </.link>
-
           <div :if={is_nil(item[:link])}>{render_slot(item)}</div>
-
+          
           <.icon
             :if={@separator_icon && index < Enum.count(@item)}
             name={@separator_icon}
@@ -132,7 +131,7 @@ defmodule FastCheckWeb.Components.Breadcrumb do
             {@separator_text}
           </span>
         </li>
-        {render_slot(@inner_block)}
+         {render_slot(@inner_block)}
       </ol>
     </nav>
     """

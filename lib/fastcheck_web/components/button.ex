@@ -222,15 +222,12 @@ defmodule FastCheckWeb.Components.Button do
       >
         {render_slot(loading)}
       </span>
-
       <.button_indicator position="left" size={@indicator_size} class={@indicator_class} {@rest} />
       <.icon :if={icon_position(@icon, @rest) == "left"} name={@icon} class={@icon_class} />
       <span :if={@inner_block && render_slot(@inner_block)} class={[@content_class]}>
         {render_slot(@inner_block)}
-      </span>
-      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
+      </span> <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
-
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
       </span>
@@ -425,15 +422,12 @@ defmodule FastCheckWeb.Components.Button do
       >
         {render_slot(loading)}
       </span>
-
       <.button_indicator position="left" size={@indicator_size} class={@indicator_class} {@rest} />
       <.icon :if={icon_position(@icon, @rest) == "left"} name={@icon} class={@icon_class} />
       <span :if={(@inner_block && render_slot(@inner_block)) || @title} class={[@content_class]}>
         {render_slot(@inner_block) || @title}
-      </span>
-      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
+      </span> <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
-
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
       </span>
@@ -468,15 +462,12 @@ defmodule FastCheckWeb.Components.Button do
       >
         {render_slot(loading)}
       </span>
-
       <.button_indicator position="left" size={@indicator_size} class={@indicator_class} {@rest} />
       <.icon :if={icon_position(@icon, @rest) == "left"} name={@icon} />
       <span :if={(@inner_block && render_slot(@inner_block)) || @title} class={[@content_class]}>
         {render_slot(@inner_block) || @title}
-      </span>
-      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
+      </span> <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
-
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
       </span>
@@ -511,15 +502,12 @@ defmodule FastCheckWeb.Components.Button do
       >
         {render_slot(loading)}
       </span>
-
       <.button_indicator position="left" size={@indicator_size} class={@indicator_class} {@rest} />
       <.icon :if={icon_position(@icon, @rest) == "left"} name={@icon} />
       <span :if={(@inner_block && render_slot(@inner_block)) || @title} class={[@content_class]}>
         {render_slot(@inner_block) || @title}
-      </span>
-      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
+      </span> <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
-
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
       </span>
@@ -545,8 +533,7 @@ defmodule FastCheckWeb.Components.Button do
         navigate={@navigate}
         class="text-sm font-semibold leading-6 text-zinc-900 hover:text-zinc-700"
       >
-        <.icon name="hero-arrow-left-solid" class="h-3 w-3" />
-        {render_slot(@inner_block)}
+        <.icon name="hero-arrow-left-solid" class="h-3 w-3" /> {render_slot(@inner_block)}
       </.link>
     </div>
     """
@@ -700,7 +687,8 @@ defmodule FastCheckWeb.Components.Button do
               "default_gradient",
               "outline_gradient",
               "inverted_gradient"
-            ], do: nil
+            ],
+       do: nil
 
   defp border_size("none", _), do: nil
   defp border_size("extra_small", _), do: "border"

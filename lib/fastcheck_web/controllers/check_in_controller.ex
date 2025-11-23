@@ -14,7 +14,7 @@ defmodule FastCheckWeb.CheckInController do
          {:ok, attendee, status} <-
            Attendees.check_in(
              event_id,
-              ticket_code,
+             ticket_code,
              Map.get(params, "entrance_name", "Main"),
              Map.get(params, "operator_name")
            ) do
@@ -30,8 +30,9 @@ defmodule FastCheckWeb.CheckInController do
     end
   end
 
-  defp fetch_event_id(%{assigns: %{current_event_id: event_id}}) when is_integer(event_id) and event_id > 0,
-    do: {:ok, event_id}
+  defp fetch_event_id(%{assigns: %{current_event_id: event_id}})
+       when is_integer(event_id) and event_id > 0,
+       do: {:ok, event_id}
 
   defp fetch_event_id(_), do: {:error, :unauthorized}
 

@@ -130,10 +130,10 @@ defmodule FastCheckWeb.Components.Alert do
           <div :if={@title} class={@title_class} id={@id && "#{@id}-title"}>
             <.icon :if={!is_nil(@icon)} name={@icon} class="alert-icon" aria-hidden="true" /> {@title}
           </div>
-
+          
           <div class={@content_class}>{msg}</div>
         </div>
-
+        
         <button type="button" class={["group shrink-0", @button_class]} aria-label={gettext("close")}>
           <.icon name="hero-x-mark-solid" class="alert-icon opacity-40 group-hover:opacity-70" />
         </button>
@@ -199,7 +199,7 @@ defmodule FastCheckWeb.Components.Alert do
         {gettext("Attempting to reconnect")}
         <.icon name="hero-arrow-path" class="ms-1 h-3 w-3 animate-spin" />
       </.flash>
-
+      
       <.flash
         id="server-error"
         kind={:error}
@@ -317,8 +317,7 @@ defmodule FastCheckWeb.Components.Alert do
           aria-hidden="true"
         /> {@title}
       </div>
-
-      {render_slot(@inner_block)}
+       {render_slot(@inner_block)}
     </div>
     """
   end

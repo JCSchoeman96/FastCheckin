@@ -107,10 +107,10 @@ defmodule FastCheckWeb.Components.ToggleField do
     ]}>
       <div class={@label_wrapper_class}>
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        <div :if={!is_nil(@description)} class={@description_class}>
-          {@description}
-        </div>
+        
+        <div :if={!is_nil(@description)} class={@description_class}>{@description}</div>
       </div>
+      
       <label
         for={@id}
         class={["flex items-center cursor-pointer select-none w-fit", @toggle_wrapper_class]}
@@ -134,6 +134,7 @@ defmodule FastCheckWeb.Components.ToggleField do
             @toggle_circle_class
           ]}>
           </div>
+          
           <div class={[
             "bg-default-light-gray dark:bg-natural-light transition-all ease-in-out duration-500 toggle-field-base",
             color_class(@color),
@@ -142,7 +143,6 @@ defmodule FastCheckWeb.Components.ToggleField do
           </div>
         </div>
       </label>
-
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -176,8 +176,7 @@ defmodule FastCheckWeb.Components.ToggleField do
   defp error(assigns) do
     ~H"""
     <p class="mt-3 flex items-center gap-3 text-sm leading-6 text-rose-700">
-      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" />
-      {render_slot(@inner_block)}
+      <.icon :if={!is_nil(@icon)} name={@icon} class="shrink-0" /> {render_slot(@inner_block)}
     </p>
     """
   end

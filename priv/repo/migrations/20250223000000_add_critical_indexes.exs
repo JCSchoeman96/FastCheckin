@@ -5,7 +5,7 @@ defmodule FastCheck.Repo.Migrations.AddCriticalIndexes do
     # Add the missing is_currently_inside column before creating index on it
     # This column tracks whether an attendee is currently inside the venue
     alter table(:attendees) do
-      add_if_not_exists :is_currently_inside, :boolean, default: false
+      add_if_not_exists(:is_currently_inside, :boolean, default: false)
     end
 
     create_if_not_exists(
@@ -35,12 +35,12 @@ defmodule FastCheck.Repo.Migrations.AddCriticalIndexes do
     # ADD THIS MISSING TABLE DEFINITION:
     # It must be placed BEFORE the create index command that is failing.
     create_if_not_exists table(:check_in_sessions) do
-      add :attendee_id, references(:attendees, on_delete: :delete_all), null: false
-      add :event_id, references(:events, on_delete: :delete_all), null: false
-      add :entry_time, :utc_datetime, null: false
-      add :exit_time, :utc_datetime
-      add :status, :string, default: "active"
-      add :session_length_minutes, :integer
+      add(:attendee_id, references(:attendees, on_delete: :delete_all), null: false)
+      add(:event_id, references(:events, on_delete: :delete_all), null: false)
+      add(:entry_time, :utc_datetime, null: false)
+      add(:exit_time, :utc_datetime)
+      add(:status, :string, default: "active")
+      add(:session_length_minutes, :integer)
 
       timestamps()
     end

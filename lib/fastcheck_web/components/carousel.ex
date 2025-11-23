@@ -155,7 +155,6 @@ defmodule FastCheckWeb.Components.Carousel do
       >
         <.icon name="hero-chevron-left" class="size-7 text-white" />
       </button>
-
       <button
         :if={@control}
         id={"#{@id}-carousel-next"}
@@ -163,7 +162,6 @@ defmodule FastCheckWeb.Components.Carousel do
       >
         <.icon name="hero-chevron-right" class="size-7 text-white" />
       </button>
-
       <div
         :for={{slide, index} <- Enum.with_index(@slide, 1)}
         id={"#{@id}-carousel-slide-#{index}"}
@@ -176,8 +174,7 @@ defmodule FastCheckWeb.Components.Carousel do
           </.slide_image>
         </div>
       </div>
-
-      <.slide_indicators :if={@indicator} id={@id} count={length(@slide)} />
+       <.slide_indicators :if={@indicator} id={@id} count={length(@slide)} />
     </div>
     """
   end
@@ -212,7 +209,7 @@ defmodule FastCheckWeb.Components.Carousel do
           id={"#{@id}-carousel-slide-image-#{@index}"}
         />
       </div>
-      {render_slot(@inner_block)}
+       {render_slot(@inner_block)}
     </.link>
     """
   end
@@ -226,7 +223,7 @@ defmodule FastCheckWeb.Components.Carousel do
         id={"#{@id}-carousel-slide-image-#{@index}"}
       />
     </div>
-    {render_slot(@inner_block)}
+     {render_slot(@inner_block)}
     """
   end
 
@@ -273,6 +270,7 @@ defmodule FastCheckWeb.Components.Carousel do
         >
           {@title}
         </div>
+        
         <p
           :if={!is_nil(@description)}
           id={"#{@id}-carousel-slide-content-description-#{@index}"}

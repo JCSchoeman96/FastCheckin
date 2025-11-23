@@ -116,7 +116,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
           "event_id" => event.id
         })
 
-      assert %{"error" => %{ "code" => "missing_credential", "message" => message }} =
+      assert %{"error" => %{"code" => "missing_credential", "message" => message}} =
                json_response(conn, 401)
 
       assert message =~ "credential"
@@ -129,7 +129,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
           "credential" => "wrong"
         })
 
-      assert %{"error" => %{ "code" => "invalid_credential", "message" => message }} =
+      assert %{"error" => %{"code" => "invalid_credential", "message" => message}} =
                json_response(conn, 403)
 
       assert message =~ "invalid"

@@ -69,7 +69,7 @@ defmodule FastCheckWeb.Components.ScrollArea do
           {render_slot(@inner_block)}
         </div>
       </div>
-
+      
       <div
         class={[
           "absolute right-0 top-0 h-full bg-black/5 rounded-lg scrollbar-y transition-all duration-400",
@@ -80,7 +80,7 @@ defmodule FastCheckWeb.Components.ScrollArea do
       >
         <div class="absolute w-full bg-black/40 h-[20%] rounded-lg thumb-y"></div>
       </div>
-
+      
       <div
         class={[
           "absolute left-0 bottom-0 w-full bg-black/5 rounded-lg transition-all duration-400 scrollbar-x",
