@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('$app/environment', () => ({ browser: true }));
 
-import { createSyncStore } from './sync';
+import { createSyncStore } from './sync.svelte';
 import type { ScanQueueItem } from '$lib/types';
 
 type MockDeps = Parameters<typeof createSyncStore>[0];

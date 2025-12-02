@@ -613,7 +613,7 @@ defmodule FastCheck.Cache.CacheManager do
   def increment_occupancy(_, _), do: {:error, :invalid_arguments}
 
   defp cache_name, do: config()[:cache_name]
-  defp max_size, do: config()[:max_size]
+
 
   defp cache_ready? do
     cache_name()

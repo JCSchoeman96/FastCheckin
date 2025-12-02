@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { auth } from "$lib/stores/auth";
-  import { syncStore } from "$lib/stores/sync";
+  import { syncStore } from "$lib/stores/sync.svelte";
   import { onMount } from "svelte";
 
   let eventId = "";
@@ -46,8 +46,7 @@
         type="number"
         bind:value={eventId}
         required
-        placeholder="123"
-      />
+        placeholder="123" />
 
       <label class="block text-sm font-medium text-slate-700" for="device-name">Device name</label>
       <input
@@ -56,8 +55,7 @@
         type="text"
         bind:value={deviceName}
         required
-        placeholder="Front Gate Scanner"
-      />
+        placeholder="Front Gate Scanner" />
 
       <label class="block text-sm font-medium text-slate-700" for="credential">Mobile access code</label>
       <input
@@ -66,8 +64,7 @@
         type="password"
         bind:value={credential}
         required
-        placeholder="••••••"
-      />
+        placeholder="••••••" />
 
       {#if formError}
         <p class="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{formError}</p>
@@ -79,8 +76,7 @@
       <button
         type="submit"
         class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-blue-300"
-        disabled={$auth.isLoading}
-      >
+        disabled={$auth.isLoading}>
         {$auth.isLoading ? "Signing in..." : "Sign in"}
       </button>
     </form>
