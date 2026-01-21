@@ -227,6 +227,93 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("pause_sync", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param) do
+      FastCheck.Events.SyncState.pause_sync(event_id)
+
+      {:noreply,
+       socket
+       |> assign(:sync_paused, true)
+       |> assign(:sync_status, "Sync paused")}
+    else
+      _ ->
+        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+    end
+  end
+
+  def handle_event("pause_sync", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
+  def handle_event("resume_sync", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param) do
+      FastCheck.Events.SyncState.resume_sync(event_id)
+
+      {:noreply,
+       socket
+       |> assign(:sync_paused, false)
+       |> assign(:sync_status, "Sync resumed")}
+    else
+      _ ->
+        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+    end
+  end
+
+  def handle_event("resume_sync", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
+  def handle_event("cancel_sync", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param) do
+      FastCheck.Events.SyncState.cancel_sync(event_id)
+
+      {:noreply,
+       socket
+       |> assign(:sync_progress, nil)
+       |> assign(:sync_paused, false)
+       |> assign(:sync_status, "Sync cancelled")
+       |> assign(:sync_start_time, nil)
+       |> assign(:sync_timing_data, [])}
+    else
+      _ ->
+        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+    end
+  end
+
+  def handle_event("cancel_sync", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
+  def handle_event("show_sync_history", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param) do
+      sync_history = Events.list_event_sync_logs(event_id, 10)
+
+      {:noreply,
+       socket
+       |> assign(:viewing_sync_history_for, event_id)
+       |> assign(:sync_history, sync_history)}
+    else
+      _ ->
+        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+    end
+  end
+
+  def handle_event("show_sync_history", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
+  def handle_event("hide_sync_history", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:viewing_sync_history_for, nil)
+     |> assign(:sync_history, [])}
+  end
+
+  @impl true
   def handle_event(_event, _params, socket) do
     {:noreply, socket}
   end

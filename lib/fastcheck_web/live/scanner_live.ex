@@ -159,6 +159,60 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   @impl true
+  def handle_event("toggle_bulk_mode", _params, socket) do
+    new_mode = !socket.assigns.bulk_mode
+
+    {:noreply,
+     socket
+     |> assign(:bulk_mode, new_mode)
+     |> assign(:bulk_codes, if(new_mode, do: socket.assigns.bulk_codes, else: ""))
+     |> assign(:bulk_results, [])}
+  end
+
+  @impl true
+  def handle_event("update_bulk_codes", %{"codes" => codes}, socket) do
+    {:noreply, assign(socket, :bulk_codes, codes)}
+  end
+
+  def handle_event("update_bulk_codes", params, socket) when is_map(params) do
+    # Handle case where codes might be in different format
+    codes = Map.get(params, "codes", socket.assigns.bulk_codes)
+    {:noreply, assign(socket, :bulk_codes, codes)}
+  end
+
+  def handle_event("update_bulk_codes", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("process_bulk_codes", %{"codes" => codes_param}, socket) do
+    codes =
+      codes_param
+      |> String.split(~r/\R/, trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    if Enum.empty?(codes) do
+      {:noreply,
+       socket
+       |> assign(:bulk_results, [%{status: :error, message: "No ticket codes provided."}])}
+    else
+      # Start async processing
+      send(self(), {:process_bulk_codes_async, codes})
+
+      {:noreply,
+       socket
+       |> assign(:bulk_processing, true)
+       |> assign(:bulk_results, [])}
+    end
+  end
+
+  def handle_event("process_bulk_codes", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("camera_permission_sync", params, socket) when is_map(params) do
     status = normalize_camera_permission_status(Map.get(params, "status"))
     remembered = truthy?(Map.get(params, "remembered"))
@@ -247,6 +301,7 @@ defmodule FastCheckWeb.ScannerLive do
     {:noreply, socket |> assign_event_state() |> schedule_event_state_refresh()}
   end
 
+  @impl true
   def handle_info({:process_bulk_codes_async, codes}, socket) do
     check_in_type = socket.assigns.check_in_type || "entry"
     event_id = socket.assigns.event_id
@@ -272,7 +327,12 @@ defmodule FastCheckWeb.ScannerLive do
             }
 
           {:error, error_code, message} ->
-            scan_entry = build_scan_history_entry(code, nil, String.to_atom(error_code), message, check_in_type)
+            # Normalize error code to lowercase atom for consistent status matching
+            # Error codes from Attendees.check_in_advanced are uppercase strings like "LIMIT_EXCEEDED"
+            # but scan_status_color/icon functions expect lowercase atoms like :limit_exceeded
+            # Use normalize_error_code/1 to safely convert to known atoms only
+            normalized_status = normalize_error_code(error_code)
+            scan_entry = build_scan_history_entry(code, nil, normalized_status, message, check_in_type)
             %{
               code: code,
               status: :error,
@@ -1127,6 +1187,15 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_status_color(:expired), do: "text-red-400"
   defp scan_status_color(:invalid), do: "text-red-400"
   defp scan_status_color(:error), do: "text-red-400"
+  # Additional error codes from check_in_advanced (normalized to lowercase)
+  defp scan_status_color(:not_found), do: "text-red-400"
+  defp scan_status_color(:already_inside), do: "text-yellow-400"
+  defp scan_status_color(:archived), do: "text-slate-400"
+  defp scan_status_color(:invalid_code), do: "text-red-400"
+  defp scan_status_color(:invalid_ticket), do: "text-red-400"
+  defp scan_status_color(:invalid_entrance), do: "text-red-400"
+  defp scan_status_color(:invalid_type), do: "text-red-400"
+  defp scan_status_color(:payment_invalid), do: "text-red-400"
   defp scan_status_color(_), do: "text-slate-400"
 
   defp scan_status_icon(:success), do: "✓"
@@ -1136,7 +1205,45 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_status_icon(:expired), do: "✖"
   defp scan_status_icon(:invalid), do: "✖"
   defp scan_status_icon(:error), do: "✖"
+  # Additional error codes from check_in_advanced (normalized to lowercase)
+  defp scan_status_icon(:not_found), do: "✖"
+  defp scan_status_icon(:already_inside), do: "⚠"
+  defp scan_status_icon(:archived), do: "⊘"
+  defp scan_status_icon(:invalid_code), do: "✖"
+  defp scan_status_icon(:invalid_ticket), do: "✖"
+  defp scan_status_icon(:invalid_entrance), do: "✖"
+  defp scan_status_icon(:invalid_type), do: "✖"
+  defp scan_status_icon(:payment_invalid), do: "✖"
   defp scan_status_icon(_), do: "?"
+
+  # Safely normalize error codes to known atoms without using String.to_atom/1
+  # This avoids atom table exhaustion from arbitrary strings
+  @error_code_map %{
+    "SUCCESS" => :success,
+    "DUPLICATE_TODAY" => :duplicate_today,
+    "LIMIT_EXCEEDED" => :limit_exceeded,
+    "NOT_YET_VALID" => :not_yet_valid,
+    "EXPIRED" => :expired,
+    "INVALID" => :invalid,
+    "ERROR" => :error,
+    "NOT_FOUND" => :not_found,
+    "ALREADY_INSIDE" => :already_inside,
+    "ARCHIVED" => :archived,
+    "INVALID_CODE" => :invalid_code,
+    "INVALID_TICKET" => :invalid_ticket,
+    "INVALID_ENTRANCE" => :invalid_entrance,
+    "INVALID_TYPE" => :invalid_type,
+    "PAYMENT_INVALID" => :payment_invalid,
+    "TIMEOUT" => :error,
+    "UPDATE_FAILED" => :error,
+    "TICKET_IN_USE_ELSEWHERE" => :error
+  }
+
+  defp normalize_error_code(code) when is_binary(code) do
+    Map.get(@error_code_map, String.upcase(code), :error)
+  end
+
+  defp normalize_error_code(_), do: :error
 
   defp assign_event_state(socket) do
     event = Map.get(socket.assigns, :event)

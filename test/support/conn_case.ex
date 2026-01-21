@@ -41,7 +41,11 @@ defmodule FastCheckWeb.ConnCase do
   """
   def response_content_type(conn, type) do
     case type do
-      :csv -> conn.resp_headers |> List.keyfind("content-type", 0) |> elem(1) |> String.contains?("csv")
+      :csv ->
+        case List.keyfind(conn.resp_headers, "content-type", 0) do
+          {_, content_type} -> String.contains?(content_type, "csv")
+          nil -> false
+        end
       _ -> false
     end
   end

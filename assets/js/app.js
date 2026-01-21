@@ -309,6 +309,50 @@ SoundFeedback.init();
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
   .getAttribute("content");
+
+// Sound Toggle Hook
+const SoundToggle = {
+  mounted() {
+    // Store reference to click handler for cleanup
+    this.handleClick = () => {
+      const enabled = SoundFeedback.toggle();
+      this.updateButton(enabled);
+      // Sync with LiveView if needed
+      this.pushEvent("sound_toggle", { enabled: enabled });
+    };
+    
+    this.el.addEventListener("click", this.handleClick);
+    
+    // Initialize button state from localStorage
+    const enabled = SoundFeedback.isEnabled();
+    this.updateButton(enabled);
+  },
+  
+  destroyed() {
+    // Remove click listener to prevent memory leaks and duplicate handlers
+    if (this.handleClick) {
+      this.el.removeEventListener("click", this.handleClick);
+    }
+  },
+  
+  updateButton(enabled) {
+    // Regex pattern matches both plain and prefixed Tailwind classes (hover:, focus:, etc.)
+    const classCleanupPattern = /(?:hover:|focus:)?(?:bg-slate-700\/\d+|text-slate-\d+|bg-green-600\/\d+|text-green-\d+)/g;
+    
+    if (enabled) {
+      this.el.textContent = "🔊 Sound On";
+      this.el.className = this.el.className.replace(classCleanupPattern, "").replace(/\s+/g, " ").trim();
+      this.el.classList.add("bg-green-600/20", "text-green-300", "hover:bg-green-600/30");
+      this.el.setAttribute("aria-label", "Disable sound feedback");
+    } else {
+      this.el.textContent = "🔇 Sound Off";
+      this.el.className = this.el.className.replace(classCleanupPattern, "").replace(/\s+/g, " ").trim();
+      this.el.classList.add("bg-slate-700/50", "text-slate-400", "hover:bg-slate-700/70");
+      this.el.setAttribute("aria-label", "Enable sound feedback");
+    }
+  }
+};
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {
@@ -322,36 +366,6 @@ const liveSocket = new LiveSocket("/live", Socket, {
     SoundToggle,
   },
 });
-
-// Sound Toggle Hook
-const SoundToggle = {
-  mounted() {
-    this.el.addEventListener("click", () => {
-      const enabled = SoundFeedback.toggle();
-      this.updateButton(enabled);
-      // Sync with LiveView if needed
-      this.pushEvent("sound_toggle", { enabled: enabled });
-    });
-    
-    // Initialize button state from localStorage
-    const enabled = SoundFeedback.isEnabled();
-    this.updateButton(enabled);
-  },
-  
-  updateButton(enabled) {
-    if (enabled) {
-      this.el.textContent = "🔊 Sound On";
-      this.el.className = this.el.className.replace(/bg-slate-700\/\d+|text-slate-\d+|bg-green-600\/\d+|text-green-\d+/g, "");
-      this.el.classList.add("bg-green-600/20", "text-green-300", "hover:bg-green-600/30");
-      this.el.setAttribute("aria-label", "Disable sound feedback");
-    } else {
-      this.el.textContent = "🔇 Sound Off";
-      this.el.className = this.el.className.replace(/bg-slate-700\/\d+|text-slate-\d+|bg-green-600\/\d+|text-green-\d+/g, "");
-      this.el.classList.add("bg-slate-700/50", "text-slate-400", "hover:bg-slate-700/70");
-      this.el.setAttribute("aria-label", "Enable sound feedback");
-    }
-  }
-};
 
 // Listen for scan results to play sounds
 liveSocket.on("phx:event", (event) => {

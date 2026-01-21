@@ -77,7 +77,6 @@ defmodule FastCheck.Events.Sync do
                     case Attendees.create_bulk(event.id, attendees_to_process, incremental: incremental) do
                       {:ok, processed_count} ->
                         finalize_sync(event)
-                        SyncState.clear_state(event_id)
 
                         count_message =
                           if incremental do
@@ -86,10 +85,19 @@ defmodule FastCheck.Events.Sync do
                             resolve_synced_count(processed_count, attendees, total_count)
                           end
 
-                        # Log successful completion
-                        estimated_total_pages = if total_count > 0, do: div(total_count, 100) + 1, else: 1
+                        # Get actual pages processed from sync state BEFORE clearing
+                        actual_pages_processed =
+                          case SyncState.get_state(event_id) do
+                            %{current_page: page} when is_integer(page) and page > 0 -> page
+                            _ -> 1  # At least 1 page if we got results
+                          end
+
+                        # Clear sync state after extracting page count
+                        SyncState.clear_state(event_id)
+
+                        # Log successful completion with actual pages processed
                         if sync_log_id do
-                          SyncLog.log_sync_completion(sync_log_id, "completed", processed_count, estimated_total_pages)
+                          SyncLog.log_sync_completion(sync_log_id, "completed", processed_count, actual_pages_processed)
                         end
 
                         Cache.invalidate_event_cache(event.id)
@@ -104,24 +112,29 @@ defmodule FastCheck.Events.Sync do
 
                       {:error, reason} ->
                         mark_error(event, reason)
+                        SyncState.clear_state(event_id)
                         {:error, format_reason(reason)}
                     end
 
                   {:error, reason, _partial} ->
                     mark_error(event, reason)
+                    SyncState.clear_state(event_id)
                     {:error, format_reason(reason)}
                 end
 
               {:error, :decryption_failed} ->
                 mark_error(event, :decryption_failed)
+                SyncState.clear_state(event_id)
                 {:error, "Unable to decrypt Tickera credentials"}
             end
 
           {:error, {:event_archived, message}} ->
             Logger.warning("Sync attempt blocked for archived event #{event.id}")
+            # No sync state was initialized for blocked syncs
             {:error, message}
 
           {:error, {_reason, message}} ->
+            # No sync state was initialized for blocked syncs
             {:error, message}
         end
     end
@@ -356,8 +369,17 @@ defmodule FastCheck.Events.Sync do
     FastCheck.Attendees.Attendee
     |> where([a], a.event_id == ^event_id)
     |> select([a], a.ticket_code)
-    |> Repo.all()
+    |> Repo.all(timeout: 15_000)
     |> MapSet.new()
+  rescue
+    exception ->
+      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+        Logger.error("Query timeout fetching existing ticket codes for event #{event_id}")
+        MapSet.new()
+      else
+        Logger.error("Database error fetching ticket codes: #{Exception.message(exception)}")
+        MapSet.new()
+      end
   end
 
   defp refresh_event_window_from_tickera(%Event{} = event, api_key) do
