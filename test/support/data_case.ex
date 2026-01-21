@@ -24,6 +24,7 @@ defmodule FastCheck.DataCase do
       import Ecto.Changeset
       import Ecto.Query
       import FastCheck.DataCase
+      import FastCheck.Fixtures
     end
   end
 

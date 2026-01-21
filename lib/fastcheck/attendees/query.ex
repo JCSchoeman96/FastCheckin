@@ -20,14 +20,25 @@ defmodule FastCheck.Attendees.Query do
   Lists all attendees for the given event ordered by most recent check-in.
 
   This is a pure database query with no caching or side effects.
+  Includes a timeout to prevent long-running queries.
   """
   @spec list_event_attendees(integer()) :: [Attendee.t()]
   def list_event_attendees(event_id) when is_integer(event_id) do
     from(a in Attendee,
       where: a.event_id == ^event_id,
-      order_by: [desc: a.checked_in_at]
+      order_by: [desc: a.checked_in_at],
+      limit: 10_000
     )
-    |> Repo.all()
+    |> Repo.all(timeout: 15_000)
+  rescue
+    exception ->
+      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+        Logger.error("Query timeout listing attendees for event #{event_id}")
+        []
+      else
+        Logger.error("Database error listing attendees: #{Exception.message(exception)}")
+        []
+      end
   end
 
   def list_event_attendees(_), do: []
@@ -36,11 +47,21 @@ defmodule FastCheck.Attendees.Query do
   Fetches a single attendee by ticket code within an event.
 
   This is a pure database query without caching.
+  Includes a timeout for fast failure on slow queries.
   """
   @spec get_attendee_by_ticket_code(integer(), String.t()) :: Attendee.t() | nil
   def get_attendee_by_ticket_code(event_id, ticket_code)
       when is_integer(event_id) and is_binary(ticket_code) do
-    Repo.get_by(Attendee, event_id: event_id, ticket_code: ticket_code)
+    Repo.get_by(Attendee, [event_id: event_id, ticket_code: ticket_code], timeout: 5_000)
+  rescue
+    exception ->
+      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+        Logger.error("Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}")
+        nil
+      else
+        Logger.error("Database error fetching attendee: #{Exception.message(exception)}")
+        nil
+      end
   end
 
   def get_attendee_by_ticket_code(_, _), do: nil
@@ -50,6 +71,8 @@ defmodule FastCheck.Attendees.Query do
 
   Uses `FOR UPDATE` to lock the row for safe concurrent updates.
   Returns `{:ok, attendee}` or `{:error, code, message}`.
+
+  Includes a 5-second timeout to prevent long-running queries.
   """
   @spec fetch_attendee_for_update(integer(), String.t()) ::
           {:ok, Attendee.t()} | {:error, String.t(), String.t()}
@@ -61,7 +84,7 @@ defmodule FastCheck.Attendees.Query do
         lock: "FOR UPDATE"
       )
 
-    case Repo.one(query) do
+    case Repo.one(query, timeout: 5_000) do
       nil ->
         Logger.warning("Attendee not found for event #{event_id} ticket #{ticket_code}")
         {:error, "NOT_FOUND", "Ticket not found"}
@@ -69,6 +92,15 @@ defmodule FastCheck.Attendees.Query do
       %Attendee{} = attendee ->
         {:ok, attendee}
     end
+  rescue
+    exception ->
+      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+        Logger.error("Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}")
+        {:error, "TIMEOUT", "Database query timed out"}
+      else
+        Logger.error("Database error fetching attendee: #{Exception.message(exception)}")
+        {:error, "ERROR", "Database error"}
+      end
   end
 
   def fetch_attendee_for_update(_, _), do: {:error, "INVALID_PARAMS", "Invalid parameters"}
@@ -172,6 +204,35 @@ defmodule FastCheck.Attendees.Query do
   end
 
   def compute_occupancy_breakdown(_), do: default_occupancy_breakdown()
+
+  @doc """
+  Lists all check-ins for the given event ordered by most recent.
+
+  Includes attendee information via preload.
+  """
+  @spec list_event_check_ins(integer()) :: [map()]
+  def list_event_check_ins(event_id) when is_integer(event_id) do
+    alias FastCheck.Attendees.CheckIn
+
+    from(ci in CheckIn,
+      where: ci.event_id == ^event_id,
+      order_by: [desc: ci.checked_in_at],
+      preload: [:attendee],
+      limit: 50_000
+    )
+    |> Repo.all(timeout: 30_000)
+  rescue
+    exception ->
+      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+        Logger.error("Query timeout listing check-ins for event #{event_id}")
+        []
+      else
+        Logger.error("Database error listing check-ins: #{Exception.message(exception)}")
+        []
+      end
+  end
+
+  def list_event_check_ins(_), do: []
 
   @doc """
   Computes aggregate statistics for an event's attendees.

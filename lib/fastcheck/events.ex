@@ -203,9 +203,9 @@ defmodule FastCheck.Events do
   defdelegate get_event!(event_id), to: Cache
 
   @doc "Synchronizes attendees for the specified event."
-  @spec sync_event(integer(), (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil) ::
+  @spec sync_event(integer(), (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil, keyword()) ::
           {:ok, String.t()} | {:error, String.t()}
-  defdelegate sync_event(event_id, progress_callback \\ nil), to: Sync
+  defdelegate sync_event(event_id, progress_callback \\ nil, opts \\ []), to: Sync
 
   @doc "Returns event with refreshed stats."
   @spec get_event_with_stats(integer()) :: Event.t()
@@ -222,6 +222,10 @@ defmodule FastCheck.Events do
   @doc "Returns advanced event statistics."
   @spec get_event_advanced_stats(integer()) :: map()
   defdelegate get_event_advanced_stats(event_id), to: FastCheck.Events.Stats
+
+  @doc "Lists recent sync logs for an event."
+  @spec list_event_sync_logs(integer(), integer()) :: [FastCheck.Events.SyncLog.t()]
+  defdelegate list_event_sync_logs(event_id, limit \\ 10), to: FastCheck.Events.SyncLog
 
   @doc "Broadcasts occupancy update."
   @spec broadcast_occupancy_update(integer(), integer()) :: :ok
@@ -291,6 +295,193 @@ defmodule FastCheck.Events do
   end
 
   def create_event(_), do: {:error, "Invalid attributes"}
+
+  @doc """
+  Archives an event by setting its status to "archived".
+
+  Archived events cannot be synced or scanned.
+
+  ## Parameters
+    * `event_id` - The integer ID of the event to archive
+
+  ## Returns
+    * `{:ok, %Event{}}` on success
+    * `{:error, reason}` when the event is not found or update fails
+  """
+  @spec archive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
+  def archive_event(event_id) when is_integer(event_id) and event_id > 0 do
+    case Cache.get_event!(event_id) do
+      %Event{status: "archived"} = event ->
+        {:ok, event}
+
+      %Event{} = event ->
+        event
+        |> Event.changeset(%{status: "archived"})
+        |> Repo.update()
+        |> case do
+          {:ok, updated} ->
+            Cache.invalidate_event_cache(updated.id)
+            Cache.invalidate_events_list_cache()
+            Logger.info("Archived event #{event_id}")
+            {:ok, updated}
+
+          {:error, reason} ->
+            Logger.error("Failed to archive event #{event_id}: #{inspect(reason)}")
+            {:error, reason}
+        end
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  def archive_event(_), do: {:error, :invalid_event_id}
+
+  @doc """
+  Unarchives an event by setting its status to "active".
+
+  ## Parameters
+    * `event_id` - The integer ID of the event to unarchive
+
+  ## Returns
+    * `{:ok, %Event{}}` on success
+    * `{:error, reason}` when the event is not found or update fails
+  """
+  @spec unarchive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
+  def unarchive_event(event_id) when is_integer(event_id) and event_id > 0 do
+    case Cache.get_event!(event_id) do
+      %Event{status: "active"} = event ->
+        {:ok, event}
+
+      %Event{} = event ->
+        event
+        |> Event.changeset(%{status: "active"})
+        |> Repo.update()
+        |> case do
+          {:ok, updated} ->
+            Cache.invalidate_event_cache(updated.id)
+            Cache.invalidate_events_list_cache()
+            Logger.info("Unarchived event #{event_id}")
+            {:ok, updated}
+
+          {:error, reason} ->
+            Logger.error("Failed to unarchive event #{event_id}: #{inspect(reason)}")
+            {:error, reason}
+        end
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  def unarchive_event(_), do: {:error, :invalid_event_id}
+
+  @doc """
+  Updates an existing event with new attributes.
+
+  Only updates fields that are provided. API key validation is only performed
+  if the API key is being changed.
+
+  ## Parameters
+    * `event_id` - The integer ID of the event to update
+    * `attrs` - Map of attributes to update (name, location, entrance_name, etc.)
+
+  ## Returns
+    * `{:ok, %Event{}}` on success
+    * `{:error, reason}` when the event is not found or update fails
+  """
+  @spec update_event(integer(), map()) :: {:ok, Event.t()} | {:error, term()}
+  def update_event(event_id, attrs) when is_integer(event_id) and event_id > 0 do
+    case Cache.get_event!(event_id) do
+      %Event{} = event ->
+        # Only validate API key if it's being changed
+        attrs =
+          if Map.has_key?(attrs, "tickera_api_key_encrypted") || Map.has_key?(attrs, "api_key") do
+            # API key is being updated, validate credentials
+            site_url = Map.get(attrs, "tickera_site_url") || event.tickera_site_url
+            api_key = Map.get(attrs, "tickera_api_key_encrypted") || Map.get(attrs, "api_key")
+
+            if site_url && api_key do
+              case ensure_credentials(site_url, api_key) do
+                :ok -> attrs
+                {:error, _reason} -> Map.put(attrs, :_validation_error, "Invalid API key or site URL")
+              end
+            else
+              attrs
+            end
+          else
+            attrs
+          end
+
+        if Map.has_key?(attrs, :_validation_error) do
+          {:error, Map.get(attrs, :_validation_error)}
+        else
+          # Prepare update attributes
+          update_attrs = prepare_update_attrs(attrs, event)
+
+          event
+          |> Event.changeset(update_attrs)
+          |> Repo.update()
+          |> case do
+            {:ok, updated} ->
+              Cache.invalidate_event_cache(updated.id)
+              Cache.invalidate_events_list_cache()
+              Logger.info("Updated event #{event_id}")
+              {:ok, updated}
+
+            {:error, reason} ->
+              Logger.error("Failed to update event #{event_id}: #{inspect(reason)}")
+              {:error, reason}
+          end
+        end
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  def update_event(_, _), do: {:error, :invalid_event_id}
+
+  defp prepare_update_attrs(attrs, event) do
+    attrs
+    |> Map.drop([:_validation_error])
+    |> maybe_encrypt_api_key(event)
+    |> maybe_update_last4(event)
+  end
+
+  defp maybe_encrypt_api_key(attrs, _event) do
+    api_key = Map.get(attrs, "tickera_api_key_encrypted") || Map.get(attrs, "api_key")
+
+    if api_key && is_binary(api_key) && api_key != "" do
+      # New API key provided, encrypt it
+      case Crypto.encrypt(api_key) do
+        {:ok, encrypted} ->
+          # Extract last4 from the original key
+          last4 = String.slice(api_key, -4, 4)
+          attrs
+          |> Map.put("tickera_api_key_encrypted", encrypted)
+          |> Map.put("tickera_api_key_last4", last4)
+
+        _ ->
+          attrs
+      end
+    else
+      # No API key provided, keep existing
+      attrs
+      |> Map.delete("tickera_api_key_encrypted")
+      |> Map.delete("api_key")
+    end
+  end
+
+  defp maybe_update_last4(attrs, event) do
+    # If we're updating the API key, last4 is already set in maybe_encrypt_api_key
+    # Otherwise, keep existing last4
+    if Map.has_key?(attrs, "tickera_api_key_last4") do
+      attrs
+    else
+      Map.put(attrs, "tickera_api_key_last4", event.tickera_api_key_last4)
+    end
+  end
 
   @doc """
   Lists cached events along with their attendee counts, falling back to the

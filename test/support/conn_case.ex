@@ -35,4 +35,14 @@ defmodule FastCheckWeb.ConnCase do
     FastCheck.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
+
+  @doc """
+  Helper to check response content type.
+  """
+  def response_content_type(conn, type) do
+    case type do
+      :csv -> conn.resp_headers |> List.keyfind("content-type", 0) |> elem(1) |> String.contains?("csv")
+      _ -> false
+    end
+  end
 end

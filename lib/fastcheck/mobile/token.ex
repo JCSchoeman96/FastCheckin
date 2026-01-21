@@ -120,12 +120,16 @@ defmodule FastCheck.Mobile.Token do
   @doc """
   Issues a JWT token for a mobile scanner for the given event.
 
+  The token expiration is set based on the event's end time if available,
+  otherwise falls back to the configured TTL. This ensures tokens expire
+  when the event ends, providing better security.
+
   The token includes the following claims:
   - `event_id` - The ID of the event (integer)
   - `role` - Always "scanner"
   - `iss` - Issuer (from config)
   - `iat` - Issued at (current Unix timestamp)
-  - `exp` - Expiration (iat + token_ttl_seconds)
+  - `exp` - Expiration (event end time or iat + token_ttl_seconds)
 
   ## Parameters
 
@@ -145,14 +149,14 @@ defmodule FastCheck.Mobile.Token do
   @spec issue_scanner_token(integer()) :: {:ok, String.t()} | {:error, term()}
   def issue_scanner_token(event_id) when is_integer(event_id) and event_id > 0 do
     now = System.system_time(:second)
-    ttl = token_ttl_seconds()
+    exp = calculate_expiration(event_id, now)
 
     claims = %{
       "event_id" => event_id,
       "role" => @role_scanner,
       "iss" => issuer(),
       "iat" => now,
-      "exp" => now + ttl
+      "exp" => exp
     }
 
     signer = Joken.Signer.create(algorithm(), secret_key())
@@ -165,6 +169,39 @@ defmodule FastCheck.Mobile.Token do
 
   def issue_scanner_token(_event_id) do
     {:error, :invalid_event_id}
+  end
+
+  # Calculates token expiration based on event end time if available,
+  # otherwise uses configured TTL.
+  defp calculate_expiration(event_id, now) do
+    case fetch_event_end_time(event_id) do
+      {:ok, end_time_unix} when is_integer(end_time_unix) ->
+        # Use event end time, but ensure it's not in the past
+        max(end_time_unix, now + 3600) # At least 1 hour from now
+
+      _ ->
+        # Fallback to configured TTL
+        now + token_ttl_seconds()
+    end
+  end
+
+  # Fetches the event's end time from the database.
+  defp fetch_event_end_time(event_id) do
+    alias FastCheck.Repo
+    alias FastCheck.Events.Event
+
+    case Repo.get(Event, event_id) do
+      %Event{tickera_end_date: %DateTime{} = end_date} ->
+        {:ok, DateTime.to_unix(end_date)}
+
+      %Event{tickera_end_date: nil} ->
+        {:error, :no_end_date}
+
+      nil ->
+        {:error, :event_not_found}
+    end
+  rescue
+    _ -> {:error, :fetch_failed}
   end
 
   # ========================================================================

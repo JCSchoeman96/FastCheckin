@@ -19,6 +19,7 @@ defmodule FastCheck.Application do
         FastCheckWeb.Telemetry,
         FastCheck.Repo,
         FastCheck.TickeraCircuitBreaker,
+        FastCheck.Events.SyncState,
         {DNSCluster, query: Application.get_env(:fastcheck, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: FastCheck.PubSub},
         # Abuse tracking ETS table (MUST be before telemetry handlers attach)

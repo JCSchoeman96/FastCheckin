@@ -45,6 +45,8 @@ defmodule FastCheckWeb.Router do
     live "/dashboard", DashboardLive, :index
     live "/scan/:event_id", ScannerLive, :index
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
+    get "/export/attendees/:event_id", ExportController, :export_attendees
+    get "/export/check-ins/:event_id", ExportController, :export_check_ins
     delete "/logout", SessionController, :delete
   end
 

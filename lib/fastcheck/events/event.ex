@@ -9,6 +9,8 @@ defmodule FastCheck.Events.Event do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias FastCheck.Security.Sanitizer
+
   @type t :: %__MODULE__{
           id: integer() | nil,
           name: String.t() | nil,
@@ -104,11 +106,20 @@ defmodule FastCheck.Events.Event do
       :last_sync_at,
       :last_soft_sync_at
     ])
+    |> sanitize_string_fields()
     |> validate_required([
       :name,
       :tickera_api_key_encrypted,
       :tickera_site_url,
       :mobile_access_secret_encrypted
     ])
+  end
+
+  defp sanitize_string_fields(changeset) do
+    changeset
+    |> update_change(:name, &Sanitizer.sanitize_name/1)
+    |> update_change(:location, &Sanitizer.sanitize_name/1)
+    |> update_change(:entrance_name, &Sanitizer.sanitize_name/1)
+    |> update_change(:tickera_site_url, &Sanitizer.sanitize_url/1)
   end
 end

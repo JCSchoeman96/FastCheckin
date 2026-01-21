@@ -32,6 +32,8 @@ config :fastcheck,
          queue_target: 50,
          queue_interval: 1_000,
          preallocate: true,
+         # Query timeout: 30 seconds for all queries
+         timeout: 30_000,
          # Log all queries with timing in development
          log: :info
        )

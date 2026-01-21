@@ -97,6 +97,8 @@ if config_env() == :prod do
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "20"),
     queue_target: 5_000,
     queue_interval: 1_000,
+    # Query timeout: 30 seconds for all queries
+    timeout: String.to_integer(System.get_env("DB_TIMEOUT_MS") || "30000"),
     # Log queries that exceed the threshold (in microseconds, default 100ms)
     log: false,
     telemetry_prefix: [:fastcheck, :repo]

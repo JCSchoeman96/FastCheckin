@@ -157,11 +157,27 @@ defmodule FastCheck.Events.Cache do
   end
 
   defp fetch_events_from_db do
-    Event
-    |> join(:left, [e], a in Attendee, on: a.event_id == e.id)
-    |> group_by([e, _a], e)
-    |> select_merge([_e, a], %{attendee_count: count(a.id)})
-    |> Repo.all()
+    # Optimized query: Use subquery for attendee counts to avoid N+1
+    # This is more efficient than a left join with group_by
+    attendee_counts =
+      from(a in Attendee,
+        group_by: a.event_id,
+        select: %{event_id: a.event_id, attendee_count: count(a.id)}
+      )
+      |> Repo.all()
+      |> Map.new(fn %{event_id: id, attendee_count: count} -> {id, count} end)
+
+    # Fetch events and merge attendee counts
+    events =
+      Event
+      |> order_by([e], [desc: e.inserted_at])
+      |> Repo.all(timeout: 10_000)
+
+    # Merge attendee counts into events
+    Enum.map(events, fn event ->
+      attendee_count = Map.get(attendee_counts, event.id, 0)
+      %{event | attendee_count: attendee_count}
+    end)
   end
 
   defp cache_events_list(events) do
