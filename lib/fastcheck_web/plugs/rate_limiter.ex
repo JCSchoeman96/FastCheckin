@@ -29,21 +29,33 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   import Plug.Conn
   require Logger
 
-  # Configurable limits (can be overridden in runtime.exs or via env vars)
-  @sync_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :sync_limit], 3)
-  @occupancy_limit Application.compile_env(
-                     :fastcheck,
-                     [FastCheck.RateLimiter, :occupancy_limit],
-                     10
-                   )
-  @checkin_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :checkin_limit], 30)
-  @scan_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :scan_limit], 50)
-  @dashboard_limit Application.compile_env(
-                     :fastcheck,
-                     [FastCheck.RateLimiter, :dashboard_limit],
-                     100
-                   )
-  @login_limit Application.compile_env(:fastcheck, [FastCheck.RateLimiter, :login_limit], 5)
+  # ---------------------------------------------------------------------------
+  # RATE LIMIT CONFIG (RUNTIME)
+  #
+  # IMPORTANT:
+  # Do NOT use Application.compile_env/3 here.
+  # These values are set in config/runtime.exs via env vars on Railway.
+  # compile_env marks them as "compile-time" and releases will FAIL BOOT if
+  # runtime.exs sets a different value (validate_compile_env).
+  # ---------------------------------------------------------------------------
+
+  defp get_limit(key, default) when is_atom(key) and is_integer(default) do
+    :fastcheck
+    |> Application.get_env(FastCheck.RateLimiter, [])
+    |> Keyword.get(key, default)
+    |> normalize_limit(default)
+  end
+
+  defp normalize_limit(value, _default) when is_integer(value) and value > 0, do: value
+
+  defp normalize_limit(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _} when int > 0 -> int
+      _ -> default
+    end
+  end
+
+  defp normalize_limit(_value, default), do: default
 
   # Storage backend configured in application.ex
   # {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000}
@@ -95,7 +107,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       key = "sync:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
       # Configurable limit per 5 minutes per event
       throttle(key,
-        limit: @sync_limit,
+        limit: get_limit(:sync_limit, 3),
         period: 300_000,
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
@@ -109,7 +121,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       key = "occupancy:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
       # Configurable limit per minute per event
       throttle(key,
-        limit: @occupancy_limit,
+        limit: get_limit(:occupancy_limit, 10),
         period: 60_000,
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
@@ -124,7 +136,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       key = "login:#{get_peer_ip(conn)}"
       # Strict limit per minute per IP to prevent brute force
       throttle(key,
-        limit: @login_limit,
+        limit: get_limit(:login_limit, 5),
         period: 60_000,
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
@@ -139,7 +151,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       key = "check_in:#{get_peer_ip(conn)}"
       # Configurable limit per minute per IP
       throttle(key,
-        limit: @checkin_limit,
+        limit: get_limit(:checkin_limit, 30),
         period: 60_000,
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
@@ -153,7 +165,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       key = "scan:#{get_peer_ip(conn)}"
       # Configurable limit per minute per IP
       throttle(key,
-        limit: @scan_limit,
+        limit: get_limit(:scan_limit, 50),
         period: 60_000,
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
@@ -167,7 +179,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     key = "general:#{get_peer_ip(conn)}"
     # Configurable limit per minute per IP
     throttle(key,
-      limit: @dashboard_limit,
+      limit: get_limit(:dashboard_limit, 100),
       period: 60_000,
       storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
     )
