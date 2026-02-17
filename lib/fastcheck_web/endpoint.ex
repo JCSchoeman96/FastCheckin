@@ -1,40 +1,17 @@
 defmodule FastCheckWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :fastcheck
 
-  @endpoint_config Application.compile_env(:fastcheck, __MODULE__, [])
-
-  @live_reload_options (case Keyword.get(@endpoint_config, :live_reload) do
-                          nil ->
-                            []
-
-                          live_reload ->
-                            {pattern_sources, live_reload} =
-                              Keyword.pop(live_reload, :pattern_sources, [])
-
-                            patterns =
-                              pattern_sources
-                              |> Enum.reject(&is_nil/1)
-                              |> Enum.map(&Regex.compile!(&1))
-
-                            if patterns == [] do
-                              live_reload
-                            else
-                              Keyword.put(live_reload, :patterns, patterns)
-                            end
-                        end)
+  # @endpoint_config removed to prevent compile-time config freezing
 
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.
-  @session_overrides @endpoint_config |> Keyword.get(:session_options, [])
-
   @session_options [
-                     store: :cookie,
-                     key: "_fastcheck_key",
-                     signing_salt: "TZ10yE5o",
-                     same_site: "Lax"
-                   ]
-                   |> Keyword.merge(@session_overrides)
+    store: :cookie,
+    key: "_fastcheck_key",
+    signing_salt: "TZ10yE5o",
+    same_site: "Lax"
+  ]
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
@@ -55,9 +32,28 @@ defmodule FastCheckWeb.Endpoint do
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-    plug Phoenix.LiveReloader, @live_reload_options
+    plug Phoenix.LiveReloader
     plug Phoenix.CodeReloader
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :fastcheck
+
+    # Process live_reload options at compile-time for dev only
+    # We use get_env here because we are in the macro expansion phase
+    # and this block only exists in dev.
+    @live_reload_opts_raw Application.get_env(:fastcheck, __MODULE__, [])
+                          |> Keyword.get(:live_reload, [])
+
+    @live_reload_patterns (
+                            {pattern_sources, opts} =
+                              Keyword.pop(@live_reload_opts_raw, :pattern_sources, [])
+
+                            patterns = Enum.map(pattern_sources, &Regex.compile!/1)
+
+                            if patterns == [],
+                              do: opts,
+                              else: Keyword.put(opts, :patterns, patterns)
+                          )
+
+    plug Phoenix.LiveReloader, @live_reload_patterns
   end
 
   plug Phoenix.LiveDashboard.RequestLogger,
@@ -77,13 +73,18 @@ defmodule FastCheckWeb.Endpoint do
   plug Plug.Head
   plug Plug.Session, @session_options
 
-  @cors_origins (case Keyword.get(@endpoint_config, :cors_origins) do
-                   nil -> ["https://example.com"]
-                   origins when is_list(origins) -> origins
-                   origin -> [origin]
-                 end)
+  # Runtime CORS configuration
+  def cors_origins do
+    Application.get_env(:fastcheck, __MODULE__, [])
+    |> Keyword.get(:cors_origins, ["https://example.com"])
+    |> case do
+      nil -> ["https://example.com"]
+      origins when is_list(origins) -> origins
+      origin -> [origin]
+    end
+  end
 
-  plug CORSPlug, origin: @cors_origins
+  plug CORSPlug, origin: &__MODULE__.cors_origins/0
 
   plug FastCheckWeb.Router
 end
