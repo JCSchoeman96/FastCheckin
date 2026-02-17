@@ -259,7 +259,8 @@ defmodule FastCheckWeb.Components.Stepper do
         <span :if={@title} class={["block font-bold text-wrap", @title_class]}>{@title}</span>
         <span :if={@description} class={["block text-xs text-wrap", @description_class]}>
           {@description}
-        </span> {render_slot(@inner_block)}
+        </span>
+         {render_slot(@inner_block)}
       </span>
     </div>
     """
@@ -327,7 +328,8 @@ defmodule FastCheckWeb.Components.Stepper do
         <span :if={@title} class={["block font-bold text-wrap", @title_class]}>{@title}</span>
         <span :if={@description} class={["block text-xs text-wrap", @description_class]}>
           {@description}
-        </span> {render_slot(@inner_block)}
+        </span>
+         {render_slot(@inner_block)}
       </span>
     </div>
 

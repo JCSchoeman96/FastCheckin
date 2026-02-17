@@ -136,25 +136,62 @@ defmodule FastCheckWeb.Mobile.AuthController do
   def login(conn, params) do
     with {:ok, event_id} <- extract_event_id(params),
          {:ok, credential} <- extract_credential(params),
-         {:ok, event} <- fetch_event(event_id),
-         :ok <- Events.verify_mobile_access_secret(event, credential),
-         {:ok, token} <- Token.issue_scanner_token(event_id) do
-      # Authentication successful - return token and event metadata
-      Logger.info("Mobile scanner authenticated",
-        event_id: event_id,
-        event_name: event.name,
-        ip: get_peer_ip(conn)
-      )
+         {:ok, event} <- fetch_event(event_id) do
+      case auth_failure_reason(event, credential) do
+        nil ->
+          case Token.issue_scanner_token(event_id) do
+            {:ok, token} ->
+              # Authentication successful - return token and event metadata
+              Logger.info("Mobile scanner authenticated",
+                event_id: event_id,
+                event_name: event.name,
+                ip: get_peer_ip(conn)
+              )
 
-      json(conn, %{
-        data: %{
-          token: token,
-          event_id: event.id,
-          event_name: event.name,
-          expires_in: Token.token_ttl_seconds()
-        },
-        error: nil
-      })
+              json(conn, %{
+                data: %{
+                  token: token,
+                  event_id: event.id,
+                  event_name: event.name,
+                  expires_in: Token.token_ttl_seconds()
+                },
+                error: nil
+              })
+
+            {:error, reason} ->
+              Logger.error("Mobile token generation failed",
+                event_id: event_id,
+                reason: inspect(reason),
+                ip: get_peer_ip(conn)
+              )
+
+              server_error(
+                conn,
+                "token_generation_failed",
+                "Unable to generate authentication token"
+              )
+          end
+
+        :missing_secret ->
+          Logger.warning("Mobile login attempted without configured credential",
+            ip: get_peer_ip(conn)
+          )
+
+          unauthorized(conn, "missing_credential", "Event requires credential for mobile access")
+
+        :invalid_credential ->
+          Logger.warning("Mobile login rejected: invalid credential",
+            ip: get_peer_ip(conn)
+          )
+
+          forbidden(conn, "invalid_credential", "credential is invalid")
+
+        :missing_credential ->
+          unauthorized(conn, "missing_credential", "credential is required")
+
+        _ ->
+          forbidden(conn, "invalid_credential", "credential is invalid")
+      end
     else
       {:error, :missing_event_id} ->
         bad_request(conn, "invalid_request", "event_id is required")
@@ -179,20 +216,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
         )
 
         not_found(conn, "event_not_found", "Event with ID #{event_id} does not exist")
-
-      {:error, :missing_secret} ->
-        Logger.warning("Mobile login attempted without configured credential",
-          ip: get_peer_ip(conn)
-        )
-
-        unauthorized(conn, "missing_credential", "Event requires credential for mobile access")
-
-      {:error, :invalid_credential} ->
-        Logger.warning("Mobile login rejected: invalid credential",
-          ip: get_peer_ip(conn)
-        )
-
-        forbidden(conn, "invalid_credential", "credential is invalid")
     end
   end
 
@@ -242,6 +265,17 @@ defmodule FastCheckWeb.Mobile.AuthController do
   rescue
     Ecto.NoResultsError ->
       {:error, :event_not_found, event_id}
+  end
+
+  defp auth_failure_reason(event, credential) do
+    verification_result = Events.verify_mobile_access_secret(event, credential)
+
+    if is_tuple(verification_result) and tuple_size(verification_result) == 2 and
+         elem(verification_result, 0) == :error do
+      elem(verification_result, 1)
+    else
+      nil
+    end
   end
 
   # Helper: Get peer IP address for logging (handles proxies)
@@ -298,6 +332,18 @@ defmodule FastCheckWeb.Mobile.AuthController do
   defp not_found(conn, error_code, message) do
     conn
     |> put_status(:not_found)
+    |> json(%{
+      data: nil,
+      error: %{
+        code: error_code,
+        message: message
+      }
+    })
+  end
+
+  defp server_error(conn, error_code, message) do
+    conn
+    |> put_status(:internal_server_error)
     |> json(%{
       data: nil,
       error: %{

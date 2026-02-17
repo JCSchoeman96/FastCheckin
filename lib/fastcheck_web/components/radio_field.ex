@@ -128,7 +128,7 @@ defmodule FastCheckWeb.Components.RadioField do
           {@rest}
         /> <span :if={@label} class={@label_class}>{@label}</span>
       </.label>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

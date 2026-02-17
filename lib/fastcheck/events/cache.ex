@@ -170,7 +170,7 @@ defmodule FastCheck.Events.Cache do
     # Fetch events and merge attendee counts
     events =
       Event
-      |> order_by([e], [desc: e.inserted_at])
+      |> order_by([e], desc: e.inserted_at)
       |> Repo.all(timeout: 10_000)
 
     # Merge attendee counts into events

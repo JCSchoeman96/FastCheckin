@@ -9,12 +9,12 @@ defmodule FastCheck.Events.SyncState do
 
   @type sync_state :: :running | :paused | :cancelled
   @type state_map :: %{
-    status: sync_state(),
-    current_page: integer(),
-    total_pages: integer(),
-    attendees_processed: integer(),
-    sync_log_id: integer() | nil
-  }
+          status: sync_state(),
+          current_page: integer(),
+          total_pages: integer(),
+          attendees_processed: integer(),
+          sync_log_id: integer() | nil
+        }
 
   @doc """
   Starts the sync state agent.

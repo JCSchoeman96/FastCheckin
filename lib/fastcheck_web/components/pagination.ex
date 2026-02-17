@@ -212,7 +212,7 @@ defmodule FastCheckWeb.Components.Pagination do
           </div>
         <% end %>
       </div>
-      
+
       <.item_button
         :if={is_nil(@rest[:hide_controls])}
         on_action={{"next", @on_next}}

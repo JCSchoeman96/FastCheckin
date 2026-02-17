@@ -128,7 +128,7 @@ defmodule FastCheckWeb.Components.TableContent do
       >
         {@title}
       </h5>
-      
+
       <div
         :for={item <- @item}
         class={[
@@ -139,7 +139,7 @@ defmodule FastCheckWeb.Components.TableContent do
         ]}
       >
         <div :if={!is_nil(item[:title])} class={item[:title_class]}>{item[:title]}</div>
-        
+
         <div class={[
           "flex items-center transition-all hover:font-bold hover:opacity-90",
           item[:wrapper_class]
@@ -155,7 +155,7 @@ defmodule FastCheckWeb.Components.TableContent do
           <div class={item[:content_class]}>{render_slot(item)}</div>
         </div>
       </div>
-       {render_slot(@inner_block)}
+      {render_slot(@inner_block)}
     </div>
     """
   end
@@ -288,7 +288,7 @@ defmodule FastCheckWeb.Components.TableContent do
       {@rest}
     >
       <div :if={!is_nil(@title)} class={@title_class}>{@title}</div>
-      
+
       <div class={[
         "flex items-center transition-all hover:font-bold hover:opacity-90",
         @wrapper_content_class

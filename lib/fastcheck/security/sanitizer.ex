@@ -19,6 +19,7 @@ defmodule FastCheck.Security.Sanitizer do
   @spec sanitize_string(String.t() | nil, integer() | nil) :: String.t()
   def sanitize_string(input, max_length \\ @max_string_length)
   def sanitize_string(nil, _max_length), do: ""
+
   def sanitize_string(input, max_length) when is_binary(input) do
     input
     |> strip_html_tags()
@@ -35,6 +36,7 @@ defmodule FastCheck.Security.Sanitizer do
   """
   @spec sanitize_name(String.t() | nil) :: String.t()
   def sanitize_name(nil), do: ""
+
   def sanitize_name(name) when is_binary(name) do
     name
     |> strip_html_tags()
@@ -51,6 +53,7 @@ defmodule FastCheck.Security.Sanitizer do
   """
   @spec sanitize_url(String.t() | nil) :: String.t()
   def sanitize_url(nil), do: ""
+
   def sanitize_url(url) when is_binary(url) do
     url
     |> String.trim()
@@ -65,6 +68,7 @@ defmodule FastCheck.Security.Sanitizer do
   """
   @spec sanitize_email(String.t() | nil) :: String.t()
   def sanitize_email(nil), do: ""
+
   def sanitize_email(email) when is_binary(email) do
     email
     |> String.trim()

@@ -105,7 +105,7 @@ defmodule FastCheckWeb.Components.Fieldset do
         >
           {@legend}
         </legend>
-        
+
         <div
           :for={{control, index} <- Enum.with_index(@control, 1)}
           id={"#{@id}-control-#{index}"}
@@ -114,7 +114,7 @@ defmodule FastCheckWeb.Components.Fieldset do
           {render_slot(control)}
         </div>
       </fieldset>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

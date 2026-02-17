@@ -385,7 +385,7 @@ defmodule FastCheckWeb.Components.Menu do
               {Map.drop(menu_item, [:sub_items, :padding])}
             />
           </:trigger>
-          
+
           <.menu
             id={menu_item[:id]}
             class={menu_item[:padding]}
@@ -393,7 +393,7 @@ defmodule FastCheckWeb.Components.Menu do
           />
         </.collapse>
       </li>
-       {render_slot(@inner_block)}
+      {render_slot(@inner_block)}
     </ul>
     """
   end

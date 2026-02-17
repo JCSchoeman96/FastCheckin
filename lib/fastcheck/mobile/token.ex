@@ -177,7 +177,8 @@ defmodule FastCheck.Mobile.Token do
     case fetch_event_end_time(event_id) do
       {:ok, end_time_unix} when is_integer(end_time_unix) ->
         # Use event end time, but ensure it's not in the past
-        max(end_time_unix, now + 3600) # At least 1 hour from now
+        # At least 1 hour from now
+        max(end_time_unix, now + 3600)
 
       _ ->
         # Fallback to configured TTL

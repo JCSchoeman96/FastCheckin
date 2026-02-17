@@ -149,7 +149,7 @@ defmodule FastCheckWeb.Components.TextField do
       @class
     ]}>
       <div :if={@description} class={@description_class}>{@description}</div>
-      
+
       <div class={[
         "text-field-wrapper transition-all ease-in-out duration-200 w-full flex flex-nowrap",
         @errors != [] && "text-field-error",
@@ -164,7 +164,7 @@ defmodule FastCheckWeb.Components.TextField do
         >
           {render_slot(@start_section)}
         </div>
-        
+
         <div class="relative w-full z-[2]">
           <input
             type="text"
@@ -190,7 +190,7 @@ defmodule FastCheckWeb.Components.TextField do
             {@label}
           </label>
         </div>
-        
+
         <div
           :if={@end_section}
           class={["flex items-center justify-center shrink-0 pe-2", @end_section[:class]]}
@@ -198,7 +198,7 @@ defmodule FastCheckWeb.Components.TextField do
           {render_slot(@end_section)}
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -220,10 +220,10 @@ defmodule FastCheckWeb.Components.TextField do
         class={["text-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div class={[
         "text-field-wrapper overflow-hidden transition-all ease-in-out duration-200 flex items-center flex-nowrap",
         @errors != [] && "text-field-error",
@@ -238,7 +238,7 @@ defmodule FastCheckWeb.Components.TextField do
         >
           {render_slot(@start_section)}
         </div>
-        
+
         <input
           type="text"
           name={@name}
@@ -259,7 +259,7 @@ defmodule FastCheckWeb.Components.TextField do
           {render_slot(@end_section)}
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

@@ -256,7 +256,7 @@ defmodule FastCheckWeb.Components.Timeline do
             aria-hidden="true"
           />
         </div>
-        
+
         <div class={[
           "timeline-horizontal-line hidden sm:flex w-full",
           line_size(@line_size, @horizontal),
@@ -265,7 +265,7 @@ defmodule FastCheckWeb.Components.Timeline do
         ]}>
         </div>
       </div>
-      
+
       <div :if={@image} class={["flex items-center", @bullet_wrapper_class]}>
         <div class={[
           "timeline-image-wrapper z-10 shrink-0",
@@ -274,7 +274,7 @@ defmodule FastCheckWeb.Components.Timeline do
         ]}>
           <img class={["rounded-full shadow-md", @image_class]} src={@image} alt={@image} />
         </div>
-        
+
         <div class={[
           "timeline-horizontal-line hidden sm:flex w-full",
           line_size(@line_size, @horizontal),
@@ -283,15 +283,15 @@ defmodule FastCheckWeb.Components.Timeline do
         ]}>
         </div>
       </div>
-      
+
       <div class={["mt-3 sm:pe-5", @content_class]}>
         <h3 :if={@title} class={["text-lg font-semibold mb-2", @title_class]}>{@title}</h3>
-        
+
         <time :if={@time} class={["block mb-3 text-xs font-normal leading-none", @time_class]}>
           {@time}
         </time>
         <p :if={@description} class={@description_class}>{@description}</p>
-         {render_slot(@inner_block)}
+        {render_slot(@inner_block)}
       </div>
     </div>
     """
@@ -336,7 +336,7 @@ defmodule FastCheckWeb.Components.Timeline do
           </div>
         </div>
       </div>
-      
+
       <div
         :if={@image}
         class={[
@@ -357,15 +357,15 @@ defmodule FastCheckWeb.Components.Timeline do
           </div>
         </div>
       </div>
-      
+
       <div class={["grow pt-0.5 pb-5", @content_class]}>
         <h3 :if={@title} class={["text-lg font-semibold mb-2", @title_class]}>{@title}</h3>
-        
+
         <time :if={@time} class={["block mb-3 text-[12px] font-normal leading-none", @time_class]}>
           {@time}
         </time>
         <p :if={@description} class={@description_class}>{@description}</p>
-         {render_slot(@inner_block)}
+        {render_slot(@inner_block)}
       </div>
     </div>
     """

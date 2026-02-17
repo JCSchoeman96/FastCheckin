@@ -29,7 +29,8 @@ defmodule FastCheck.Attendees do
 
   Returns `{:ok, count}` where `count` is the number of new/updated attendees stored.
   """
-  @spec create_bulk(integer(), list(), keyword()) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  @spec create_bulk(integer(), list(), keyword()) ::
+          {:ok, non_neg_integer()} | {:error, String.t()}
   def create_bulk(event_id, attendees_data, opts \\ [])
 
   def create_bulk(event_id, attendees_data, opts)
@@ -75,12 +76,24 @@ defmodule FastCheck.Attendees do
               Repo.insert_all(
                 Attendee,
                 entries,
-                on_conflict: {:replace_all_except, [:id, :checked_in_at, :last_checked_in_at, :checkins_remaining, :is_currently_inside, :inserted_at]},
+                on_conflict:
+                  {:replace_all_except,
+                   [
+                     :id,
+                     :checked_in_at,
+                     :last_checked_in_at,
+                     :checkins_remaining,
+                     :is_currently_inside,
+                     :inserted_at
+                   ]},
                 conflict_target: conflict_target
               )
             else
               # Only insert new records
-              Repo.insert_all(Attendee, entries, on_conflict: :nothing, conflict_target: conflict_target)
+              Repo.insert_all(Attendee, entries,
+                on_conflict: :nothing,
+                conflict_target: conflict_target
+              )
             end
 
           action = if incremental, do: "Upserted", else: "Inserted"

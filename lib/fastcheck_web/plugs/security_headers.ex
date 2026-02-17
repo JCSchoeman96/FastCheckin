@@ -27,11 +27,14 @@ defmodule FastCheckWeb.Plugs.SecurityHeaders do
   defp content_security_policy do
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", # Required for LiveView
-      "style-src 'self' 'unsafe-inline'", # Required for TailwindCSS
+      # Required for LiveView
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      # Required for TailwindCSS
+      "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      "connect-src 'self' wss: ws: https:", # WebSocket connections
+      # WebSocket connections
+      "connect-src 'self' wss: ws: https:",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

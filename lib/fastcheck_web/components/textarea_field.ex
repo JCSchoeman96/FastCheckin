@@ -147,7 +147,7 @@ defmodule FastCheckWeb.Components.TextareaField do
       @class
     ]}>
       <div :if={@description} class={@description_class}>{@description}</div>
-      
+
       <div class={[
         "textarea-field-wrapper transition-all ease-in-out duration-200 relative w-full z-[2]",
         @errors != [] && "textarea-field-error",
@@ -179,7 +179,7 @@ defmodule FastCheckWeb.Components.TextareaField do
           {@label}
         </label>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -201,10 +201,10 @@ defmodule FastCheckWeb.Components.TextareaField do
         class={["textarea-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div class={[
         "textarea-field-wrapper overflow-hidden transition-all ease-in-out duration-200 flex flex-nowrap",
         @errors != [] && "textarea-field-error",
@@ -226,7 +226,7 @@ defmodule FastCheckWeb.Components.TextareaField do
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

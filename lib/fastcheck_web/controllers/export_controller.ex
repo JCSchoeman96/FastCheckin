@@ -11,7 +11,7 @@ defmodule FastCheckWeb.ExportController do
   """
   def export_attendees(conn, %{"event_id" => event_id_param}) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         %Events.Event{} = event <- Events.get_event!(event_id) do
+         {:ok, %Events.Event{} = event} <- fetch_event(event_id) do
       attendees = Attendees.list_event_attendees(event_id)
 
       csv_content = generate_attendees_csv(attendees)
@@ -22,12 +22,12 @@ defmodule FastCheckWeb.ExportController do
       |> put_resp_header("content-disposition", "attachment; filename=\"#{filename}\"")
       |> send_resp(200, csv_content)
     else
-      {:error, _reason} ->
+      {:error, :event_not_found} ->
         conn
         |> put_status(:not_found)
         |> json(%{error: "Event not found"})
 
-      _ ->
+      {:error, :invalid_event_id} ->
         conn
         |> put_status(:bad_request)
         |> json(%{error: "Invalid event ID"})
@@ -45,7 +45,7 @@ defmodule FastCheckWeb.ExportController do
   """
   def export_check_ins(conn, %{"event_id" => event_id_param}) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         %Events.Event{} = _event <- Events.get_event!(event_id) do
+         {:ok, %Events.Event{}} <- fetch_event(event_id) do
       check_ins = Attendees.list_event_check_ins(event_id)
 
       csv_content = generate_check_ins_csv(check_ins)
@@ -56,12 +56,12 @@ defmodule FastCheckWeb.ExportController do
       |> put_resp_header("content-disposition", "attachment; filename=\"#{filename}\"")
       |> send_resp(200, csv_content)
     else
-      {:error, _reason} ->
+      {:error, :event_not_found} ->
         conn
         |> put_status(:not_found)
         |> json(%{error: "Event not found"})
 
-      _ ->
+      {:error, :invalid_event_id} ->
         conn
         |> put_status(:bad_request)
         |> json(%{error: "Invalid event ID"})
@@ -86,6 +86,12 @@ defmodule FastCheckWeb.ExportController do
   end
 
   defp parse_event_id(_), do: {:error, :invalid_event_id}
+
+  defp fetch_event(event_id) do
+    {:ok, Events.get_event!(event_id)}
+  rescue
+    Ecto.NoResultsError -> {:error, :event_not_found}
+  end
 
   defp generate_attendees_csv(attendees) do
     headers = [

@@ -121,7 +121,7 @@ defmodule FastCheckWeb.Components.Drawer do
         aria-hidden="true"
       >
       </div>
-      
+
       <div
         phx-click-away={hide_drawer(@on_hide_away, @id, @position)}
         phx-window-keydown={hide_drawer(@on_hide, @id, @position)}
@@ -154,9 +154,9 @@ defmodule FastCheckWeb.Components.Drawer do
             {title}
           </h5>
         </div>
-        
+
         <div id={"#{@id}-#{@position}-desc"} class="sr-only">{gettext("Drawer content")}</div>
-        
+
         <div class={@content_class}>{render_slot(@inner_block)}</div>
       </div>
     </div>

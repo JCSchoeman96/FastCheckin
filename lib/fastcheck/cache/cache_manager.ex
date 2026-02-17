@@ -614,7 +614,6 @@ defmodule FastCheck.Cache.CacheManager do
 
   defp cache_name, do: config()[:cache_name]
 
-
   defp cache_ready? do
     cache_name()
     |> Process.whereis()

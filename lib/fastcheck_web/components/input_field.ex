@@ -121,7 +121,7 @@ defmodule FastCheckWeb.Components.InputField do
     ~H"""
     <div>
       <.label for={@id}>{@label}</.label>
-      
+
       <select
         id={@id}
         name={@name}
@@ -130,7 +130,7 @@ defmodule FastCheckWeb.Components.InputField do
         {@rest}
       >
         <option :if={@prompt} value="">{@prompt}</option>
-         {Phoenix.HTML.Form.options_for_select(@options, @value)}
+        {Phoenix.HTML.Form.options_for_select(@options, @value)}
       </select>
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
@@ -141,7 +141,7 @@ defmodule FastCheckWeb.Components.InputField do
     ~H"""
     <div>
       <.label for={@id}>{@label}</.label>
-       <textarea
+      <textarea
         id={@id}
         name={@name}
         class={[
@@ -161,7 +161,7 @@ defmodule FastCheckWeb.Components.InputField do
     ~H"""
     <div>
       <.label for={@id}>{@label}</.label>
-      
+
       <input
         type={@type}
         name={@name}

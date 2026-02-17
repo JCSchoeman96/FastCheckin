@@ -147,7 +147,7 @@ defmodule FastCheckWeb.Components.Modal do
                 <div :if={@title} id={"#{@id}-title"} class={["font-semibold", @title_class]}>
                   {@title}
                 </div>
-                
+
                 <button
                   phx-click={JS.exec("data-cancel", to: "##{@id}")}
                   type="button"
@@ -157,7 +157,7 @@ defmodule FastCheckWeb.Components.Modal do
                   <.icon name="hero-x-mark-solid" class={@icon_class} />
                 </button>
               </div>
-              
+
               <div id={"#{@id}-description"} class={@content_class}>{render_slot(@inner_block)}</div>
             </.focus_wrap>
           </div>

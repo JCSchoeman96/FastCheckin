@@ -568,10 +568,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
         ip |> String.split(",") |> List.first() |> String.trim()
 
       _ ->
-        case Plug.Conn.get_peer_data(conn) do
-          %{address: address} -> :inet.ntoa(address) |> to_string()
-          _ -> "unknown"
-        end
+        %{address: address} = Plug.Conn.get_peer_data(conn)
+        :inet.ntoa(address) |> to_string()
     end
   end
 

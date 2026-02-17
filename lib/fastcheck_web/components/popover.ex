@@ -140,7 +140,8 @@ defmodule FastCheckWeb.Components.Popover do
       <span data-floating-trigger class={@trigger_class}>
         <span :for={trigger <- @trigger} :if={@trigger != []} class={trigger[:class]}>
           {render_slot(trigger)}
-        </span> <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
+        </span>
+         <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
       </span>
       <span
         id={"#{@id}-content"}
@@ -194,9 +195,10 @@ defmodule FastCheckWeb.Components.Popover do
       <div data-floating-trigger class={@trigger_class}>
         <span :for={trigger <- @trigger} :if={@trigger != []} class={trigger[:class]}>
           {render_slot(trigger)}
-        </span> <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
+        </span>
+         <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
       </div>
-      
+
       <div
         id={"#{@id}-content"}
         role="dialog"

@@ -146,7 +146,7 @@ defmodule FastCheckWeb.Components.TelField do
       @class
     ]}>
       <div :if={@description} class={@description_class}>{@description}</div>
-      
+
       <div class={[
         "tel-field-wrapper transition-all ease-in-out duration-200 w-full flex flex-nowrap",
         @errors != [] && "tel-field-error",
@@ -161,7 +161,7 @@ defmodule FastCheckWeb.Components.TelField do
         >
           {render_slot(@start_section)}
         </div>
-        
+
         <div class="relative w-full z-[2]">
           <input
             type="tel"
@@ -187,7 +187,7 @@ defmodule FastCheckWeb.Components.TelField do
             {@label}
           </label>
         </div>
-        
+
         <div
           :if={@end_section}
           class={["flex items-center justify-center shrink-0 pe-2", @end_section[:class]]}
@@ -195,7 +195,7 @@ defmodule FastCheckWeb.Components.TelField do
           {render_slot(@end_section)}
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -217,10 +217,10 @@ defmodule FastCheckWeb.Components.TelField do
         class={["tel-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div class={[
         "tel-field-wrapper overflow-hidden transition-all ease-in-out duration-200 flex items-center flex-nowrap",
         @errors != [] && "tel-field-error",
@@ -235,7 +235,7 @@ defmodule FastCheckWeb.Components.TelField do
         >
           {render_slot(@start_section)}
         </div>
-        
+
         <input
           type="tel"
           name={@name}
@@ -256,7 +256,7 @@ defmodule FastCheckWeb.Components.TelField do
           {render_slot(@end_section)}
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

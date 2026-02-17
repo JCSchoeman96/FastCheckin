@@ -56,7 +56,10 @@ defmodule FastCheck.Attendees.Query do
   rescue
     exception ->
       if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
-        Logger.error("Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}")
+        Logger.error(
+          "Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}"
+        )
+
         nil
       else
         Logger.error("Database error fetching attendee: #{Exception.message(exception)}")
@@ -95,7 +98,10 @@ defmodule FastCheck.Attendees.Query do
   rescue
     exception ->
       if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
-        Logger.error("Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}")
+        Logger.error(
+          "Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}"
+        )
+
         {:error, "TIMEOUT", "Database query timed out"}
       else
         Logger.error("Database error fetching attendee: #{Exception.message(exception)}")

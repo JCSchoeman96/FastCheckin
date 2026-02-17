@@ -124,13 +124,13 @@ defmodule FastCheckWeb.Components.FileField do
         <div class="flex flex-col gap-3 items-center justify-center pt-5 pb-6">
           <.icon name={@dropzone_icon} class="size-14" />
           <div class="mb-2 font-semibold">{@dropzone_title}</div>
-          
+
           <div>{@dropzone_description}</div>
         </div>
-         <.live_file_input id={@id} upload={@upload} class="hidden" />
+        <.live_file_input id={@id} upload={@upload} class="hidden" />
       </label>
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
-      
+
       <div aria-live="polite" class="mt-5 space-y-4">
         <%= for entry <- @entries do %>
           <div
@@ -144,9 +144,9 @@ defmodule FastCheckWeb.Components.FileField do
                 <div class="text-ellipsis overflow-hidden w-44 whitespace-nowrap">
                   {entry.client_name}
                 </div>
-                
+
                 <div>{convert_to_mb(entry.client_size)} <span>MB</span></div>
-                 <.progress value={entry.progress} color={@color} size="extra_small" />
+                <.progress value={entry.progress} color={@color} size="extra_small" />
                 <span class="sr-only">
                   {gettext("Uploading %{file}: %{progress} percent",
                     file: entry.client_name,
@@ -155,7 +155,7 @@ defmodule FastCheckWeb.Components.FileField do
                 </span>
               </div>
             </div>
-            
+
             <button
               type="button"
               phx-click="cancel-upload"
@@ -171,7 +171,7 @@ defmodule FastCheckWeb.Components.FileField do
           </div>
         <% end %>
       </div>
-      
+
       <%= for err <- upload_errors(@upload_error) do %>
         <p class="text-rose-600 font-medium text-xs">{error_to_string(err)}</p>
       <% end %>
@@ -208,17 +208,17 @@ defmodule FastCheckWeb.Components.FileField do
         <div class="flex flex-col gap-3 items-center justify-center pt-5 pb-6">
           <.icon name={@dropzone_icon} class="size-14" />
           <div class="mb-2 font-semibold">{@dropzone_title}</div>
-          
+
           <div>{@dropzone_description}</div>
         </div>
-         <.live_file_input id={@id} upload={@upload} class="hidden" />
+        <.live_file_input id={@id} upload={@upload} class="hidden" />
       </label>
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
-      
+
       <%= for err <- upload_errors(@upload_error) do %>
         <p class="text-rose-600 font-semibold text-sm my-5">{error_to_string(err)}</p>
       <% end %>
-      
+
       <div class="flex flex-wrap gap-3 my-3">
         <%= for entry <- @entries do %>
           <div>
@@ -232,7 +232,7 @@ defmodule FastCheckWeb.Components.FileField do
                   <.live_img_preview entry={entry} class="w-full h-full object-cover rounded" />
                 </figure>
               </div>
-              
+
               <button
                 type="button"
                 phx-click="cancel-upload"
@@ -251,7 +251,7 @@ defmodule FastCheckWeb.Components.FileField do
                 <span class="sr-only">{gettext("Uploading %{file}", file: entry.client_name)}</span>
               </div>
             </div>
-            
+
             <%= for err <- upload_errors(@upload_error, entry) do %>
               <p class="text-rose-600 font-medium text-xs mt-3">Error: {error_to_string(err)}</p>
             <% end %>
@@ -271,7 +271,7 @@ defmodule FastCheckWeb.Components.FileField do
       @class
     ]}>
       <.label for={@id}>{@label}</.label>
-      
+
       <%= if @live do %>
         <.live_file_input
           upload={@upload}
@@ -294,7 +294,7 @@ defmodule FastCheckWeb.Components.FileField do
           {@rest}
         />
       <% end %>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

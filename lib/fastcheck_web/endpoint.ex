@@ -39,7 +39,7 @@ defmodule FastCheckWeb.Endpoint do
     # Process live_reload options at compile-time for dev only
     # We use get_env here because we are in the macro expansion phase
     # and this block only exists in dev.
-    @live_reload_opts_raw Application.get_env(:fastcheck, __MODULE__, [])
+    @live_reload_opts_raw Application.compile_env(:fastcheck, __MODULE__, [])
                           |> Keyword.get(:live_reload, [])
 
     @live_reload_patterns (

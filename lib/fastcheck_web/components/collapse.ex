@@ -98,7 +98,7 @@ defmodule FastCheckWeb.Components.Collapse do
         <div data-collapsible-trigger={@item_id} class="collapse-trigger">
           {render_slot(@trigger)}
         </div>
-        
+
         <div data-collapsible-panel={@item_id} class="collapse-panel">
           <div
             data-collapsible-content

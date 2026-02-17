@@ -121,10 +121,10 @@ defmodule FastCheckWeb.Components.ColorField do
         class={["color-field-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div class="color-field-wrapper">
         <input
           type="color"
@@ -135,7 +135,7 @@ defmodule FastCheckWeb.Components.ColorField do
           {@rest}
         />
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

@@ -433,7 +433,7 @@ defmodule FastCheckWeb.Components.Progress do
         >
           {tooltip[:label]}
         </div>
-        
+
         <div
           id={"#{@id}-tooltip"}
           role="tooltip"

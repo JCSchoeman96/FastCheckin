@@ -119,7 +119,7 @@ defmodule FastCheckWeb.Components.CheckboxField do
         <% else %>
           <input type="hidden" name={@name} value="" disabled={@rest[:disabled]} />
         <% end %>
-        
+
         <input
           type="checkbox"
           name={@name}
@@ -130,7 +130,7 @@ defmodule FastCheckWeb.Components.CheckboxField do
           {@rest}
         /> <span :if={@label} class={@label_class}>{@label}</span>
       </.label>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

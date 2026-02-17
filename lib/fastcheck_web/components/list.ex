@@ -124,7 +124,7 @@ defmodule FastCheckWeb.Components.List do
     ~H"""
     <.ol {assigns}>
       <.li :for={item <- @item} {item}>{render_slot(item)}</.li>
-       {render_slot(@inner_block)}
+      {render_slot(@inner_block)}
     </.ol>
     """
   end
@@ -140,9 +140,9 @@ defmodule FastCheckWeb.Components.List do
         {item}
       >
         <div :if={!is_nil(Map.get(item, :title))} class="font-semibold me-2">{item.title}</div>
-         {render_slot(item)}
+        {render_slot(item)}
       </.li>
-       {render_slot(@inner_block)}
+      {render_slot(@inner_block)}
     </.ul>
     """
   end

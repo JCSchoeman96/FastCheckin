@@ -142,10 +142,10 @@ defmodule FastCheckWeb.Components.NativeSelect do
         class={["select-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <select
         name={@name}
         id={@id}

@@ -180,7 +180,7 @@ defmodule FastCheckWeb.Components.Navbar do
         <div :if={@start_content != [] and !is_nil(@start_content)} class={@start_content[:class]}>
           {render_slot(@start_content)}
         </div>
-        
+
         <.link
           :if={!is_nil(@link)}
           navigate={@link}
@@ -209,7 +209,7 @@ defmodule FastCheckWeb.Components.Navbar do
             </li>
           </ul>
         </div>
-         {render_slot(@inner_block)}
+        {render_slot(@inner_block)}
         <div :if={@end_content != [] and !is_nil(@end_content)} class={@end_content[:class]}>
           {render_slot(@end_content)}
         </div>
@@ -233,12 +233,12 @@ defmodule FastCheckWeb.Components.Navbar do
     <header class={[@actions != [] && "flex items-center justify-between gap-6", @class]}>
       <div>
         <h1 class="text-lg font-semibold leading-8 text-zinc-800">{render_slot(@inner_block)}</h1>
-        
+
         <p :if={@subtitle != []} class="mt-2 text-sm leading-6 text-zinc-600">
           {render_slot(@subtitle)}
         </p>
       </div>
-      
+
       <div class="flex-none">{render_slot(@actions)}</div>
     </header>
     """

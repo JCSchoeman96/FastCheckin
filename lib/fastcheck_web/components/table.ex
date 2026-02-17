@@ -180,16 +180,16 @@ defmodule FastCheckWeb.Components.Table do
                   /> {render_slot(header)}
                 </.th>
               </.tr>
-              
+
               <.tr :if={@col}>
                 <.th :for={col <- @col} class={["font-normal", col[:label_class]]}>{col[:label]}</.th>
-                
+
                 <.th :if={@action != []} class="relative">
                   <span class="sr-only">{gettext("Actions")}</span>
                 </.th>
               </.tr>
             </thead>
-            
+
             <tbody
               id={@id}
               phx-update={match?(%Phoenix.LiveView.LiveStream{}, @rows) && "stream"}
@@ -210,7 +210,7 @@ defmodule FastCheckWeb.Components.Table do
                     </span>
                   </div>
                 </.td>
-                
+
                 <.td :if={@action} class="relative w-14 p-0">
                   <div class="relative whitespace-nowrap py-4 text-right text-sm font-medium">
                     <span class="absolute -inset-y-px -right-4 left-0" />
@@ -221,7 +221,7 @@ defmodule FastCheckWeb.Components.Table do
                 </.td>
               </.tr>
             </tbody>
-            
+
             <tfoot :if={length(@footer) > 0} class={@footer_class}>
               <.tr>
                 <.td

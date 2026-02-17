@@ -204,7 +204,7 @@ defmodule FastCheckWeb.Components.MegaMenu do
       >
         {render_slot(@trigger)}
       </div>
-      
+
       <div
         id={@id && "#{@id}-mega-menu-content"}
         phx-click-away={

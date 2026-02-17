@@ -145,7 +145,7 @@ defmodule FastCheckWeb.Components.Accordion do
             <div :if={item[:icon]} class={["shrink-0", item[:icon_wrapper_class]]}>
               <.icon name={item[:icon]} class={item[:icon_class] || "accordion-icon"} />
             </div>
-            
+
             <img
               :if={!is_nil(item[:image])}
               class={["accordion-title-media shrink-0", item[:image_class]]}
@@ -153,11 +153,11 @@ defmodule FastCheckWeb.Components.Accordion do
             />
             <div class="flex-1">
               <div class="accordion-title">{item[:title]}</div>
-              
+
               <div :if={item[:description]} class="accordion-description">{item[:description]}</div>
             </div>
           </div>
-          
+
           <.icon
             :if={chevron_visible?(assigns) && chevron_position(assigns) == "right"}
             name={@chevron_icon}

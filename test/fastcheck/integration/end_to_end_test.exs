@@ -106,7 +106,8 @@ defmodule FastCheck.Integration.EndToEndTest do
       # For incremental sync, we'll add new tickets
       Bypass.expect_once(bypass, "GET", "/tc-api/#{api_key}/tickets_info/100/1/", fn conn ->
         # Return more tickets than before (add 10 new ones)
-        response = mock_tickets_info_response(1, 100, 60)  # 60 total (50 existing + 10 new)
+        # 60 total (50 existing + 10 new)
+        response = mock_tickets_info_response(1, 100, 60)
         Plug.Conn.resp(conn, 200, Jason.encode!(response))
       end)
 
@@ -185,7 +186,8 @@ defmodule FastCheck.Integration.EndToEndTest do
 
     # Mock tickets_info endpoint (first page) - 100 per page to keep it simple
     Bypass.expect_once(bypass, "GET", "/tc-api/#{api_key}/tickets_info/100/1/", fn conn ->
-      response = mock_tickets_info_response(1, 100, 50)  # 50 total tickets
+      # 50 total tickets
+      response = mock_tickets_info_response(1, 100, 50)
       Plug.Conn.resp(conn, 200, Jason.encode!(response))
     end)
   end

@@ -164,7 +164,8 @@ defmodule FastCheckWeb.Components.Tooltip do
         </span>
         <span :for={content <- @content} :if={@content != []} class={content[:class]}>
           {render_slot(content)}
-        </span> <span :if={@content == [] && @text != ""}>{@text}</span>
+        </span>
+         <span :if={@content == [] && @text != ""}>{@text}</span>
         <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
       </span>
     </span>
@@ -188,7 +189,7 @@ defmodule FastCheckWeb.Components.Tooltip do
       >
         <div :for={trigger <- @trigger} :if={@trigger != []}>{render_slot(trigger)}</div>
       </div>
-      
+
       <div
         id={"#{@id}-content"}
         role="tooltip"
@@ -218,13 +219,13 @@ defmodule FastCheckWeb.Components.Tooltip do
           ]}
         >
         </div>
-        
+
         <div :for={content <- @content} :if={@content != []} class={content[:class]}>
           {render_slot(content)}
         </div>
-        
+
         <div :if={@content == [] && @text != ""}>{@text}</div>
-        
+
         <div :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</div>
       </div>
     </div>

@@ -202,15 +202,15 @@ defmodule FastCheckWeb.Components.Combobox do
         class={["combobox-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div phx-hook="Combobox" data-multiple={@multiple} id={"#{@id}-combo"}>
         <input type="hidden" name={@name} />
         <select id={@id} name={@name} multiple class="combo-select hidden" {@rest}>
           <option value=""></option>
-          
+
           <%= if Enum.empty?(@option) do %>
             {Phoenix.HTML.Form.options_for_select(@options, @value)}
           <% else %>
@@ -224,7 +224,7 @@ defmodule FastCheckWeb.Components.Combobox do
                 @value
               )}
             </optgroup>
-             {!Enum.any?(@option, &Map.has_key?(&1, :group)) &&
+            {!Enum.any?(@option, &Map.has_key?(&1, :group)) &&
               Phoenix.HTML.Form.options_for_select(
                 Enum.map(@option, fn %{value: v} -> {v, v} end),
                 @value
@@ -251,9 +251,9 @@ defmodule FastCheckWeb.Components.Combobox do
               >
                 {render_slot(@start_section)}
               </div>
-              
+
               <div :if={@placeholder} class="combobox-placeholder select-none">{@placeholder}</div>
-              
+
               <div
                 data-part="select-toggle-label"
                 class={[
@@ -263,7 +263,7 @@ defmodule FastCheckWeb.Components.Combobox do
               >
               </div>
             </div>
-            
+
             <div class="flex items-center gap-1">
               <div class="shrink-0" data-part="clear-combobox-button" role="button" hidden>
                 <svg
@@ -281,7 +281,7 @@ defmodule FastCheckWeb.Components.Combobox do
                   <path d="M18 6 6 18" /><path d="m6 6 12 12" />
                 </svg>
               </div>
-              
+
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="24"
@@ -321,7 +321,7 @@ defmodule FastCheckWeb.Components.Combobox do
                 placeholder={@search_placeholder}
               />
             </div>
-            
+
             <.scroll_area
               id={"combobox-wrapper-#{@id}"}
               padding="none"
@@ -332,14 +332,14 @@ defmodule FastCheckWeb.Components.Combobox do
                 <.option :for={{label, value} <- @options} :if={@options} value={value}>
                   {label}
                 </.option>
-                
+
                 <div
                   :for={{group_label, grouped_options} <- Enum.group_by(@option, & &1[:group])}
                   :if={!is_nil(group_label)}
                   class={["option-group", @option_group_class]}
                 >
                   <div class="group-label font-semibold my-2">{group_label}</div>
-                  
+
                   <div>
                     <.option
                       :for={option <- grouped_options}
@@ -351,7 +351,7 @@ defmodule FastCheckWeb.Components.Combobox do
                     </.option>
                   </div>
                 </div>
-                
+
                 <.option
                   :for={option <- Enum.filter(@option, &is_nil(&1[:group]))}
                   value={option[:value]}
@@ -360,7 +360,7 @@ defmodule FastCheckWeb.Components.Combobox do
                 >
                   {render_slot(option)}
                 </.option>
-                
+
                 <div :if={@searchable} class="no-results text-center hidden">
                   {gettext("Nothing found!")}
                 </div>
@@ -369,7 +369,7 @@ defmodule FastCheckWeb.Components.Combobox do
           </div>
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -398,14 +398,14 @@ defmodule FastCheckWeb.Components.Combobox do
         class={["combobox-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div phx-hook="Combobox" id={"#{@id}-combo"}>
         <select id={@id} name={@name} class="combo-select hidden" {@rest}>
           <option value=""></option>
-          
+
           <%= if Enum.empty?(@option) do %>
             {Phoenix.HTML.Form.options_for_select(@options, @value)}
           <% else %>
@@ -419,7 +419,7 @@ defmodule FastCheckWeb.Components.Combobox do
                 @value
               )}
             </optgroup>
-             {!Enum.any?(@option, &Map.has_key?(&1, :group)) &&
+            {!Enum.any?(@option, &Map.has_key?(&1, :group)) &&
               Phoenix.HTML.Form.options_for_select(
                 Enum.map(@option, fn %{value: v} -> {v, v} end),
                 @value
@@ -446,12 +446,12 @@ defmodule FastCheckWeb.Components.Combobox do
               >
                 {render_slot(@start_section)}
               </div>
-              
+
               <div :if={@placeholder} class="combobox-placeholder select-none">{@placeholder}</div>
-              
+
               <div data-part="select-toggle-label" class="selected-value"></div>
             </div>
-            
+
             <div class="flex items-center gap-1">
               <div class="shrink-0" data-part="clear-combobox-button" role="button" hidden>
                 <svg
@@ -469,7 +469,7 @@ defmodule FastCheckWeb.Components.Combobox do
                   <path d="M18 6 6 18" /><path d="m6 6 12 12" />
                 </svg>
               </div>
-              
+
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="24"
@@ -509,7 +509,7 @@ defmodule FastCheckWeb.Components.Combobox do
                 placeholder={@search_placeholder}
               />
             </div>
-            
+
             <.scroll_area
               id={"combobox-wrapper-#{@id}"}
               padding="none"
@@ -520,14 +520,14 @@ defmodule FastCheckWeb.Components.Combobox do
                 <.option :for={{label, value} <- @options} :if={@options} value={value}>
                   {label}
                 </.option>
-                
+
                 <div
                   :for={{group_label, grouped_options} <- Enum.group_by(@option, & &1[:group])}
                   :if={!is_nil(group_label)}
                   class={["option-group", @option_group_class]}
                 >
                   <div class="group-label font-semibold my-2">{group_label}</div>
-                  
+
                   <div>
                     <.option
                       :for={option <- grouped_options}
@@ -539,7 +539,7 @@ defmodule FastCheckWeb.Components.Combobox do
                     </.option>
                   </div>
                 </div>
-                
+
                 <.option
                   :for={option <- Enum.filter(@option, &is_nil(&1[:group]))}
                   value={option[:value]}
@@ -548,7 +548,7 @@ defmodule FastCheckWeb.Components.Combobox do
                 >
                   {render_slot(option)}
                 </.option>
-                
+
                 <div :if={@searchable} class="no-results text-center hidden">
                   {gettext("Nothing found!")}
                 </div>
@@ -557,7 +557,7 @@ defmodule FastCheckWeb.Components.Combobox do
           </div>
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """

@@ -150,7 +150,7 @@ defmodule FastCheckWeb.Components.Blockquote do
       <blockquote class={["p-2 italic", @blockquote_class]} cite={@rest[:cite] && @rest[:cite]}>
         <p>{render_slot(@inner_block)}</p>
       </blockquote>
-      
+
       <div
         :for={caption <- @caption}
         class={[

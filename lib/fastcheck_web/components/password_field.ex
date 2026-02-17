@@ -146,7 +146,7 @@ defmodule FastCheckWeb.Components.PasswordField do
       @class
     ]}>
       <div :if={@description} class={@description_class}>{@description}</div>
-      
+
       <div class={[
         "password-field-wrapper transition-all ease-in-out duration-200 w-full flex flex-nowrap",
         @errors != [] && "password-field-error",
@@ -161,7 +161,7 @@ defmodule FastCheckWeb.Components.PasswordField do
         >
           {render_slot(@start_section)}
         </div>
-        
+
         <div class="relative w-full z-[2]">
           <input
             type="password"
@@ -187,14 +187,14 @@ defmodule FastCheckWeb.Components.PasswordField do
             {@label}
           </label>
         </div>
-        
+
         <div
           :if={@end_section}
           class={["flex items-center justify-center shrink-0 pe-2", @end_section[:class]]}
         >
           {render_slot(@end_section)}
         </div>
-        
+
         <div
           :if={@show_password}
           class={["flex items-center justify-center shrink-0 pe-2", @show_pass_class]}
@@ -210,7 +210,7 @@ defmodule FastCheckWeb.Components.PasswordField do
           </button>
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """
@@ -231,10 +231,10 @@ defmodule FastCheckWeb.Components.PasswordField do
     ]}>
       <div :if={@label || @description} class={["password-label-wrapper", @description_wrapper_class]}>
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={@description_class}>{@description}</div>
       </div>
-      
+
       <div class={[
         "password-field-wrapper overflow-hidden transition-all ease-in-out duration-200 flex items-center flex-nowrap",
         @errors != [] && "password-field-error",
@@ -249,7 +249,7 @@ defmodule FastCheckWeb.Components.PasswordField do
         >
           {render_slot(@start_section)}
         </div>
-        
+
         <input
           type="password"
           name={@name}
@@ -269,7 +269,7 @@ defmodule FastCheckWeb.Components.PasswordField do
         >
           {render_slot(@end_section)}
         </div>
-        
+
         <div
           :if={@show_password}
           class={["flex items-center justify-center shrink-0 pe-2", @show_pass_class]}
@@ -285,7 +285,7 @@ defmodule FastCheckWeb.Components.PasswordField do
           </button>
         </div>
       </div>
-      
+
       <.error :for={msg <- @errors} icon={@error_icon}>{msg}</.error>
     </div>
     """

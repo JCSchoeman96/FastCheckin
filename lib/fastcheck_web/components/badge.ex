@@ -144,7 +144,7 @@ defmodule FastCheckWeb.Components.Badge do
         class={["badge-icon", @icon_class]}
       />
       <div class={["leading-5", @content_class]}>{render_slot(@inner_block)}</div>
-      
+
       <.icon
         :if={icon_position(@icon, @rest) == "right"}
         name={@icon}

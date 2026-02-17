@@ -24,7 +24,11 @@ defmodule FastCheck.Events.Sync do
   Options:
   - `:incremental` - If true, only syncs new/updated attendees since last sync (default: false)
   """
-  @spec sync_event(integer(), (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil, keyword()) ::
+  @spec sync_event(
+          integer(),
+          (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil,
+          keyword()
+        ) ::
           {:ok, String.t()} | {:error, String.t()}
   def sync_event(event_id, progress_callback \\ nil, opts \\ []) do
     incremental = Keyword.get(opts, :incremental, false)
@@ -51,7 +55,8 @@ defmodule FastCheck.Events.Sync do
             SyncState.init_sync(event_id, sync_log_id)
 
             # Wrap progress callback to include logging and pause checks
-            callback = wrap_progress_callback_with_pause_check(progress_callback, sync_log_id, event_id)
+            callback =
+              wrap_progress_callback_with_pause_check(progress_callback, sync_log_id, event_id)
 
             case get_tickera_api_key(event) do
               {:ok, api_key} ->
@@ -74,7 +79,9 @@ defmodule FastCheck.Events.Sync do
                         attendees
                       end
 
-                    case Attendees.create_bulk(event.id, attendees_to_process, incremental: incremental) do
+                    case Attendees.create_bulk(event.id, attendees_to_process,
+                           incremental: incremental
+                         ) do
                       {:ok, processed_count} ->
                         finalize_sync(event)
 
@@ -89,7 +96,8 @@ defmodule FastCheck.Events.Sync do
                         actual_pages_processed =
                           case SyncState.get_state(event_id) do
                             %{current_page: page} when is_integer(page) and page > 0 -> page
-                            _ -> 1  # At least 1 page if we got results
+                            # At least 1 page if we got results
+                            _ -> 1
                           end
 
                         # Clear sync state after extracting page count
@@ -97,7 +105,12 @@ defmodule FastCheck.Events.Sync do
 
                         # Log successful completion with actual pages processed
                         if sync_log_id do
-                          SyncLog.log_sync_completion(sync_log_id, "completed", processed_count, actual_pages_processed)
+                          SyncLog.log_sync_completion(
+                            sync_log_id,
+                            "completed",
+                            processed_count,
+                            actual_pages_processed
+                          )
                         end
 
                         Cache.invalidate_event_cache(event.id)
@@ -107,7 +120,11 @@ defmodule FastCheck.Events.Sync do
                         stats = Stats.get_event_stats(event.id)
                         Stats.broadcast_event_stats(event.id, stats)
 
-                        sync_message = if incremental, do: "Incremental sync: #{count_message}", else: "Synced #{count_message} attendees"
+                        sync_message =
+                          if incremental,
+                            do: "Incremental sync: #{count_message}",
+                            else: "Synced #{count_message} attendees"
+
                         {:ok, sync_message}
 
                       {:error, reason} ->
@@ -251,10 +268,6 @@ defmodule FastCheck.Events.Sync do
   defp format_reason(reason) when is_binary(reason), do: reason
   defp format_reason(reason), do: inspect(reason)
 
-  defp wrap_progress_callback(nil), do: fn _page, _total, _count -> :ok end
-  defp wrap_progress_callback(cb) when is_function(cb, 3), do: cb
-  defp wrap_progress_callback(_), do: fn _page, _total, _count -> :ok end
-
   defp wrap_progress_callback_with_pause_check(nil, sync_log_id, event_id) do
     fn page, total, count ->
       # Update sync state
@@ -272,7 +285,8 @@ defmodule FastCheck.Events.Sync do
     end
   end
 
-  defp wrap_progress_callback_with_pause_check(cb, sync_log_id, event_id) when is_function(cb, 3) do
+  defp wrap_progress_callback_with_pause_check(cb, sync_log_id, event_id)
+       when is_function(cb, 3) do
     fn page, total, count ->
       # Update sync state
       SyncState.update_progress(event_id, page, total, count)
@@ -358,7 +372,10 @@ defmodule FastCheck.Events.Sync do
           ticket_code not in existing_codes
         end)
 
-      Logger.info("Incremental sync: #{length(new_attendees)} new attendees out of #{length(attendees)} total")
+      Logger.info(
+        "Incremental sync: #{length(new_attendees)} new attendees out of #{length(attendees)} total"
+      )
+
       new_attendees
     end
   end

@@ -46,7 +46,9 @@ defmodule FastCheckWeb.ConnCase do
           {_, content_type} -> String.contains?(content_type, "csv")
           nil -> false
         end
-      _ -> false
+
+      _ ->
+        false
     end
   end
 end

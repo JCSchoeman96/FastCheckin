@@ -140,7 +140,7 @@ defmodule FastCheckWeb.Components.Dropdown do
       >
         {render_slot(trigger)}
       </div>
-      
+
       <div
         :for={content <- @content}
         id={@id && "#{@id}-dropdown-content"}
@@ -167,7 +167,7 @@ defmodule FastCheckWeb.Components.Dropdown do
       >
         {render_slot(content)}
       </div>
-       {render_slot(@inner_block)}
+      {render_slot(@inner_block)}
     </div>
     """
   end

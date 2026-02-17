@@ -123,10 +123,10 @@ defmodule FastCheckWeb.Components.CheckboxCard do
         class={["checkbox-card-label-wrapper", @description_wrapper_class]}
       >
         <.label :if={@label} for={@id} class={@label_class}>{@label}</.label>
-        
+
         <div :if={@description} class={["text-[12px]", @description_class]}>{@description}</div>
       </div>
-      
+
       <div class={["grid", grid_cols(@cols), grid_gap(@cols_gap), @class]}>
         <label
           :for={{checkbox, index} <- Enum.with_index(@checkbox, 1)}
@@ -183,7 +183,7 @@ defmodule FastCheckWeb.Components.CheckboxCard do
               >
                 {checkbox[:title]}
               </div>
-              
+
               <p
                 :if={checkbox[:description]}
                 class={["checkbox-card-description", checkbox[:description_class]]}
@@ -191,7 +191,7 @@ defmodule FastCheckWeb.Components.CheckboxCard do
                 {checkbox[:description]}
               </p>
             </div>
-            
+
             <div class={["checkbox-card-content leading-[17px]", checkbox[:card_content_class]]}>
               {render_slot(checkbox)}
             </div>

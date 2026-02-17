@@ -146,7 +146,7 @@ defmodule FastCheckWeb.Components.Sidebar do
             <span class="sr-only">{gettext("Minimize sidebar")}</span>
           </button>
         </div>
-        
+
         <div class={[
           "flex justify-end pt-2 px-2 mb-1 md:hidden dismiss-sidebar-wrapper",
           @close_wrapper_class
@@ -161,7 +161,7 @@ defmodule FastCheckWeb.Components.Sidebar do
             <span class="sr-only">{gettext("Close menu")}</span>
           </button>
         </div>
-        
+
         <ul :if={@item != []} class={@list_wrapper_class} role="list">
           <li :for={item <- @item} class={item[:class]}>
             <.link
@@ -175,7 +175,7 @@ defmodule FastCheckWeb.Components.Sidebar do
             </.link>
           </li>
         </ul>
-         {render_slot(@inner_block)}
+        {render_slot(@inner_block)}
       </div>
     </aside>
     """

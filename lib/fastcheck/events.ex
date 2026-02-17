@@ -203,7 +203,11 @@ defmodule FastCheck.Events do
   defdelegate get_event!(event_id), to: Cache
 
   @doc "Synchronizes attendees for the specified event."
-  @spec sync_event(integer(), (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil, keyword()) ::
+  @spec sync_event(
+          integer(),
+          (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil,
+          keyword()
+        ) ::
           {:ok, String.t()} | {:error, String.t()}
   defdelegate sync_event(event_id, progress_callback \\ nil, opts \\ []), to: Sync
 
@@ -403,8 +407,11 @@ defmodule FastCheck.Events do
 
             if site_url && api_key do
               case ensure_credentials(site_url, api_key) do
-                :ok -> attrs
-                {:error, _reason} -> Map.put(attrs, :_validation_error, "Invalid API key or site URL")
+                :ok ->
+                  attrs
+
+                {:error, _reason} ->
+                  Map.put(attrs, :_validation_error, "Invalid API key or site URL")
               end
             else
               attrs
@@ -458,6 +465,7 @@ defmodule FastCheck.Events do
         {:ok, encrypted} ->
           # Extract last4 from the original key
           last4 = String.slice(api_key, -4, 4)
+
           attrs
           |> Map.put("tickera_api_key_encrypted", encrypted)
           |> Map.put("tickera_api_key_last4", last4)
