@@ -16,21 +16,13 @@ defmodule FastCheck.Application do
 
     children =
       [
+        FastCheck.AbuseTrackingTable,
         FastCheckWeb.Telemetry,
         FastCheck.Repo,
         FastCheck.TickeraCircuitBreaker,
         FastCheck.Events.SyncState,
         {DNSCluster, query: Application.get_env(:fastcheck, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: FastCheck.PubSub},
-        # Abuse tracking ETS table (MUST be before telemetry handlers attach)
-        %{
-          id: :fastcheck_abuse_tracking_table,
-          start: {
-            :ets,
-            :new,
-            [:fastcheck_abuse_tracking, [:public, :named_table, :set, {:write_concurrency, true}]]
-          }
-        },
         # Rate limiter storage (ETS table) - cleans up expired entries every 60 seconds
         {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000},
         # Rate limiter monitor - logs ETS table stats every 5 minutes
