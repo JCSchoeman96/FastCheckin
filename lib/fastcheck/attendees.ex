@@ -24,11 +24,17 @@ defmodule FastCheck.Attendees do
   This is the only direct database operation in this module - it orchestrates
   parsing, validation, and batch insertion of attendees from Tickera data.
 
-  Returns `{:ok, count}` where `count` is the number of new attendees stored.
+  Options:
+  - `:incremental` - If true, uses upsert to update existing records (default: false)
+
+  Returns `{:ok, count}` where `count` is the number of new/updated attendees stored.
   """
-  @spec create_bulk(integer(), list()) :: {:ok, non_neg_integer()} | {:error, String.t()}
-  def create_bulk(event_id, attendees_data)
+  @spec create_bulk(integer(), list(), keyword()) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  def create_bulk(event_id, attendees_data, opts \\ [])
+
+  def create_bulk(event_id, attendees_data, opts)
       when is_integer(event_id) and is_list(attendees_data) do
+    incremental = Keyword.get(opts, :incremental, false)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     entries =
@@ -61,8 +67,24 @@ defmodule FastCheck.Attendees do
           {:ok, 0}
 
         _ ->
-          {count, _} = Repo.insert_all(Attendee, entries, on_conflict: :nothing)
-          Logger.info("Inserted #{count} attendees for event #{event_id}")
+          conflict_target = [:event_id, :ticket_code]
+
+          {count, _} =
+            if incremental do
+              # Use upsert to update existing records
+              Repo.insert_all(
+                Attendee,
+                entries,
+                on_conflict: {:replace_all_except, [:id, :checked_in_at, :last_checked_in_at, :checkins_remaining, :is_currently_inside, :inserted_at]},
+                conflict_target: conflict_target
+              )
+            else
+              # Only insert new records
+              Repo.insert_all(Attendee, entries, on_conflict: :nothing, conflict_target: conflict_target)
+            end
+
+          action = if incremental, do: "Upserted", else: "Inserted"
+          Logger.info("#{action} #{count} attendees for event #{event_id}")
           {:ok, count}
       end
     rescue
@@ -75,7 +97,7 @@ defmodule FastCheck.Attendees do
     end
   end
 
-  def create_bulk(_event_id, _data), do: {:error, "Invalid attendee data"}
+  def create_bulk(_event_id, _data, _opts), do: {:error, "Invalid attendee data"}
 
   # Delegation Functions (for backwards compatibility)
 
@@ -194,6 +216,16 @@ defmodule FastCheck.Attendees do
   @spec list_event_attendees(integer()) :: [Attendee.t()]
   def list_event_attendees(event_id) do
     FastCheck.Attendees.Cache.list_event_attendees(event_id)
+  end
+
+  @doc """
+  Lists all check-ins for the given event ordered by most recent.
+
+  Delegates to `FastCheck.Attendees.Query.list_event_check_ins/1`.
+  """
+  @spec list_event_check_ins(integer()) :: [map()]
+  def list_event_check_ins(event_id) do
+    FastCheck.Attendees.Query.list_event_check_ins(event_id)
   end
 
   @doc """

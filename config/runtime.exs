@@ -1,12 +1,12 @@
 import Config
 
+# ENCRYPTION_KEY is used by FastCheck.Crypto for field-level encryption.
+# Required if you encrypt attendee PII; safe to skip for MVP scanning.
 encryption_key =
   System.get_env("ENCRYPTION_KEY") ||
     if config_env() == :prod do
-      raise """
-      environment variable ENCRYPTION_KEY is missing.
-      Generate a strong 32+ byte key and export it before booting FastCheck.
-      """
+      IO.warn("ENCRYPTION_KEY is not set — field-level encryption is disabled")
+      nil
     else
       "dev fastcheck encryption key dev fastcheck encryption key"
     end
@@ -30,27 +30,10 @@ config :fastcheck, FastCheck.Mobile.Token,
   issuer: System.get_env("MOBILE_JWT_ISSUER") || "fastcheck",
   algorithm: System.get_env("MOBILE_JWT_ALGORITHM") || "HS256"
 
-dashboard_username =
-  System.get_env("DASHBOARD_USERNAME") ||
-    if config_env() == :prod do
-      raise """
-      environment variable DASHBOARD_USERNAME is missing.
-      Set dashboard credentials before booting FastCheck.
-      """
-    else
-      "admin"
-    end
-
-dashboard_password =
-  System.get_env("DASHBOARD_PASSWORD") ||
-    if config_env() == :prod do
-      raise """
-      environment variable DASHBOARD_PASSWORD is missing.
-      Set dashboard credentials before booting FastCheck.
-      """
-    else
-      "fastcheck"
-    end
+# LiveDashboard is only mounted in dev routes, so dashboard auth is optional.
+# If you enable it in prod, set DASHBOARD_USERNAME and DASHBOARD_PASSWORD.
+dashboard_username = System.get_env("DASHBOARD_USERNAME") || "admin"
+dashboard_password = System.get_env("DASHBOARD_PASSWORD") || "fastcheck"
 
 config :fastcheck, :dashboard_auth,
   username: dashboard_username,
@@ -75,16 +58,12 @@ config :fastcheck,
 
 # config/runtime.exs is executed for all environments and is the right place to
 # read secrets that should not be baked into the release.
-
-# Allow operators to run `PHX_SERVER=true bin/fastcheck start` so releases
-# boot the HTTP endpoint automatically.
-if System.get_env("PHX_SERVER") do
-  config :fastcheck, FastCheckWeb.Endpoint, server: true
-end
+# Note: PHX_SERVER is not needed — the prod block below sets server: true.
 
 if config_env() == :prod do
-  # Route all production database traffic through pgBouncer so the scanners can
-  # share a compact pool of upstream PostgreSQL connections.
+  # ---------------------------------------------------------------------------
+  # Database
+  # ---------------------------------------------------------------------------
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
@@ -92,17 +71,24 @@ if config_env() == :prod do
       Provide the full Ecto URL (ecto://USER:PASS@HOST:PORT/DB) for releases.
       """
 
+  # Railway (and many managed Postgres hosts) require SSL. Default to true but
+  # allow operators to opt out via DATABASE_SSL=false when the host doesn't
+  # support it or the URL already encodes sslmode.
+  ssl? = System.get_env("DATABASE_SSL", "true") in ~w(true 1)
+
   config :fastcheck, FastCheck.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "20"),
+    ssl: ssl?,
     queue_target: 5_000,
     queue_interval: 1_000,
-    # Log queries that exceed the threshold (in microseconds, default 100ms)
+    timeout: String.to_integer(System.get_env("DB_TIMEOUT_MS") || "30000"),
     log: false,
     telemetry_prefix: [:fastcheck, :repo]
 
-  # The secret key base signs/encrypts cookies and tokens. Generate it with
-  # `mix phx.gen.secret` and keep it outside of version control.
+  # ---------------------------------------------------------------------------
+  # Secrets
+  # ---------------------------------------------------------------------------
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
       raise """
@@ -110,22 +96,33 @@ if config_env() == :prod do
       Generate one with: mix phx.gen.secret
       """
 
-  # DOMAIN and PORT mirror the entries in .env.example so systemd (or any
-  # process manager) can wire Phoenix up behind a reverse proxy.
+  # ---------------------------------------------------------------------------
+  # Endpoint
+  # ---------------------------------------------------------------------------
   domain = System.get_env("DOMAIN") || System.get_env("PHX_HOST") || "example.com"
-  port = String.to_integer(System.get_env("PORT") || "8080")
+  port = String.to_integer(System.get_env("PORT") || "4000")
 
-  # DNS cluster query makes it possible to auto-discover other nodes when the
-  # app runs on Kubernetes or Fly.io. Leave it nil when not clustering.
+  mobile_app_origin = System.get_env("MOBILE_APP_ORIGIN")
+  dashboard_origin = "https://#{domain}"
+
+  cors_origins =
+    [mobile_app_origin, dashboard_origin]
+    |> Enum.reject(&is_nil/1)
+
   config :fastcheck, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-  # Configure the endpoint with runtime values so releases can adjust ports and
-  # hosts without being recompiled.
   config :fastcheck, FastCheckWeb.Endpoint,
-    http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
+    server: true,
+    http: [ip: {0, 0, 0, 0}, port: port],
     url: [host: domain, scheme: "https", port: 443],
     check_origin: ["https://#{domain}"],
-    secret_key_base: secret_key_base
+    secret_key_base: secret_key_base,
+    # Railway (and most PaaS) terminate TLS at the proxy layer and forward
+    # X-Forwarded-Proto. force_ssl ensures Phoenix generates https:// URLs and
+    # sets secure cookie flags.
+    force_ssl: [hsts: true, rewrite_on: [:x_forwarded_proto]],
+    cors_origins: cors_origins,
+    session_options: [secure: true]
 end
 
 # Runtime configurable rate limiting

@@ -28,6 +28,88 @@ import { hooks as colocatedHooks } from "phoenix-colocated/fastcheck";
 import topbar from "../vendor/topbar";
 import MishkaComponents from "../vendor/mishka_components.js";
 
+const ScannerKeyboardShortcuts = {
+  mounted() {
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.scannerContainer = this.el;
+    this.ticketInput = this.el.querySelector('input[type="text"][name*="ticket_code"]');
+    this.directionButtons = this.el.querySelectorAll('button[phx-click="set_check_in_type"]');
+    
+    // Only enable on desktop (not mobile)
+    if (window.innerWidth >= 640) {
+      document.addEventListener("keydown", this.handleKeyDown);
+    }
+  },
+
+  destroyed() {
+    document.removeEventListener("keydown", this.handleKeyDown);
+  },
+
+  handleKeyDown(event) {
+    // Don't interfere if user is typing in an input/textarea
+    const activeElement = document.activeElement;
+    const isInputFocused = activeElement && (
+      activeElement.tagName === "INPUT" ||
+      activeElement.tagName === "TEXTAREA" ||
+      activeElement.isContentEditable
+    );
+
+    // Enter key: Trigger scan if ticket code input has focus and value
+    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      if (isInputFocused && this.ticketInput && this.ticketInput.value.trim() !== "") {
+        // Only trigger if the focused input is the ticket code input
+        if (activeElement === this.ticketInput || activeElement.name?.includes("ticket_code")) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.triggerScan();
+          return;
+        }
+      }
+    }
+
+    // Tab key: Toggle check-in direction (only when not in input)
+    if (event.key === "Tab" && !isInputFocused) {
+      // Check if scanner is disabled
+      const isDisabled = this.scannerContainer.querySelector('[disabled][aria-disabled="true"]');
+      if (!isDisabled && this.directionButtons.length >= 2) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleDirection();
+        return;
+      }
+    }
+  },
+
+  triggerScan() {
+    const form = this.scannerContainer.querySelector('form[phx-submit="scan"]');
+    if (form) {
+      // Trigger form submit
+      const submitEvent = new Event("submit", { bubbles: true, cancelable: true });
+      form.dispatchEvent(submitEvent);
+    }
+  },
+
+  toggleDirection() {
+    // Find the currently active direction button
+    const activeButton = Array.from(this.directionButtons).find(btn => 
+      btn.classList.contains("bg-green-600") || btn.classList.contains("bg-orange-600")
+    );
+    
+    if (activeButton) {
+      // Find the other button and click it
+      const otherButton = Array.from(this.directionButtons).find(btn => btn !== activeButton);
+      if (otherButton) {
+        otherButton.click();
+      }
+    } else {
+      // If no active button, click the first one (entry)
+      if (this.directionButtons[0]) {
+        this.directionButtons[0].click();
+      }
+    }
+  },
+};
+
 const CameraPermission = {
   mounted() {
     this.storageKey = this.el.dataset.storageKey || "fastcheck:camera-permission";
@@ -133,9 +215,144 @@ const CameraPermission = {
     }
   },
 };
+const SoundFeedback = {
+  storageKey: "fastcheck:sound-enabled",
+  audioContext: null,
+  
+  init() {
+    // Check if sounds are enabled (default: true)
+    this.enabled = this.isEnabled();
+    this.setupAudioContext();
+  },
+  
+  setupAudioContext() {
+    // Create AudioContext lazily to respect browser autoplay policies
+    try {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.warn("AudioContext not supported:", e);
+    }
+  },
+  
+  isEnabled() {
+    try {
+      const stored = localStorage.getItem(this.storageKey);
+      return stored !== "false"; // Default to true if not set
+    } catch (e) {
+      return true; // Default to enabled
+    }
+  },
+  
+  setEnabled(enabled) {
+    this.enabled = enabled;
+    try {
+      localStorage.setItem(this.storageKey, enabled ? "true" : "false");
+    } catch (e) {
+      console.warn("Failed to save sound preference:", e);
+    }
+  },
+  
+  toggle() {
+    this.setEnabled(!this.enabled);
+    return this.enabled;
+  },
+  
+  playSuccess() {
+    if (!this.enabled) return;
+    this.playTone(800, 0.1, 0.2); // 800Hz, 0.1s duration, 0.2s fade
+  },
+  
+  playError() {
+    if (!this.enabled) return;
+    // Descending error tone: 600Hz -> 400Hz over 0.3s
+    this.playTone(600, 0.15, 0.1);
+    setTimeout(() => {
+      this.playTone(400, 0.15, 0.1);
+    }, 150);
+  },
+  
+  playTone(frequency, duration, fadeDuration) {
+    if (!this.audioContext) {
+      this.setupAudioContext();
+      if (!this.audioContext) return;
+    }
+    
+    try {
+      const oscillator = this.audioContext.createOscillator();
+      const gainNode = this.audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(this.audioContext.destination);
+      
+      oscillator.frequency.value = frequency;
+      oscillator.type = "sine";
+      
+      // Fade in/out for smoother sound
+      const now = this.audioContext.currentTime;
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.3, now + fadeDuration);
+      gainNode.gain.linearRampToValueAtTime(0.3, now + duration - fadeDuration);
+      gainNode.gain.linearRampToValueAtTime(0, now + duration);
+      
+      oscillator.start(now);
+      oscillator.stop(now + duration);
+    } catch (e) {
+      // Silently fail if audio can't play (e.g., autoplay restrictions)
+      console.debug("Could not play sound:", e);
+    }
+  }
+};
+
+// Initialize sound feedback
+SoundFeedback.init();
+
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
   .getAttribute("content");
+
+// Sound Toggle Hook
+const SoundToggle = {
+  mounted() {
+    // Store reference to click handler for cleanup
+    this.handleClick = () => {
+      const enabled = SoundFeedback.toggle();
+      this.updateButton(enabled);
+      // Sync with LiveView if needed
+      this.pushEvent("sound_toggle", { enabled: enabled });
+    };
+    
+    this.el.addEventListener("click", this.handleClick);
+    
+    // Initialize button state from localStorage
+    const enabled = SoundFeedback.isEnabled();
+    this.updateButton(enabled);
+  },
+  
+  destroyed() {
+    // Remove click listener to prevent memory leaks and duplicate handlers
+    if (this.handleClick) {
+      this.el.removeEventListener("click", this.handleClick);
+    }
+  },
+  
+  updateButton(enabled) {
+    // Regex pattern matches both plain and prefixed Tailwind classes (hover:, focus:, etc.)
+    const classCleanupPattern = /(?:hover:|focus:)?(?:bg-slate-700\/\d+|text-slate-\d+|bg-green-600\/\d+|text-green-\d+)/g;
+    
+    if (enabled) {
+      this.el.textContent = "🔊 Sound On";
+      this.el.className = this.el.className.replace(classCleanupPattern, "").replace(/\s+/g, " ").trim();
+      this.el.classList.add("bg-green-600/20", "text-green-300", "hover:bg-green-600/30");
+      this.el.setAttribute("aria-label", "Disable sound feedback");
+    } else {
+      this.el.textContent = "🔇 Sound Off";
+      this.el.className = this.el.className.replace(classCleanupPattern, "").replace(/\s+/g, " ").trim();
+      this.el.classList.add("bg-slate-700/50", "text-slate-400", "hover:bg-slate-700/70");
+      this.el.setAttribute("aria-label", "Enable sound feedback");
+    }
+  }
+};
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {
@@ -145,8 +362,24 @@ const liveSocket = new LiveSocket("/live", Socket, {
     ...colocatedHooks,
     ...MishkaComponents,
     CameraPermission,
+    ScannerKeyboardShortcuts,
+    SoundToggle,
   },
 });
+
+// Listen for scan results to play sounds
+liveSocket.on("phx:event", (event) => {
+  if (event.detail && event.detail.type === "scan_result") {
+    if (event.detail.status === "success") {
+      SoundFeedback.playSuccess();
+    } else if (event.detail.status === "error" || event.detail.status === "invalid") {
+      SoundFeedback.playError();
+    }
+  }
+});
+
+// Expose SoundFeedback globally for LiveView hooks
+window.SoundFeedback = SoundFeedback;
 // Show progress bar on live navigation and form submits
 topbar.config({
   barColors: {
