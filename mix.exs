@@ -111,6 +111,7 @@ defmodule FastCheck.MixProject do
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind fastcheck", "esbuild fastcheck"],
       "assets.deploy": [
+        "compile",
         "tailwind fastcheck --minify",
         "esbuild fastcheck --minify",
         "phx.digest"

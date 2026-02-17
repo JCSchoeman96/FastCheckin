@@ -24,7 +24,24 @@ import "phoenix_html";
 // Establish Phoenix Socket and LiveView configuration.
 import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
-import { hooks as colocatedHooks } from "phoenix-colocated/fastcheck";
+// ----------------------------------------------------------------------------
+// [PHOENIX-COLOCATED BUILD WARNING]
+//
+// This import is currently DISABLED because the project has ZERO colocated
+// hooks (LiveView <script> tags). This means the compiler does not generate
+// the "phoenix-colocated" directory, causing esbuild to fail in CI/Prod.
+//
+// WHEN TO ENABLE:
+// As soon as you add your first colocated hook, you must:
+// 1. Uncomment the import below.
+// 2. Remove the empty `const colocatedHooks = {};`.
+//
+// The `mix.exs` pipeline is already configured correctly ("compile" first),
+// and `config/config.exs` has the correct `NODE_PATH` setup.
+//
+// import { hooks as colocatedHooks } from "phoenix-colocated/fastcheck";
+const colocatedHooks = {};
+// ----------------------------------------------------------------------------
 import topbar from "../vendor/topbar";
 import MishkaComponents from "../vendor/mishka_components.js";
 
