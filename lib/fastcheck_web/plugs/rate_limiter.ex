@@ -64,10 +64,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   rule "allow_local", conn do
     case get_peer_ip(conn) do
       # IPv4 localhost
-      "127.0.0.1" -> :allow
+      "127.0.0.1" -> {:allow, :localhost}
       # IPv6 localhost
-      "::1" -> :allow
-      _ -> :next
+      "::1" -> {:allow, :localhost}
+      _ -> nil
     end
   end
 
@@ -86,19 +86,19 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
             path: conn.request_path
           )
 
-          {:error, :auto_banned, ban_info}
+          {:block, {:auto_banned, ban_info}}
         else
           # Ban expired - clean up and allow
           :ets.delete(:fastcheck_abuse_tracking, {:banned, ip})
-          :next
+          nil
         end
 
       _ ->
         # Not banned or old format
-        :next
+        nil
     end
   rescue
-    ArgumentError -> :next
+    ArgumentError -> nil
   end
 
   # Tier 1: Critical operations (Tickera API + expensive DB queries)
@@ -112,7 +112,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
     else
-      :next
+      nil
     end
   end
 
@@ -126,7 +126,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
     else
-      :next
+      nil
     end
   end
 
@@ -141,7 +141,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
     else
-      :next
+      nil
     end
   end
 
@@ -156,7 +156,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
     else
-      :next
+      nil
     end
   end
 
@@ -170,7 +170,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
         storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
       )
     else
-      :next
+      nil
     end
   end
 
@@ -207,7 +207,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   def allow_action(conn, _data, _opts), do: conn
 
   # Block rate limited requests
-  def block_action(conn, {:error, :auto_banned, ban_info}, _opts) when is_map(ban_info) do
+  def block_action(conn, {:auto_banned, ban_info}, _opts) when is_map(ban_info) do
     # Auto-ban with metadata
     retry_after = DateTime.diff(ban_info.ban_until, DateTime.utc_now())
 
