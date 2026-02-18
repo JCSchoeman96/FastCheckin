@@ -68,8 +68,10 @@ defmodule FastCheck.Attendees.Scan do
               cond do
                 # Reject tickets with invalid payment status
                 not is_payment_status_valid?(attendee.payment_status) ->
+                  rejection_message = payment_rejection_message(attendee.payment_status)
+
                   Logger.warning(
-                    "Check-in rejected due to invalid payment status: #{attendee.payment_status}",
+                    "Check-in rejected due to non-completed order status: #{attendee.payment_status}",
                     ticket_code: sanitized_code,
                     event_id: event_id,
                     payment_status: attendee.payment_status
@@ -85,8 +87,7 @@ defmodule FastCheck.Attendees.Scan do
 
                   broadcast_event_stats_async(event_id)
 
-                  {:error, "PAYMENT_INVALID",
-                   "Ticket payment status is invalid: #{normalize_payment_status(attendee.payment_status)}"}
+                  {:error, "PAYMENT_INVALID", rejection_message}
 
                 attendee.checked_in_at && remaining <= 0 ->
                   Logger.warning("Duplicate ticket #{sanitized_code} for event #{event_id}")
@@ -622,13 +623,24 @@ defmodule FastCheck.Attendees.Scan do
   defp invalid_error(:entrance_name, message),
     do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
 
-  defp is_payment_status_valid?(status) when status in [nil, "paid", "completed", "free"],
-    do: true
+  defp is_payment_status_valid?(status), do: normalize_payment_status(status) == "completed"
 
-  defp is_payment_status_valid?(_status), do: false
+  defp payment_rejection_message(status) do
+    "Entry denied: order status '#{normalize_payment_status(status)}' is not completed"
+  end
 
   defp normalize_payment_status(nil), do: "unknown"
-  defp normalize_payment_status(status) when is_binary(status), do: status
+
+  defp normalize_payment_status(status) when is_binary(status) do
+    status
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "" -> "unknown"
+      value -> value
+    end
+  end
+
   defp normalize_payment_status(_), do: "unknown"
 
   defp format_datetime(nil), do: "unknown time"
@@ -857,6 +869,10 @@ defmodule FastCheck.Attendees.Scan do
 
   defp ensure_can_check_in(%Attendee{} = attendee) do
     cond do
+      not is_payment_status_valid?(attendee.payment_status) ->
+        Logger.warning("Attendee #{attendee.id} has non-completed order status")
+        {:error, "PAYMENT_INVALID", payment_rejection_message(attendee.payment_status)}
+
       attendee.is_currently_inside ->
         Logger.warning("Attendee #{attendee.id} already inside")
         {:error, "ALREADY_INSIDE", "Attendee already inside"}

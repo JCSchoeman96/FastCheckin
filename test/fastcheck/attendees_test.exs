@@ -102,6 +102,39 @@ defmodule FastCheck.AttendeesTest do
 
       assert message =~ "Entrance name"
     end
+
+    test "rejects non-completed order statuses with clear message" do
+      event = insert_event!("Conference")
+
+      attendee =
+        create_attendee(event, %{
+          ticket_code: "PAY-001",
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          payment_status: "paid"
+        })
+
+      assert {:error, "PAYMENT_INVALID", message} =
+               Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
+
+      assert message =~ "not completed"
+      assert message =~ "paid"
+    end
+
+    test "accepts completed status case-insensitively" do
+      event = insert_event!("Conference")
+
+      attendee =
+        create_attendee(event, %{
+          ticket_code: "PAY-002",
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          payment_status: "Completed"
+        })
+
+      assert {:ok, %Attendee{}, "SUCCESS"} =
+               Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
+    end
   end
 
   describe "check_in_advanced/5" do
@@ -294,7 +327,8 @@ defmodule FastCheck.AttendeesTest do
       ticket_code: unique_ticket_code(),
       first_name: "Test",
       last_name: "User",
-      email: "test@example.com"
+      email: "test@example.com",
+      payment_status: "completed"
     }
 
     attrs = Map.merge(defaults, attrs)

@@ -61,7 +61,7 @@ defmodule FastCheckWeb.CheckInControllerTest do
       ticket_code: "TICKET-#{System.unique_integer([:positive])}",
       allowed_checkins: 1,
       checkins_remaining: 1,
-      payment_status: "paid"
+      payment_status: "completed"
     }
 
     %Attendee{}
