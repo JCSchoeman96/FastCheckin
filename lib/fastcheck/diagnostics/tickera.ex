@@ -132,12 +132,23 @@ defmodule FastCheck.Diagnostics.Tickera do
 
   defp normalize_body(body) when is_binary(body), do: String.trim(body)
 
+  defp normalize_body(body) when is_map(body) do
+    case Jason.encode(body) do
+      {:ok, encoded} -> String.trim(encoded)
+      {:error, _reason} -> ""
+    end
+  end
+
   defp normalize_body(body) when is_list(body) do
     body
     |> IO.iodata_to_binary()
     |> String.trim()
   rescue
-    ArgumentError -> ""
+    ArgumentError ->
+      case Jason.encode(body) do
+        {:ok, encoded} -> String.trim(encoded)
+        {:error, _reason} -> ""
+      end
   end
 
   defp normalize_body(nil), do: ""

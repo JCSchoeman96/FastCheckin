@@ -1689,12 +1689,15 @@ defmodule FastCheck.TickeraClient do
              connect_timeout: @timeout,
              receive_timeout: @timeout
            ) do
-        {:ok, %Response{status: code, body: body}} when code in 200..299 ->
-          body = normalize_response_body(body)
+        {:ok, %Response{status: code, body: raw_body}} when code in 200..299 ->
+          body = normalize_response_body(raw_body)
 
           cond do
             body == "" ->
-              Logger.error("Tickera returned an empty response body for #{safe_log_url(url)}")
+              Logger.error(
+                "Tickera returned an empty response body for #{safe_log_url(url)} (raw type: #{inspect(response_body_type(raw_body))})"
+              )
+
               {:error, {:http_error, :empty_body, ""}}
 
             true ->
@@ -1755,16 +1758,33 @@ defmodule FastCheck.TickeraClient do
 
   defp normalize_response_body(body) when is_binary(body), do: String.trim(body)
 
+  defp normalize_response_body(body) when is_map(body) do
+    case Jason.encode(body) do
+      {:ok, encoded} -> String.trim(encoded)
+      {:error, _reason} -> ""
+    end
+  end
+
   defp normalize_response_body(body) when is_list(body) do
     body
     |> IO.iodata_to_binary()
     |> String.trim()
   rescue
-    ArgumentError -> ""
+    ArgumentError ->
+      case Jason.encode(body) do
+        {:ok, encoded} -> String.trim(encoded)
+        {:error, _reason} -> ""
+      end
   end
 
   defp normalize_response_body(nil), do: ""
   defp normalize_response_body(_other), do: ""
+
+  defp response_body_type(body) when is_binary(body), do: :binary
+  defp response_body_type(body) when is_map(body), do: :map
+  defp response_body_type(body) when is_list(body), do: :list
+  defp response_body_type(nil), do: nil
+  defp response_body_type(_body), do: :other
 
   defp body_preview(body) when is_binary(body) do
     body
