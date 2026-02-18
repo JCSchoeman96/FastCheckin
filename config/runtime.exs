@@ -61,9 +61,10 @@ config :fastcheck, FastCheck.Mobile.Token,
 dashboard_username = System.get_env("DASHBOARD_USERNAME") || "admin"
 dashboard_password = System.get_env("DASHBOARD_PASSWORD") || "fastcheck"
 
-config :fastcheck, :dashboard_auth,
+config :fastcheck, :dashboard_auth, %{
   username: dashboard_username,
   password: dashboard_password
+}
 
 # Cache defaults shared across all environments. The values can be overridden
 # via environment variables without recompiling the release.
