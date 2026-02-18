@@ -335,7 +335,7 @@ defmodule FastCheck.Telemetry do
     seven_days_ago = DateTime.add(now, -7 * 24 * 3600, :second)
 
     :ets.select_delete(:fastcheck_abuse_tracking, [
-      {{{:ban_history, :"$1"}, :"$2"}, [{:<, :"$2", seven_days_ago}], [true]}
+      {{{:ban_history, :"$1"}, :"$2"}, [{:<, :"$2", {:const, seven_days_ago}}], [true]}
     ])
 
     if expired_count > 0 or old_counters_count > 0 do

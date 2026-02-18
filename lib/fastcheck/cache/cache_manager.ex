@@ -640,7 +640,7 @@ defmodule FastCheck.Cache.CacheManager do
     else
       cache_options = [
         stats: true,
-        limit: Cachex.Spec.limit(size: config.max_size, policy: Cachex.Policy.LRU),
+        limit: Cachex.Spec.limit(size: config.max_size, policy: Cachex.Policy.LRW),
         expiration:
           Cachex.Spec.expiration(
             default: config.default_ttl,

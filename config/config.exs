@@ -59,10 +59,6 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id, :event_id, :user_id, :ip, :device_id]
 
-# Add Sentry backend to Logger for automatic error capture
-config :logger,
-  backends: [:console, Sentry.LoggerBackend]
-
 # Console logger configuration with metadata
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
