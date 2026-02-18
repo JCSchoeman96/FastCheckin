@@ -13,7 +13,7 @@ defmodule FastCheckWeb.SessionController do
   def new(conn, params) do
     render(conn, :new,
       form: login_form(),
-      redirect_to: params["redirect_to"],
+      redirect_to: normalize_redirect_to(params["redirect_to"]),
       error_message: nil
     )
   end
@@ -21,7 +21,7 @@ defmodule FastCheckWeb.SessionController do
   def create(conn, %{"session" => session_params} = params) do
     with %{"username" => username, "password" => password} <- session_params do
       if valid_credentials?(username, password) do
-        redirect_to = params["redirect_to"] || ~p"/"
+        redirect_to = normalize_redirect_to(params["redirect_to"])
 
         conn
         |> put_session(@session_key, true)
@@ -32,7 +32,7 @@ defmodule FastCheckWeb.SessionController do
         |> put_status(:unauthorized)
         |> render(:new,
           form: login_form(session_params),
-          redirect_to: params["redirect_to"],
+          redirect_to: normalize_redirect_to(params["redirect_to"]),
           error_message: "Invalid credentials"
         )
       end
@@ -71,4 +71,31 @@ defmodule FastCheckWeb.SessionController do
     |> put_status(:bad_request)
     |> render(:new, form: login_form(), redirect_to: nil, error_message: "Invalid login payload")
   end
+
+  defp normalize_redirect_to(nil), do: ~p"/"
+  defp normalize_redirect_to(""), do: ~p"/"
+
+  defp normalize_redirect_to(redirect_to) when is_binary(redirect_to) do
+    redirect_to
+    |> decode_redirect_param()
+    |> ensure_safe_path()
+  end
+
+  defp normalize_redirect_to(_), do: ~p"/"
+
+  defp decode_redirect_param(value) do
+    decoded = URI.decode_www_form(value)
+
+    if decoded == value do
+      decoded
+    else
+      URI.decode_www_form(decoded)
+    end
+  end
+
+  defp ensure_safe_path("/" <> _ = path) do
+    if String.starts_with?(path, "//"), do: ~p"/", else: path
+  end
+
+  defp ensure_safe_path(_), do: ~p"/"
 end

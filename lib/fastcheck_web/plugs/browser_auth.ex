@@ -102,6 +102,6 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
         qs -> conn.request_path <> "?" <> qs
       end
 
-    ~p"/login?redirect_to=#{URI.encode_www_form(redirect_target)}"
+    ~p"/login?redirect_to=#{redirect_target}"
   end
 end
