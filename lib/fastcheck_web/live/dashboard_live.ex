@@ -79,23 +79,27 @@ defmodule FastCheckWeb.DashboardLive do
   def handle_event("start_sync", %{"event_id" => event_id_param} = params, socket) do
     incremental = Map.get(params, "incremental", "false") == "true"
 
-    with {:ok, event_id} <- parse_event_id(event_id_param),
-         {:ok, pid} <- start_sync_task(event_id, incremental: incremental) do
-      start_time = System.monotonic_time(:second)
-      sync_type = if incremental, do: "incremental", else: "full"
-
-      {:noreply,
-       socket
-       |> assign(:selected_event_id, event_id)
-       |> assign(:sync_progress, {0, 0, 0})
-       |> assign(:sync_start_time, start_time)
-       |> assign(:sync_timing_data, [])
-       |> assign(:sync_paused, false)
-       |> assign(:sync_task_pid, pid)
-       |> assign(:sync_status, "Starting #{sync_type} attendee sync...")}
+    if is_pid(socket.assigns.sync_task_pid) do
+      {:noreply, assign(socket, :sync_status, "A sync is already running for this dashboard")}
     else
-      {:error, reason} ->
-        {:noreply, assign(socket, :sync_status, reason)}
+      with {:ok, event_id} <- parse_event_id(event_id_param),
+           {:ok, pid} <- start_sync_task(event_id, incremental: incremental) do
+        start_time = System.monotonic_time(:second)
+        sync_type = if incremental, do: "incremental", else: "full"
+
+        {:noreply,
+         socket
+         |> assign(:selected_event_id, event_id)
+         |> assign(:sync_progress, {0, 0, 0})
+         |> assign(:sync_start_time, start_time)
+         |> assign(:sync_timing_data, [])
+         |> assign(:sync_paused, false)
+         |> assign(:sync_task_pid, pid)
+         |> assign(:sync_status, "Starting #{sync_type} attendee sync...")}
+      else
+        {:error, reason} ->
+          {:noreply, assign(socket, :sync_status, reason)}
+      end
     end
   end
 
@@ -613,14 +617,15 @@ defmodule FastCheckWeb.DashboardLive do
                     type="button"
                     class={[
                       "flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2",
-                      lifecycle_state == :archived && "cursor-not-allowed opacity-60"
+                      (lifecycle_state == :archived || !is_nil(@sync_task_pid)) &&
+                        "cursor-not-allowed opacity-60"
                     ]}
                     phx-click="start_sync"
                     phx-value-event_id={event.id}
                     phx-value-incremental="false"
                     phx-disable-with="Syncing..."
-                    disabled={lifecycle_state == :archived}
-                    aria-disabled={lifecycle_state == :archived}
+                    disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                    aria-disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
                   >
                     Full Sync
                   </button>
@@ -628,14 +633,15 @@ defmodule FastCheckWeb.DashboardLive do
                     type="button"
                     class={[
                       "flex-1 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2",
-                      lifecycle_state == :archived && "cursor-not-allowed opacity-60"
+                      (lifecycle_state == :archived || !is_nil(@sync_task_pid)) &&
+                        "cursor-not-allowed opacity-60"
                     ]}
                     phx-click="start_sync"
                     phx-value-event_id={event.id}
                     phx-value-incremental="true"
                     phx-disable-with="Syncing..."
-                    disabled={lifecycle_state == :archived}
-                    aria-disabled={lifecycle_state == :archived}
+                    disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                    aria-disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
                     title="Only sync new or updated attendees (faster)"
                   >
                     Incremental Sync
@@ -653,7 +659,7 @@ defmodule FastCheckWeb.DashboardLive do
                     phx-value-event_id={event.id}
                     class="flex-1 rounded-md bg-yellow-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2"
                   >
-                    ⏸ Pause
+                    Pause
                   </button>
                   <button
                     :if={@sync_paused}
@@ -662,7 +668,7 @@ defmodule FastCheckWeb.DashboardLive do
                     phx-value-event_id={event.id}
                     class="flex-1 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
                   >
-                    ▶ Resume
+                    Resume
                   </button>
                   <button
                     type="button"
@@ -670,7 +676,7 @@ defmodule FastCheckWeb.DashboardLive do
                     phx-value-event_id={event.id}
                     class="flex-1 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2"
                   >
-                    ✕ Cancel
+                    Cancel
                   </button>
                 </div>
 
@@ -1038,12 +1044,12 @@ defmodule FastCheckWeb.DashboardLive do
     base_status =
       cond do
         total in [nil, 0] -> "Syncing attendees..."
-        true -> "Syncing attendees (page #{page}/#{total}) • Imported #{count} records"
+        true -> "Syncing attendees (page #{page}/#{total}) - Imported #{count} records"
       end
 
     if estimated_remaining && estimated_remaining > 0 do
       time_str = format_time_estimate(estimated_remaining)
-      "#{base_status} • Estimated time remaining: #{time_str}"
+      "#{base_status} - Estimated time remaining: #{time_str}"
     else
       base_status
     end
