@@ -35,50 +35,35 @@ defmodule FastCheckWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
+    <.navbar
+      id="fc-navbar"
+      variant="shadow"
+      color="natural"
+      padding="small"
+      class="px-4 sm:px-6 lg:px-8"
+    >
+      <:start_content>
+        <a href="/" class="flex items-center gap-2.5">
+          <img src={~p"/images/logo.svg"} width="36" alt="FastCheck" />
+          <span class="text-lg font-bold text-fc-text-primary">FastCheck</span>
         </a>
-      </div>
+      </:start_content>
 
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a
-              href="https://phoenixframework.org/"
-              class="inline-flex items-center rounded-2xl border border-base-border-light px-3 py-1.5 text-sm font-semibold text-base-text-light transition hover:bg-base-hover-light dark:border-base-border-dark dark:text-base-text-dark dark:hover:bg-base-hover-dark"
-            >
-              Website
-            </a>
-          </li>
+      <:end_content>
+        <div class="flex items-center gap-3">
+          <.link
+            navigate={~p"/dashboard"}
+            class="hidden sm:inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-fc-text-secondary transition hover:text-fc-text-primary hover:bg-fc-surface-raised"
+          >
+            Dashboard
+          </.link>
+          <.theme_toggle />
+        </div>
+      </:end_content>
+    </.navbar>
 
-          <li>
-            <a
-              href="https://github.com/phoenixframework/phoenix"
-              class="inline-flex items-center rounded-2xl border border-base-border-light px-3 py-1.5 text-sm font-semibold text-base-text-light transition hover:bg-base-hover-light dark:border-base-border-dark dark:text-base-text-dark dark:hover:bg-base-hover-dark"
-            >
-              GitHub
-            </a>
-          </li>
-
-          <li><.theme_toggle /></li>
-
-          <li>
-            <a
-              href="https://hexdocs.pm/phoenix/overview.html"
-              class="inline-flex items-center gap-2 rounded-2xl bg-primary-light px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-hover-light dark:bg-primary-dark dark:text-base-text-light dark:hover:bg-primary-hover-dark"
-            >
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
-    </header>
-
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">{render_slot(@inner_block)}</div>
+    <main class="fc-app-container fc-container" style="padding-block: var(--fc-space-section)">
+      {render_slot(@inner_block)}
     </main>
     <.flash_group flash={@flash} />
     """
@@ -132,12 +117,13 @@ defmodule FastCheckWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
-      <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left]" />
+    <div class="card relative flex flex-row items-center border-2 border-fc-border-default bg-fc-surface-raised rounded-full">
+      <div class="absolute w-1/3 h-full rounded-full border border-fc-border-subtle bg-fc-surface-page brightness-105 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left] duration-200" />
       <button
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
+        aria-label="Use system theme"
       >
         <.icon name="hero-computer-desktop-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
@@ -145,6 +131,7 @@ defmodule FastCheckWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
+        aria-label="Use light theme"
       >
         <.icon name="hero-sun-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
@@ -152,6 +139,7 @@ defmodule FastCheckWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
+        aria-label="Use dark theme"
       >
         <.icon name="hero-moon-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>

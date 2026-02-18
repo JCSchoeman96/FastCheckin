@@ -22,9 +22,150 @@
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
+/* ──────────────────────────────────────────────────────────
+   Pink-Peach primary palette override
+   ────────────────────────────────────────────────────────── */
+:root {
+    --primary-light: #e8756a;
+    --primary-dark: #f4978e;
+    --primary-hover-light: #d4635a;
+    --primary-hover-dark: #f7b0a8;
+    --primary-border-light: #e8756a;
+    --primary-border-dark: #f4978e;
+    --primary-bordered-text-light: #c74d42;
+    --primary-bordered-text-dark: #fbc4be;
+    --primary-bordered-bg-light: #fef0ee;
+    --primary-bordered-bg-dark: #3d1f1c;
+    --primary-indicator-light: #e8756a;
+    --primary-indicator-dark: #f4978e;
+    --shadow-primary: rgba(232, 117, 106, 0.35);
+    --gradient-primary-from-light: #e8756a;
+    --gradient-primary-to-light: #f4978e;
+    --gradient-primary-from-dark: #d4635a;
+    --gradient-primary-to-dark: #f4978e;
+    --checkbox-primary-checked: #e8756a;
+    --primary-gradient-indicator-dark: #f4978e;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Warm surface tokens — auto-switch with data-theme
+   ────────────────────────────────────────────────────────── */
+[data-theme=light], :root:not([data-theme]) {
+    --fc-surface-page: #faf8f6;
+    --fc-surface-raised: #f5f0ed;
+    --fc-surface-overlay: #ede8e4;
+    --fc-text-primary: #1c1917;
+    --fc-text-secondary: #78716c;
+    --fc-text-muted: #a8a29e;
+    --fc-border-default: #e7e5e4;
+    --fc-border-subtle: #f5f5f4;
+}
+
+[data-theme=dark] {
+    --fc-surface-page: #2a2725;
+    --fc-surface-raised: #353230;
+    --fc-surface-overlay: #403d3a;
+    --fc-text-primary: #fafaf9;
+    --fc-text-secondary: #a8a29e;
+    --fc-text-muted: #78716c;
+    --fc-border-default: #44403c;
+    --fc-border-subtle: #292524;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Fluid typography & spacing — clamp()
+   ────────────────────────────────────────────────────────── */
+:root {
+    --fc-text-xs: clamp(0.6875rem, 0.625rem + 0.25vw, 0.75rem);
+    --fc-text-sm: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+    --fc-text-base: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
+    --fc-text-lg: clamp(1rem, 0.9rem + 0.5vw, 1.25rem);
+    --fc-text-xl: clamp(1.125rem, 0.95rem + 0.875vw, 1.5rem);
+    --fc-text-2xl: clamp(1.25rem, 1rem + 1.25vw, 1.875rem);
+    --fc-text-3xl: clamp(1.5rem, 1.15rem + 1.75vw, 2.5rem);
+    --fc-text-4xl: clamp(1.875rem, 1.25rem + 3.125vw, 3.75rem);
+
+    --fc-space-section: clamp(1.5rem, 1rem + 2.5vw, 3rem);
+    --fc-space-card: clamp(1rem, 0.75rem + 1.25vw, 1.5rem);
+    --fc-radius-card: clamp(0.75rem, 0.5rem + 1.25vw, 1.5rem);
+}
+
+/* ──────────────────────────────────────────────────────────
+   Container queries
+   ────────────────────────────────────────────────────────── */
+.fc-container {
+    container-type: inline-size;
+    container-name: fc-main;
+}
+
+.fc-card-container {
+    container-type: inline-size;
+    container-name: fc-card;
+}
+
+/* Main container breakpoints */
+@container fc-main (min-width: 640px) {
+    .cq-sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cq-sm\:flex-row { flex-direction: row; }
+    .cq-sm\:text-lg { font-size: var(--fc-text-lg); }
+    .cq-sm\:hidden { display: none; }
+    .cq-sm\:block { display: block; }
+    .cq-sm\:flex { display: flex; }
+    .cq-sm\:text-right { text-align: right; }
+    .cq-sm\:items-center { align-items: center; }
+    .cq-sm\:justify-between { justify-content: space-between; }
+    .cq-sm\:gap-6 { gap: 1.5rem; }
+    .cq-sm\:max-w-md { max-width: 28rem; }
+    .cq-sm\:py-3 { padding-block: 0.75rem; }
+    .cq-sm\:px-6 { padding-inline: 1.5rem; }
+}
+
+@container fc-main (min-width: 768px) {
+    .cq-md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cq-md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cq-md\:flex-row { flex-direction: row; }
+    .cq-md\:col-span-2 { grid-column: span 2 / span 2; }
+}
+
+@container fc-main (min-width: 1024px) {
+    .cq-lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cq-lg\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Per-card container breakpoints */
+@container fc-card (min-width: 280px) {
+    .cq-card\:flex-row { flex-direction: row; }
+    .cq-card\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container fc-card (min-width: 400px) {
+    .cq-card\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Fluid app container — replaces hardcoded max-w-*
+   ────────────────────────────────────────────────────────── */
+.fc-app-container {
+    width: 100%;
+    max-width: clamp(40rem, 60vw + 20rem, 90rem);
+    margin-inline: auto;
+    padding-inline: clamp(0.5rem, 1vw + 0.25rem, 2rem);
+}
+
 /* This file is for your main application CSS */
 
 @theme {
+    /* FastCheck surface tokens */
+    --color-fc-surface-page: var(--fc-surface-page);
+    --color-fc-surface-raised: var(--fc-surface-raised);
+    --color-fc-surface-overlay: var(--fc-surface-overlay);
+    --color-fc-text-primary: var(--fc-text-primary);
+    --color-fc-text-secondary: var(--fc-text-secondary);
+    --color-fc-text-muted: var(--fc-text-muted);
+    --color-fc-border-default: var(--fc-border-default);
+    --color-fc-border-subtle: var(--fc-border-subtle);
+
+    /* Mishka base tokens */
     --color-base-border-light: var(--base-border-light);
     --color-base-border-dark: var(--base-border-dark);
     --color-base-text-light: var(--base-text-light);

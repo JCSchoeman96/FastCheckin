@@ -392,533 +392,566 @@ defmodule FastCheckWeb.ScannerLive do
       assigns
       |> assign(:scan_form, to_form(%{"ticket_code" => assigns.ticket_code}))
       |> assign(:search_form, to_form(%{"query" => assigns.search_query}))
+      |> assign(:bulk_form, to_form(%{"codes" => assigns.bulk_codes}))
 
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="min-h-screen bg-slate-950 text-white">
-        <div class="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 sm:gap-6 px-2 sm:px-4 py-6 sm:py-8">
-          <header class="rounded-3xl bg-slate-900/80 px-6 py-8 shadow-2xl backdrop-blur">
-            <p class="text-sm uppercase tracking-[0.3em] text-slate-400">Event check-in</p>
+      <div class="min-h-screen space-y-6 sm:space-y-8">
+        <.card variant="shadow" color="natural" rounded="large" padding="large">
+          <.card_content>
+            <p
+              style="font-size: var(--fc-text-xs)"
+              class="uppercase tracking-[0.35em] text-fc-text-muted"
+            >
+              Event check-in
+            </p>
 
-            <h1 class="mt-2 text-2xl font-semibold text-white sm:text-3xl md:text-4xl">
+            <h1 style="font-size: var(--fc-text-3xl)" class="mt-3 font-semibold text-fc-text-primary">
               {@event.name}
             </h1>
 
-            <p class="mt-1 text-base text-slate-300">
-              Entrance:
-              <span class="font-semibold text-white">{entrance_label(@event.entrance_name)}</span>
-            </p>
+            <div class="mt-6 flex flex-wrap items-center gap-3">
+              <.badge color="secondary" variant="bordered" rounded="full">
+                {entrance_label(@event.entrance_name)}
+              </.badge>
 
-            <div class="mt-4 flex flex-wrap gap-3">
-              <span class={[
-                "inline-flex items-center rounded-full px-4 py-1 text-xs font-semibold uppercase tracking-wide",
-                scanner_lifecycle_badge_class(@event_lifecycle_state)
-              ]}>
+              <.badge
+                color={scanner_lifecycle_badge_color(@event_lifecycle_state)}
+                variant="bordered"
+                rounded="full"
+              >
                 {scanner_lifecycle_label(@event_lifecycle_state)}
-              </span>
+              </.badge>
             </div>
-          </header>
+          </.card_content>
+        </.card>
 
-          <section
-            :if={@scans_disabled?}
-            class="rounded-3xl border border-red-500/40 bg-red-900/40 px-6 py-4 text-center text-red-100 shadow-lg"
-          >
-            <p class="text-lg font-semibold">Scanning disabled</p>
+        <.alert
+          :if={@scans_disabled?}
+          kind={:danger}
+          variant="bordered"
+          rounded="large"
+          title="Scanning disabled"
+        >
+          {@scans_disabled_message || "Event archived, scanning disabled"}
+        </.alert>
 
-            <p class="mt-1 text-sm">
-              {@scans_disabled_message || "Event archived, scanning disabled"}
-            </p>
-          </section>
+        <.card
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="fc-card-container"
+        >
+          <.card_content>
+            <div class="flex flex-col gap-6">
+              <div class="space-y-2">
+                <p
+                  style="font-size: var(--fc-text-xs)"
+                  class="uppercase tracking-[0.35em] text-fc-text-muted"
+                >
+                  Scanner mode
+                </p>
 
-          <section class="rounded-3xl bg-slate-900/85 px-6 py-6 shadow-2xl backdrop-blur">
-            <div class="flex flex-col gap-4">
-              <div>
-                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Scanner mode</p>
+                <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+                  Entry and exit controls
+                </h2>
 
-                <h2 class="mt-1 text-2xl font-semibold text-white">Entry & exit controls</h2>
-
-                <p class="text-sm text-slate-300">
-                  Switch the scanner direction instantly while keeping the field focused for rapid-fire processing.
+                <p class="text-sm text-fc-text-secondary">
+                  Switch direction instantly while keeping the field focused for rapid scans.
                 </p>
               </div>
 
-              <div class="flex flex-col gap-3 mt-4 mb-6 sm:flex-row sm:gap-4">
-                <button
+              <.button_group
+                id="check-in-type-group"
+                color="natural"
+                rounded="large"
+                class="w-full cq-card:flex-row"
+              >
+                <.button
+                  id="entry-mode-button"
+                  type="button"
                   phx-click="set_check_in_type"
                   phx-value-type="entry"
-                  class={[
-                    "px-4 py-2 sm:px-6 sm:py-3 rounded-lg font-bold text-base sm:text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
-                    if @check_in_type == "entry" do
-                      "bg-green-600 text-white shadow-lg"
-                    else
-                      "bg-slate-700 text-slate-300"
-                    end
-                  ]}
+                  color={if(@check_in_type == "entry", do: "success", else: "natural")}
+                  variant={if(@check_in_type == "entry", do: "shadow", else: "bordered")}
+                  class="w-full"
                   disabled={@scans_disabled?}
                 >
-                  ➡️ ENTRY
-                </button>
-                <button
+                  <span class="inline-flex items-center gap-2">
+                    <.icon name="hero-arrow-right-circle" class="size-4" /> Entry
+                  </span>
+                </.button>
+
+                <.button
+                  id="exit-mode-button"
+                  type="button"
                   phx-click="set_check_in_type"
                   phx-value-type="exit"
-                  class={[
-                    "px-4 py-2 sm:px-6 sm:py-3 rounded-lg font-bold text-base sm:text-lg transition-all disabled:cursor-not-allowed disabled:opacity-60",
-                    if @check_in_type == "exit" do
-                      "bg-orange-600 text-white shadow-lg"
-                    else
-                      "bg-slate-700 text-slate-300"
-                    end
-                  ]}
+                  color={if(@check_in_type == "exit", do: "warning", else: "natural")}
+                  variant={if(@check_in_type == "exit", do: "shadow", else: "bordered")}
+                  class="w-full"
                   disabled={@scans_disabled?}
                 >
-                  ⤴️ EXIT
-                </button>
-              </div>
+                  <span class="inline-flex items-center gap-2">
+                    <.icon name="hero-arrow-left-circle" class="size-4" /> Exit
+                  </span>
+                </.button>
+              </.button_group>
 
-              <div class="mt-2 bg-blue-900 rounded-lg p-6 border-4 border-blue-500">
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p class="text-blue-300 text-sm font-semibold">CURRENT OCCUPANCY</p>
+              <.card variant="base" color="secondary" rounded="large" padding="large">
+                <.card_content>
+                  <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                    <div>
+                      <p class="text-sm uppercase tracking-[0.3em] opacity-80">Current occupancy</p>
+                      <p style="font-size: var(--fc-text-4xl)" class="mt-2 font-semibold">
+                        {@current_occupancy}
+                      </p>
+                      <p class="text-sm opacity-85">Guests currently inside</p>
+                    </div>
 
-                    <p class="text-4xl sm:text-5xl md:text-6xl font-bold text-blue-200 mt-2">
-                      {@current_occupancy}
-                    </p>
-
-                    <p class="text-blue-200 text-sm mt-2">Guests inside right now</p>
-                  </div>
-
-                  <div class="text-right">
-                    <p class="text-blue-300 text-sm">CAPACITY</p>
-
-                    <p class="text-3xl sm:text-4xl font-bold text-blue-200">
-                      {format_percentage(@occupancy_percentage)}%
-                    </p>
-
-                    <span class={[
-                      "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold text-white mt-3",
-                      occupancy_status_color(@occupancy_percentage)
-                    ]}>
-                      Crowd load
-                    </span>
-                  </div>
-                </div>
-
-                <div class="mt-4 w-full bg-blue-800 rounded-full h-4 overflow-hidden">
-                  <div
-                    class="bg-blue-400 h-4 transition-all"
-                    style={"width: #{@occupancy_percentage}%"}
-                  >
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="hidden sm:block rounded-3xl bg-slate-800/80 px-6 py-6 shadow-2xl backdrop-blur">
-            <div class="grid gap-4 sm:grid-cols-3">
-              <div class="rounded-2xl bg-slate-700/70 p-4">
-                <p class="text-xs uppercase tracking-widest text-slate-300">Total tickets</p>
-
-                <p class="mt-2 text-3xl font-bold text-white">{@stats.total}</p>
-              </div>
-
-              <div class="rounded-2xl bg-green-900/80 p-4">
-                <p class="text-xs uppercase tracking-widest text-green-200">Checked in</p>
-
-                <p class="mt-2 text-3xl font-bold text-green-300">{@stats.checked_in}</p>
-              </div>
-
-              <div class="rounded-2xl bg-yellow-900/80 p-4">
-                <p class="text-xs uppercase tracking-widest text-yellow-200">Pending</p>
-
-                <p class="mt-2 text-3xl font-bold text-yellow-200">{@stats.pending}</p>
-              </div>
-            </div>
-
-            <div class="mt-5">
-              <div class="h-3 w-full rounded-full bg-slate-900/60">
-                <div
-                  class="h-3 rounded-full bg-gradient-to-r from-green-500 via-emerald-400 to-lime-400 transition-all"
-                  style={"width: #{min(@stats.percentage, 100)}%"}
-                />
-              </div>
-
-              <p class="mt-2 text-sm font-medium text-slate-200">
-                {format_percentage(@stats.percentage)}% Checked In
-              </p>
-            </div>
-          </section>
-
-          <div
-            :if={@last_scan_status}
-            id="scan-result"
-            phx-remove={JS.add_class("opacity-0", transition: "transition-opacity duration-300")}
-          >
-            <%= case %{status: @last_scan_status, mode: @check_in_type} do %>
-              <% %{status: :success, mode: "entry"} -> %>
-                <div class="mt-6 p-8 bg-green-900 border-4 border-green-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-green-300">➡️ ENTERED</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-
-                  <div :if={@last_scan_checkins_allowed > 1}>
-                    <p class="text-green-200 text-lg mt-3">
-                      Check-in: <span class="font-bold">{@last_scan_checkins_used}</span>
-                      of <span class="font-bold">{@last_scan_checkins_allowed}</span>
-                      used
-                    </p>
-
-                    <div class="mt-3 w-full bg-green-800 rounded-full h-3">
-                      <% percentage =
-                        div(@last_scan_checkins_used * 100, max(@last_scan_checkins_allowed, 1)) %>
-                      <div class="bg-green-400 h-3 rounded-full" style={"width: #{percentage}%"}>
-                      </div>
+                    <div class="cq-sm:text-right">
+                      <p class="text-sm uppercase tracking-[0.3em] opacity-80">Capacity</p>
+                      <p style="font-size: var(--fc-text-3xl)" class="mt-2 font-semibold">
+                        {format_percentage(@occupancy_percentage)}%
+                      </p>
+                      <.badge
+                        color={occupancy_status_color(@occupancy_percentage)}
+                        variant="bordered"
+                        rounded="full"
+                        class="mt-3"
+                      >
+                        Crowd load
+                      </.badge>
                     </div>
                   </div>
 
-                  <p class="text-green-200 text-sm mt-2">Occupancy: {@current_occupancy} inside</p>
-                </div>
-              <% %{status: :success, mode: "exit"} -> %>
-                <div class="mt-6 p-8 bg-orange-900 border-4 border-orange-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-orange-300">⤴️ EXITED</p>
+                  <.progress
+                    value={trunc(min(@occupancy_percentage, 100))}
+                    color="secondary"
+                    size="small"
+                    class="mt-5"
+                  />
+                </.card_content>
+              </.card>
+            </div>
+          </.card_content>
+        </.card>
 
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-
-                  <p class="text-orange-200 text-sm mt-2">Occupancy: {@current_occupancy} inside</p>
-                </div>
-              <% %{status: :duplicate_today} -> %>
-                <div class="mt-6 p-8 bg-yellow-900 border-4 border-yellow-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-yellow-300">⚠️ DUPLICATE</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-
-                  <p class="text-yellow-200 text-sm mt-2">Next check-in: Tomorrow</p>
-
-                  <p :if={@last_scan_reason} class="text-yellow-100 text-xs mt-1">
-                    {@last_scan_reason}
-                  </p>
-                </div>
-              <% %{status: :limit_exceeded} -> %>
-                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-red-300">✖️ LIMIT EXCEEDED</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-                </div>
-              <% %{status: :not_yet_valid} -> %>
-                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-red-300">✖️ NOT YET VALID</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-                </div>
-              <% %{status: :expired} -> %>
-                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-red-300">✖️ EXPIRED</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-                </div>
-              <% %{status: :invalid} -> %>
-                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-red-300">✖️ INVALID</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-                </div>
-              <% %{status: :archived} -> %>
-                <div class="mt-6 p-8 bg-slate-900 border-4 border-red-400 rounded-lg text-center shadow-2xl">
-                  <p class="text-4xl font-bold text-red-200">⏸️ Scanning disabled</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-                </div>
-              <% %{status: :error} -> %>
-                <div class="mt-6 p-8 bg-red-900 border-4 border-red-500 rounded-lg text-center shadow-2xl">
-                  <p class="text-6xl font-bold text-red-300">✖️ ERROR</p>
-
-                  <p class="text-white text-2xl mt-3">{@last_scan_result}</p>
-                </div>
-              <% _ -> %>
-                <div class="mt-6 p-8 bg-slate-900 border-4 border-slate-600 rounded-lg text-center shadow-2xl">
-                  <p class="text-2xl font-semibold text-white">Ready for the next scan</p>
-                </div>
-            <% end %>
-          </div>
-
-          <section
-            id="camera-permission-hook"
-            phx-hook="CameraPermission"
-            data-storage-key={"fastcheck:camera-permission:event-#{@event_id}"}
-            class="rounded-3xl bg-slate-900/85 px-6 py-8 text-white shadow-2xl backdrop-blur"
+        <section class="grid gap-4 cq-md:grid-cols-3 sm:grid-cols-3">
+          <.card
+            variant="outline"
+            color="natural"
+            rounded="large"
+            padding="medium"
+            class="fc-card-container"
           >
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Camera status</p>
+            <.card_content>
+              <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
+              <p style="font-size: var(--fc-text-2xl)" class="mt-2 font-semibold text-fc-text-primary">
+                {@stats.total}
+              </p>
+            </.card_content>
+          </.card>
 
-                <h2 class="mt-1 text-2xl font-semibold">Ready the QR scanner</h2>
+          <.card
+            variant="outline"
+            color="success"
+            rounded="large"
+            padding="medium"
+            class="fc-card-container"
+          >
+            <.card_content>
+              <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
+              <p style="font-size: var(--fc-text-2xl)" class="mt-2 font-semibold">
+                {@stats.checked_in}
+              </p>
+            </.card_content>
+          </.card>
 
-                <p class="mt-2 text-sm text-slate-300">
-                  We'll remember your choice for this device so future scans start instantly.
+          <.card
+            variant="outline"
+            color="warning"
+            rounded="large"
+            padding="medium"
+            class="fc-card-container"
+          >
+            <.card_content>
+              <p class="text-xs uppercase tracking-[0.3em] opacity-80">Pending</p>
+              <p style="font-size: var(--fc-text-2xl)" class="mt-2 font-semibold">
+                {@stats.pending}
+              </p>
+            </.card_content>
+          </.card>
+        </section>
+
+        <.card
+          :if={@last_scan_status}
+          id="scan-result"
+          variant="base"
+          color={scan_result_color(@last_scan_status, @check_in_type)}
+          rounded="large"
+          padding="large"
+          phx-remove={JS.add_class("opacity-0", transition: "transition-opacity duration-300")}
+        >
+          <.card_content>
+            <div class="space-y-3">
+              <p class="text-xs uppercase tracking-[0.3em] opacity-80">
+                {scan_result_title(@last_scan_status, @check_in_type)}
+              </p>
+
+              <p style="font-size: var(--fc-text-2xl)" class="font-semibold">
+                {@last_scan_result}
+              </p>
+
+              <p :if={@last_scan_reason} class="text-sm opacity-85">
+                {@last_scan_reason}
+              </p>
+
+              <div
+                :if={@last_scan_status == :success and @last_scan_checkins_allowed > 1}
+                class="space-y-2"
+              >
+                <p class="text-sm opacity-90">
+                  Check-ins used: {@last_scan_checkins_used} of {@last_scan_checkins_allowed}
                 </p>
+                <.progress
+                  value={
+                    checkins_used_percentage(@last_scan_checkins_used, @last_scan_checkins_allowed)
+                  }
+                  color={scan_result_color(@last_scan_status, @check_in_type)}
+                  size="small"
+                />
               </div>
 
-              <span class="rounded-full border border-white/20 px-4 py-1 text-xs uppercase tracking-wide text-slate-100">
-                {camera_permission_status_label(@camera_permission.status)}
-              </span>
-            </div>
-
-            <div class={camera_permission_state_classes(@camera_permission.status)}>
-              <p class="text-base font-semibold">
-                {camera_permission_status_label(@camera_permission.status)}
-              </p>
-
-              <p class="mt-1 text-sm text-slate-100/80">
-                {@camera_permission.message ||
-                  camera_permission_default_message(@camera_permission.status)}
+              <p class="text-sm opacity-85">
+                Current occupancy: {@current_occupancy} inside
               </p>
             </div>
+          </.card_content>
+        </.card>
 
-            <div class="mt-6 flex flex-wrap items-center gap-4">
-              <button
-                :if={@camera_permission.status != :granted}
-                type="button"
-                data-camera-request
-                class="rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
-                disabled={@camera_permission.status == :unsupported}
-              >
-                Enable camera
-              </button>
-              <p class="text-xs text-slate-400">
-                {if @camera_permission.remembered do
-                  "Preference synced from this device."
-                else
-                  "Your decision will be remembered for future check-ins."
-                end}
-              </p>
-            </div>
-          </section>
-
-          <section
-            id="scanner-keyboard-shortcuts"
-            class="rounded-3xl bg-slate-900/90 px-6 py-10 text-white shadow-2xl backdrop-blur"
-            phx-hook="ScannerKeyboardShortcuts"
+        <section
+          id="camera-permission-hook"
+          phx-hook="CameraPermission"
+          data-storage-key={"fastcheck:camera-permission:event-#{@event_id}"}
+        >
+          <.card
+            variant="outline"
+            color="natural"
+            rounded="large"
+            padding="large"
+            class="fc-card-container"
           >
-            <div class="space-y-2">
-              <div class="flex items-center justify-between mb-4">
-                <h2 class="text-2xl font-semibold">Scan tickets</h2>
+            <.card_content>
+              <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                <div>
+                  <p
+                    style="font-size: var(--fc-text-xs)"
+                    class="uppercase tracking-[0.35em] text-fc-text-muted"
+                  >
+                    Camera status
+                  </p>
+                  <h2
+                    style="font-size: var(--fc-text-2xl)"
+                    class="mt-2 font-semibold text-fc-text-primary"
+                  >
+                    Ready the QR scanner
+                  </h2>
+                  <p class="mt-2 text-sm text-fc-text-secondary">
+                    Your decision is saved for this device.
+                  </p>
+                </div>
+
+                <.badge
+                  color={camera_permission_badge_color(@camera_permission.status)}
+                  variant="bordered"
+                  rounded="full"
+                >
+                  {camera_permission_status_label(@camera_permission.status)}
+                </.badge>
+              </div>
+
+              <.alert
+                kind={camera_permission_alert_kind(@camera_permission.status)}
+                variant="bordered"
+                rounded="large"
+                class="mt-6"
+              >
+                <p class="font-semibold">
+                  {camera_permission_status_label(@camera_permission.status)}
+                </p>
+                <p class="mt-1 text-sm">
+                  {@camera_permission.message ||
+                    camera_permission_default_message(@camera_permission.status)}
+                </p>
+              </.alert>
+
+              <div class="mt-6 flex flex-wrap items-center gap-3">
+                <.button
+                  :if={@camera_permission.status != :granted}
+                  id="camera-enable-button"
+                  type="button"
+                  data-camera-request
+                  color="success"
+                  variant="shadow"
+                  disabled={@camera_permission.status == :unsupported}
+                >
+                  Enable camera
+                </.button>
+
+                <p class="text-xs text-fc-text-muted">
+                  {if @camera_permission.remembered do
+                    "Preference synced from this device."
+                  else
+                    "Your decision will be remembered for future check-ins."
+                  end}
+                </p>
+              </div>
+            </.card_content>
+          </.card>
+        </section>
+
+        <section id="scanner-keyboard-shortcuts" phx-hook="ScannerKeyboardShortcuts">
+          <.card
+            variant="outline"
+            color="natural"
+            rounded="large"
+            padding="large"
+            class="fc-card-container"
+          >
+            <.card_content>
+              <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                <div>
+                  <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+                    Scan tickets
+                  </h2>
+                  <p :if={!@bulk_mode} class="mt-2 text-sm text-fc-text-secondary">
+                    Use the QR scanner or type a code below.
+                  </p>
+                  <p :if={@bulk_mode} class="mt-2 text-sm text-fc-text-secondary">
+                    Paste one ticket code per line for bulk processing.
+                  </p>
+                </div>
 
                 <div class="flex items-center gap-2">
-                  <button
+                  <.button
+                    id="bulk-mode-toggle"
                     type="button"
                     phx-click="toggle_bulk_mode"
-                    class={[
-                      "rounded-lg px-3 py-1.5 text-sm font-medium transition",
-                      if(@bulk_mode,
-                        do: "bg-blue-600/20 text-blue-300 hover:bg-blue-600/30",
-                        else: "bg-slate-700/50 text-slate-400 hover:bg-slate-700/70"
-                      )
-                    ]}
+                    variant="bordered"
+                    color={if(@bulk_mode, do: "secondary", else: "natural")}
+                    size="small"
                     aria-label={
                       if(@bulk_mode,
-                        do: "Switch to single entry mode",
-                        else: "Switch to bulk entry mode"
+                        do: "Switch to single scan mode",
+                        else: "Switch to bulk scan mode"
                       )
                     }
                   >
-                    {if(@bulk_mode, do: "📋 Bulk Mode", else: "📋 Bulk")}
-                  </button>
-                  <button
+                    {if(@bulk_mode, do: "Bulk mode", else: "Bulk")}
+                  </.button>
+
+                  <.button
+                    id="sound-toggle"
                     type="button"
                     phx-hook="SoundToggle"
-                    id="sound-toggle"
-                    class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
-                    class={[
-                      if(@sound_enabled,
-                        do: "bg-green-600/20 text-green-300 hover:bg-green-600/30",
-                        else: "bg-slate-700/50 text-slate-400 hover:bg-slate-700/70"
-                      )
-                    ]}
+                    variant="bordered"
+                    color={if(@sound_enabled, do: "success", else: "natural")}
+                    size="small"
                     aria-label={
                       if(@sound_enabled, do: "Disable sound feedback", else: "Enable sound feedback")
                     }
                   >
-                    {if(@sound_enabled, do: "🔊 Sound On", else: "🔇 Sound Off")}
-                  </button>
+                    {if(@sound_enabled, do: "Sound on", else: "Sound off")}
+                  </.button>
                 </div>
               </div>
 
-              <div :if={!@bulk_mode} class="text-center">
-                <p class="text-sm text-slate-300">
-                  Use the QR scanner or type a code below. The field stays focused for rapid-fire check-ins.
-                </p>
-
-                <p class="text-xs text-slate-400 mt-1">
-                  Keyboard shortcuts:
-                  <kbd class="px-1 py-0.5 bg-slate-700 rounded text-xs">Enter</kbd>
-                  to scan, <kbd class="px-1 py-0.5 bg-slate-700 rounded text-xs">Tab</kbd>
-                  to switch direction
-                </p>
-              </div>
-
-              <div :if={@bulk_mode} class="text-center">
-                <p class="text-sm text-slate-300">
-                  Paste multiple ticket codes (one per line) to process them all at once.
-                </p>
-
-                <p class="text-xs text-slate-400 mt-1">
-                  Each line will be processed as a separate ticket code
-                </p>
-              </div>
-            </div>
-
-            <div :if={!@bulk_mode}>
-              <.form
-                :let={f}
-                for={@scan_form}
-                phx-submit="scan"
-                phx-change="update_code"
-                class="mx-auto mt-8 max-w-md"
-              >
-                <.input
-                  field={f[:ticket_code]}
-                  type="text"
-                  placeholder="Point scanner at QR code..."
-                  autocomplete="off"
-                  autocorrect="off"
-                  autocapitalize="characters"
-                  spellcheck="false"
-                  inputmode="text"
-                  autofocus
-                  aria-label="Ticket code input"
-                  class="w-full rounded-2xl border-2 border-transparent bg-white px-4 sm:px-6 py-4 sm:py-5 text-base sm:text-xl font-semibold text-slate-900 shadow-lg focus:border-green-400 focus:outline-none focus:ring-4 focus:ring-green-500"
-                  disabled={@scans_disabled?}
-                />
-                <button
-                  type="submit"
-                  class="mt-4 w-full rounded-2xl bg-emerald-500 px-6 py-3 sm:py-4 text-base sm:text-lg font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={@scans_disabled?}
-                  aria-disabled={@scans_disabled?}
+              <div :if={!@bulk_mode} class="mt-6">
+                <.form
+                  id="scanner-form"
+                  for={@scan_form}
+                  phx-submit="scan"
+                  phx-change="update_code"
+                  class="cq-sm:max-w-md mx-auto"
                 >
-                  Process scan
-                </button>
-              </.form>
+                  <.input
+                    field={@scan_form[:ticket_code]}
+                    type="text"
+                    placeholder="Point scanner at QR code"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="characters"
+                    spellcheck="false"
+                    inputmode="text"
+                    autofocus
+                    disabled={@scans_disabled?}
+                  />
 
-              <p class="mt-6 text-center text-sm text-slate-300">Or manually enter ticket code</p>
-            </div>
+                  <.button
+                    id="process-scan-button"
+                    type="submit"
+                    color="success"
+                    variant="shadow"
+                    full_width
+                    class="mt-4"
+                    disabled={@scans_disabled?}
+                    aria-disabled={@scans_disabled?}
+                  >
+                    Process scan
+                  </.button>
+                </.form>
 
-            <div :if={@bulk_mode} class="mx-auto mt-8 max-w-3xl">
-              <.form
-                for={to_form(%{"codes" => @bulk_codes})}
-                phx-submit="process_bulk_codes"
-              >
-                <textarea
-                  name="codes"
-                  phx-blur="update_bulk_codes"
-                  phx-debounce="300"
-                  placeholder="Paste ticket codes here, one per line&#10;&#10;Example:&#10;25955-1&#10;25955-2&#10;25955-3"
-                  rows="10"
-                  class="w-full rounded-2xl border-2 border-transparent bg-slate-800/70 px-6 py-4 text-base text-white shadow-inner shadow-slate-950 focus:border-emerald-400 focus:bg-slate-900/70 focus:outline-none focus:ring-4 focus:ring-emerald-500 font-mono"
-                >{@bulk_codes}</textarea>
-                <button
-                  type="submit"
-                  disabled={@bulk_processing || @bulk_codes == ""}
-                  class="mt-4 w-full rounded-2xl bg-emerald-500 px-6 py-4 text-lg font-semibold text-slate-900 shadow-lg transition hover:bg-emerald-400 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
-                >
-                  {if(@bulk_processing, do: "Processing...", else: "Process All Codes")}
-                </button>
-              </.form>
-
-              <div :if={@bulk_results != []} class="mt-6 space-y-2">
-                <div class="rounded-xl bg-slate-800/80 px-4 py-3">
-                  <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-sm font-semibold text-white">Results</h3>
-                    <span class="text-xs text-slate-400">{Enum.count(@bulk_results)} total</span>
-                  </div>
-
-                  <div class="grid grid-cols-2 gap-2 text-xs">
-                    <div class="text-green-300">
-                      ✓ {Enum.count(@bulk_results, &(&1.status == :success))} successful
-                    </div>
-
-                    <div class="text-red-300">
-                      ✗ {Enum.count(@bulk_results, &(&1.status == :error))} errors
-                    </div>
-                  </div>
-                </div>
-
-                <div class="max-h-64 overflow-y-auto space-y-1">
-                  <%= for result <- @bulk_results do %>
-                    <div class={[
-                      "rounded-lg px-3 py-2 text-xs",
-                      if(result.status == :success,
-                        do: "bg-green-900/30 text-green-200",
-                        else: "bg-red-900/30 text-red-200"
-                      )
-                    ]}>
-                      <div class="flex items-center justify-between">
-                        <span class="font-mono truncate">{result.code}</span>
-                        <span class="ml-2 flex-shrink-0">
-                          {if(result.status == :success, do: "✓", else: "✗")}
-                        </span>
-                      </div>
-
-                      <p class="text-xs opacity-75 mt-1 truncate">{result.message}</p>
-                    </div>
-                  <% end %>
-                </div>
+                <p class="mt-4 text-center text-xs text-fc-text-muted">
+                  Keyboard: Enter to scan, Tab to toggle direction.
+                </p>
               </div>
-            </div>
-          </section>
 
-          <section class="rounded-3xl bg-slate-900/80 px-6 py-8 shadow-2xl backdrop-blur">
-            <div class="space-y-2 text-center">
-              <h2 class="text-2xl font-semibold">Find attendee</h2>
+              <div :if={@bulk_mode} class="mt-6">
+                <.form id="bulk-scan-form" for={@bulk_form} phx-submit="process_bulk_codes">
+                  <.input
+                    field={@bulk_form[:codes]}
+                    type="textarea"
+                    rows="10"
+                    phx-blur="update_bulk_codes"
+                    phx-debounce="300"
+                    placeholder="Paste ticket codes here, one per line"
+                    class="font-mono"
+                  />
 
-              <p class="text-sm text-slate-300">
-                Search by name, email, or ticket code to handle manual check-ins.
-              </p>
-            </div>
+                  <.button
+                    id="process-bulk-button"
+                    type="submit"
+                    color="success"
+                    variant="shadow"
+                    full_width
+                    class="mt-4"
+                    disabled={@bulk_processing || String.trim(@bulk_codes) == ""}
+                  >
+                    {if(@bulk_processing, do: "Processing...", else: "Process all codes")}
+                  </.button>
+                </.form>
+
+                <.card
+                  :if={@bulk_results != []}
+                  variant="outline"
+                  color="natural"
+                  rounded="large"
+                  padding="medium"
+                  class="mt-5"
+                >
+                  <.card_content>
+                    <div class="flex items-center justify-between">
+                      <p class="text-sm font-semibold text-fc-text-primary">Bulk results</p>
+                      <p class="text-xs text-fc-text-muted">{Enum.count(@bulk_results)} total</p>
+                    </div>
+
+                    <div class="mt-3 grid gap-2 cq-card:grid-cols-2 text-xs">
+                      <.badge color="success" variant="bordered">
+                        {Enum.count(@bulk_results, &(&1.status == :success))} successful
+                      </.badge>
+                      <.badge color="danger" variant="bordered">
+                        {Enum.count(@bulk_results, &(&1.status == :error))} errors
+                      </.badge>
+                    </div>
+
+                    <div class="mt-4 max-h-64 space-y-2 overflow-y-auto">
+                      <.card
+                        :for={result <- @bulk_results}
+                        variant="bordered"
+                        color={if(result.status == :success, do: "success", else: "danger")}
+                        rounded="medium"
+                        padding="small"
+                      >
+                        <.card_content>
+                          <div class="flex items-center justify-between gap-2">
+                            <p class="truncate font-mono text-xs">{result.code}</p>
+                            <.icon
+                              name={
+                                if(result.status == :success, do: "hero-check", else: "hero-x-mark")
+                              }
+                              class="size-4 shrink-0"
+                            />
+                          </div>
+                          <p class="mt-1 truncate text-xs opacity-80">{result.message}</p>
+                        </.card_content>
+                      </.card>
+                    </div>
+                  </.card_content>
+                </.card>
+              </div>
+            </.card_content>
+          </.card>
+        </section>
+
+        <.card variant="outline" color="natural" rounded="large" padding="large">
+          <.card_content>
+            <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+              Find attendee
+            </h2>
+
+            <p class="mt-2 text-sm text-fc-text-secondary">
+              Search by name, email, or ticket code for manual check-ins.
+            </p>
 
             <.form
               id="attendee-search-form"
               for={@search_form}
               phx-change="search_attendees"
-              class="mx-auto mt-6 max-w-3xl"
+              class="mt-5"
             >
               <.input
                 field={@search_form[:query]}
                 type="search"
-                placeholder="Start typing to search attendees..."
+                placeholder="Start typing to search attendees"
                 autocomplete="off"
                 phx-debounce="400"
                 data-test="attendee-search-input"
-                class="w-full rounded-2xl border-2 border-transparent bg-slate-800/70 px-6 py-4 text-base text-white shadow-inner shadow-slate-950 focus:border-emerald-400 focus:bg-slate-900/70 focus:outline-none focus:ring-4 focus:ring-emerald-500"
               />
             </.form>
 
-            <p :if={@search_error} class="mt-4 text-center text-sm text-red-300">{@search_error}</p>
+            <p :if={@search_error} class="mt-4 text-sm text-danger-light dark:text-danger-dark">
+              {@search_error}
+            </p>
 
-            <p :if={@search_loading} class="mt-4 text-center text-sm text-slate-300">
+            <p :if={@search_loading} class="mt-4 text-sm text-fc-text-secondary">
               Searching attendees...
             </p>
 
             <div :if={@search_results != []} class="mt-6 space-y-3">
-              <%= for attendee <- @search_results do %>
-                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl bg-slate-800/80 px-5 py-4 shadow-md backdrop-blur transition hover:bg-slate-700/80">
-                  <div>
-                    <p class="font-bold text-white">{attendee.first_name} {attendee.last_name}</p>
+              <.card
+                :for={attendee <- @search_results}
+                variant="outline"
+                color="natural"
+                rounded="medium"
+                padding="medium"
+                class="fc-card-container"
+              >
+                <.card_content>
+                  <div class="flex flex-col gap-3 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                    <div>
+                      <p class="font-semibold text-fc-text-primary">
+                        {attendee.first_name} {attendee.last_name}
+                      </p>
+                      <p class="text-sm text-fc-text-secondary">{attendee.ticket_code}</p>
+                      <p class="text-xs text-fc-text-muted">{attendee.ticket_type}</p>
+                    </div>
 
-                    <p class="text-sm text-slate-400">{attendee.ticket_code}</p>
-
-                    <p class="text-xs text-slate-500">{attendee.ticket_type}</p>
+                    <.button
+                      type="button"
+                      phx-click="manual_check_in"
+                      phx-value-ticket_code={attendee.ticket_code}
+                      color="success"
+                      variant="bordered"
+                      size="small"
+                      disabled={@scans_disabled?}
+                    >
+                      Check in
+                    </.button>
                   </div>
-
-                  <button
-                    phx-click="manual_check_in"
-                    phx-value-ticket_code={attendee.ticket_code}
-                    class="w-full sm:w-auto rounded-lg bg-emerald-600/20 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-600/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    disabled={@scans_disabled?}
-                  >
-                    Check In
-                  </button>
-                </div>
-              <% end %>
+                </.card_content>
+              </.card>
             </div>
 
             <p
@@ -926,74 +959,96 @@ defmodule FastCheckWeb.ScannerLive do
                 @search_results == [] and @search_query != "" and not @search_loading and
                   is_nil(@search_error)
               }
-              class="mt-6 text-center text-sm text-slate-300"
+              class="mt-6 text-sm text-fc-text-secondary"
             >
-              No attendees found. Double-check the spelling and try again.
+              No attendees found for "{@search_query}".
             </p>
 
             <p
               :if={@search_query == "" and not @search_loading and is_nil(@search_error)}
-              class="mt-6 text-center text-sm text-slate-400"
+              class="mt-6 text-sm text-fc-text-muted"
             >
               Lookup results will appear here as you type.
             </p>
-          </section>
+          </.card_content>
+        </.card>
 
-          <section
-            :if={@scan_history != []}
-            class="rounded-3xl bg-slate-900/80 px-6 py-6 shadow-2xl backdrop-blur"
-          >
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-semibold text-white">Recent Scans</h2>
+        <.card
+          :if={@scan_history != []}
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+        >
+          <.card_content>
+            <div class="flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-fc-text-primary">Recent scans</h2>
 
-              <button
+              <.button
+                id="clear-scan-history-button"
                 type="button"
                 phx-click="clear_scan_history"
-                class="text-xs text-slate-400 hover:text-slate-200 transition"
+                variant="bordered"
+                color="natural"
+                size="extra_small"
               >
                 Clear
-              </button>
+              </.button>
             </div>
 
-            <div class="space-y-2 max-h-64 overflow-y-auto">
-              <%= for scan <- @scan_history do %>
-                <div class={[
-                  "flex items-center justify-between rounded-lg px-4 py-2 bg-slate-800/60",
-                  "hover:bg-slate-700/60 transition"
-                ]}>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span class={scan_status_color(scan.status)}>
-                        {scan_status_icon(scan.status)}
-                      </span>
-                      <span class="text-sm font-medium text-white truncate">
-                        {scan.name || scan.ticket_code}
-                      </span>
-                      <span class="text-xs text-slate-400">{format_scan_time(scan.scanned_at)}</span>
+            <div class="mt-4 max-h-64 space-y-2 overflow-y-auto">
+              <.card
+                :for={scan <- @scan_history}
+                variant="bordered"
+                color="natural"
+                rounded="medium"
+                padding="small"
+              >
+                <.card_content>
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2">
+                        <.icon
+                          name={scan_status_icon(scan.status)}
+                          class="size-4 text-fc-text-secondary"
+                        />
+                        <p class="truncate text-sm font-medium text-fc-text-primary">
+                          {scan.name || scan.ticket_code}
+                        </p>
+                        <p class="text-xs text-fc-text-muted">{format_scan_time(scan.scanned_at)}</p>
+                      </div>
+                      <p class="mt-1 truncate text-xs text-fc-text-secondary">{scan.message}</p>
                     </div>
 
-                    <p class="text-xs text-slate-400 mt-1 truncate">{scan.message}</p>
+                    <div class="flex flex-col items-end gap-1">
+                      <.badge
+                        color={scan_status_color(scan.status)}
+                        variant="bordered"
+                        size="extra_small"
+                      >
+                        {scan_status_label(scan.status)}
+                      </.badge>
+                      <span class="text-xs uppercase text-fc-text-muted">
+                        {String.upcase(scan.check_in_type)}
+                      </span>
+                    </div>
                   </div>
-
-                  <span class="text-xs text-slate-500 ml-2">{String.upcase(scan.check_in_type)}</span>
-                </div>
-              <% end %>
+                </.card_content>
+              </.card>
             </div>
-          </section>
+          </.card_content>
+        </.card>
 
-          <footer class="mt-auto rounded-3xl bg-slate-800/80 px-6 py-4 text-sm text-slate-300 shadow-2xl">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <a
-                href={~p"/dashboard"}
-                class="font-semibold text-emerald-300 transition hover:text-emerald-200"
-              >
-                &larr; Back to dashboard
-              </a>
-              <p class="text-xs text-slate-400">
-                {length(@scan_history)} recent scan{if length(@scan_history) != 1, do: "s", else: ""}
-              </p>
-            </div>
-          </footer>
+        <div class="pb-6">
+          <div class="flex flex-col gap-3 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+            <.button_link navigate={~p"/dashboard"} variant="bordered" color="secondary" size="small">
+              Back to dashboard
+            </.button_link>
+
+            <p class="text-xs text-fc-text-muted">
+              {length(@scan_history)} recent scan{if(length(@scan_history) != 1, do: "s", else: "")}
+            </p>
+          </div>
         </div>
       </div>
     </Layouts.app>
@@ -1210,46 +1265,90 @@ defmodule FastCheckWeb.ScannerLive do
     cond do
       diff_seconds < 60 -> "#{diff_seconds}s ago"
       diff_seconds < 3600 -> "#{div(diff_seconds, 60)}m ago"
-      diff_seconds < 86400 -> "#{div(diff_seconds, 3600)}h ago"
+      diff_seconds < 86_400 -> "#{div(diff_seconds, 3600)}h ago"
       true -> Calendar.strftime(datetime, "%H:%M:%S")
     end
   end
 
-  defp scan_status_color(:success), do: "text-green-400"
-  defp scan_status_color(:duplicate_today), do: "text-yellow-400"
-  defp scan_status_color(:limit_exceeded), do: "text-red-400"
-  defp scan_status_color(:not_yet_valid), do: "text-orange-400"
-  defp scan_status_color(:expired), do: "text-red-400"
-  defp scan_status_color(:invalid), do: "text-red-400"
-  defp scan_status_color(:error), do: "text-red-400"
-  # Additional error codes from check_in_advanced (normalized to lowercase)
-  defp scan_status_color(:not_found), do: "text-red-400"
-  defp scan_status_color(:already_inside), do: "text-yellow-400"
-  defp scan_status_color(:archived), do: "text-slate-400"
-  defp scan_status_color(:invalid_code), do: "text-red-400"
-  defp scan_status_color(:invalid_ticket), do: "text-red-400"
-  defp scan_status_color(:invalid_entrance), do: "text-red-400"
-  defp scan_status_color(:invalid_type), do: "text-red-400"
-  defp scan_status_color(:payment_invalid), do: "text-red-400"
-  defp scan_status_color(_), do: "text-slate-400"
+  defp scan_status_color(:success), do: "success"
+  defp scan_status_color(:duplicate_today), do: "warning"
+  defp scan_status_color(:limit_exceeded), do: "danger"
+  defp scan_status_color(:not_yet_valid), do: "danger"
+  defp scan_status_color(:expired), do: "danger"
+  defp scan_status_color(:invalid), do: "danger"
+  defp scan_status_color(:error), do: "danger"
+  defp scan_status_color(:not_found), do: "danger"
+  defp scan_status_color(:already_inside), do: "warning"
+  defp scan_status_color(:archived), do: "natural"
+  defp scan_status_color(:invalid_code), do: "danger"
+  defp scan_status_color(:invalid_ticket), do: "danger"
+  defp scan_status_color(:invalid_entrance), do: "danger"
+  defp scan_status_color(:invalid_type), do: "danger"
+  defp scan_status_color(:payment_invalid), do: "danger"
+  defp scan_status_color(_), do: "natural"
 
-  defp scan_status_icon(:success), do: "✓"
-  defp scan_status_icon(:duplicate_today), do: "⚠"
-  defp scan_status_icon(:limit_exceeded), do: "✖"
-  defp scan_status_icon(:not_yet_valid), do: "⏱"
-  defp scan_status_icon(:expired), do: "✖"
-  defp scan_status_icon(:invalid), do: "✖"
-  defp scan_status_icon(:error), do: "✖"
-  # Additional error codes from check_in_advanced (normalized to lowercase)
-  defp scan_status_icon(:not_found), do: "✖"
-  defp scan_status_icon(:already_inside), do: "⚠"
-  defp scan_status_icon(:archived), do: "⊘"
-  defp scan_status_icon(:invalid_code), do: "✖"
-  defp scan_status_icon(:invalid_ticket), do: "✖"
-  defp scan_status_icon(:invalid_entrance), do: "✖"
-  defp scan_status_icon(:invalid_type), do: "✖"
-  defp scan_status_icon(:payment_invalid), do: "✖"
-  defp scan_status_icon(_), do: "?"
+  defp scan_status_label(:success), do: "Success"
+  defp scan_status_label(:duplicate_today), do: "Duplicate"
+  defp scan_status_label(:limit_exceeded), do: "Limit exceeded"
+  defp scan_status_label(:not_yet_valid), do: "Not valid yet"
+  defp scan_status_label(:expired), do: "Expired"
+  defp scan_status_label(:invalid), do: "Invalid"
+  defp scan_status_label(:error), do: "Error"
+  defp scan_status_label(:not_found), do: "Not found"
+  defp scan_status_label(:already_inside), do: "Already inside"
+  defp scan_status_label(:archived), do: "Archived"
+  defp scan_status_label(:invalid_code), do: "Invalid code"
+  defp scan_status_label(:invalid_ticket), do: "Invalid ticket"
+  defp scan_status_label(:invalid_entrance), do: "Invalid entrance"
+  defp scan_status_label(:invalid_type), do: "Invalid type"
+  defp scan_status_label(:payment_invalid), do: "Payment invalid"
+  defp scan_status_label(_), do: "Unknown"
+
+  defp scan_status_icon(:success), do: "hero-check-circle"
+  defp scan_status_icon(:duplicate_today), do: "hero-exclamation-triangle"
+  defp scan_status_icon(:limit_exceeded), do: "hero-x-circle"
+  defp scan_status_icon(:not_yet_valid), do: "hero-clock"
+  defp scan_status_icon(:expired), do: "hero-x-circle"
+  defp scan_status_icon(:invalid), do: "hero-x-circle"
+  defp scan_status_icon(:error), do: "hero-x-circle"
+  defp scan_status_icon(:not_found), do: "hero-x-circle"
+  defp scan_status_icon(:already_inside), do: "hero-exclamation-triangle"
+  defp scan_status_icon(:archived), do: "hero-pause-circle"
+  defp scan_status_icon(:invalid_code), do: "hero-x-circle"
+  defp scan_status_icon(:invalid_ticket), do: "hero-x-circle"
+  defp scan_status_icon(:invalid_entrance), do: "hero-x-circle"
+  defp scan_status_icon(:invalid_type), do: "hero-x-circle"
+  defp scan_status_icon(:payment_invalid), do: "hero-x-circle"
+  defp scan_status_icon(_), do: "hero-question-mark-circle"
+
+  defp scan_result_color(:success, "entry"), do: "success"
+  defp scan_result_color(:success, "exit"), do: "warning"
+  defp scan_result_color(:duplicate_today, _), do: "warning"
+  defp scan_result_color(:archived, _), do: "natural"
+  defp scan_result_color(:invalid, _), do: "danger"
+  defp scan_result_color(:limit_exceeded, _), do: "danger"
+  defp scan_result_color(:not_yet_valid, _), do: "danger"
+  defp scan_result_color(:expired, _), do: "danger"
+  defp scan_result_color(:error, _), do: "danger"
+  defp scan_result_color(_, _), do: "natural"
+
+  defp scan_result_title(:success, "entry"), do: "Entry confirmed"
+  defp scan_result_title(:success, "exit"), do: "Exit confirmed"
+  defp scan_result_title(:duplicate_today, _), do: "Duplicate scan"
+  defp scan_result_title(:limit_exceeded, _), do: "Check-in limit reached"
+  defp scan_result_title(:not_yet_valid, _), do: "Ticket not yet valid"
+  defp scan_result_title(:expired, _), do: "Ticket expired"
+  defp scan_result_title(:invalid, _), do: "Invalid ticket"
+  defp scan_result_title(:archived, _), do: "Scanning unavailable"
+  defp scan_result_title(:error, _), do: "Scan error"
+  defp scan_result_title(_, _), do: "Scan status"
+
+  defp checkins_used_percentage(used, allowed)
+       when is_integer(used) and is_integer(allowed) and allowed > 0 do
+    trunc(min(used * 100 / allowed, 100))
+  end
+
+  defp checkins_used_percentage(_, _), do: 0
 
   # Safely normalize error codes to known atoms without using String.to_atom/1
   # This avoids atom table exhaustion from arbitrary strings
@@ -1310,11 +1409,11 @@ defmodule FastCheckWeb.ScannerLive do
     socket
   end
 
-  defp scanner_lifecycle_badge_class(:archived), do: "bg-red-500/20 text-red-200"
-  defp scanner_lifecycle_badge_class(:grace), do: "bg-amber-500/20 text-amber-100"
-  defp scanner_lifecycle_badge_class(:upcoming), do: "bg-slate-500/20 text-slate-200"
-  defp scanner_lifecycle_badge_class(:unknown), do: "bg-slate-500/20 text-slate-200"
-  defp scanner_lifecycle_badge_class(_), do: "bg-emerald-500/20 text-emerald-100"
+  defp scanner_lifecycle_badge_color(:archived), do: "danger"
+  defp scanner_lifecycle_badge_color(:grace), do: "warning"
+  defp scanner_lifecycle_badge_color(:upcoming), do: "natural"
+  defp scanner_lifecycle_badge_color(:unknown), do: "natural"
+  defp scanner_lifecycle_badge_color(_), do: "success"
 
   defp scanner_lifecycle_label(:archived), do: "Archived"
   defp scanner_lifecycle_label(:grace), do: "In grace period"
@@ -1409,8 +1508,10 @@ defmodule FastCheckWeb.ScannerLive do
     end
   end
 
-  defp success_message(attendee, "exit"), do: "👋 See you soon, #{attendee_first_name(attendee)}!"
-  defp success_message(attendee, _), do: "✓ Welcome, #{attendee_first_name(attendee)}!"
+  defp success_message(attendee, "exit"),
+    do: "Exit confirmed for #{attendee_first_name(attendee)}."
+
+  defp success_message(attendee, _), do: "Welcome, #{attendee_first_name(attendee)}."
 
   defp attendee_first_name(%{} = attendee) do
     attendee
@@ -1550,10 +1651,9 @@ defmodule FastCheckWeb.ScannerLive do
   defp entrance_label(""), do: "General Admission"
   defp entrance_label(name), do: name
 
-  defp occupancy_status_color(percentage) when percentage >= 100, do: "bg-red-600"
-  defp occupancy_status_color(percentage) when percentage > 90, do: "bg-red-500"
-  defp occupancy_status_color(percentage) when percentage > 75, do: "bg-yellow-500"
-  defp occupancy_status_color(_), do: "bg-green-500"
+  defp occupancy_status_color(percentage) when percentage >= 95, do: "danger"
+  defp occupancy_status_color(percentage) when percentage > 75, do: "warning"
+  defp occupancy_status_color(_), do: "success"
 
   defp default_camera_permission, do: @default_camera_permission
 
@@ -1606,16 +1706,13 @@ defmodule FastCheckWeb.ScannerLive do
   defp camera_permission_status_label(:unsupported), do: "Camera unsupported"
   defp camera_permission_status_label(_), do: "Awaiting camera choice"
 
-  defp camera_permission_state_classes(:granted),
-    do:
-      "mt-6 rounded-2xl border border-emerald-400/60 bg-emerald-500/10 px-5 py-4 text-emerald-100"
+  defp camera_permission_badge_color(:granted), do: "success"
+  defp camera_permission_badge_color(status) when status in [:denied, :error], do: "danger"
+  defp camera_permission_badge_color(:unsupported), do: "warning"
+  defp camera_permission_badge_color(_), do: "natural"
 
-  defp camera_permission_state_classes(status) when status in [:denied, :error],
-    do: "mt-6 rounded-2xl border border-red-400/60 bg-red-500/10 px-5 py-4 text-red-100"
-
-  defp camera_permission_state_classes(:unsupported),
-    do: "mt-6 rounded-2xl border border-yellow-400/60 bg-yellow-500/10 px-5 py-4 text-yellow-100"
-
-  defp camera_permission_state_classes(_),
-    do: "mt-6 rounded-2xl border border-slate-700 bg-slate-800/80 px-5 py-4 text-slate-100"
+  defp camera_permission_alert_kind(:granted), do: :success
+  defp camera_permission_alert_kind(status) when status in [:denied, :error], do: :danger
+  defp camera_permission_alert_kind(:unsupported), do: :warning
+  defp camera_permission_alert_kind(_), do: :natural
 end

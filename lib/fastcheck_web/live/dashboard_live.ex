@@ -9,6 +9,7 @@ defmodule FastCheckWeb.DashboardLive do
   alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  alias Phoenix.LiveView.JS
 
   @impl true
   def mount(_params, _session, socket) do
@@ -391,587 +392,633 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, :search_form, to_form(%{"query" => assigns.search_query}))
+
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="mx-auto max-w-7xl space-y-6 sm:space-y-8 px-2 sm:px-4 py-6 sm:py-10">
-        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div class="space-y-6 sm:space-y-8">
+        <section class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p class="text-sm uppercase tracking-widest text-slate-500">Control Center</p>
-
-            <h1 class="text-2xl sm:text-3xl font-semibold text-slate-900">FastCheck Dashboard</h1>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <button
-              type="button"
-              phx-click="show_new_event_form"
-              class="rounded-md bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+            <p
+              style="font-size: var(--fc-text-xs)"
+              class="uppercase tracking-[0.35em] text-fc-text-muted"
             >
-              + New Event
-            </button>
-          </div>
-        </div>
-
-        <div :if={@sync_status} class="rounded-xl bg-white p-6 shadow">
-          <div class="flex flex-col gap-4">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm font-medium text-slate-600">Sync status</p>
-
-                <p class="text-base font-semibold text-slate-900">{@sync_status}</p>
-              </div>
-            </div>
-
-            <div :if={@sync_progress} class="w-full rounded-full bg-slate-100 p-1">
-              <div
-                class="h-3 rounded-full bg-blue-600 transition-all"
-                style={"width: #{progress_percent(@sync_progress)}%"}
-              />
-              <p class="mt-2 text-xs font-medium text-slate-500">
-                {progress_details(@sync_progress)}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div :if={@show_new_event_form} class="rounded-2xl bg-white p-8 shadow">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-2xl font-semibold text-slate-900">Create new event</h2>
-
-              <p class="text-sm text-slate-500">
-                Connect a Tickera event by providing its credentials and entrance details.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              class="text-sm font-medium text-slate-500 hover:text-slate-800"
-              phx-click="hide_new_event_form"
-            >
-              Cancel
-            </button>
+              Control center
+            </p>
+            <h1 style="font-size: var(--fc-text-3xl)" class="mt-2 font-semibold text-fc-text-primary">
+              FastCheck dashboard
+            </h1>
           </div>
 
-          <.form
-            for={@form}
-            phx-submit="create_event"
-            class="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2"
+          <.button
+            id="show-new-event-form-button"
+            type="button"
+            phx-click="show_new_event_form"
+            color="primary"
+            variant="shadow"
           >
-            <.input
-              field={@form[:name]}
-              type="text"
-              label="Event name"
-              placeholder="Tech Summit 2024"
-            />
-            <.input
-              field={@form[:tickera_site_url]}
-              type="text"
-              label="Site URL"
-              placeholder="https://example.com"
-            />
-            <.input
-              field={@form[:tickera_api_key_encrypted]}
-              type="password"
-              label="Tickera API Key"
-              placeholder="••••••"
-            />
-            <.input
-              field={@form[:mobile_access_code]}
-              type="password"
-              label="Mobile access code"
-              placeholder="Required for scanner login"
-            />
-            <.input
-              field={@form[:location]}
-              type="text"
-              label="Location"
-              placeholder="Cape Town Convention Centre"
-            />
-            <.input
-              field={@form[:entrance_name]}
-              type="text"
-              label="Entrance Name"
-              placeholder="Main Gate"
-            />
-            <div class="md:col-span-2 flex items-center gap-3">
-              <button
-                type="submit"
-                class="inline-flex items-center rounded-md bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow transition hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
-                phx-disable-with="Creating..."
-              >
-                Create Event
-              </button>
-              <button
-                type="button"
-                class="text-sm font-medium text-slate-500 hover:text-slate-800"
-                phx-click="hide_new_event_form"
-              >
-                Nevermind
-              </button>
-            </div>
-          </.form>
-        </div>
+            New Event
+          </.button>
+        </section>
 
-        <div class="space-y-4">
+        <.card :if={@sync_status} variant="outline" color="natural" rounded="large" padding="large">
+          <.card_content>
+            <p class="text-sm text-fc-text-secondary">Sync status</p>
+            <p class="mt-1 text-base font-semibold text-fc-text-primary">{@sync_status}</p>
+
+            <div :if={@sync_progress} class="mt-4 space-y-2">
+              <.progress
+                value={trunc(progress_percent(@sync_progress))}
+                color="secondary"
+                size="small"
+              />
+              <p class="text-xs text-fc-text-muted">{progress_details(@sync_progress)}</p>
+            </div>
+          </.card_content>
+        </.card>
+
+        <.card
+          :if={@show_new_event_form}
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+        >
+          <.card_content>
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+                  Create new event
+                </h2>
+                <p class="mt-1 text-sm text-fc-text-secondary">
+                  Connect a Tickera event and define entrance settings.
+                </p>
+              </div>
+
+              <.button
+                id="hide-new-event-form-button"
+                type="button"
+                phx-click="hide_new_event_form"
+                variant="bordered"
+                color="natural"
+                size="small"
+              >
+                Cancel
+              </.button>
+            </div>
+
+            <.form
+              id="create-event-form"
+              for={@form}
+              phx-submit="create_event"
+              class="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2"
+            >
+              <.input
+                field={@form[:name]}
+                type="text"
+                label="Event name"
+                placeholder="Tech Summit 2026"
+              />
+              <.input
+                field={@form[:tickera_site_url]}
+                type="url"
+                label="Site URL"
+                placeholder="https://example.com"
+              />
+
+              <.input
+                field={@form[:tickera_api_key_encrypted]}
+                type="password"
+                label="Tickera API key"
+                placeholder="Paste API key"
+              />
+
+              <.input
+                field={@form[:mobile_access_code]}
+                type="password"
+                label="Mobile access code"
+                placeholder="Required for scanner login"
+              />
+
+              <.input field={@form[:location]} type="text" label="Location" placeholder="Main venue" />
+              <.input
+                field={@form[:entrance_name]}
+                type="text"
+                label="Entrance name"
+                placeholder="Main gate"
+              />
+
+              <div class="md:col-span-2 flex flex-wrap items-center gap-3">
+                <.button
+                  id="create-event-button"
+                  type="submit"
+                  color="primary"
+                  variant="shadow"
+                  phx-disable-with="Creating..."
+                >
+                  Create event
+                </.button>
+
+                <.button
+                  id="cancel-create-event-button"
+                  type="button"
+                  phx-click="hide_new_event_form"
+                  variant="bordered"
+                  color="natural"
+                >
+                  Nevermind
+                </.button>
+              </div>
+            </.form>
+          </.card_content>
+        </.card>
+
+        <section class="space-y-4">
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 class="text-2xl font-semibold text-slate-900">Events</h2>
-
-              <p class="text-sm text-slate-500">
-                Manage entrances, sync attendees, and launch scanners.
+              <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+                Events
+              </h2>
+              <p class="text-sm text-fc-text-secondary">
+                Manage syncs, scanners, and lifecycle state.
               </p>
             </div>
 
-            <div class="flex-1 sm:max-w-md">
+            <div class="w-full sm:max-w-md">
               <.form
-                for={to_form(%{"query" => @search_query})}
+                id="event-search-form"
+                for={@search_form}
                 phx-change="search_events"
                 class="relative"
               >
                 <.input
-                  field={to_form(%{"query" => @search_query})[:query]}
+                  field={@search_form[:query]}
                   type="search"
-                  placeholder="Search events by name, location..."
+                  placeholder="Search events by name or location"
                   phx-debounce="300"
-                  class="w-full rounded-lg border border-slate-300 px-4 py-2 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                 />
-                <button
+
+                <.button
                   :if={@search_query != ""}
+                  id="clear-event-search-button"
                   type="button"
                   phx-click="search_events"
                   phx-value-query=""
-                  class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  aria-label="Clear search"
+                  variant="transparent"
+                  color="natural"
+                  size="extra_small"
+                  class="absolute right-2 top-8"
                 >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </button>
+                  Clear
+                </.button>
               </.form>
             </div>
           </div>
 
           <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-            <div
+            <.card
               :for={event <- @filtered_events}
-              class={[
-                "rounded-2xl border border-slate-200 bg-white p-6 shadow transition hover:-translate-y-1 hover:shadow-lg",
-                @selected_event_id == event.id && "ring-2 ring-blue-500"
-              ]}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="large"
+              class={"fc-card-container #{if(@selected_event_id == event.id, do: "ring-2 ring-primary-light", else: "")}"}
             >
-              <% lifecycle_state = Events.event_lifecycle_state(event) %>
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm uppercase tracking-wide text-slate-400">
-                    {event.location || "Unassigned"}
-                  </p>
+              <.card_content>
+                <% lifecycle_state = Events.event_lifecycle_state(event) %>
 
-                  <h3 class="mt-1 text-xl font-semibold text-slate-900">{event.name}</h3>
-                </div>
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <p
+                      style="font-size: var(--fc-text-xs)"
+                      class="uppercase tracking-[0.35em] text-fc-text-muted"
+                    >
+                      {event.location || "Unassigned"}
+                    </p>
+                    <h3 class="mt-2 text-xl font-semibold text-fc-text-primary">{event.name}</h3>
+                  </div>
 
-                <div class="flex flex-col items-end gap-2 text-right">
-                  <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-                    {event.entrance_name || "Entrance"}
-                  </span>
-                  <span class={[
-                    "rounded-full px-3 py-1 text-xs font-semibold",
-                    lifecycle_badge_class(lifecycle_state)
-                  ]}>
-                    {lifecycle_label(lifecycle_state)}
-                  </span>
-                </div>
-              </div>
-
-              <div class="mt-6 grid grid-cols-2 gap-4 text-center md:grid-cols-3">
-                <div class="rounded-xl bg-slate-50 p-4">
-                  <p class="text-xs uppercase tracking-wide text-slate-500">Total tickets</p>
-
-                  <p class="text-2xl font-semibold text-slate-900">{event.total_tickets || 0}</p>
-                </div>
-
-                <div class="rounded-xl bg-slate-50 p-4">
-                  <p class="text-xs uppercase tracking-wide text-slate-500">Checked in</p>
-
-                  <p class="text-2xl font-semibold text-green-600">{event.checked_in_count || 0}</p>
-                </div>
-
-                <div class="rounded-xl bg-slate-50 p-4">
-                  <p class="text-xs uppercase tracking-wide text-slate-500">Total attendees</p>
-
-                  <p class="text-2xl font-semibold text-slate-900">{event.attendee_count || 0}</p>
-                </div>
-              </div>
-
-              <div class="mt-6 flex flex-wrap gap-3">
-                <div
-                  :if={@selected_event_id != event.id || @sync_progress == nil}
-                  class="flex-1 flex gap-2"
-                >
-                  <button
-                    type="button"
-                    class={[
-                      "flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2",
-                      (lifecycle_state == :archived || !is_nil(@sync_task_pid)) &&
-                        "cursor-not-allowed opacity-60"
-                    ]}
-                    phx-click="start_sync"
-                    phx-value-event_id={event.id}
-                    phx-value-incremental="false"
-                    phx-disable-with="Syncing..."
-                    disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                    aria-disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                  >
-                    Full Sync
-                  </button>
-                  <button
-                    type="button"
-                    class={[
-                      "flex-1 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2",
-                      (lifecycle_state == :archived || !is_nil(@sync_task_pid)) &&
-                        "cursor-not-allowed opacity-60"
-                    ]}
-                    phx-click="start_sync"
-                    phx-value-event_id={event.id}
-                    phx-value-incremental="true"
-                    phx-disable-with="Syncing..."
-                    disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                    aria-disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                    title="Only sync new or updated attendees (faster)"
-                  >
-                    Incremental Sync
-                  </button>
-                </div>
-
-                <div
-                  :if={@selected_event_id == event.id && @sync_progress != nil}
-                  class="flex-1 flex gap-2"
-                >
-                  <button
-                    :if={!@sync_paused}
-                    type="button"
-                    phx-click="pause_sync"
-                    phx-value-event_id={event.id}
-                    class="flex-1 rounded-md bg-yellow-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2"
-                  >
-                    Pause
-                  </button>
-                  <button
-                    :if={@sync_paused}
-                    type="button"
-                    phx-click="resume_sync"
-                    phx-value-event_id={event.id}
-                    class="flex-1 rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
-                  >
-                    Resume
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="cancel_sync"
-                    phx-value-event_id={event.id}
-                    class="flex-1 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <a
-                  href={if lifecycle_state == :archived, do: "#", else: "/scan/#{event.id}"}
-                  class={[
-                    "flex-1 rounded-md border border-slate-200 px-4 py-2 text-center text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900",
-                    lifecycle_state == :archived &&
-                      "cursor-not-allowed opacity-60 pointer-events-none"
-                  ]}
-                  aria-disabled={lifecycle_state == :archived}
-                >
-                  Open scanner
-                </a>
-                <button
-                  :if={lifecycle_state != :archived}
-                  type="button"
-                  phx-click="show_edit_form"
-                  phx-value-event_id={event.id}
-                  class="w-full rounded-md border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
-                >
-                  Edit Event
-                </button>
-                <div :if={lifecycle_state != :archived} class="w-full flex gap-2">
-                  <a
-                    href={~p"/export/attendees/#{event.id}"}
-                    class="flex-1 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-center text-xs font-semibold text-green-700 transition hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
-                  >
-                    Export Attendees
-                  </a>
-                  <a
-                    href={~p"/export/check-ins/#{event.id}"}
-                    class="flex-1 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-center text-xs font-semibold text-green-700 transition hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
-                  >
-                    Export Check-ins
-                  </a>
-                </div>
-
-                <button
-                  :if={lifecycle_state != :archived}
-                  type="button"
-                  phx-click="archive_event"
-                  phx-value-event_id={event.id}
-                  class="w-full rounded-md border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2"
-                  data-confirm="Archive this event? Archived events cannot be synced or scanned."
-                >
-                  Archive Event
-                </button>
-                <button
-                  :if={lifecycle_state == :archived}
-                  type="button"
-                  phx-click="unarchive_event"
-                  phx-value-event_id={event.id}
-                  class="w-full rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
-                >
-                  Unarchive Event
-                </button>
-                <p
-                  :if={lifecycle_state == :archived}
-                  class="w-full text-xs text-red-500"
-                >
-                  Scanning disabled for archived events
-                </p>
-              </div>
-            </div>
-
-            <div
-              :if={Enum.empty?(@filtered_events) && @search_query != ""}
-              class="col-span-full rounded-2xl border border-dashed border-slate-300 p-10 text-center"
-            >
-              <p class="text-lg font-semibold text-slate-700">No events found</p>
-
-              <p class="mt-2 text-sm text-slate-500">
-                No events match "{@search_query}". Try a different search term.
-              </p>
-            </div>
-
-            <div
-              :if={Enum.empty?(@filtered_events) && @search_query == ""}
-              class="col-span-full rounded-2xl border border-dashed border-slate-300 p-10 text-center"
-            >
-              <p class="text-lg font-semibold text-slate-700">No events yet</p>
-
-              <p class="mt-2 text-sm text-slate-500">
-                Create your first event to start syncing attendees and scanning tickets.
-              </p>
-
-              <button
-                type="button"
-                phx-click="show_new_event_form"
-                class="mt-6 rounded-md bg-blue-600 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-blue-500"
-              >
-                Create event
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div
-          :if={@editing_event_id}
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          phx-click="hide_edit_form"
-          phx-key="Escape"
-        >
-          <div
-            class="w-full max-w-2xl rounded-2xl bg-white p-8 shadow-xl"
-            phx-click-away="hide_edit_form"
-          >
-            <div class="mb-6 flex items-center justify-between">
-              <h2 class="text-2xl font-semibold text-slate-900">Edit Event</h2>
-
-              <button
-                type="button"
-                phx-click="hide_edit_form"
-                class="text-slate-400 hover:text-slate-600"
-                aria-label="Close"
-              >
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-
-            <.form
-              :if={@edit_form}
-              for={@edit_form}
-              phx-submit="update_event"
-              class="space-y-4"
-            >
-              <.input
-                field={@edit_form[:name]}
-                type="text"
-                label="Event Name"
-                required
-                class="w-full"
-              />
-              <.input
-                field={@edit_form[:tickera_site_url]}
-                type="url"
-                label="Tickera Site URL"
-                required
-                class="w-full"
-              />
-              <.input
-                field={@edit_form[:tickera_api_key_last4]}
-                type="text"
-                label="API Key (last 4)"
-                disabled
-                class="w-full"
-              />
-              <div class="rounded-lg bg-yellow-50 border border-yellow-200 p-4">
-                <p class="text-sm text-yellow-800">
-                  <strong>Note:</strong>
-                  To update the API key, enter a new one below. Leave blank to keep current key.
-                </p>
-
-                <input
-                  type="password"
-                  name="event[tickera_api_key_encrypted]"
-                  placeholder="Enter new API key (optional)"
-                  class="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-              </div>
-
-              <.input
-                field={@edit_form[:mobile_access_code]}
-                type="password"
-                label="Mobile Access Code"
-                placeholder="Enter new code to change (optional)"
-                class="w-full"
-              />
-              <.input
-                field={@edit_form[:location]}
-                type="text"
-                label="Location"
-                class="w-full"
-              />
-              <.input
-                field={@edit_form[:entrance_name]}
-                type="text"
-                label="Entrance Name"
-                class="w-full"
-              />
-              <div class="flex gap-3 pt-4">
-                <button
-                  type="submit"
-                  class="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-500"
-                >
-                  Save Changes
-                </button>
-                <button
-                  type="button"
-                  phx-click="hide_edit_form"
-                  class="flex-1 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </.form>
-          </div>
-        </div>
-
-        <div
-          :if={@viewing_sync_history_for}
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          phx-click="hide_sync_history"
-          phx-key="Escape"
-        >
-          <div
-            class="w-full max-w-3xl rounded-2xl bg-white p-8 shadow-xl max-h-[90vh] overflow-y-auto"
-            phx-click-away="hide_sync_history"
-          >
-            <div class="mb-6 flex items-center justify-between">
-              <h2 class="text-2xl font-semibold text-slate-900">Sync History</h2>
-
-              <button
-                type="button"
-                phx-click="hide_sync_history"
-                class="text-slate-400 hover:text-slate-600"
-                aria-label="Close"
-              >
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-
-            <div :if={@sync_history == []} class="text-center py-8">
-              <p class="text-slate-500">No sync history available for this event.</p>
-            </div>
-
-            <div :if={@sync_history != []} class="space-y-3">
-              <%= for log <- @sync_history do %>
-                <div class="rounded-lg border border-slate-200 p-4">
-                  <div class="flex items-start justify-between">
-                    <div class="flex-1">
-                      <div class="flex items-center gap-2">
-                        <span class={sync_status_badge_class(log.status)}>
-                          {sync_status_label(log.status)}
-                        </span>
-                        <span class="text-sm text-slate-500">{format_datetime(log.started_at)}</span>
-                      </div>
-
-                      <div class="mt-2 grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span class="text-slate-500">Attendees synced:</span>
-                          <span class="ml-2 font-semibold text-slate-900">
-                            {log.attendees_synced || 0}
-                          </span>
-                        </div>
-
-                        <div>
-                          <span class="text-slate-500">Pages processed:</span>
-                          <span class="ml-2 font-semibold text-slate-900">
-                            {if log.total_pages,
-                              do: "#{log.pages_processed || 0}/#{log.total_pages}",
-                              else: "#{log.pages_processed || 0}"}
-                          </span>
-                        </div>
-
-                        <div :if={log.duration_ms}>
-                          <span class="text-slate-500">Duration:</span>
-                          <span class="ml-2 font-semibold text-slate-900">
-                            {format_duration(log.duration_ms)}
-                          </span>
-                        </div>
-
-                        <div :if={log.completed_at}>
-                          <span class="text-slate-500">Completed:</span>
-                          <span class="ml-2 font-semibold text-slate-900">
-                            {format_datetime(log.completed_at)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <p :if={log.error_message} class="mt-2 text-sm text-red-600">
-                        Error: {log.error_message}
-                      </p>
-                    </div>
+                  <div class="flex flex-col items-end gap-2">
+                    <.badge color="secondary" variant="bordered" rounded="full" size="extra_small">
+                      {event.entrance_name || "Entrance"}
+                    </.badge>
+                    <.badge
+                      color={lifecycle_badge_color(lifecycle_state)}
+                      variant="bordered"
+                      rounded="full"
+                      size="extra_small"
+                    >
+                      {lifecycle_label(lifecycle_state)}
+                    </.badge>
                   </div>
                 </div>
-              <% end %>
-            </div>
+
+                <div class="mt-5 grid gap-3 cq-card:grid-cols-3 text-center">
+                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-3">
+                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
+                    <p class="mt-1 text-xl font-semibold text-fc-text-primary">
+                      {event.total_tickets || 0}
+                    </p>
+                  </div>
+
+                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-3">
+                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Checked in</p>
+                    <p class="mt-1 text-xl font-semibold text-fc-text-primary">
+                      {event.checked_in_count || 0}
+                    </p>
+                  </div>
+
+                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-3">
+                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Attendees</p>
+                    <p class="mt-1 text-xl font-semibold text-fc-text-primary">
+                      {event.attendee_count || 0}
+                    </p>
+                  </div>
+                </div>
+
+                <div class="mt-6 space-y-3">
+                  <div
+                    :if={@selected_event_id != event.id || @sync_progress == nil}
+                    class="grid gap-2 cq-card:grid-cols-2"
+                  >
+                    <.button
+                      id={"full-sync-#{event.id}"}
+                      type="button"
+                      color="secondary"
+                      variant="shadow"
+                      full_width
+                      phx-click="start_sync"
+                      phx-value-event_id={event.id}
+                      phx-value-incremental="false"
+                      phx-disable-with="Syncing..."
+                      disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                    >
+                      Full sync
+                    </.button>
+
+                    <.button
+                      id={"incremental-sync-#{event.id}"}
+                      type="button"
+                      color="success"
+                      variant="shadow"
+                      full_width
+                      phx-click="start_sync"
+                      phx-value-event_id={event.id}
+                      phx-value-incremental="true"
+                      phx-disable-with="Syncing..."
+                      disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                      title="Only sync new or updated attendees"
+                    >
+                      Incremental sync
+                    </.button>
+                  </div>
+
+                  <div
+                    :if={@selected_event_id == event.id && @sync_progress != nil}
+                    class="grid gap-2 cq-card:grid-cols-3"
+                  >
+                    <.button
+                      :if={!@sync_paused}
+                      id={"pause-sync-#{event.id}"}
+                      type="button"
+                      phx-click="pause_sync"
+                      phx-value-event_id={event.id}
+                      color="warning"
+                      variant="shadow"
+                      full_width
+                    >
+                      Pause
+                    </.button>
+
+                    <.button
+                      :if={@sync_paused}
+                      id={"resume-sync-#{event.id}"}
+                      type="button"
+                      phx-click="resume_sync"
+                      phx-value-event_id={event.id}
+                      color="success"
+                      variant="shadow"
+                      full_width
+                    >
+                      Resume
+                    </.button>
+
+                    <.button
+                      id={"cancel-sync-#{event.id}"}
+                      type="button"
+                      phx-click="cancel_sync"
+                      phx-value-event_id={event.id}
+                      color="danger"
+                      variant="shadow"
+                      full_width
+                    >
+                      Cancel
+                    </.button>
+                  </div>
+
+                  <div class="grid gap-2 cq-card:grid-cols-2">
+                    <.button_link
+                      :if={lifecycle_state != :archived}
+                      navigate={~p"/scan/#{event.id}"}
+                      variant="bordered"
+                      color="secondary"
+                      full_width
+                    >
+                      Open scanner
+                    </.button_link>
+
+                    <.button
+                      :if={lifecycle_state == :archived}
+                      type="button"
+                      variant="bordered"
+                      color="natural"
+                      full_width
+                      disabled
+                    >
+                      Open scanner
+                    </.button>
+
+                    <.button
+                      id={"show-sync-history-#{event.id}"}
+                      type="button"
+                      phx-click="show_sync_history"
+                      phx-value-event_id={event.id}
+                      variant="bordered"
+                      color="natural"
+                      full_width
+                    >
+                      Sync history
+                    </.button>
+                  </div>
+
+                  <.button
+                    :if={lifecycle_state != :archived}
+                    id={"show-edit-event-#{event.id}"}
+                    type="button"
+                    phx-click="show_edit_form"
+                    phx-value-event_id={event.id}
+                    variant="bordered"
+                    color="secondary"
+                    full_width
+                  >
+                    Edit event
+                  </.button>
+
+                  <div :if={lifecycle_state != :archived} class="grid gap-2 cq-card:grid-cols-2">
+                    <.button_link
+                      href={~p"/export/attendees/#{event.id}"}
+                      variant="bordered"
+                      color="success"
+                      full_width
+                    >
+                      Export attendees
+                    </.button_link>
+
+                    <.button_link
+                      href={~p"/export/check-ins/#{event.id}"}
+                      variant="bordered"
+                      color="success"
+                      full_width
+                    >
+                      Export check-ins
+                    </.button_link>
+                  </div>
+
+                  <.button
+                    :if={lifecycle_state != :archived}
+                    id={"archive-event-#{event.id}"}
+                    type="button"
+                    phx-click="archive_event"
+                    phx-value-event_id={event.id}
+                    variant="bordered"
+                    color="danger"
+                    full_width
+                    data-confirm="Archive this event? Archived events cannot be synced or scanned."
+                  >
+                    Archive event
+                  </.button>
+
+                  <.button
+                    :if={lifecycle_state == :archived}
+                    id={"unarchive-event-#{event.id}"}
+                    type="button"
+                    phx-click="unarchive_event"
+                    phx-value-event_id={event.id}
+                    variant="bordered"
+                    color="success"
+                    full_width
+                  >
+                    Unarchive event
+                  </.button>
+
+                  <p
+                    :if={lifecycle_state == :archived}
+                    class="text-xs text-danger-light dark:text-danger-dark"
+                  >
+                    Scanning disabled for archived events.
+                  </p>
+                </div>
+              </.card_content>
+            </.card>
+
+            <.card
+              :if={Enum.empty?(@filtered_events) && @search_query != ""}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="large"
+              class="col-span-full text-center"
+            >
+              <.card_content>
+                <p class="text-lg font-semibold text-fc-text-primary">No events found</p>
+                <p class="mt-2 text-sm text-fc-text-secondary">No events match "{@search_query}".</p>
+              </.card_content>
+            </.card>
+
+            <.card
+              :if={Enum.empty?(@filtered_events) && @search_query == ""}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="large"
+              class="col-span-full text-center"
+            >
+              <.card_content>
+                <p class="text-lg font-semibold text-fc-text-primary">No events yet</p>
+                <p class="mt-2 text-sm text-fc-text-secondary">
+                  Create your first event to start syncing attendees and scanning tickets.
+                </p>
+                <.button
+                  id="empty-state-create-event-button"
+                  type="button"
+                  phx-click="show_new_event_form"
+                  color="primary"
+                  variant="shadow"
+                  class="mt-5"
+                >
+                  Create event
+                </.button>
+              </.card_content>
+            </.card>
           </div>
-        </div>
+        </section>
+
+        <.modal
+          id="edit-event-modal"
+          title="Edit Event"
+          show={@editing_event_id != nil}
+          size="double_large"
+          rounded="large"
+          color="natural"
+          on_cancel={JS.push("hide_edit_form")}
+        >
+          <.form
+            :if={@edit_form}
+            id="edit-event-form"
+            for={@edit_form}
+            phx-submit="update_event"
+            class="space-y-4"
+          >
+            <.input field={@edit_form[:name]} type="text" label="Event name" required />
+            <.input
+              field={@edit_form[:tickera_site_url]}
+              type="url"
+              label="Tickera site URL"
+              required
+            />
+
+            <.input
+              field={@edit_form[:tickera_api_key_last4]}
+              type="text"
+              label="API key (last 4)"
+              disabled
+            />
+
+            <.card variant="bordered" color="warning" rounded="large" padding="medium">
+              <.card_content>
+                <p class="text-sm">
+                  To rotate the API key, provide a new one. Leave empty to keep the current key.
+                </p>
+                <.input
+                  id="edit-event-new-api-key"
+                  name="event[tickera_api_key_encrypted]"
+                  type="password"
+                  label="New API key (optional)"
+                />
+              </.card_content>
+            </.card>
+
+            <.input
+              field={@edit_form[:mobile_access_code]}
+              type="password"
+              label="Mobile access code"
+              placeholder="Enter new code to change"
+            />
+
+            <.input field={@edit_form[:location]} type="text" label="Location" />
+            <.input field={@edit_form[:entrance_name]} type="text" label="Entrance name" />
+
+            <div class="pt-3 grid gap-2 sm:grid-cols-2">
+              <.button
+                id="save-event-button"
+                type="submit"
+                color="primary"
+                variant="shadow"
+                full_width
+              >
+                Save changes
+              </.button>
+
+              <.button
+                id="cancel-edit-event-button"
+                type="button"
+                phx-click="hide_edit_form"
+                variant="bordered"
+                color="natural"
+                full_width
+              >
+                Cancel
+              </.button>
+            </div>
+          </.form>
+        </.modal>
+
+        <.modal
+          id="sync-history-modal"
+          title="Sync History"
+          show={@viewing_sync_history_for != nil}
+          size="triple_large"
+          rounded="large"
+          color="natural"
+          on_cancel={JS.push("hide_sync_history")}
+        >
+          <div :if={@sync_history == []} class="py-8 text-center text-fc-text-secondary">
+            No sync history available for this event.
+          </div>
+
+          <div :if={@sync_history != []} class="space-y-3">
+            <.card
+              :for={log <- @sync_history}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="medium"
+            >
+              <.card_content>
+                <div class="flex flex-wrap items-center gap-2">
+                  <.badge
+                    color={sync_status_badge_color(log.status)}
+                    variant="bordered"
+                    rounded="full"
+                  >
+                    {sync_status_label(log.status)}
+                  </.badge>
+                  <span class="text-sm text-fc-text-secondary">
+                    {format_datetime(log.started_at)}
+                  </span>
+                </div>
+
+                <div class="mt-3 grid gap-2 cq-card:grid-cols-2 text-sm">
+                  <p class="text-fc-text-secondary">
+                    Attendees synced:
+                    <span class="font-semibold text-fc-text-primary">
+                      {log.attendees_synced || 0}
+                    </span>
+                  </p>
+                  <p class="text-fc-text-secondary">
+                    Pages processed:
+                    <span class="font-semibold text-fc-text-primary">
+                      {if log.total_pages,
+                        do: "#{log.pages_processed || 0}/#{log.total_pages}",
+                        else: "#{log.pages_processed || 0}"}
+                    </span>
+                  </p>
+
+                  <p :if={log.duration_ms} class="text-fc-text-secondary">
+                    Duration:
+                    <span class="font-semibold text-fc-text-primary">
+                      {format_duration(log.duration_ms)}
+                    </span>
+                  </p>
+
+                  <p :if={log.completed_at} class="text-fc-text-secondary">
+                    Completed:
+                    <span class="font-semibold text-fc-text-primary">
+                      {format_datetime(log.completed_at)}
+                    </span>
+                  </p>
+                </div>
+
+                <p
+                  :if={log.error_message}
+                  class="mt-2 text-sm text-danger-light dark:text-danger-dark"
+                >
+                  Error: {log.error_message}
+                </p>
+              </.card_content>
+            </.card>
+          </div>
+        </.modal>
       </div>
     </Layouts.app>
     """
@@ -1121,14 +1168,14 @@ defmodule FastCheckWeb.DashboardLive do
     safe_total = total || 1
 
     ["Page #{page} of #{max(safe_total, 1)}", "#{count} attendees processed"]
-    |> Enum.join(" · ")
+    |> Enum.join(" - ")
   end
 
-  defp lifecycle_badge_class(:archived), do: "bg-red-100 text-red-700"
-  defp lifecycle_badge_class(:grace), do: "bg-amber-100 text-amber-700"
-  defp lifecycle_badge_class(:upcoming), do: "bg-slate-100 text-slate-700"
-  defp lifecycle_badge_class(:unknown), do: "bg-slate-100 text-slate-700"
-  defp lifecycle_badge_class(_), do: "bg-emerald-100 text-emerald-700"
+  defp lifecycle_badge_color(:archived), do: "danger"
+  defp lifecycle_badge_color(:grace), do: "warning"
+  defp lifecycle_badge_color(:upcoming), do: "natural"
+  defp lifecycle_badge_color(:unknown), do: "natural"
+  defp lifecycle_badge_color(_), do: "success"
 
   defp lifecycle_label(:archived), do: "Archived"
   defp lifecycle_label(:grace), do: "In grace period"
@@ -1176,24 +1223,12 @@ defmodule FastCheckWeb.DashboardLive do
 
   defp filter_events(events, _), do: events
 
-  defp sync_status_badge_class("completed"),
-    do: "rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700"
-
-  defp sync_status_badge_class("failed"),
-    do: "rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700"
-
-  defp sync_status_badge_class("in_progress"),
-    do: "rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700"
-
-  defp sync_status_badge_class("paused"),
-    do: "rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-700"
-
-  defp sync_status_badge_class("cancelled"),
-    do: "rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
-
-  defp sync_status_badge_class(_),
-    do: "rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
-
+  defp sync_status_badge_color("completed"), do: "success"
+  defp sync_status_badge_color("failed"), do: "danger"
+  defp sync_status_badge_color("in_progress"), do: "secondary"
+  defp sync_status_badge_color("paused"), do: "warning"
+  defp sync_status_badge_color("cancelled"), do: "natural"
+  defp sync_status_badge_color(_), do: "natural"
   defp sync_status_label("completed"), do: "Completed"
   defp sync_status_label("failed"), do: "Failed"
   defp sync_status_label("in_progress"), do: "In Progress"
@@ -1201,12 +1236,12 @@ defmodule FastCheckWeb.DashboardLive do
   defp sync_status_label("cancelled"), do: "Cancelled"
   defp sync_status_label(_), do: "Unknown"
 
-  defp format_datetime(nil), do: "—"
+  defp format_datetime(nil), do: "-"
   defp format_datetime(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")
   defp format_datetime(%NaiveDateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")
-  defp format_datetime(_), do: "—"
+  defp format_datetime(_), do: "-"
 
-  defp format_duration(nil), do: "—"
+  defp format_duration(nil), do: "-"
 
   defp format_duration(ms) when is_integer(ms) do
     seconds = div(ms, 1000)
@@ -1237,5 +1272,5 @@ defmodule FastCheckWeb.DashboardLive do
     end
   end
 
-  defp format_duration(_), do: "—"
+  defp format_duration(_), do: "-"
 end

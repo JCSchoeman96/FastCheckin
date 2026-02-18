@@ -75,29 +75,43 @@ defmodule FastCheckWeb.OccupancyLive do
 
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="min-h-screen bg-slate-950 text-slate-100">
-        <div class="mx-auto max-w-6xl space-y-6 sm:space-y-8 px-2 sm:px-4 py-6 sm:py-10">
-          <header class="rounded-3xl bg-gradient-to-br from-slate-900 to-slate-800 p-8 shadow-2xl">
-            <p class="text-xs uppercase tracking-[0.35em] text-slate-400">Live occupancy feed</p>
+      <div class="min-h-screen space-y-6 sm:space-y-8">
+        <%!-- Header --%>
+        <.card variant="shadow" color="natural" rounded="large" padding="large">
+          <.card_content>
+            <p
+              style="font-size: var(--fc-text-xs)"
+              class="uppercase tracking-[0.35em] text-fc-text-muted"
+            >
+              Live occupancy feed
+            </p>
 
-            <h1 class="mt-3 text-2xl font-semibold text-white sm:text-3xl md:text-4xl">
+            <h1 style="font-size: var(--fc-text-3xl)" class="mt-3 font-semibold text-fc-text-primary">
               {@event.name}
             </h1>
 
-            <div class="mt-6 flex flex-col gap-4 text-sm text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+            <div class="mt-6 flex flex-col gap-4 text-sm text-fc-text-secondary sm:flex-row sm:items-center sm:justify-between">
               <div class="flex flex-wrap items-center gap-4">
                 <div>
-                  <p class="text-[11px] uppercase tracking-[0.3em] text-slate-500">Location</p>
-
-                  <p class="text-base font-medium text-white">
+                  <p
+                    style="font-size: var(--fc-text-xs)"
+                    class="uppercase tracking-[0.3em] text-fc-text-muted"
+                  >
+                    Location
+                  </p>
+                  <p class="text-base font-medium text-fc-text-primary">
                     {format_field(@event.location, "To be announced")}
                   </p>
                 </div>
 
                 <div>
-                  <p class="text-[11px] uppercase tracking-[0.3em] text-slate-500">Entrance</p>
-
-                  <p class="text-base font-medium text-white">
+                  <p
+                    style="font-size: var(--fc-text-xs)"
+                    class="uppercase tracking-[0.3em] text-fc-text-muted"
+                  >
+                    Entrance
+                  </p>
+                  <p class="text-base font-medium text-fc-text-primary">
                     {format_field(@event.entrance_name, "Any gate")}
                   </p>
                 </div>
@@ -105,198 +119,264 @@ defmodule FastCheckWeb.OccupancyLive do
 
               <div class="flex flex-wrap items-center gap-4">
                 <div>
-                  <p class="text-[11px] uppercase tracking-[0.3em] text-slate-500">Date</p>
-
-                  <p class="text-base font-medium text-white">
+                  <p
+                    style="font-size: var(--fc-text-xs)"
+                    class="uppercase tracking-[0.3em] text-fc-text-muted"
+                  >
+                    Date
+                  </p>
+                  <p class="text-base font-medium text-fc-text-primary">
                     {format_event_date(@event.event_date)}
                   </p>
                 </div>
 
                 <div>
-                  <p class="text-[11px] uppercase tracking-[0.3em] text-slate-500">Gates open</p>
-
-                  <p class="text-base font-medium text-white">
+                  <p
+                    style="font-size: var(--fc-text-xs)"
+                    class="uppercase tracking-[0.3em] text-fc-text-muted"
+                  >
+                    Gates open
+                  </p>
+                  <p class="text-base font-medium text-fc-text-primary">
                     {format_event_time(@event.event_time)}
                   </p>
                 </div>
               </div>
             </div>
-          </header>
+          </.card_content>
+        </.card>
 
-          <section class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-            <div class={"rounded-3xl border border-white/5 p-8 shadow-2xl #{occupancy_color(@percentage)}"}>
+        <%!-- Occupancy gauge + Flow summary --%>
+        <section class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <.card
+            variant="base"
+            color={occupancy_card_color(@percentage)}
+            rounded="large"
+            padding="large"
+          >
+            <.card_content>
               <div class="flex flex-col gap-2">
-                <p class="text-sm uppercase tracking-[0.3em] text-white/80">Occupancy</p>
+                <p class="text-sm uppercase tracking-[0.3em] opacity-80">Occupancy</p>
 
                 <div class="flex flex-wrap items-baseline gap-3">
-                  <p class="text-4xl sm:text-5xl font-semibold text-white">
+                  <p style="font-size: var(--fc-text-4xl)" class="font-semibold">
                     {format_percentage(@percentage)}
                   </p>
-                  <span class="text-lg text-white/80">live</span>
+                  <span class="text-lg opacity-80">live</span>
                 </div>
 
-                <p class="text-sm text-white/90">
+                <p class="text-sm opacity-90">
                   {format_count(@counts.currently_inside)} inside · Capacity {format_count(@capacity)}
                 </p>
               </div>
 
-              <div class="mt-6">
-                <div class="h-3 rounded-full bg-white/20">
-                  <div
-                    class={"h-3 rounded-full shadow-inner #{progress_bar_class(@percentage)}"}
-                    style={"width: #{progress_width(@percentage)}%"}
-                  />
-                </div>
+              <.progress
+                value={progress_width(@percentage)}
+                color={occupancy_card_color(@percentage)}
+                size="small"
+                class="mt-6"
+              />
 
-                <p class="mt-2 text-xs uppercase tracking-[0.25em] text-white/70">
-                  Crowd saturation meter
-                </p>
-              </div>
+              <p class="mt-2 text-xs uppercase tracking-[0.25em] opacity-70">
+                Crowd saturation meter
+              </p>
 
               <div :if={Enum.any?(@alerts)} class="mt-6 space-y-3">
-                <div
+                <.alert
                   :for={alert <- @alerts}
-                  class="rounded-2xl border border-white/20 bg-black/20 px-4 py-3 text-sm font-medium"
+                  kind={:warning}
+                  variant="bordered"
+                  size="small"
+                  rounded="large"
                 >
                   {alert}
-                </div>
+                </.alert>
               </div>
-            </div>
+            </.card_content>
+          </.card>
 
-            <div class="rounded-3xl border border-white/10 bg-slate-900/80 p-8 shadow-2xl">
-              <p class="text-sm uppercase tracking-[0.3em] text-slate-400">Flow summary</p>
+          <.card variant="outline" color="natural" rounded="large" padding="large">
+            <.card_content>
+              <p class="text-sm uppercase tracking-[0.3em] text-fc-text-muted">Flow summary</p>
 
               <dl class="mt-6 space-y-4 text-sm">
                 <div class="flex items-center justify-between">
-                  <dt class="text-slate-400">Checked in today</dt>
-
-                  <dd class="text-base font-semibold text-white">
+                  <dt class="text-fc-text-secondary">Checked in today</dt>
+                  <dd class="text-base font-semibold text-fc-text-primary">
                     {format_count(@counts.scans_today)}
                   </dd>
                 </div>
 
                 <div class="flex items-center justify-between">
-                  <dt class="text-slate-400">Total entries</dt>
-
-                  <dd class="text-base font-semibold text-white">
+                  <dt class="text-fc-text-secondary">Total entries</dt>
+                  <dd class="text-base font-semibold text-fc-text-primary">
                     {format_count(@counts.total_entries)}
                   </dd>
                 </div>
 
                 <div class="flex items-center justify-between">
-                  <dt class="text-slate-400">Total exits</dt>
-
-                  <dd class="text-base font-semibold text-white">
+                  <dt class="text-fc-text-secondary">Total exits</dt>
+                  <dd class="text-base font-semibold text-fc-text-primary">
                     {format_count(@counts.total_exits)}
                   </dd>
                 </div>
 
                 <div class="flex items-center justify-between">
-                  <dt class="text-slate-400">Available tomorrow</dt>
-
-                  <dd class="text-base font-semibold text-white">
+                  <dt class="text-fc-text-secondary">Available tomorrow</dt>
+                  <dd class="text-base font-semibold text-fc-text-primary">
                     {format_count(@counts.available_tomorrow)}
                   </dd>
                 </div>
 
                 <div class="flex items-center justify-between">
-                  <dt class="text-slate-400">Avg session</dt>
-
-                  <dd class="text-base font-semibold text-white">
+                  <dt class="text-fc-text-secondary">Avg session</dt>
+                  <dd class="text-base font-semibold text-fc-text-primary">
                     {format_minutes(@counts.average_session_minutes)}
                   </dd>
                 </div>
               </dl>
-            </div>
-          </section>
+            </.card_content>
+          </.card>
+        </section>
 
-          <section class="space-y-4">
-            <div class="flex flex-col gap-2">
-              <p class="text-xs uppercase tracking-[0.35em] text-slate-500">
-                Per entrance performance
-              </p>
+        <%!-- Gate distribution --%>
+        <section class="space-y-4">
+          <div class="flex flex-col gap-2">
+            <p
+              style="font-size: var(--fc-text-xs)"
+              class="uppercase tracking-[0.35em] text-fc-text-muted"
+            >
+              Per entrance performance
+            </p>
+            <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+              Gate distribution
+            </h2>
+          </div>
 
-              <h2 class="text-2xl font-semibold text-white">Gate distribution</h2>
-            </div>
-
-            <div :if={Enum.any?(@per_entrance)} class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <article
-                :for={entrance <- @per_entrance}
-                class="rounded-2xl border border-white/5 bg-slate-900/70 p-6 shadow-xl"
-              >
-                <p class="text-sm uppercase tracking-[0.3em] text-slate-400">
+          <div :if={Enum.any?(@per_entrance)} class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <.card
+              :for={entrance <- @per_entrance}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="medium"
+              class="fc-card-container"
+            >
+              <.card_content>
+                <p class="text-sm uppercase tracking-[0.3em] text-fc-text-muted">
                   {entrance.entrance_name}
                 </p>
 
-                <p class="mt-3 text-4xl font-semibold text-white">{format_count(entrance.inside)}</p>
+                <p
+                  style="font-size: var(--fc-text-3xl)"
+                  class="mt-3 font-semibold text-fc-text-primary"
+                >
+                  {format_count(entrance.inside)}
+                </p>
 
-                <p class="text-sm text-slate-400">Currently inside</p>
+                <p class="text-sm text-fc-text-secondary">Currently inside</p>
 
                 <div class="mt-6 grid grid-cols-3 gap-2 text-center text-sm">
-                  <div class="rounded-xl bg-white/5 px-3 py-2">
-                    <p class="text-[11px] uppercase tracking-[0.3em] text-slate-400">Entries</p>
-
-                    <p class="mt-1 text-lg font-semibold text-white">
+                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-2">
+                    <p
+                      style="font-size: var(--fc-text-xs)"
+                      class="uppercase tracking-[0.3em] text-fc-text-muted"
+                    >
+                      Entries
+                    </p>
+                    <p class="mt-1 text-lg font-semibold text-fc-text-primary">
                       {format_count(entrance.entries)}
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-white/5 px-3 py-2">
-                    <p class="text-[11px] uppercase tracking-[0.3em] text-slate-400">Exits</p>
-
-                    <p class="mt-1 text-lg font-semibold text-white">
+                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-2">
+                    <p
+                      style="font-size: var(--fc-text-xs)"
+                      class="uppercase tracking-[0.3em] text-fc-text-muted"
+                    >
+                      Exits
+                    </p>
+                    <p class="mt-1 text-lg font-semibold text-fc-text-primary">
                       {format_count(entrance.exits)}
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-white/5 px-3 py-2">
-                    <p class="text-[11px] uppercase tracking-[0.3em] text-slate-400">Net</p>
-
-                    <p class="mt-1 text-lg font-semibold text-white">
+                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-2">
+                    <p
+                      style="font-size: var(--fc-text-xs)"
+                      class="uppercase tracking-[0.3em] text-fc-text-muted"
+                    >
+                      Net
+                    </p>
+                    <p class="mt-1 text-lg font-semibold text-fc-text-primary">
                       {format_count(entrance.entries - entrance.exits)}
                     </p>
                   </div>
                 </div>
-              </article>
-            </div>
+              </.card_content>
+            </.card>
+          </div>
 
-            <div
-              :if={!Enum.any?(@per_entrance)}
-              class="rounded-2xl border border-dashed border-white/10 bg-slate-900/60 p-8 text-center text-sm text-slate-400"
+          <div
+            :if={!Enum.any?(@per_entrance)}
+            class="rounded-2xl border border-dashed border-fc-border-default bg-fc-surface-raised p-8 text-center text-sm text-fc-text-muted"
+          >
+            Entrance-level analytics will appear as soon as check-ins stream in.
+          </div>
+        </section>
+
+        <%!-- Operational snapshot --%>
+        <section class="space-y-4">
+          <div class="flex flex-col gap-2">
+            <p
+              style="font-size: var(--fc-text-xs)"
+              class="uppercase tracking-[0.35em] text-fc-text-muted"
             >
-              Entrance-level analytics will appear as soon as check-ins stream in.
-            </div>
-          </section>
-
-          <section class="space-y-4">
-            <div class="flex flex-col gap-2">
-              <p class="text-xs uppercase tracking-[0.35em] text-slate-500">At-a-glance</p>
-
-              <h2 class="text-2xl font-semibold text-white">Operational snapshot</h2>
-            </div>
-
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <article
-                :for={card <- @stats_cards}
-                class="rounded-2xl border border-white/5 bg-slate-900/70 p-5 shadow-xl transition hover:border-white/20"
-              >
-                <p class="text-xs uppercase tracking-[0.35em] text-slate-500">{card.label}</p>
-
-                <p class="mt-3 text-3xl font-semibold text-white">{card.value}</p>
-
-                <p class="text-sm text-slate-400">{card.hint}</p>
-              </article>
-            </div>
-          </section>
-
-          <footer class="flex flex-col items-start gap-2 border-t border-white/10 pt-6 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-            <p>Last updated {format_timestamp(@last_updated)}</p>
-
-            <p class="text-xs uppercase tracking-[0.35em] text-slate-600">
-              Topic: {occupancy_topic(@event_id)}
+              At-a-glance
             </p>
-          </footer>
-        </div>
+            <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+              Operational snapshot
+            </h2>
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <.card
+              :for={card <- @stats_cards}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="small"
+              class="transition hover:shadow-lg"
+            >
+              <.card_content>
+                <p
+                  style="font-size: var(--fc-text-xs)"
+                  class="uppercase tracking-[0.35em] text-fc-text-muted"
+                >
+                  {card.label}
+                </p>
+                <p
+                  style="font-size: var(--fc-text-3xl)"
+                  class="mt-3 font-semibold text-fc-text-primary"
+                >
+                  {card.value}
+                </p>
+                <p class="text-sm text-fc-text-secondary">{card.hint}</p>
+              </.card_content>
+            </.card>
+          </div>
+        </section>
+
+        <%!-- Footer --%>
+        <footer class="flex flex-col items-start gap-2 border-t border-fc-border-default pt-6 text-sm text-fc-text-secondary sm:flex-row sm:items-center sm:justify-between">
+          <p>Last updated {format_timestamp(@last_updated)}</p>
+          <p
+            style="font-size: var(--fc-text-xs)"
+            class="uppercase tracking-[0.35em] text-fc-text-muted"
+          >
+            Topic: {occupancy_topic(@event_id)}
+          </p>
+        </footer>
       </div>
     </Layouts.app>
     """
@@ -366,22 +446,9 @@ defmodule FastCheckWeb.OccupancyLive do
 
   defp normalize_per_entrance(_), do: []
 
-  defp occupancy_color(percentage) when percentage >= 100,
-    do: "bg-gradient-to-br from-rose-700 to-rose-500 text-white"
-
-  defp occupancy_color(percentage) when percentage >= 90,
-    do: "bg-gradient-to-br from-orange-600 to-amber-500 text-white"
-
-  defp occupancy_color(percentage) when percentage >= 75,
-    do: "bg-gradient-to-br from-amber-400 via-amber-300 to-yellow-300 text-slate-900"
-
-  defp occupancy_color(_percentage),
-    do: "bg-gradient-to-br from-emerald-600 to-emerald-500 text-white"
-
-  defp progress_bar_class(percentage) when percentage >= 100, do: "bg-rose-300"
-  defp progress_bar_class(percentage) when percentage >= 90, do: "bg-orange-300"
-  defp progress_bar_class(percentage) when percentage >= 75, do: "bg-amber-200"
-  defp progress_bar_class(_percentage), do: "bg-emerald-200"
+  defp occupancy_card_color(percentage) when percentage >= 95, do: "danger"
+  defp occupancy_card_color(percentage) when percentage >= 80, do: "warning"
+  defp occupancy_card_color(_percentage), do: "success"
 
   defp progress_width(percentage) do
     percentage
