@@ -1630,6 +1630,7 @@ defmodule FastCheck.TickeraClient do
       |> Keyword.put(:method, method)
       |> Keyword.put(:url, url)
       |> Keyword.update(:headers, [], &List.wrap/1)
+      |> Keyword.put(:into, nil)
       |> Keyword.put_new(:decode_body, false)
 
     req = Req.new(req_opts)
@@ -1785,7 +1786,7 @@ defmodule FastCheck.TickeraClient do
 
         if body == "" do
           log_empty_body_response(retry_url, code, raw_body, response_headers, :fallback)
-          {:error, {:http_error, :empty_body, empty_body_hint(response_headers)}}
+          {:error, {:http_error, :empty_body, empty_body_hint(response_headers, retry_url)}}
         else
           decode_json_body(body, retry_url)
         end
@@ -1897,7 +1898,28 @@ defmodule FastCheck.TickeraClient do
     end)
   end
 
+  defp header_value(headers, key) when is_map(headers) do
+    downcased_key = String.downcase(key)
+
+    headers
+    |> Enum.find_value(fn
+      {name, value} when is_binary(name) ->
+        if String.downcase(name) == downcased_key do
+          normalize_header_value(value)
+        end
+
+      {name, value} ->
+        if String.downcase(to_string(name)) == downcased_key do
+          normalize_header_value(value)
+        end
+    end)
+  end
+
   defp header_value(_headers, _key), do: nil
+
+  defp normalize_header_value([first | _]) when is_binary(first), do: first
+  defp normalize_header_value(value) when is_binary(value), do: value
+  defp normalize_header_value(value), do: to_string(value)
 
   defp ensure_endpoint_trailing_slash(url) when is_binary(url) do
     uri = URI.parse(url)
@@ -1919,7 +1941,7 @@ defmodule FastCheck.TickeraClient do
 
   defp ensure_endpoint_trailing_slash(url), do: url
 
-  defp empty_body_hint(response_headers) do
+  defp empty_body_hint(response_headers, url) do
     content_length = header_value(response_headers, "content-length") || "unknown"
     content_type = header_value(response_headers, "content-type") || "unknown"
     server = header_value(response_headers, "server") || "unknown"
@@ -1930,8 +1952,79 @@ defmodule FastCheck.TickeraClient do
         value -> " cf_ray=#{value}"
       end
 
-    "Tickera returned HTTP success with an empty body (content_length=#{content_length}, content_type=#{content_type}, server=#{server}).#{cf_ray_hint}"
+    credential_hint = maybe_probe_credentials_after_empty_body(url)
+
+    "Tickera returned HTTP success with an empty body (content_length=#{content_length}, content_type=#{content_type}, server=#{server}).#{cf_ray_hint}#{credential_hint}"
   end
+
+  defp maybe_probe_credentials_after_empty_body(url) when is_binary(url) do
+    with api_key when is_binary(api_key) <- extract_api_key_from_url(url),
+         site_url when is_binary(site_url) <- extract_site_url_from_tickera_url(url) do
+      check_url = build_url(site_url, api_key, "check_credentials")
+      headers = default_tickera_headers([{"accept", "application/json"}])
+
+      case request(:get, check_url,
+             headers: headers,
+             connect_timeout: min(@timeout, 10_000),
+             receive_timeout: min(@timeout, 10_000)
+           ) do
+        {:ok, %Response{status: code, body: body}} when code in 200..299 ->
+          case decode_credential_pass_value(body) do
+            :pass -> " credential_check=pass"
+            :fail -> " credential_check=fail"
+            :unknown -> " credential_check=unknown"
+            :invalid_json -> " credential_check=invalid_json"
+          end
+
+        {:ok, %Response{status: code}} ->
+          " credential_check=http_#{code}"
+
+        {:error, _error} ->
+          " credential_check=unreachable"
+      end
+    else
+      _ -> ""
+    end
+  rescue
+    _error -> " credential_check=probe_error"
+  end
+
+  defp maybe_probe_credentials_after_empty_body(_url), do: ""
+
+  defp decode_credential_pass_value(raw_body) do
+    body = normalize_response_body(raw_body)
+
+    case Jason.decode(body) do
+      {:ok, %{} = payload} ->
+        pass = Map.get(payload, "pass", Map.get(payload, :pass))
+
+        cond do
+          pass in [true, "true", "1", 1] -> :pass
+          pass in [false, "false", "0", 0, "", nil] -> :fail
+          true -> :unknown
+        end
+
+      _ ->
+        :invalid_json
+    end
+  end
+
+  defp extract_site_url_from_tickera_url(url) when is_binary(url) do
+    uri = URI.parse(url)
+    path = uri.path || ""
+
+    case String.split(path, "/tc-api/", parts: 2) do
+      [base_path, _rest] ->
+        URI.to_string(%{uri | path: base_path, query: nil, fragment: nil})
+
+      _ ->
+        nil
+    end
+  rescue
+    _error -> nil
+  end
+
+  defp extract_site_url_from_tickera_url(_url), do: nil
 
   defp add_cache_buster(url) when is_binary(url) do
     uri = URI.parse(url)

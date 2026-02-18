@@ -65,7 +65,7 @@ defmodule FastCheck.Events.Sync do
                 case TickeraClient.fetch_all_attendees(
                        event.tickera_site_url,
                        api_key,
-                       100,
+                       50,
                        callback
                      ) do
                   {:ok, attendees, total_count} ->
