@@ -686,23 +686,129 @@ defmodule FastCheck.TickeraClient do
         {email_acc, type_acc, updated_acc}
       end)
 
+    allowed_checkins =
+      Map.get(ticket_data, "allowed_checkins") ||
+        Map.get(ticket_data, :allowed_checkins) ||
+        Map.get(ticket_data, "checkin_limit")
+
+    checkins_used =
+      Map.get(ticket_data, "checkins") ||
+        Map.get(ticket_data, :checkins) ||
+        Map.get(ticket_data, "checked_in_count") ||
+        Map.get(ticket_data, :checked_in_count)
+
+    used_count = normalize_non_negative_int(checkins_used)
+    allowed_count = normalize_non_negative_int(allowed_checkins)
+
+    remaining_checkins =
+      case {allowed_count, used_count} do
+        {a, u} when is_integer(a) and a > 0 and is_integer(u) -> max(a - u, 0)
+        _ -> nil
+      end
+
+    checked_in_flag =
+      normalize_checked_in_flag(
+        Map.get(ticket_data, "checked-in") ||
+          Map.get(ticket_data, :checked_in) ||
+          Map.get(ticket_data, "checked_in")
+      )
+
+    checkouts_count =
+      Map.get(ticket_data, "check-outs") ||
+        Map.get(ticket_data, :check_outs) ||
+        Map.get(ticket_data, "check_outs")
+        |> normalize_non_negative_int()
+
+    payment_status =
+      pick_field(ticket_data, [
+        "order_status",
+        :order_status,
+        "payment_status",
+        :payment_status,
+        "status",
+        :status
+      ])
+
+    buyer_first =
+      pick_field(ticket_data, ["buyer_first", :buyer_first, "purchaser_first", :purchaser_first])
+
+    buyer_last =
+      pick_field(ticket_data, ["buyer_last", :buyer_last, "purchaser_last", :purchaser_last])
+
+    buyer_email =
+      pick_field(ticket_data, ["buyer_email", :buyer_email, "purchaser_email", :purchaser_email]) ||
+        find_custom_field_value(custom_map, [~r/(buyer|purchaser).*(e-?mail|email)/i])
+
+    attendee_first =
+      pick_field(ticket_data, [
+        "first_name",
+        :first_name,
+        "attendee_first_name",
+        :attendee_first_name,
+        "ticket_holder_first_name",
+        :ticket_holder_first_name
+      ]) ||
+        find_custom_field_value(
+          custom_map,
+          [~r/(attendee|ticket ?holder).*(first|name)/i, ~r/\b(first name|voornaam)\b/i],
+          [~r/(buyer|purchaser|billing|besteller)/i]
+        ) ||
+        buyer_first
+
+    attendee_last =
+      pick_field(ticket_data, [
+        "last_name",
+        :last_name,
+        "attendee_last_name",
+        :attendee_last_name,
+        "ticket_holder_last_name",
+        :ticket_holder_last_name
+      ]) ||
+        find_custom_field_value(
+          custom_map,
+          [
+            ~r/(attendee|ticket ?holder).*(last|surname|family)/i,
+            ~r/\b(last name|surname|van)\b/i
+          ],
+          [~r/(buyer|purchaser|billing|besteller)/i]
+        ) ||
+        buyer_last
+
+    attendee_email =
+      pick_field(ticket_data, [
+        "email",
+        :email,
+        "attendee_email",
+        :attendee_email,
+        "ticket_holder_email",
+        :ticket_holder_email
+      ]) ||
+        find_custom_field_value(
+          custom_map,
+          [~r/(attendee|ticket ?holder).*(e-?mail|email)/i, ~r/\b(e-?mail|email)\b/i],
+          [~r/(buyer|purchaser|billing|besteller)/i]
+        ) ||
+        email ||
+        buyer_email
+
+    custom_map =
+      custom_map
+      |> put_if_present("buyer_first", buyer_first)
+      |> put_if_present("buyer_last", buyer_last)
+      |> put_if_present("buyer_email", buyer_email)
+      |> put_if_present("checked_in_flag", checked_in_flag)
+      |> put_if_present("checkins_used", used_count)
+      |> put_if_present("checkouts_count", checkouts_count)
+
     %{
       ticket_code:
         Map.get(ticket_data, "ticket_code") ||
           Map.get(ticket_data, :ticket_code) ||
           Map.get(ticket_data, "checksum") ||
           Map.get(ticket_data, :checksum),
-      first_name:
-        Map.get(ticket_data, "first_name") ||
-          Map.get(ticket_data, :first_name) ||
-          Map.get(ticket_data, "buyer_first") ||
-          Map.get(ticket_data, :buyer_first),
-      last_name:
-        Map.get(ticket_data, "last_name") ||
-          Map.get(ticket_data, :last_name) ||
-          Map.get(ticket_data, "buyer_last") ||
-          Map.get(ticket_data, :buyer_last),
-      email: email,
+      first_name: attendee_first,
+      last_name: attendee_last,
+      email: attendee_email,
       ticket_type_id:
         ticket_data
         |> Map.get("ticket_type_id")
@@ -715,10 +821,9 @@ defmodule FastCheck.TickeraClient do
         ticket_type ||
           Map.get(ticket_data, "ticket_type") ||
           Map.get(ticket_data, :ticket_type),
-      allowed_checkins:
-        Map.get(ticket_data, "allowed_checkins") ||
-          Map.get(ticket_data, :allowed_checkins) ||
-          Map.get(ticket_data, "checkin_limit"),
+      allowed_checkins: allowed_checkins,
+      checkins_remaining: remaining_checkins,
+      payment_status: payment_status,
       custom_fields: custom_map
     }
   end
@@ -876,6 +981,91 @@ defmodule FastCheck.TickeraClient do
   defp normalize_custom_field_value(nil), do: nil
   defp normalize_custom_field_value(value) when is_binary(value), do: String.trim(value)
   defp normalize_custom_field_value(value), do: value
+
+  defp pick_field(map, keys) when is_map(map) and is_list(keys) do
+    keys
+    |> Enum.find_value(fn key -> normalize_optional_string(Map.get(map, key)) end)
+  end
+
+  defp find_custom_field_value(custom_map, include_patterns, exclude_patterns \\ [])
+
+  defp find_custom_field_value(custom_map, include_patterns, exclude_patterns)
+       when is_map(custom_map) do
+    custom_map
+    |> Enum.find_value(fn {name, value} ->
+      name_str = String.downcase(to_string(name))
+
+      include? = Enum.any?(include_patterns, &Regex.match?(&1, name_str))
+      excluded? = Enum.any?(exclude_patterns, &Regex.match?(&1, name_str))
+
+      if include? and not excluded? do
+        normalize_optional_string(value)
+      else
+        nil
+      end
+    end)
+  end
+
+  defp find_custom_field_value(_custom_map, _include_patterns, _exclude_patterns), do: nil
+
+  defp put_if_present(map, _key, nil), do: map
+  defp put_if_present(map, _key, ""), do: map
+  defp put_if_present(map, key, value), do: Map.put(map, key, value)
+
+  defp normalize_optional_string(nil), do: nil
+
+  defp normalize_optional_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_optional_string(value) when is_number(value), do: to_string(value)
+  defp normalize_optional_string(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_optional_string(_value), do: nil
+
+  defp normalize_non_negative_int(nil), do: nil
+
+  defp normalize_non_negative_int(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_non_negative_int(value) when is_integer(value), do: 0
+
+  defp normalize_non_negative_int(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" ->
+        nil
+
+      trimmed ->
+        case Integer.parse(trimmed) do
+          {number, _} when number >= 0 -> number
+          {number, _} when number < 0 -> 0
+          _ -> nil
+        end
+    end
+  end
+
+  defp normalize_non_negative_int(value) when is_float(value), do: trunc(max(value, 0))
+  defp normalize_non_negative_int(_value), do: nil
+
+  defp normalize_checked_in_flag(nil), do: nil
+
+  defp normalize_checked_in_flag(value) when is_boolean(value), do: value
+
+  defp normalize_checked_in_flag(value) when is_binary(value) do
+    case String.downcase(String.trim(value)) do
+      "yes" -> true
+      "true" -> true
+      "1" -> true
+      "no" -> false
+      "false" -> false
+      "0" -> false
+      _ -> nil
+    end
+  end
+
+  defp normalize_checked_in_flag(_value), do: nil
 
   defp handle_attendee_fallback(site_url, api_key, reason, partial \\ []) do
     case Fallback.maybe_use_cached(site_url, api_key, reason) do
