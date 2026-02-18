@@ -276,6 +276,26 @@ defmodule FastCheck.EventsTest do
       assert decrypted == api_key
     end
 
+    test "set_tickera_credentials normalizes surrounding whitespace" do
+      raw_api_key = "  trimmed-key-#{System.unique_integer([:positive])} \n"
+      expected_api_key = String.trim(raw_api_key)
+
+      {:ok, cred_struct} =
+        Events.set_tickera_credentials(
+          %Event{},
+          " https://demo.example.com ",
+          raw_api_key,
+          ~N[2024-01-01 10:00:00],
+          ~N[2024-01-02 10:00:00]
+        )
+
+      assert cred_struct.tickera_site_url == "https://demo.example.com"
+      assert cred_struct.site_url == "https://demo.example.com"
+      assert cred_struct.tickera_api_key_last4 == String.slice(expected_api_key, -4, 4)
+      assert {:ok, decrypted} = Events.get_tickera_api_key(cred_struct)
+      assert decrypted == expected_api_key
+    end
+
     test "touch_last_sync and touch_last_soft_sync update timestamps" do
       event = insert_event!("Timestamps")
 

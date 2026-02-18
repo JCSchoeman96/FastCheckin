@@ -168,7 +168,14 @@ defmodule FastCheck.Events.Sync do
       when is_binary(encrypted) do
     case Crypto.decrypt(encrypted) do
       {:ok, api_key} ->
-        {:ok, api_key}
+        case String.trim(api_key) do
+          "" ->
+            Logger.warning("Tickera API key is empty after normalization for event #{id}")
+            {:error, :decryption_failed}
+
+          normalized ->
+            {:ok, normalized}
+        end
 
       {:error, :decryption_failed} ->
         Logger.warning("Unable to decrypt Tickera API key for event #{id}")
