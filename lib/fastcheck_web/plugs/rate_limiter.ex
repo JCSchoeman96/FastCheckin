@@ -185,23 +185,16 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     )
   end
 
-  # Handle rate limit exceeded - log and prepare response
+  # Handle allowed requests (including those tracked by throttle rules)
   def allow_action(conn, {:throttle, data}, _opts) do
-    retry_after = div(data.period, 1000)
-
-    # Enhanced logging with more context
-    Logger.warning("Rate limit exceeded",
-      ip: get_peer_ip(conn),
-      path: conn.request_path,
-      limit: data.limit,
-      period: data.period,
-      event_id: get_event_id(conn),
-      user_agent: get_user_agent(conn)
-    )
+    limit = throttle_value(data, :limit, 0)
+    remaining = throttle_value(data, :remaining, 0)
+    expires_at = throttle_value(data, :expires_at, nil)
 
     conn
-    |> put_resp_header("retry-after", to_string(retry_after))
-    |> send_rate_limit_response()
+    |> put_resp_header("x-ratelimit-limit", to_string(limit))
+    |> put_resp_header("x-ratelimit-remaining", to_string(max(remaining, 0)))
+    |> maybe_put_rate_limit_reset(expires_at)
   end
 
   def allow_action(conn, _data, _opts), do: conn
@@ -220,7 +213,9 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   end
 
   def block_action(conn, {:throttle, data}, _opts) do
-    retry_after = div(data.period, 1000)
+    period = throttle_value(data, :period, 60_000)
+    limit = throttle_value(data, :limit, 0)
+    retry_after = max(div(period, 1000), 1)
 
     # Emit telemetry event BEFORE halting (non-blocking)
     :telemetry.execute(
@@ -229,8 +224,8 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       %{
         path: conn.request_path,
         ip: get_peer_ip(conn),
-        limit: data.limit,
-        period: data.period,
+        limit: limit,
+        period: period,
         event_id: get_event_id(conn)
       }
     )
@@ -239,8 +234,8 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     Logger.warning("Rate limit blocked request",
       ip: get_peer_ip(conn),
       path: conn.request_path,
-      limit: data.limit,
-      period: data.period,
+      limit: limit,
+      period: period,
       event_id: get_event_id(conn),
       user_agent: get_user_agent(conn)
     )
@@ -253,6 +248,18 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   end
 
   def block_action(conn, _data, _opts), do: conn
+
+  defp maybe_put_rate_limit_reset(conn, nil), do: conn
+
+  defp maybe_put_rate_limit_reset(conn, expires_at) when is_integer(expires_at) do
+    put_resp_header(conn, "x-ratelimit-reset", to_string(expires_at))
+  end
+
+  defp maybe_put_rate_limit_reset(conn, _other), do: conn
+
+  defp throttle_value(data, key, default) when is_list(data), do: Keyword.get(data, key, default)
+  defp throttle_value(data, key, default) when is_map(data), do: Map.get(data, key, default)
+  defp throttle_value(_data, _key, default), do: default
 
   # Helper: Detect operation types
   defp sync_operation?(conn) do
