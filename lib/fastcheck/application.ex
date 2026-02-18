@@ -28,12 +28,8 @@ defmodule FastCheck.Application do
         {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000},
         # Rate limiter monitor - logs ETS table stats every 5 minutes
         FastCheck.RateLimiterMonitor,
-        # NEW: ETS L1 cache initialization task
-        %{
-          id: FastCheck.Cache.EtsInit,
-          start: {Task, :start_link, [fn -> FastCheck.Cache.EtsLayer.init() end]},
-          restart: :transient
-        }
+        # ETS L1 cache table owner process (tables must be owned by a long-lived process)
+        FastCheck.Cache.EtsOwner
       ] ++ metrics_children() ++ cache_children
 
     # See https://hexdocs.pm/elixir/Supervisor.html
