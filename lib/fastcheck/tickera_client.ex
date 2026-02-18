@@ -1375,18 +1375,31 @@ defmodule FastCheck.TickeraClient do
              receive_timeout: @timeout
            ) do
         {:ok, %Response{status: code, body: body}} when code in 200..299 ->
-          case Jason.decode(body) do
-            {:ok, data} ->
-              {:ok, data}
+          body = normalize_response_body(body)
 
-            {:error, error} ->
-              Logger.error("Failed to decode Tickera response: #{inspect(error)}")
-              {:error, {:http_error, :invalid_json, error}}
+          cond do
+            body == "" ->
+              Logger.error("Tickera returned an empty response body for #{safe_log_url(url)}")
+              {:error, {:http_error, :empty_body, ""}}
+
+            true ->
+              case Jason.decode(body) do
+                {:ok, data} ->
+                  {:ok, data}
+
+                {:error, error} ->
+                  Logger.error(
+                    "Failed to decode Tickera response: #{inspect(error)} body=#{inspect(body_preview(body))}"
+                  )
+
+                  {:error, {:http_error, :invalid_json, error}}
+              end
           end
 
         {:ok, %Response{status: code, body: body}} ->
-          reason = classify_http_status(code, body)
-          Logger.error("Tickera request failed (status #{code}): #{body}")
+          normalized = normalize_response_body(body)
+          reason = classify_http_status(code, normalized)
+          Logger.error("Tickera request failed (status #{code}): #{body_preview(normalized)}")
           {:error, reason}
 
         {:error, error} ->
@@ -1424,6 +1437,27 @@ defmodule FastCheck.TickeraClient do
 
   defp classify_network_reason({:timeout, _} = reason), do: {:network_timeout, reason}
   defp classify_network_reason(reason), do: {:network_error, reason}
+
+  defp normalize_response_body(body) when is_binary(body), do: String.trim(body)
+
+  defp normalize_response_body(body) when is_list(body) do
+    body
+    |> IO.iodata_to_binary()
+    |> String.trim()
+  rescue
+    ArgumentError -> ""
+  end
+
+  defp normalize_response_body(nil), do: ""
+  defp normalize_response_body(_other), do: ""
+
+  defp body_preview(body) when is_binary(body) do
+    body
+    |> String.slice(0, 300)
+    |> String.replace(~r/\s+/, " ")
+  end
+
+  defp body_preview(_body), do: ""
 
   defp parse_datetime(nil), do: nil
   defp parse_datetime(<<>>), do: nil

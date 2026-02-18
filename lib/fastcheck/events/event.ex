@@ -112,6 +112,8 @@ defmodule FastCheck.Events.Event do
     ])
     |> sanitize_string_fields()
     |> synchronize_site_urls()
+    |> validate_inclusion(:status, ["active", "syncing", "archived"])
+    |> check_constraint(:status, name: "events_status_must_be_valid")
     |> validate_required([
       :name,
       :tickera_api_key_encrypted,

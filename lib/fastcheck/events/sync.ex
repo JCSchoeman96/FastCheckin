@@ -128,18 +128,21 @@ defmodule FastCheck.Events.Sync do
                         {:ok, sync_message}
 
                       {:error, reason} ->
+                        log_sync_failure(sync_log_id, event_id, reason)
                         mark_error(event, reason)
                         SyncState.clear_state(event_id)
                         {:error, format_reason(reason)}
                     end
 
                   {:error, reason, _partial} ->
+                    log_sync_failure(sync_log_id, event_id, reason)
                     mark_error(event, reason)
                     SyncState.clear_state(event_id)
                     {:error, format_reason(reason)}
                 end
 
               {:error, :decryption_failed} ->
+                log_sync_failure(sync_log_id, event_id, :decryption_failed)
                 mark_error(event, :decryption_failed)
                 SyncState.clear_state(event_id)
                 {:error, "Unable to decrypt Tickera credentials"}
@@ -243,8 +246,10 @@ defmodule FastCheck.Events.Sync do
   end
 
   defp mark_error(%Event{} = event, reason) do
+    now = current_timestamp()
+
     event
-    |> Event.changeset(%{status: "error"})
+    |> Event.changeset(%{status: "active", last_soft_sync_at: now})
     |> Repo.update()
     |> case do
       {:ok, updated} ->
@@ -260,6 +265,23 @@ defmodule FastCheck.Events.Sync do
 
         :ok
     end
+  end
+
+  defp log_sync_failure(nil, _event_id, _reason), do: :ok
+
+  defp log_sync_failure(sync_log_id, event_id, reason) do
+    pages_processed =
+      case SyncState.get_state(event_id) do
+        %{current_page: page} when is_integer(page) and page > 0 -> page
+        _ -> 0
+      end
+
+    _ = SyncLog.log_sync_error(sync_log_id, format_reason(reason), pages_processed)
+    :ok
+  rescue
+    exception ->
+      Logger.warning("Failed to persist sync failure log: #{Exception.message(exception)}")
+      :ok
   end
 
   defp resolve_synced_count(inserted, _attendees, total) when inserted == total, do: "#{total}"
@@ -401,7 +423,17 @@ defmodule FastCheck.Events.Sync do
 
   defp refresh_event_window_from_tickera(%Event{} = event, api_key) do
     case TickeraClient.get_event_essentials(event.tickera_site_url, api_key) do
-      {:ok, %{start_date: start_dt, end_date: end_dt}} ->
+      {:ok, essentials} when is_map(essentials) ->
+        start_dt =
+          Map.get(essentials, "event_start_date") ||
+            Map.get(essentials, :event_start_date) ||
+            Map.get(essentials, "event_date_time") ||
+            Map.get(essentials, :event_date_time)
+
+        end_dt =
+          Map.get(essentials, "event_end_date") ||
+            Map.get(essentials, :event_end_date)
+
         persist_event_window(event, start_dt, end_dt)
 
       {:error, :decryption_failed} ->
