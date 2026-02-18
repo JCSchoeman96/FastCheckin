@@ -19,7 +19,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
   ## Endpoints
 
-  - `POST /api/mobile/login` - Authenticate device and obtain JWT token
+  - `POST /api/v1/mobile/login` - Authenticate device and obtain JWT token
 
   ## Security Considerations
 
@@ -107,7 +107,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
   ## Examples
 
       # Valid authentication
-      POST /api/mobile/login
+      POST /api/v1/mobile/login
       {
         "event_id": 123,
         "credential": "secret-code"
@@ -122,7 +122,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
       }
 
       # Invalid event_id
-      POST /api/mobile/login
+      POST /api/v1/mobile/login
       {
         "event_id": "invalid"
       }

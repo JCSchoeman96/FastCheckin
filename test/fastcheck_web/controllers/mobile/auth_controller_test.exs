@@ -22,10 +22,10 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
     %{event: event}
   end
 
-  describe "POST /api/mobile/login" do
+  describe "POST /api/v1/mobile/login" do
     test "successfully issues a token for a valid event_id", %{conn: conn, event: event} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => event.id,
           "credential" => @credential
         })
@@ -50,7 +50,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "successfully issues a token when event_id is a string", %{conn: conn, event: event} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => Integer.to_string(event.id),
           "credential" => @credential
         })
@@ -59,7 +59,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
     end
 
     test "rejects missing event_id with 400", %{conn: conn} do
-      conn = post(conn, ~p"/api/mobile/login", %{"credential" => @credential})
+      conn = post(conn, ~p"/api/v1/mobile/login", %{"credential" => @credential})
 
       assert %{"error" => "invalid_request", "message" => message} = json_response(conn, 400)
       assert message =~ "event_id is required"
@@ -67,7 +67,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "rejects invalid event_id format with 400", %{conn: conn} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => "not-a-number"
         })
 
@@ -77,7 +77,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "rejects negative event_id with 400", %{conn: conn} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => -1,
           "credential" => @credential
         })
@@ -88,7 +88,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "rejects zero event_id with 400", %{conn: conn} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => 0,
           "credential" => @credential
         })
@@ -101,7 +101,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
       non_existent_id = 999_999
 
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => non_existent_id,
           "credential" => @credential
         })
@@ -112,7 +112,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "rejects missing credential with 401", %{conn: conn, event: event} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => event.id
         })
 
@@ -124,7 +124,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "rejects invalid credential with 403", %{conn: conn, event: event} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => event.id,
           "credential" => "wrong"
         })
@@ -137,7 +137,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
 
     test "issued token can be verified and contains correct claims", %{conn: conn, event: event} do
       conn =
-        post(conn, ~p"/api/mobile/login", %{
+        post(conn, ~p"/api/v1/mobile/login", %{
           "event_id" => event.id,
           "credential" => @credential
         })

@@ -55,5 +55,33 @@ defmodule FastCheckWeb.BrowserAuthTest do
       assert html_response(conn, 401)
       assert conn.resp_body =~ "Invalid credentials"
     end
+
+    test "normalizes encoded redirect_to values", %{conn: conn} do
+      conn =
+        post(conn, ~p"/login", %{
+          "session" => %{"username" => @valid_username, "password" => @valid_password},
+          "redirect_to" => "%2F"
+        })
+
+      assert redirected_to(conn) == ~p"/"
+
+      conn =
+        post(build_conn(), ~p"/login", %{
+          "session" => %{"username" => @valid_username, "password" => @valid_password},
+          "redirect_to" => "%252Fdashboard"
+        })
+
+      assert redirected_to(conn) == ~p"/dashboard"
+    end
+
+    test "falls back to root for unsafe redirect_to values", %{conn: conn} do
+      conn =
+        post(conn, ~p"/login", %{
+          "session" => %{"username" => @valid_username, "password" => @valid_password},
+          "redirect_to" => "%2F%2Fevil.com"
+        })
+
+      assert redirected_to(conn) == ~p"/"
+    end
   end
 end
