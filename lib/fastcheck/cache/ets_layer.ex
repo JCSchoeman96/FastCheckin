@@ -211,7 +211,7 @@ defmodule FastCheck.Cache.EtsLayer do
     # Only create if not already created – safe for code reloads.
     case :ets.info(name) do
       :undefined ->
-        default_flags = [:set, :public]
+        default_flags = [:set, :public, :named_table]
         default_kv = [read_concurrency: true]
 
         {flags, kv} =
@@ -221,7 +221,8 @@ defmodule FastCheck.Cache.EtsLayer do
           end)
 
         merged_kv = Keyword.merge(default_kv, kv)
-        :ets.new(name, default_flags ++ flags ++ merged_kv)
+        merged_flags = Enum.uniq(default_flags ++ flags)
+        :ets.new(name, merged_flags ++ merged_kv)
 
       _info ->
         name
