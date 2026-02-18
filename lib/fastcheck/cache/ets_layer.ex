@@ -211,8 +211,17 @@ defmodule FastCheck.Cache.EtsLayer do
     # Only create if not already created – safe for code reloads.
     case :ets.info(name) do
       :undefined ->
-        base_opts = [:set, :public, {:read_concurrency, true}]
-        :ets.new(name, Keyword.merge(base_opts, opts))
+        default_flags = [:set, :public]
+        default_kv = [read_concurrency: true]
+
+        {flags, kv} =
+          Enum.split_with(opts, fn
+            atom when is_atom(atom) -> true
+            _ -> false
+          end)
+
+        merged_kv = Keyword.merge(default_kv, kv)
+        :ets.new(name, default_flags ++ flags ++ merged_kv)
 
       _info ->
         name

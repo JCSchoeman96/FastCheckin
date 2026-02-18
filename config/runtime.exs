@@ -71,6 +71,16 @@ if config_env() == :prod do
       Provide the full Ecto URL (ecto://USER:PASS@HOST:PORT/DB) for releases.
       """
 
+  database_host = URI.parse(database_url).host
+
+  if database_host in ["localhost", "127.0.0.1", "::1"] do
+    raise """
+    DATABASE_URL points to #{database_host}, which is invalid for production deployments.
+    Set DATABASE_URL to your managed Postgres host (for Railway, link the Postgres service
+    and map its connection string into this service's DATABASE_URL variable).
+    """
+  end
+
   # Railway (and many managed Postgres hosts) require SSL. Default to true but
   # allow operators to opt out via DATABASE_SSL=false when the host doesn't
   # support it or the URL already encodes sslmode.
