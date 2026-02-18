@@ -622,9 +622,9 @@ defmodule FastCheck.TickeraClient do
     per_page = max(1, per_page)
 
     case get_tickets_info(site_url, api_key, per_page, 1) do
-      {:ok, %{"data" => data} = first_resp} ->
-        additional = Map.get(first_resp, "additional", %{})
-        total_count = Map.get(additional, "results_count") || length(data)
+      {:ok, first_resp} ->
+        {data, additional} = extract_tickets_page(first_resp)
+        total_count = extract_results_count(additional, data)
 
         total_pages =
           total_count
@@ -661,27 +661,47 @@ defmodule FastCheck.TickeraClient do
   """
   @spec parse_attendee(map()) :: map()
   def parse_attendee(ticket_data) when is_map(ticket_data) do
+    ticket_data = extract_ticket_data(ticket_data)
+
     custom_fields =
       ticket_data
-      |> Map.get("custom_fields", [])
-      |> List.wrap()
+      |> Map.get("custom_fields", Map.get(ticket_data, :custom_fields, []))
+      |> normalize_custom_fields()
 
     {email, ticket_type, custom_map} =
-      Enum.reduce(custom_fields, {nil, nil, []}, fn field, {email_acc, type_acc, acc} ->
-        name = Map.get(field, "name") || Map.get(field, "field")
-        value = Map.get(field, "value")
-        normalized = %{name: name, value: value}
+      Enum.reduce(custom_fields, {nil, nil, %{}}, fn {name, value}, {email_acc, type_acc, acc} ->
+        normalized_name = normalize_custom_field_name(name)
+        normalized_value = normalize_custom_field_value(value)
 
-        email_acc = email_acc || email_from_field(name, value)
-        type_acc = type_acc || ticket_type_from_field(name, value)
+        email_acc = email_acc || email_from_field(normalized_name, normalized_value)
+        type_acc = type_acc || ticket_type_from_field(normalized_name, normalized_value)
 
-        {email_acc, type_acc, [normalized | acc]}
+        updated_acc =
+          if is_binary(normalized_name) and normalized_name != "" do
+            Map.put(acc, normalized_name, normalized_value)
+          else
+            acc
+          end
+
+        {email_acc, type_acc, updated_acc}
       end)
 
     %{
-      ticket_code: Map.get(ticket_data, "ticket_code"),
-      first_name: Map.get(ticket_data, "first_name"),
-      last_name: Map.get(ticket_data, "last_name"),
+      ticket_code:
+        Map.get(ticket_data, "ticket_code") ||
+          Map.get(ticket_data, :ticket_code) ||
+          Map.get(ticket_data, "checksum") ||
+          Map.get(ticket_data, :checksum),
+      first_name:
+        Map.get(ticket_data, "first_name") ||
+          Map.get(ticket_data, :first_name) ||
+          Map.get(ticket_data, "buyer_first") ||
+          Map.get(ticket_data, :buyer_first),
+      last_name:
+        Map.get(ticket_data, "last_name") ||
+          Map.get(ticket_data, :last_name) ||
+          Map.get(ticket_data, "buyer_last") ||
+          Map.get(ticket_data, :buyer_last),
       email: email,
       ticket_type_id:
         ticket_data
@@ -691,10 +711,15 @@ defmodule FastCheck.TickeraClient do
           id -> id
         end
         |> normalize_ticket_type_id_field(),
-      ticket_type: ticket_type || Map.get(ticket_data, "ticket_type"),
+      ticket_type:
+        ticket_type ||
+          Map.get(ticket_data, "ticket_type") ||
+          Map.get(ticket_data, :ticket_type),
       allowed_checkins:
-        Map.get(ticket_data, "allowed_checkins") || Map.get(ticket_data, "checkin_limit"),
-      custom_fields: Enum.reverse(custom_map)
+        Map.get(ticket_data, "allowed_checkins") ||
+          Map.get(ticket_data, :allowed_checkins) ||
+          Map.get(ticket_data, "checkin_limit"),
+      custom_fields: custom_map
     }
   end
 
@@ -738,7 +763,8 @@ defmodule FastCheck.TickeraClient do
     :timer.sleep(@pagination_delay)
 
     case get_tickets_info(site_url, api_key, per_page, page) do
-      {:ok, %{"data" => data}} ->
+      {:ok, response} ->
+        {data, _additional} = extract_tickets_page(response)
         parsed = Enum.map(data, &parse_attendee/1)
         maybe_callback(callback, page, total_pages, length(data))
         new_acc = Enum.reduce(parsed, acc, fn attendee, acc -> [attendee | acc] end)
@@ -751,6 +777,105 @@ defmodule FastCheck.TickeraClient do
         {:error, "HTTP error: unexpected response #{inspect(other)}", Enum.reverse(acc)}
     end
   end
+
+  defp extract_tickets_page(%{} = response) do
+    data =
+      case Map.get(response, "data", Map.get(response, :data)) do
+        list when is_list(list) -> list
+        %{} = map -> [map]
+        _ -> []
+      end
+
+    additional = Map.get(response, "additional", Map.get(response, :additional, %{}))
+    {Enum.map(data, &extract_ticket_data/1), additional}
+  end
+
+  defp extract_tickets_page(response) when is_list(response) do
+    Enum.reduce(response, {[], %{}}, fn item, {acc_data, acc_additional} ->
+      cond do
+        is_map(item) and is_map(Map.get(item, "data")) ->
+          data_map = Map.get(item, "data")
+          additional = Map.get(item, "additional")
+          merged_additional = merge_additional(acc_additional, additional)
+          {[extract_ticket_data(data_map) | acc_data], merged_additional}
+
+        is_map(item) and Map.has_key?(item, "checksum") ->
+          {[extract_ticket_data(item) | acc_data], acc_additional}
+
+        is_map(item) and is_map(Map.get(item, "additional")) ->
+          {acc_data, merge_additional(acc_additional, Map.get(item, "additional"))}
+
+        true ->
+          {acc_data, acc_additional}
+      end
+    end)
+    |> then(fn {data, additional} -> {Enum.reverse(data), additional} end)
+  end
+
+  defp extract_tickets_page(_response), do: {[], %{}}
+
+  defp extract_ticket_data(%{"data" => %{} = inner}), do: inner
+  defp extract_ticket_data(%{data: %{} = inner}), do: inner
+  defp extract_ticket_data(%{} = item), do: item
+  defp extract_ticket_data(_item), do: %{}
+
+  defp merge_additional(acc, %{} = additional), do: Map.merge(acc, additional)
+  defp merge_additional(acc, _), do: acc
+
+  defp extract_results_count(additional, data) do
+    additional
+    |> Map.get("results_count", Map.get(additional, :results_count))
+    |> coerce_integer()
+    |> case do
+      count when count > 0 -> count
+      _ -> length(data)
+    end
+  end
+
+  defp normalize_custom_fields(fields) when is_list(fields) do
+    fields
+    |> Enum.map(&normalize_custom_field/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_custom_fields(%{} = fields) do
+    fields
+    |> Enum.map(fn {name, value} ->
+      {normalize_custom_field_name(name), normalize_custom_field_value(value)}
+    end)
+  end
+
+  defp normalize_custom_fields(_), do: []
+
+  defp normalize_custom_field(%{} = field) do
+    name =
+      Map.get(field, "name") ||
+        Map.get(field, "field") ||
+        Map.get(field, :name) ||
+        Map.get(field, :field)
+
+    value = Map.get(field, "value") || Map.get(field, :value)
+    {normalize_custom_field_name(name), normalize_custom_field_value(value)}
+  end
+
+  defp normalize_custom_field([name, value]) do
+    {normalize_custom_field_name(name), normalize_custom_field_value(value)}
+  end
+
+  defp normalize_custom_field({name, value}) do
+    {normalize_custom_field_name(name), normalize_custom_field_value(value)}
+  end
+
+  defp normalize_custom_field(_), do: nil
+
+  defp normalize_custom_field_name(name) when is_binary(name), do: String.trim(name)
+  defp normalize_custom_field_name(name) when is_atom(name), do: Atom.to_string(name)
+  defp normalize_custom_field_name(name) when is_number(name), do: to_string(name)
+  defp normalize_custom_field_name(_), do: ""
+
+  defp normalize_custom_field_value(nil), do: nil
+  defp normalize_custom_field_value(value) when is_binary(value), do: String.trim(value)
+  defp normalize_custom_field_value(value), do: value
 
   defp handle_attendee_fallback(site_url, api_key, reason, partial \\ []) do
     case Fallback.maybe_use_cached(site_url, api_key, reason) do
