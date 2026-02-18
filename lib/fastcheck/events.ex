@@ -294,7 +294,7 @@ defmodule FastCheck.Events do
 
       {:error, reason} ->
         Logger.error("Unable to create event: #{inspect(reason)}")
-        {:error, to_string(reason)}
+        {:error, credential_error_message(reason)}
     end
   end
 
@@ -410,8 +410,8 @@ defmodule FastCheck.Events do
                 :ok ->
                   attrs
 
-                {:error, _reason} ->
-                  Map.put(attrs, :_validation_error, "Invalid API key or site URL")
+                {:error, reason} ->
+                  Map.put(attrs, :_validation_error, credential_error_message(reason))
               end
             else
               attrs
@@ -812,11 +812,57 @@ defmodule FastCheck.Events do
   defp ensure_credentials(site_url, api_key) when is_binary(site_url) and is_binary(api_key) do
     case TickeraClient.check_credentials(site_url, api_key) do
       {:ok, _resp} -> :ok
-      {:error, _reason} -> {:error, :invalid_credentials}
+
+      {:error, {:http_error, code, _body}}
+      when code in [401, 403, 404] ->
+        {:error, :invalid_credentials}
+
+      {:error, {:http_error, _code, _body} = reason} ->
+        {:error, {:credential_check_failed, reason}}
+
+      {:error, {:network_timeout, _reason} = reason} ->
+        {:error, {:credential_check_failed, reason}}
+
+      {:error, {:network_error, _reason} = reason} ->
+        {:error, {:credential_check_failed, reason}}
+
+      {:error, {:exception, _message} = reason} ->
+        {:error, {:credential_check_failed, reason}}
+
+      {:error, reason} ->
+        {:error, {:credential_check_failed, reason}}
     end
   end
 
   defp ensure_credentials(_site_url, _api_key), do: {:error, :invalid_credentials}
+
+  defp credential_error_message(:invalid_credentials),
+    do: "Invalid API key or site URL mismatch"
+
+  defp credential_error_message({:credential_check_failed, {:exception, message}})
+       when is_binary(message) do
+    "Tickera request configuration error: #{message}"
+  end
+
+  defp credential_error_message({:credential_check_failed, {:network_timeout, _reason}}) do
+    "Tickera request timed out. Verify the site URL and network reachability."
+  end
+
+  defp credential_error_message({:credential_check_failed, {:network_error, _reason}}) do
+    "Tickera network error. Verify the site URL (include https://) and connectivity."
+  end
+
+  defp credential_error_message({:credential_check_failed, {:http_error, code, _body}})
+       when is_integer(code) do
+    "Tickera rejected credential check with HTTP #{code}"
+  end
+
+  defp credential_error_message({:credential_check_failed, reason}) do
+    "Tickera credential check failed: #{inspect(reason)}"
+  end
+
+  defp credential_error_message(reason) when is_binary(reason), do: reason
+  defp credential_error_message(reason), do: inspect(reason)
 
   defp fetch_attr(attrs, key) when is_map(attrs) and is_binary(key) do
     cond do

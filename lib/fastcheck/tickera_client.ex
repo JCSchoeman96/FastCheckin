@@ -1307,6 +1307,8 @@ defmodule FastCheck.TickeraClient do
   defp ensure_map(_value), do: %{}
 
   defp request(method, url, opts) do
+    opts = normalize_req_timeouts(opts)
+
     req_opts =
       opts
       |> Keyword.put(:method, method)
@@ -1316,6 +1318,24 @@ defmodule FastCheck.TickeraClient do
     req = Req.new(req_opts)
 
     request_fun().(req)
+  end
+
+  defp normalize_req_timeouts(opts) when is_list(opts) do
+    case Keyword.pop(opts, :connect_timeout) do
+      {nil, remaining_opts} ->
+        remaining_opts
+
+      {timeout, remaining_opts} when is_integer(timeout) and timeout > 0 ->
+        connect_options =
+          remaining_opts
+          |> Keyword.get(:connect_options, [])
+          |> Keyword.put_new(:timeout, timeout)
+
+        Keyword.put(remaining_opts, :connect_options, connect_options)
+
+      {_timeout, remaining_opts} ->
+        remaining_opts
+    end
   end
 
   defp request_fun do
