@@ -141,7 +141,7 @@ defmodule FastCheckWeb.Components.Popover do
         <span :for={trigger <- @trigger} :if={@trigger != []} class={trigger[:class]}>
           {render_slot(trigger)}
         </span>
-         <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
+        <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
       </span>
       <span
         id={"#{@id}-content"}
@@ -196,7 +196,7 @@ defmodule FastCheckWeb.Components.Popover do
         <span :for={trigger <- @trigger} :if={@trigger != []} class={trigger[:class]}>
           {render_slot(trigger)}
         </span>
-         <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
+        <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
       </div>
 
       <div

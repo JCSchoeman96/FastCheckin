@@ -393,10 +393,10 @@ defmodule FastCheckWeb.DashboardLive do
         <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p class="text-sm uppercase tracking-widest text-slate-500">Control Center</p>
-            
+
             <h1 class="text-2xl sm:text-3xl font-semibold text-slate-900">FastCheck Dashboard</h1>
           </div>
-          
+
           <div class="flex items-center gap-3">
             <button
               type="button"
@@ -407,17 +407,17 @@ defmodule FastCheckWeb.DashboardLive do
             </button>
           </div>
         </div>
-        
+
         <div :if={@sync_status} class="rounded-xl bg-white p-6 shadow">
           <div class="flex flex-col gap-4">
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm font-medium text-slate-600">Sync status</p>
-                
+
                 <p class="text-base font-semibold text-slate-900">{@sync_status}</p>
               </div>
             </div>
-            
+
             <div :if={@sync_progress} class="w-full rounded-full bg-slate-100 p-1">
               <div
                 class="h-3 rounded-full bg-blue-600 transition-all"
@@ -429,17 +429,17 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
         </div>
-        
+
         <div :if={@show_new_event_form} class="rounded-2xl bg-white p-8 shadow">
           <div class="flex items-center justify-between">
             <div>
               <h2 class="text-2xl font-semibold text-slate-900">Create new event</h2>
-              
+
               <p class="text-sm text-slate-500">
                 Connect a Tickera event by providing its credentials and entrance details.
               </p>
             </div>
-            
+
             <button
               type="button"
               class="text-sm font-medium text-slate-500 hover:text-slate-800"
@@ -448,7 +448,7 @@ defmodule FastCheckWeb.DashboardLive do
               Cancel
             </button>
           </div>
-          
+
           <.form
             for={@form}
             phx-submit="create_event"
@@ -508,17 +508,17 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </.form>
         </div>
-        
+
         <div class="space-y-4">
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="text-2xl font-semibold text-slate-900">Events</h2>
-              
+
               <p class="text-sm text-slate-500">
                 Manage entrances, sync attendees, and launch scanners.
               </p>
             </div>
-            
+
             <div class="flex-1 sm:max-w-md">
               <.form
                 for={to_form(%{"query" => @search_query})}
@@ -552,7 +552,7 @@ defmodule FastCheckWeb.DashboardLive do
               </.form>
             </div>
           </div>
-          
+
           <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             <div
               :for={event <- @filtered_events}
@@ -567,10 +567,10 @@ defmodule FastCheckWeb.DashboardLive do
                   <p class="text-sm uppercase tracking-wide text-slate-400">
                     {event.location || "Unassigned"}
                   </p>
-                  
+
                   <h3 class="mt-1 text-xl font-semibold text-slate-900">{event.name}</h3>
                 </div>
-                
+
                 <div class="flex flex-col items-end gap-2 text-right">
                   <span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
                     {event.entrance_name || "Entrance"}
@@ -583,27 +583,27 @@ defmodule FastCheckWeb.DashboardLive do
                   </span>
                 </div>
               </div>
-              
+
               <div class="mt-6 grid grid-cols-2 gap-4 text-center md:grid-cols-3">
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Total tickets</p>
-                  
+
                   <p class="text-2xl font-semibold text-slate-900">{event.total_tickets || 0}</p>
                 </div>
-                
+
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Checked in</p>
-                  
+
                   <p class="text-2xl font-semibold text-green-600">{event.checked_in_count || 0}</p>
                 </div>
-                
+
                 <div class="rounded-xl bg-slate-50 p-4">
                   <p class="text-xs uppercase tracking-wide text-slate-500">Total attendees</p>
-                  
+
                   <p class="text-2xl font-semibold text-slate-900">{event.attendee_count || 0}</p>
                 </div>
               </div>
-              
+
               <div class="mt-6 flex flex-wrap gap-3">
                 <div
                   :if={@selected_event_id != event.id || @sync_progress == nil}
@@ -641,7 +641,7 @@ defmodule FastCheckWeb.DashboardLive do
                     Incremental Sync
                   </button>
                 </div>
-                
+
                 <div
                   :if={@selected_event_id == event.id && @sync_progress != nil}
                   class="flex-1 flex gap-2"
@@ -673,7 +673,7 @@ defmodule FastCheckWeb.DashboardLive do
                     ✕ Cancel
                   </button>
                 </div>
-                
+
                 <a
                   href={if lifecycle_state == :archived, do: "#", else: "/scan/#{event.id}"}
                   class={[
@@ -708,7 +708,7 @@ defmodule FastCheckWeb.DashboardLive do
                     Export Check-ins
                   </a>
                 </div>
-                
+
                 <button
                   :if={lifecycle_state != :archived}
                   type="button"
@@ -736,28 +736,28 @@ defmodule FastCheckWeb.DashboardLive do
                 </p>
               </div>
             </div>
-            
+
             <div
               :if={Enum.empty?(@filtered_events) && @search_query != ""}
               class="col-span-full rounded-2xl border border-dashed border-slate-300 p-10 text-center"
             >
               <p class="text-lg font-semibold text-slate-700">No events found</p>
-              
+
               <p class="mt-2 text-sm text-slate-500">
                 No events match "{@search_query}". Try a different search term.
               </p>
             </div>
-            
+
             <div
               :if={Enum.empty?(@filtered_events) && @search_query == ""}
               class="col-span-full rounded-2xl border border-dashed border-slate-300 p-10 text-center"
             >
               <p class="text-lg font-semibold text-slate-700">No events yet</p>
-              
+
               <p class="mt-2 text-sm text-slate-500">
                 Create your first event to start syncing attendees and scanning tickets.
               </p>
-              
+
               <button
                 type="button"
                 phx-click="show_new_event_form"
@@ -768,7 +768,7 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
         </div>
-        
+
         <div
           :if={@editing_event_id}
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -781,7 +781,7 @@ defmodule FastCheckWeb.DashboardLive do
           >
             <div class="mb-6 flex items-center justify-between">
               <h2 class="text-2xl font-semibold text-slate-900">Edit Event</h2>
-              
+
               <button
                 type="button"
                 phx-click="hide_edit_form"
@@ -798,7 +798,7 @@ defmodule FastCheckWeb.DashboardLive do
                 </svg>
               </button>
             </div>
-            
+
             <.form
               :if={@edit_form}
               for={@edit_form}
@@ -831,7 +831,7 @@ defmodule FastCheckWeb.DashboardLive do
                   <strong>Note:</strong>
                   To update the API key, enter a new one below. Leave blank to keep current key.
                 </p>
-                
+
                 <input
                   type="password"
                   name="event[tickera_api_key_encrypted]"
@@ -839,7 +839,7 @@ defmodule FastCheckWeb.DashboardLive do
                   class="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-              
+
               <.input
                 field={@edit_form[:mobile_access_code]}
                 type="password"
@@ -877,7 +877,7 @@ defmodule FastCheckWeb.DashboardLive do
             </.form>
           </div>
         </div>
-        
+
         <div
           :if={@viewing_sync_history_for}
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -890,7 +890,7 @@ defmodule FastCheckWeb.DashboardLive do
           >
             <div class="mb-6 flex items-center justify-between">
               <h2 class="text-2xl font-semibold text-slate-900">Sync History</h2>
-              
+
               <button
                 type="button"
                 phx-click="hide_sync_history"
@@ -907,11 +907,11 @@ defmodule FastCheckWeb.DashboardLive do
                 </svg>
               </button>
             </div>
-            
+
             <div :if={@sync_history == []} class="text-center py-8">
               <p class="text-slate-500">No sync history available for this event.</p>
             </div>
-            
+
             <div :if={@sync_history != []} class="space-y-3">
               <%= for log <- @sync_history do %>
                 <div class="rounded-lg border border-slate-200 p-4">
@@ -923,7 +923,7 @@ defmodule FastCheckWeb.DashboardLive do
                         </span>
                         <span class="text-sm text-slate-500">{format_datetime(log.started_at)}</span>
                       </div>
-                      
+
                       <div class="mt-2 grid grid-cols-2 gap-4 text-sm">
                         <div>
                           <span class="text-slate-500">Attendees synced:</span>
@@ -931,7 +931,7 @@ defmodule FastCheckWeb.DashboardLive do
                             {log.attendees_synced || 0}
                           </span>
                         </div>
-                        
+
                         <div>
                           <span class="text-slate-500">Pages processed:</span>
                           <span class="ml-2 font-semibold text-slate-900">
@@ -940,14 +940,14 @@ defmodule FastCheckWeb.DashboardLive do
                               else: "#{log.pages_processed || 0}"}
                           </span>
                         </div>
-                        
+
                         <div :if={log.duration_ms}>
                           <span class="text-slate-500">Duration:</span>
                           <span class="ml-2 font-semibold text-slate-900">
                             {format_duration(log.duration_ms)}
                           </span>
                         </div>
-                        
+
                         <div :if={log.completed_at}>
                           <span class="text-slate-500">Completed:</span>
                           <span class="ml-2 font-semibold text-slate-900">
@@ -955,7 +955,7 @@ defmodule FastCheckWeb.DashboardLive do
                           </span>
                         </div>
                       </div>
-                      
+
                       <p :if={log.error_message} class="mt-2 text-sm text-red-600">
                         Error: {log.error_message}
                       </p>
@@ -1021,7 +1021,9 @@ defmodule FastCheckWeb.DashboardLive do
           event_id,
           fn page, total, count ->
             send(parent, {:sync_progress, page, total, count})
-          end, incremental: incremental)
+          end,
+          incremental: incremental
+        )
 
       if match?({:error, _}, result) do
         {:error, reason} = result

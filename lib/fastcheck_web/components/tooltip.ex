@@ -165,7 +165,7 @@ defmodule FastCheckWeb.Components.Tooltip do
         <span :for={content <- @content} :if={@content != []} class={content[:class]}>
           {render_slot(content)}
         </span>
-         <span :if={@content == [] && @text != ""}>{@text}</span>
+        <span :if={@content == [] && @text != ""}>{@text}</span>
         <span :if={@trigger == [] && @inner_block != []}>{render_slot(@inner_block)}</span>
       </span>
     </span>

@@ -227,7 +227,7 @@ defmodule FastCheckWeb.Components.Button do
       <span :if={@inner_block && render_slot(@inner_block)} class={[@content_class]}>
         {render_slot(@inner_block)}
       </span>
-       <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
+      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
@@ -428,7 +428,7 @@ defmodule FastCheckWeb.Components.Button do
       <span :if={(@inner_block && render_slot(@inner_block)) || @title} class={[@content_class]}>
         {render_slot(@inner_block) || @title}
       </span>
-       <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
+      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} class={@icon_class} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
@@ -469,7 +469,7 @@ defmodule FastCheckWeb.Components.Button do
       <span :if={(@inner_block && render_slot(@inner_block)) || @title} class={[@content_class]}>
         {render_slot(@inner_block) || @title}
       </span>
-       <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
+      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}
@@ -510,7 +510,7 @@ defmodule FastCheckWeb.Components.Button do
       <span :if={(@inner_block && render_slot(@inner_block)) || @title} class={[@content_class]}>
         {render_slot(@inner_block) || @title}
       </span>
-       <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
+      <.icon :if={icon_position(@icon, @rest) == "right"} name={@icon} />
       <.button_indicator size={@indicator_size} class={@indicator_class} {@rest} />
       <span :for={loading <- @loading} :if={loading[:position] == "end"} class={loading[:class]}>
         {render_slot(loading)}

@@ -232,13 +232,13 @@ defmodule FastCheck.Cache.CacheManager do
 
     :persistent_term.put(@config_key, config)
 
-      case maybe_start_cache(config) do
-        :ok ->
-          :ok
+    case maybe_start_cache(config) do
+      :ok ->
+        :ok
 
-        {:error, reason} ->
-          Logger.error("Cachex failed to start (#{inspect(config.cache_name)}): #{inspect(reason)}")
-      end
+      {:error, reason} ->
+        Logger.error("Cachex failed to start (#{inspect(config.cache_name)}): #{inspect(reason)}")
+    end
 
     :ok = PubSub.subscribe(@pubsub, config.pubsub_topic)
 
