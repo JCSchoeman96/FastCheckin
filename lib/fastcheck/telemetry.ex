@@ -29,7 +29,7 @@ defmodule FastCheck.Telemetry do
     :telemetry.attach(
       "fastcheck-phoenix-endpoint",
       [:phoenix, :endpoint, :stop],
-      &handle_phoenix_endpoint/4,
+      &__MODULE__.handle_phoenix_endpoint/4,
       %{}
     )
 
@@ -37,7 +37,7 @@ defmodule FastCheck.Telemetry do
     :telemetry.attach(
       "fastcheck-phoenix-router",
       [:phoenix, :router_dispatch, :stop],
-      &handle_router_dispatch/4,
+      &__MODULE__.handle_router_dispatch/4,
       %{}
     )
 
@@ -45,7 +45,7 @@ defmodule FastCheck.Telemetry do
     :telemetry.attach(
       "fastcheck-phoenix-router-exception",
       [:phoenix, :router_dispatch, :exception],
-      &handle_router_exception/4,
+      &__MODULE__.handle_router_exception/4,
       %{}
     )
   end
@@ -55,7 +55,7 @@ defmodule FastCheck.Telemetry do
     :telemetry.attach(
       "fastcheck-slow-query-logger",
       [:fastcheck, :repo, :query],
-      &handle_slow_query/4,
+      &__MODULE__.handle_slow_query/4,
       %{}
     )
   end
@@ -65,7 +65,7 @@ defmodule FastCheck.Telemetry do
     :telemetry.attach(
       "fastcheck-rate-limit-counter",
       [:fastcheck, :rate_limit, :blocked],
-      &handle_rate_limit_blocked/4,
+      &__MODULE__.handle_rate_limit_blocked/4,
       %{}
     )
 
@@ -73,7 +73,7 @@ defmodule FastCheck.Telemetry do
     :telemetry.attach(
       "fastcheck-rate-limit-abuse-detector",
       [:fastcheck, :rate_limit, :blocked],
-      &handle_abuse_detection/4,
+      &__MODULE__.handle_abuse_detection/4,
       %{}
     )
   end
