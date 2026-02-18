@@ -3,26 +3,52 @@ import Config
 # ENCRYPTION_KEY is used by FastCheck.Crypto for field-level encryption.
 # Required if you encrypt attendee PII; safe to skip for MVP scanning.
 encryption_key =
-  System.get_env("ENCRYPTION_KEY") ||
-    if config_env() == :prod do
-      IO.warn("ENCRYPTION_KEY is not set — field-level encryption is disabled")
-      nil
-    else
-      "dev fastcheck encryption key dev fastcheck encryption key"
-    end
+  case System.get_env("ENCRYPTION_KEY") do
+    nil ->
+      if config_env() == :prod do
+        raise """
+        environment variable ENCRYPTION_KEY is missing.
+        Generate one with: mix phx.gen.secret
+        """
+      else
+        "dev fastcheck encryption key dev fastcheck encryption key"
+      end
+
+    value ->
+      String.trim(value)
+  end
+
+if config_env() == :prod and byte_size(encryption_key) < 32 do
+  raise """
+  ENCRYPTION_KEY must be at least 32 bytes in production.
+  Generate one with: mix phx.gen.secret
+  """
+end
 
 config :fastcheck, :encryption_key, encryption_key
 
 mobile_token_secret =
-  System.get_env("MOBILE_JWT_SECRET") ||
-    if config_env() == :prod do
-      raise """
-      environment variable MOBILE_JWT_SECRET is missing.
-      Generate a strong shared secret and export it before booting FastCheck.
-      """
-    else
-      "dev fastcheck mobile jwt secret key"
-    end
+  case System.get_env("MOBILE_JWT_SECRET") do
+    nil ->
+      if config_env() == :prod do
+        raise """
+        environment variable MOBILE_JWT_SECRET is missing.
+        Generate a strong shared secret and export it before booting FastCheck.
+        """
+      else
+        "dev fastcheck mobile jwt secret key"
+      end
+
+    value ->
+      String.trim(value)
+  end
+
+if config_env() == :prod and byte_size(mobile_token_secret) < 32 do
+  raise """
+  MOBILE_JWT_SECRET must be at least 32 bytes in production.
+  Generate one with: mix phx.gen.secret
+  """
+end
 
 config :fastcheck, FastCheck.Mobile.Token,
   secret_key: mobile_token_secret,
@@ -100,12 +126,23 @@ if config_env() == :prod do
   # Secrets
   # ---------------------------------------------------------------------------
   secret_key_base =
-    System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      Generate one with: mix phx.gen.secret
-      """
+    case System.get_env("SECRET_KEY_BASE") do
+      nil ->
+        raise """
+        environment variable SECRET_KEY_BASE is missing.
+        Generate one with: mix phx.gen.secret
+        """
 
+      value ->
+        String.trim(value)
+    end
+
+  if byte_size(secret_key_base) < 64 do
+    raise """
+    SECRET_KEY_BASE must be at least 64 bytes in production.
+    Generate one with: mix phx.gen.secret
+    """
+  end
   # ---------------------------------------------------------------------------
   # Endpoint
   # ---------------------------------------------------------------------------
@@ -174,3 +211,4 @@ if sentry_dsn do
     # Sample rate for performance monitoring (0.0 to 1.0)
     traces_sample_rate: 0.1
 end
+
