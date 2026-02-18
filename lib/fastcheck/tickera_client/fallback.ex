@@ -59,6 +59,7 @@ defmodule FastCheck.TickeraClient.Fallback do
   @spec unreachable?(reason()) :: boolean()
   def unreachable?({:server_error, code, _}) when is_integer(code) and code >= 500, do: true
   def unreachable?({:http_error, code, _}) when is_integer(code) and code >= 500, do: true
+  def unreachable?({:http_error, :empty_body, _}), do: true
   def unreachable?({:network_timeout, _}), do: true
 
   def unreachable?({:network_error, reason}) do

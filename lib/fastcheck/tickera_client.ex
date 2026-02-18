@@ -1743,7 +1743,10 @@ defmodule FastCheck.TickeraClient do
 
         if body == "" do
           log_empty_body_response(retry_url, code, raw_body, response_headers, :retry)
-          {:error, {:http_error, :empty_body, ""}}
+
+          headers
+          |> build_empty_body_fallback_headers(url)
+          |> retry_empty_body_request_with_fallback_profile(url)
         else
           decode_json_body(body, retry_url)
         end
@@ -1757,6 +1760,49 @@ defmodule FastCheck.TickeraClient do
       {:error, error} ->
         classified = classify_network_error(error)
         Logger.error("Tickera retry request error: #{inspect(error)}")
+        {:error, classified}
+    end
+  end
+
+  defp retry_empty_body_request_with_fallback_profile(headers, url) do
+    retry_url =
+      url
+      |> ensure_endpoint_trailing_slash()
+      |> add_cache_buster()
+
+    Logger.warning(
+      "Retrying Tickera request with fallback profile after empty body for #{safe_log_url(url)} as #{safe_log_url(retry_url)}"
+    )
+
+    case request(:get, retry_url,
+           headers: headers,
+           connect_timeout: @timeout,
+           receive_timeout: @timeout
+         ) do
+      {:ok, %Response{status: code, body: raw_body, headers: response_headers}}
+      when code in 200..299 ->
+        body = normalize_response_body(raw_body)
+
+        if body == "" do
+          log_empty_body_response(retry_url, code, raw_body, response_headers, :fallback)
+          {:error, {:http_error, :empty_body, empty_body_hint(response_headers)}}
+        else
+          decode_json_body(body, retry_url)
+        end
+
+      {:ok, %Response{status: code, body: body}} ->
+        normalized = normalize_response_body(body)
+        reason = classify_http_status(code, normalized)
+
+        Logger.error(
+          "Tickera fallback-profile request failed (status #{code}): #{body_preview(normalized)}"
+        )
+
+        {:error, reason}
+
+      {:error, error} ->
+        classified = classify_network_error(error)
+        Logger.error("Tickera fallback-profile request error: #{inspect(error)}")
         {:error, classified}
     end
   end
@@ -1776,7 +1822,8 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp log_empty_body_response(url, status, raw_body, response_headers, attempt) do
-    Logger.error("Tickera returned an empty response body",
+    Logger.error(
+      "Tickera returned an empty response body (attempt=#{attempt} status=#{status} content_length=#{header_value(response_headers, "content-length") || "unknown"} content_type=#{header_value(response_headers, "content-type") || "unknown"} server=#{header_value(response_headers, "server") || "unknown"} cf_ray=#{header_value(response_headers, "cf-ray") || "n/a"})",
       url: safe_log_url(url),
       attempt: attempt,
       status: status,
@@ -1793,9 +1840,33 @@ defmodule FastCheck.TickeraClient do
     headers
     |> put_or_replace_header("user-agent", @tickera_user_agent)
     |> put_or_replace_header("accept-language", "en-US,en;q=0.9")
+    |> put_or_replace_header("accept-encoding", "identity")
     |> put_or_replace_header("cache-control", "no-cache")
     |> put_or_replace_header("pragma", "no-cache")
   end
+
+  defp build_empty_body_fallback_headers(headers, url) do
+    headers
+    |> maybe_put_tickera_authorization(url)
+    |> put_or_replace_header("accept", "application/json, text/plain, */*")
+    |> put_or_replace_header("accept-encoding", "identity")
+  end
+
+  defp maybe_put_tickera_authorization(headers, url) do
+    case extract_api_key_from_url(url) do
+      nil -> headers
+      api_key -> put_or_replace_header(headers, "authorization", "Bearer #{api_key}")
+    end
+  end
+
+  defp extract_api_key_from_url(url) when is_binary(url) do
+    case Regex.run(~r{/tc-api/([^/?#]+)/}, url, capture: :all_but_first) do
+      [api_key] when api_key != "" -> api_key
+      _ -> nil
+    end
+  end
+
+  defp extract_api_key_from_url(_url), do: nil
 
   defp put_or_replace_header(headers, key, value) when is_list(headers) do
     downcased_key = String.downcase(key)
@@ -1827,6 +1898,40 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp header_value(_headers, _key), do: nil
+
+  defp ensure_endpoint_trailing_slash(url) when is_binary(url) do
+    uri = URI.parse(url)
+    path = uri.path || ""
+
+    cond do
+      path == "" ->
+        url
+
+      String.ends_with?(path, "/") ->
+        url
+
+      true ->
+        URI.to_string(%{uri | path: "#{path}/"})
+    end
+  rescue
+    _error -> url
+  end
+
+  defp ensure_endpoint_trailing_slash(url), do: url
+
+  defp empty_body_hint(response_headers) do
+    content_length = header_value(response_headers, "content-length") || "unknown"
+    content_type = header_value(response_headers, "content-type") || "unknown"
+    server = header_value(response_headers, "server") || "unknown"
+
+    cf_ray_hint =
+      case header_value(response_headers, "cf-ray") do
+        nil -> ""
+        value -> " cf_ray=#{value}"
+      end
+
+    "Tickera returned HTTP success with an empty body (content_length=#{content_length}, content_type=#{content_type}, server=#{server}).#{cf_ray_hint}"
+  end
 
   defp add_cache_buster(url) when is_binary(url) do
     uri = URI.parse(url)
