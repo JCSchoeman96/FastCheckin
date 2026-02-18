@@ -26,6 +26,18 @@ defmodule FastCheck.EventsTest do
     end
   end
 
+  describe "event_lifecycle_state/1" do
+    test "respects manually archived status even without Tickera dates" do
+      event = %Event{status: "archived", tickera_start_date: nil, tickera_end_date: nil}
+      assert :archived == Events.event_lifecycle_state(event)
+    end
+
+    test "returns unknown when dates are missing and status is not archived" do
+      event = %Event{status: "active", tickera_start_date: nil, tickera_end_date: nil}
+      assert :unknown == Events.event_lifecycle_state(event)
+    end
+  end
+
   describe "get_event_advanced_stats/1" do
     test "returns aggregated metrics" do
       event = insert_event!("Analytics")

@@ -134,6 +134,9 @@ defmodule FastCheck.Events do
     grace_cutoff = grace_period_end(end_time)
 
     cond do
+      event_archived_by_status?(event) ->
+        :archived
+
       is_nil(now) ->
         :unknown
 
@@ -158,6 +161,12 @@ defmodule FastCheck.Events do
   end
 
   def event_lifecycle_state(_, _), do: :unknown
+
+  defp event_archived_by_status?(%Event{status: status}) when is_binary(status) do
+    String.downcase(String.trim(status)) == "archived"
+  end
+
+  defp event_archived_by_status?(_), do: false
 
   @doc """
   Returns `{:ok, state}` when syncing is allowed or `{:error, {:event_archived, message}}`

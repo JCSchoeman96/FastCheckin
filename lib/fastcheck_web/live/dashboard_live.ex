@@ -19,6 +19,7 @@ defmodule FastCheckWeb.DashboardLive do
      socket
      |> assign(:events, events)
      |> assign(:filtered_events, events)
+     |> assign(:events_tab, "active")
      |> assign(:search_query, "")
      |> assign(:selected_event_id, nil)
      |> assign(:show_new_event_form, false)
@@ -48,12 +49,13 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("create_event", %{"event" => event_params}, socket) do
     case Events.create_event(event_params) do
-      {:ok, event} ->
-        updated_events = [event | socket.assigns.events]
+      {:ok, _event} ->
+        refreshed_events = Events.list_events()
 
         {:noreply,
          socket
-         |> assign(:events, updated_events)
+         |> assign(:events, refreshed_events)
+         |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
          |> assign(:show_new_event_form, false)
          |> assign(:sync_status, "Event created successfully")
          |> assign(:form, empty_event_form())}
@@ -124,6 +126,14 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("switch_events_tab", %{"tab" => tab}, socket)
+      when tab in ["active", "archived"] do
+    {:noreply, assign(socket, :events_tab, tab)}
+  end
+
+  def handle_event("switch_events_tab", _params, socket), do: {:noreply, socket}
+
+  @impl true
   def handle_event("archive_event", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
          {:ok, _event} <- Events.archive_event(event_id) do
@@ -133,6 +143,7 @@ defmodule FastCheckWeb.DashboardLive do
        socket
        |> assign(:events, refreshed_events)
        |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+       |> assign(:selected_event_id, nil)
        |> assign(:sync_status, "Event archived successfully")}
     else
       {:error, reason} ->
@@ -155,6 +166,7 @@ defmodule FastCheckWeb.DashboardLive do
        socket
        |> assign(:events, refreshed_events)
        |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+       |> assign(:events_tab, "active")
        |> assign(:sync_status, "Event unarchived successfully")}
     else
       {:error, reason} ->
@@ -381,6 +393,7 @@ defmodule FastCheckWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:events, refreshed_events)
+     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
      |> assign(:sync_progress, nil)
      |> assign(:sync_start_time, nil)
      |> assign(:sync_timing_data, [])
@@ -392,7 +405,16 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :search_form, to_form(%{"query" => assigns.search_query}))
+    visible_events = events_for_tab(assigns.filtered_events, assigns.events_tab)
+    active_events_count = count_events_for_tab(assigns.filtered_events, "active")
+    archived_events_count = count_events_for_tab(assigns.filtered_events, "archived")
+
+    assigns =
+      assigns
+      |> assign(:search_form, to_form(%{"query" => assigns.search_query}))
+      |> assign(:visible_events, visible_events)
+      |> assign(:active_events_count, active_events_count)
+      |> assign(:archived_events_count, archived_events_count)
 
     ~H"""
     <Layouts.app flash={@flash}>
@@ -575,9 +597,37 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
 
+          <div class="inline-flex w-full sm:w-auto rounded-xl border border-fc-border bg-fc-surface-overlay p-1">
+            <.button
+              id="events-tab-active"
+              type="button"
+              phx-click="switch_events_tab"
+              phx-value-tab="active"
+              color={if(@events_tab == "active", do: "primary", else: "natural")}
+              variant={if(@events_tab == "active", do: "shadow", else: "transparent")}
+              size="small"
+              class="flex-1 sm:flex-none"
+            >
+              Active ({@active_events_count})
+            </.button>
+
+            <.button
+              id="events-tab-archived"
+              type="button"
+              phx-click="switch_events_tab"
+              phx-value-tab="archived"
+              color={if(@events_tab == "archived", do: "primary", else: "natural")}
+              variant={if(@events_tab == "archived", do: "shadow", else: "transparent")}
+              size="small"
+              class="flex-1 sm:flex-none"
+            >
+              Archived ({@archived_events_count})
+            </.button>
+          </div>
+
           <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             <.card
-              :for={event <- @filtered_events}
+              :for={event <- @visible_events}
               variant="outline"
               color="natural"
               rounded="large"
@@ -586,6 +636,7 @@ defmodule FastCheckWeb.DashboardLive do
             >
               <.card_content>
                 <% lifecycle_state = Events.event_lifecycle_state(event) %>
+                <% archived_event = archived_event?(event) %>
 
                 <div class="flex items-start justify-between gap-3">
                   <div>
@@ -637,192 +688,178 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
 
                 <div class="mt-6 space-y-3">
-                  <div
-                    :if={@selected_event_id != event.id || @sync_progress == nil}
-                    class="grid gap-2 cq-card:grid-cols-2"
-                  >
+                  <div :if={!archived_event} class="space-y-3">
+                    <div
+                      :if={@selected_event_id != event.id || @sync_progress == nil}
+                      class="grid gap-2 cq-card:grid-cols-2"
+                    >
+                      <.button
+                        id={"full-sync-#{event.id}"}
+                        type="button"
+                        color="secondary"
+                        variant="shadow"
+                        full_width
+                        phx-click="start_sync"
+                        phx-value-event_id={event.id}
+                        phx-value-incremental="false"
+                        phx-disable-with="Syncing..."
+                        disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                      >
+                        Full sync
+                      </.button>
+
+                      <.button
+                        id={"incremental-sync-#{event.id}"}
+                        type="button"
+                        color="success"
+                        variant="shadow"
+                        full_width
+                        phx-click="start_sync"
+                        phx-value-event_id={event.id}
+                        phx-value-incremental="true"
+                        phx-disable-with="Syncing..."
+                        disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                        title="Only sync new or updated attendees"
+                      >
+                        Incremental sync
+                      </.button>
+                    </div>
+
+                    <div
+                      :if={@selected_event_id == event.id && @sync_progress != nil}
+                      class="grid gap-2 cq-card:grid-cols-3"
+                    >
+                      <.button
+                        :if={!@sync_paused}
+                        id={"pause-sync-#{event.id}"}
+                        type="button"
+                        phx-click="pause_sync"
+                        phx-value-event_id={event.id}
+                        color="warning"
+                        variant="shadow"
+                        full_width
+                      >
+                        Pause
+                      </.button>
+
+                      <.button
+                        :if={@sync_paused}
+                        id={"resume-sync-#{event.id}"}
+                        type="button"
+                        phx-click="resume_sync"
+                        phx-value-event_id={event.id}
+                        color="success"
+                        variant="shadow"
+                        full_width
+                      >
+                        Resume
+                      </.button>
+
+                      <.button
+                        id={"cancel-sync-#{event.id}"}
+                        type="button"
+                        phx-click="cancel_sync"
+                        phx-value-event_id={event.id}
+                        color="danger"
+                        variant="shadow"
+                        full_width
+                      >
+                        Cancel
+                      </.button>
+                    </div>
+
+                    <div class="grid gap-2 cq-card:grid-cols-2">
+                      <.button_link
+                        navigate={~p"/scan/#{event.id}"}
+                        variant="bordered"
+                        color="secondary"
+                        full_width
+                      >
+                        Open scanner
+                      </.button_link>
+
+                      <.button
+                        id={"show-sync-history-#{event.id}"}
+                        type="button"
+                        phx-click="show_sync_history"
+                        phx-value-event_id={event.id}
+                        variant="bordered"
+                        color="natural"
+                        full_width
+                      >
+                        Sync history
+                      </.button>
+                    </div>
+
                     <.button
-                      id={"full-sync-#{event.id}"}
+                      id={"show-edit-event-#{event.id}"}
                       type="button"
+                      phx-click="show_edit_form"
+                      phx-value-event_id={event.id}
+                      variant="bordered"
                       color="secondary"
-                      variant="shadow"
-                      full_width
-                      phx-click="start_sync"
-                      phx-value-event_id={event.id}
-                      phx-value-incremental="false"
-                      phx-disable-with="Syncing..."
-                      disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                    >
-                      Full sync
-                    </.button>
-
-                    <.button
-                      id={"incremental-sync-#{event.id}"}
-                      type="button"
-                      color="success"
-                      variant="shadow"
-                      full_width
-                      phx-click="start_sync"
-                      phx-value-event_id={event.id}
-                      phx-value-incremental="true"
-                      phx-disable-with="Syncing..."
-                      disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                      title="Only sync new or updated attendees"
-                    >
-                      Incremental sync
-                    </.button>
-                  </div>
-
-                  <div
-                    :if={@selected_event_id == event.id && @sync_progress != nil}
-                    class="grid gap-2 cq-card:grid-cols-3"
-                  >
-                    <.button
-                      :if={!@sync_paused}
-                      id={"pause-sync-#{event.id}"}
-                      type="button"
-                      phx-click="pause_sync"
-                      phx-value-event_id={event.id}
-                      color="warning"
-                      variant="shadow"
                       full_width
                     >
-                      Pause
+                      Edit event
                     </.button>
 
-                    <.button
-                      :if={@sync_paused}
-                      id={"resume-sync-#{event.id}"}
-                      type="button"
-                      phx-click="resume_sync"
-                      phx-value-event_id={event.id}
-                      color="success"
-                      variant="shadow"
-                      full_width
-                    >
-                      Resume
-                    </.button>
+                    <div class="grid gap-2 cq-card:grid-cols-2">
+                      <.button_link
+                        href={~p"/export/attendees/#{event.id}"}
+                        variant="bordered"
+                        color="success"
+                        full_width
+                      >
+                        Export attendees
+                      </.button_link>
+
+                      <.button_link
+                        href={~p"/export/check-ins/#{event.id}"}
+                        variant="bordered"
+                        color="success"
+                        full_width
+                      >
+                        Export check-ins
+                      </.button_link>
+                    </div>
 
                     <.button
-                      id={"cancel-sync-#{event.id}"}
+                      id={"archive-event-#{event.id}"}
                       type="button"
-                      phx-click="cancel_sync"
+                      phx-click="archive_event"
                       phx-value-event_id={event.id}
+                      variant="bordered"
                       color="danger"
-                      variant="shadow"
                       full_width
+                      data-confirm="Archive this event? Archived events cannot be synced or scanned."
                     >
-                      Cancel
+                      Archive event
                     </.button>
                   </div>
 
-                  <div class="grid gap-2 cq-card:grid-cols-2">
-                    <.button_link
-                      :if={lifecycle_state != :archived}
-                      navigate={~p"/scan/#{event.id}"}
-                      variant="bordered"
-                      color="secondary"
-                      full_width
-                    >
-                      Open scanner
-                    </.button_link>
-
+                  <div :if={archived_event} class="space-y-2">
                     <.button
-                      :if={lifecycle_state == :archived}
+                      id={"unarchive-event-#{event.id}"}
                       type="button"
-                      variant="bordered"
-                      color="natural"
-                      full_width
-                      disabled
-                    >
-                      Open scanner
-                    </.button>
-
-                    <.button
-                      id={"show-sync-history-#{event.id}"}
-                      type="button"
-                      phx-click="show_sync_history"
+                      phx-click="unarchive_event"
                       phx-value-event_id={event.id}
                       variant="bordered"
-                      color="natural"
+                      color="success"
                       full_width
                     >
-                      Sync history
+                      Unarchive event
                     </.button>
+
+                    <p class="text-xs text-danger-light dark:text-danger-dark">
+                      This event is archived. Unarchive to restore sync and scanner access.
+                    </p>
                   </div>
-
-                  <.button
-                    :if={lifecycle_state != :archived}
-                    id={"show-edit-event-#{event.id}"}
-                    type="button"
-                    phx-click="show_edit_form"
-                    phx-value-event_id={event.id}
-                    variant="bordered"
-                    color="secondary"
-                    full_width
-                  >
-                    Edit event
-                  </.button>
-
-                  <div :if={lifecycle_state != :archived} class="grid gap-2 cq-card:grid-cols-2">
-                    <.button_link
-                      href={~p"/export/attendees/#{event.id}"}
-                      variant="bordered"
-                      color="success"
-                      full_width
-                    >
-                      Export attendees
-                    </.button_link>
-
-                    <.button_link
-                      href={~p"/export/check-ins/#{event.id}"}
-                      variant="bordered"
-                      color="success"
-                      full_width
-                    >
-                      Export check-ins
-                    </.button_link>
-                  </div>
-
-                  <.button
-                    :if={lifecycle_state != :archived}
-                    id={"archive-event-#{event.id}"}
-                    type="button"
-                    phx-click="archive_event"
-                    phx-value-event_id={event.id}
-                    variant="bordered"
-                    color="danger"
-                    full_width
-                    data-confirm="Archive this event? Archived events cannot be synced or scanned."
-                  >
-                    Archive event
-                  </.button>
-
-                  <.button
-                    :if={lifecycle_state == :archived}
-                    id={"unarchive-event-#{event.id}"}
-                    type="button"
-                    phx-click="unarchive_event"
-                    phx-value-event_id={event.id}
-                    variant="bordered"
-                    color="success"
-                    full_width
-                  >
-                    Unarchive event
-                  </.button>
-
-                  <p
-                    :if={lifecycle_state == :archived}
-                    class="text-xs text-danger-light dark:text-danger-dark"
-                  >
-                    Scanning disabled for archived events.
-                  </p>
                 </div>
               </.card_content>
             </.card>
 
             <.card
-              :if={Enum.empty?(@filtered_events) && @search_query != ""}
+              :if={Enum.empty?(@visible_events) && @search_query != ""}
               variant="outline"
               color="natural"
               rounded="large"
@@ -836,7 +873,7 @@ defmodule FastCheckWeb.DashboardLive do
             </.card>
 
             <.card
-              :if={Enum.empty?(@filtered_events) && @search_query == ""}
+              :if={Enum.empty?(@visible_events) && @search_query == ""}
               variant="outline"
               color="natural"
               rounded="large"
@@ -844,20 +881,27 @@ defmodule FastCheckWeb.DashboardLive do
               class="col-span-full text-center"
             >
               <.card_content>
-                <p class="text-lg font-semibold text-fc-text-primary">No events yet</p>
-                <p class="mt-2 text-sm text-fc-text-secondary">
-                  Create your first event to start syncing attendees and scanning tickets.
-                </p>
-                <.button
-                  id="empty-state-create-event-button"
-                  type="button"
-                  phx-click="show_new_event_form"
-                  color="primary"
-                  variant="shadow"
-                  class="mt-5"
-                >
-                  Create event
-                </.button>
+                <%= if @events_tab == "active" do %>
+                  <p class="text-lg font-semibold text-fc-text-primary">No active events</p>
+                  <p class="mt-2 text-sm text-fc-text-secondary">
+                    Create your first event to start syncing attendees and scanning tickets.
+                  </p>
+                  <.button
+                    id="empty-state-create-event-button"
+                    type="button"
+                    phx-click="show_new_event_form"
+                    color="primary"
+                    variant="shadow"
+                    class="mt-5"
+                  >
+                    Create event
+                  </.button>
+                <% else %>
+                  <p class="text-lg font-semibold text-fc-text-primary">No archived events</p>
+                  <p class="mt-2 text-sm text-fc-text-secondary">
+                    Archived events will appear here and can be restored with one click.
+                  </p>
+                <% end %>
               </.card_content>
             </.card>
           </div>
@@ -1222,6 +1266,21 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp filter_events(events, _), do: events
+
+  defp events_for_tab(events, "archived"), do: Enum.filter(events, &archived_event?/1)
+  defp events_for_tab(events, _tab), do: Enum.reject(events, &archived_event?/1)
+
+  defp count_events_for_tab(events, tab) do
+    events
+    |> events_for_tab(tab)
+    |> length()
+  end
+
+  defp archived_event?(%Event{status: status}) when is_binary(status) do
+    String.downcase(String.trim(status)) == "archived"
+  end
+
+  defp archived_event?(_), do: false
 
   defp sync_status_badge_color("completed"), do: "success"
   defp sync_status_badge_color("failed"), do: "danger"
