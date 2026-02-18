@@ -13,6 +13,7 @@ defmodule FastCheck.TickeraClient do
   @status_timeout 5_000
   @rate_limit_delay 100
   @request_fun Application.compile_env(:fastcheck, :tickera_request_fun, &Req.request/1)
+  @tickera_user_agent "FastCheck/1.0 (+https://scan.voelgoed.co.za)"
 
   @doc """
   Fetches the historical check-in events for a ticket checksum.
@@ -1682,37 +1683,18 @@ defmodule FastCheck.TickeraClient do
     Logger.debug("TickeraClient GET #{safe_log_url(url)}")
 
     try do
-      headers = [{"accept", "application/json"}]
+      headers =
+        [{"accept", "application/json"}]
+        |> default_tickera_headers()
 
       case request(:get, url,
              headers: headers,
              connect_timeout: @timeout,
              receive_timeout: @timeout
            ) do
-        {:ok, %Response{status: code, body: raw_body}} when code in 200..299 ->
-          body = normalize_response_body(raw_body)
-
-          cond do
-            body == "" ->
-              Logger.error(
-                "Tickera returned an empty response body for #{safe_log_url(url)} (raw type: #{inspect(response_body_type(raw_body))})"
-              )
-
-              {:error, {:http_error, :empty_body, ""}}
-
-            true ->
-              case Jason.decode(body) do
-                {:ok, data} ->
-                  {:ok, data}
-
-                {:error, error} ->
-                  Logger.error(
-                    "Failed to decode Tickera response: #{inspect(error)} body=#{inspect(body_preview(body))}"
-                  )
-
-                  {:error, {:http_error, :invalid_json, error}}
-              end
-          end
+        {:ok, %Response{status: code, body: raw_body, headers: response_headers}}
+        when code in 200..299 ->
+          handle_fetch_json_success(url, code, raw_body, response_headers, headers)
 
         {:ok, %Response{status: code, body: body}} ->
           normalized = normalize_response_body(body)
@@ -1731,6 +1713,131 @@ defmodule FastCheck.TickeraClient do
         {:error, {:exception, Exception.message(exception)}}
     end
   end
+
+  defp handle_fetch_json_success(url, status, raw_body, response_headers, request_headers) do
+    body = normalize_response_body(raw_body)
+
+    if body == "" do
+      log_empty_body_response(url, status, raw_body, response_headers, :initial)
+      retry_empty_body_request(url, request_headers)
+    else
+      decode_json_body(body, url)
+    end
+  end
+
+  defp retry_empty_body_request(url, headers) do
+    retry_url = add_cache_buster(url)
+
+    Logger.warning(
+      "Retrying Tickera request after empty body for #{safe_log_url(url)} as #{safe_log_url(retry_url)}"
+    )
+
+    case request(:get, retry_url,
+           headers: headers,
+           connect_timeout: @timeout,
+           receive_timeout: @timeout
+         ) do
+      {:ok, %Response{status: code, body: raw_body, headers: response_headers}}
+      when code in 200..299 ->
+        body = normalize_response_body(raw_body)
+
+        if body == "" do
+          log_empty_body_response(retry_url, code, raw_body, response_headers, :retry)
+          {:error, {:http_error, :empty_body, ""}}
+        else
+          decode_json_body(body, retry_url)
+        end
+
+      {:ok, %Response{status: code, body: body}} ->
+        normalized = normalize_response_body(body)
+        reason = classify_http_status(code, normalized)
+        Logger.error("Tickera retry request failed (status #{code}): #{body_preview(normalized)}")
+        {:error, reason}
+
+      {:error, error} ->
+        classified = classify_network_error(error)
+        Logger.error("Tickera retry request error: #{inspect(error)}")
+        {:error, classified}
+    end
+  end
+
+  defp decode_json_body(body, url) do
+    case Jason.decode(body) do
+      {:ok, data} ->
+        {:ok, data}
+
+      {:error, error} ->
+        Logger.error(
+          "Failed to decode Tickera response from #{safe_log_url(url)}: #{inspect(error)} body=#{inspect(body_preview(body))}"
+        )
+
+        {:error, {:http_error, :invalid_json, error}}
+    end
+  end
+
+  defp log_empty_body_response(url, status, raw_body, response_headers, attempt) do
+    Logger.error("Tickera returned an empty response body",
+      url: safe_log_url(url),
+      attempt: attempt,
+      status: status,
+      raw_type: response_body_type(raw_body),
+      raw_size: response_body_size(raw_body),
+      content_type: header_value(response_headers, "content-type"),
+      content_length: header_value(response_headers, "content-length"),
+      server: header_value(response_headers, "server"),
+      cf_ray: header_value(response_headers, "cf-ray")
+    )
+  end
+
+  defp default_tickera_headers(headers) do
+    headers
+    |> put_or_replace_header("user-agent", @tickera_user_agent)
+    |> put_or_replace_header("accept-language", "en-US,en;q=0.9")
+    |> put_or_replace_header("cache-control", "no-cache")
+    |> put_or_replace_header("pragma", "no-cache")
+  end
+
+  defp put_or_replace_header(headers, key, value) when is_list(headers) do
+    downcased_key = String.downcase(key)
+
+    filtered =
+      Enum.reject(headers, fn
+        {name, _value} -> String.downcase(to_string(name)) == downcased_key
+        _other -> false
+      end)
+
+    filtered ++ [{key, value}]
+  end
+
+  defp put_or_replace_header(_headers, key, value), do: [{key, value}]
+
+  defp header_value(headers, key) when is_list(headers) do
+    downcased_key = String.downcase(key)
+
+    Enum.find_value(headers, fn
+      {name, value} when is_binary(name) ->
+        if String.downcase(name) == downcased_key, do: value
+
+      {name, value} ->
+        if String.downcase(to_string(name)) == downcased_key, do: value
+
+      _other ->
+        nil
+    end)
+  end
+
+  defp header_value(_headers, _key), do: nil
+
+  defp add_cache_buster(url) when is_binary(url) do
+    uri = URI.parse(url)
+    existing_query = if uri.query in [nil, ""], do: %{}, else: URI.decode_query(uri.query)
+    query = Map.put(existing_query, "_fc", Integer.to_string(System.system_time(:millisecond)))
+    URI.to_string(%{uri | query: URI.encode_query(query)})
+  rescue
+    _error -> url
+  end
+
+  defp add_cache_buster(url), do: url
 
   defp classify_http_status(code, body) when is_integer(code) and code >= 500,
     do: {:server_error, code, body}
@@ -1785,6 +1892,20 @@ defmodule FastCheck.TickeraClient do
   defp response_body_type(body) when is_list(body), do: :list
   defp response_body_type(nil), do: nil
   defp response_body_type(_body), do: :other
+
+  defp response_body_size(body) when is_binary(body), do: byte_size(body)
+  defp response_body_size(body) when is_map(body), do: map_size(body)
+
+  defp response_body_size(body) when is_list(body) do
+    body
+    |> IO.iodata_to_binary()
+    |> byte_size()
+  rescue
+    ArgumentError -> length(body)
+  end
+
+  defp response_body_size(nil), do: 0
+  defp response_body_size(_body), do: nil
 
   defp body_preview(body) when is_binary(body) do
     body
