@@ -810,31 +810,51 @@ defmodule FastCheck.Events do
   end
 
   defp ensure_credentials(site_url, api_key) when is_binary(site_url) and is_binary(api_key) do
-    case TickeraClient.check_credentials(site_url, api_key) do
-      {:ok, _resp} -> :ok
+    with true <- present_binary?(site_url),
+         true <- present_binary?(api_key) do
+      case TickeraClient.check_credentials(site_url, api_key) do
+        {:ok, response} when is_map(response) ->
+          if credential_check_passed?(response) do
+            :ok
+          else
+            {:error, :invalid_credentials}
+          end
 
-      {:error, {:http_error, code, _body}}
-      when code in [401, 403, 404] ->
-        {:error, :invalid_credentials}
+        {:ok, _response} ->
+          {:error, :invalid_credentials}
 
-      {:error, {:http_error, _code, _body} = reason} ->
-        {:error, {:credential_check_failed, reason}}
+        {:error, {:http_error, code, _body}}
+        when code in [401, 403, 404] ->
+          {:error, :invalid_credentials}
 
-      {:error, {:network_timeout, _reason} = reason} ->
-        {:error, {:credential_check_failed, reason}}
+        {:error, {:http_error, _code, _body} = reason} ->
+          {:error, {:credential_check_failed, reason}}
 
-      {:error, {:network_error, _reason} = reason} ->
-        {:error, {:credential_check_failed, reason}}
+        {:error, {:network_timeout, _reason} = reason} ->
+          {:error, {:credential_check_failed, reason}}
 
-      {:error, {:exception, _message} = reason} ->
-        {:error, {:credential_check_failed, reason}}
+        {:error, {:network_error, _reason} = reason} ->
+          {:error, {:credential_check_failed, reason}}
 
-      {:error, reason} ->
-        {:error, {:credential_check_failed, reason}}
+        {:error, {:exception, _message} = reason} ->
+          {:error, {:credential_check_failed, reason}}
+
+        {:error, reason} ->
+          {:error, {:credential_check_failed, reason}}
+      end
+    else
+      false -> {:error, :invalid_credentials}
     end
   end
 
   defp ensure_credentials(_site_url, _api_key), do: {:error, :invalid_credentials}
+
+  defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present_binary?(_value), do: false
+
+  defp credential_check_passed?(%{"pass" => pass}) when pass in [true, "true", "1", 1], do: true
+  defp credential_check_passed?(%{"pass" => _}), do: false
+  defp credential_check_passed?(_response), do: false
 
   defp credential_error_message(:invalid_credentials),
     do: "Invalid API key or site URL mismatch"

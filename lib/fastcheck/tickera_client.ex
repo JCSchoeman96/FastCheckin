@@ -1314,6 +1314,7 @@ defmodule FastCheck.TickeraClient do
       |> Keyword.put(:method, method)
       |> Keyword.put(:url, url)
       |> Keyword.update(:headers, [], &List.wrap/1)
+      |> Keyword.put_new(:decode_body, false)
 
     req = Req.new(req_opts)
 
@@ -1343,9 +1344,17 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp build_url(site_url, api_key, endpoint) do
-    trimmed = site_url |> to_string() |> String.trim_trailing("/")
+    trimmed = site_url |> to_string() |> String.trim()
+
+    normalized_site_url =
+      case Regex.match?(~r/^https?:\/\//i, trimmed) do
+        true -> trimmed
+        false -> "https://#{trimmed}"
+      end
+      |> String.trim_trailing("/")
+
     endpoint = endpoint |> to_string() |> String.trim_leading("/")
-    "#{trimmed}/tc-api/#{api_key}/#{endpoint}"
+    "#{normalized_site_url}/tc-api/#{api_key}/#{endpoint}"
   end
 
   defp safe_log_url(url) when is_binary(url) do
