@@ -467,8 +467,11 @@ defmodule FastCheck.Events.Sync do
   defp persist_event_window(_event, nil, nil), do: :unchanged
 
   defp persist_event_window(%Event{} = event, start_dt, end_dt) do
+    normalized_start = coerce_window_datetime(start_dt)
+    normalized_end = coerce_window_datetime(end_dt)
+
     updates =
-      [tickera_start_date: start_dt, tickera_end_date: end_dt]
+      [tickera_start_date: normalized_start, tickera_end_date: normalized_end]
       |> Enum.reduce(%{}, fn
         {_field, nil}, acc ->
           acc
@@ -501,6 +504,214 @@ defmodule FastCheck.Events.Sync do
     end
   end
 
+  defp coerce_window_datetime(nil), do: nil
+
+  defp coerce_window_datetime(%DateTime{} = datetime) do
+    datetime
+    |> DateTime.shift_zone("Etc/UTC")
+    |> case do
+      {:ok, shifted} -> DateTime.truncate(shifted, :second)
+      {:error, _reason} -> DateTime.truncate(datetime, :second)
+    end
+  end
+
+  defp coerce_window_datetime(%NaiveDateTime{} = datetime) do
+    case DateTime.from_naive(datetime, "Etc/UTC") do
+      {:ok, utc} -> DateTime.truncate(utc, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_window_datetime(%Date{} = date) do
+    case DateTime.new(date, ~T[00:00:00], "Etc/UTC") do
+      {:ok, datetime} -> DateTime.truncate(datetime, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_window_datetime(%Time{} = time) do
+    DateTime.new(Date.utc_today(), time, "Etc/UTC")
+    |> case do
+      {:ok, datetime} -> DateTime.truncate(datetime, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_window_datetime(value) when is_integer(value) do
+    case DateTime.from_unix(value) do
+      {:ok, datetime} -> DateTime.truncate(datetime, :second)
+      _ -> nil
+    end
+  end
+
+  defp coerce_window_datetime(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" ->
+        nil
+
+      trimmed ->
+        parse_window_datetime_string(trimmed)
+    end
+  end
+
+  defp coerce_window_datetime(_value), do: nil
+
+  defp parse_window_datetime_string(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} ->
+        coerce_window_datetime(datetime)
+
+      {:error, _reason} ->
+        case NaiveDateTime.from_iso8601(value) do
+          {:ok, naive} ->
+            coerce_window_datetime(naive)
+
+          {:error, _reason} ->
+            case Integer.parse(value) do
+              {unix, ""} ->
+                coerce_window_datetime(unix)
+
+              _ ->
+                parse_window_datetime_human(value)
+            end
+        end
+    end
+  end
+
+  defp parse_window_datetime_human(value) when is_binary(value) do
+    regexes = [
+      ~r/^(?<month>[[:alpha:].]+)\s+(?<day>\d{1,2})(?:st|nd|rd|th)?[,]?\s+(?<year>\d{4})\s+(?<hour>\d{1,2}):(?<minute>\d{2})\s*(?<meridian>[[:alpha:]]+)?$/iu,
+      ~r/^(?<day>\d{1,2})(?:st|nd|rd|th)?\s+(?<month>[[:alpha:].]+)\s+(?<year>\d{4})\s+(?<hour>\d{1,2}):(?<minute>\d{2})\s*(?<meridian>[[:alpha:]]+)?$/iu
+    ]
+
+    Enum.find_value(regexes, fn regex ->
+      case Regex.named_captures(regex, value) do
+        nil -> nil
+        captures -> build_datetime_from_human_parts(captures)
+      end
+    end)
+  end
+
+  defp parse_window_datetime_human(_value), do: nil
+
+  defp build_datetime_from_human_parts(parts) when is_map(parts) do
+    with {:ok, year} <- parse_int(Map.get(parts, "year")),
+         {:ok, month} <- parse_month(Map.get(parts, "month")),
+         {:ok, day} <- parse_int(Map.get(parts, "day")),
+         {:ok, hour} <- parse_int(Map.get(parts, "hour")),
+         {:ok, minute} <- parse_int(Map.get(parts, "minute")),
+         {:ok, adjusted_hour} <- adjust_hour(hour, Map.get(parts, "meridian")),
+         {:ok, date} <- Date.new(year, month, day),
+         {:ok, time} <- Time.new(adjusted_hour, minute, 0),
+         {:ok, datetime} <- DateTime.new(date, time, "Etc/UTC") do
+      DateTime.truncate(datetime, :second)
+    else
+      _ -> nil
+    end
+  end
+
+  defp build_datetime_from_human_parts(_parts), do: nil
+
+  defp parse_month(nil), do: :error
+
+  defp parse_month(month_name) when is_binary(month_name) do
+    normalized =
+      month_name
+      |> String.trim()
+      |> String.downcase()
+      |> String.replace(".", "")
+
+    month =
+      %{
+        "january" => 1,
+        "januarie" => 1,
+        "jan" => 1,
+        "february" => 2,
+        "februarie" => 2,
+        "feb" => 2,
+        "march" => 3,
+        "maart" => 3,
+        "mar" => 3,
+        "april" => 4,
+        "apr" => 4,
+        "may" => 5,
+        "mei" => 5,
+        "jun" => 6,
+        "june" => 6,
+        "junie" => 6,
+        "jul" => 7,
+        "july" => 7,
+        "julie" => 7,
+        "aug" => 8,
+        "august" => 8,
+        "augustus" => 8,
+        "sep" => 9,
+        "sept" => 9,
+        "september" => 9,
+        "oct" => 10,
+        "okt" => 10,
+        "october" => 10,
+        "oktober" => 10,
+        "nov" => 11,
+        "november" => 11,
+        "dec" => 12,
+        "december" => 12,
+        "desember" => 12
+      }
+      |> Map.get(normalized)
+
+    case month do
+      nil -> :error
+      value -> {:ok, value}
+    end
+  end
+
+  defp parse_month(_month_name), do: :error
+
+  defp parse_int(nil), do: :error
+
+  defp parse_int(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, ""} -> {:ok, parsed}
+      _ -> :error
+    end
+  end
+
+  defp parse_int(value) when is_integer(value), do: {:ok, value}
+  defp parse_int(_value), do: :error
+
+  defp adjust_hour(hour, meridian) when is_integer(hour) and hour >= 0 and hour <= 23 do
+    normalized_meridian =
+      meridian
+      |> to_string()
+      |> String.trim()
+      |> String.downcase()
+
+    case normalized_meridian do
+      "" ->
+        {:ok, hour}
+
+      "am" ->
+        {:ok, if(hour == 12, do: 0, else: hour)}
+
+      "vm" ->
+        {:ok, if(hour == 12, do: 0, else: hour)}
+
+      "pm" ->
+        {:ok, if(hour < 12, do: hour + 12, else: hour)}
+
+      "nm" ->
+        {:ok, if(hour < 12, do: hour + 12, else: hour)}
+
+      _ ->
+        {:ok, hour}
+    end
+  end
+
+  defp adjust_hour(_hour, _meridian), do: :error
+
   defp update_sync_timestamp(event_id, updates, _timestamp) do
     from(e in Event, where: e.id == ^event_id)
     |> Repo.update_all(set: updates)
@@ -532,6 +743,20 @@ defmodule FastCheck.Events.Sync do
       NaiveDateTime.truncate(left, :second),
       NaiveDateTime.truncate(right, :second)
     ) == :eq
+  end
+
+  defp same_datetime?(%DateTime{} = left, %NaiveDateTime{} = right) do
+    case DateTime.from_naive(right, "Etc/UTC") do
+      {:ok, right_dt} -> same_datetime?(left, right_dt)
+      _ -> false
+    end
+  end
+
+  defp same_datetime?(%NaiveDateTime{} = left, %DateTime{} = right) do
+    case DateTime.from_naive(left, "Etc/UTC") do
+      {:ok, left_dt} -> same_datetime?(left_dt, right)
+      _ -> false
+    end
   end
 
   defp same_datetime?(left, right), do: left == right
