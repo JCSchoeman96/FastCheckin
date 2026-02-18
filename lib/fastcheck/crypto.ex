@@ -42,8 +42,13 @@ defmodule FastCheck.Crypto do
 
   defp do_decrypt(encoded) do
     try do
-      plaintext = MessageEncryptor.decrypt(encryption_secret(), signing_secret(), encoded)
-      {:ok, plaintext}
+      case MessageEncryptor.decrypt(encryption_secret(), signing_secret(), encoded) do
+        plaintext when is_binary(plaintext) ->
+          {:ok, plaintext}
+
+        _ ->
+          {:error, :invalid_ciphertext}
+      end
     rescue
       _ -> {:error, :invalid_ciphertext}
     end
