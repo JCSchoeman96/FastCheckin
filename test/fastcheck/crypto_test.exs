@@ -28,5 +28,13 @@ defmodule FastCheck.CryptoTest do
     test "rejects invalid base64" do
       assert {:error, :invalid_base64} = Crypto.decrypt("not-base64!!")
     end
+
+    test "rejects random binary payload that is not a valid encrypted token" do
+      garbage =
+        :crypto.strong_rand_bytes(24)
+        |> Base.encode64()
+
+      assert {:error, :invalid_ciphertext} = Crypto.decrypt(garbage)
+    end
   end
 end
