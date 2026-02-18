@@ -36,7 +36,7 @@ defmodule FastCheck.Attendees do
   def create_bulk(event_id, attendees_data, opts)
       when is_integer(event_id) and is_list(attendees_data) do
     incremental = Keyword.get(opts, :incremental, false)
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     entries =
       attendees_data
