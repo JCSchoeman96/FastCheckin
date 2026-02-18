@@ -14,6 +14,7 @@ defmodule FastCheck.Events.Event do
   @type t :: %__MODULE__{
           id: integer() | nil,
           name: String.t() | nil,
+          site_url: String.t() | nil,
           tickera_api_key_encrypted: String.t() | nil,
           tickera_api_key_last4: String.t() | nil,
           tickera_site_url: String.t() | nil,
@@ -41,6 +42,8 @@ defmodule FastCheck.Events.Event do
   schema "events" do
     # Human readable name, e.g. "Voelgoed Live 13 November"
     field :name, :string
+    # Legacy site URL column retained for backwards compatibility with older migrations.
+    field :site_url, :string
     # API key provided by Tickera (stored encrypted in the database)
     field :tickera_api_key_encrypted, :string
     field :tickera_api_key_last4, :string
@@ -92,6 +95,7 @@ defmodule FastCheck.Events.Event do
     event
     |> cast(attrs, [
       :name,
+      :site_url,
       :tickera_api_key_encrypted,
       :tickera_api_key_last4,
       :mobile_access_secret_encrypted,
@@ -107,9 +111,11 @@ defmodule FastCheck.Events.Event do
       :last_soft_sync_at
     ])
     |> sanitize_string_fields()
+    |> synchronize_site_urls()
     |> validate_required([
       :name,
       :tickera_api_key_encrypted,
+      :site_url,
       :tickera_site_url,
       :mobile_access_secret_encrypted
     ])
@@ -118,8 +124,28 @@ defmodule FastCheck.Events.Event do
   defp sanitize_string_fields(changeset) do
     changeset
     |> update_change(:name, &Sanitizer.sanitize_name/1)
+    |> update_change(:site_url, &Sanitizer.sanitize_url/1)
     |> update_change(:location, &Sanitizer.sanitize_name/1)
     |> update_change(:entrance_name, &Sanitizer.sanitize_name/1)
     |> update_change(:tickera_site_url, &Sanitizer.sanitize_url/1)
   end
+
+  defp synchronize_site_urls(changeset) do
+    tickera_site_url = get_field(changeset, :tickera_site_url)
+    legacy_site_url = get_field(changeset, :site_url)
+
+    cond do
+      present_binary?(tickera_site_url) ->
+        put_change(changeset, :site_url, tickera_site_url)
+
+      present_binary?(legacy_site_url) ->
+        put_change(changeset, :tickera_site_url, legacy_site_url)
+
+      true ->
+        changeset
+    end
+  end
+
+  defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present_binary?(_value), do: false
 end

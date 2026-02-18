@@ -45,6 +45,7 @@ defmodule FastCheck.Events do
   }
 
   @credential_fields [
+    :site_url,
     :tickera_site_url,
     :tickera_api_key_encrypted,
     :tickera_api_key_last4,
@@ -452,8 +453,27 @@ defmodule FastCheck.Events do
   defp prepare_update_attrs(attrs, event) do
     attrs
     |> Map.drop([:_validation_error])
+    |> normalize_site_url_attrs(event)
     |> maybe_encrypt_api_key(event)
     |> maybe_update_last4(event)
+  end
+
+  defp normalize_site_url_attrs(attrs, event) do
+    site_url =
+      Map.get(attrs, "tickera_site_url") ||
+        Map.get(attrs, "site_url") ||
+        event.tickera_site_url ||
+        event.site_url
+
+    if present_binary?(site_url) do
+      trimmed = String.trim(site_url)
+
+      attrs
+      |> Map.put("tickera_site_url", trimmed)
+      |> Map.put("site_url", trimmed)
+    else
+      attrs
+    end
   end
 
   defp maybe_encrypt_api_key(attrs, _event) do
@@ -513,13 +533,15 @@ defmodule FastCheck.Events do
         ) :: {:ok, Event.t()} | {:error, term()}
   def set_tickera_credentials(%Event{} = event, site_url, api_key, start_date, end_date)
       when is_binary(site_url) and is_binary(api_key) do
+    normalized_site_url = String.trim(site_url)
     start_datetime = coerce_event_datetime(start_date)
     end_datetime = coerce_event_datetime(end_date)
 
     with {:ok, encrypted} <- Crypto.encrypt(api_key),
          attrs <-
            %{
-             tickera_site_url: String.trim(site_url),
+             site_url: normalized_site_url,
+             tickera_site_url: normalized_site_url,
              tickera_api_key_encrypted: encrypted,
              tickera_api_key_last4: derive_last4(api_key),
              tickera_start_date: start_datetime,

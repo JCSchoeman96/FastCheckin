@@ -144,6 +144,7 @@ if config_env() == :prod do
     Generate one with: mix phx.gen.secret
     """
   end
+
   # ---------------------------------------------------------------------------
   # Endpoint
   # ---------------------------------------------------------------------------
@@ -212,4 +213,3 @@ if sentry_dsn do
     # Sample rate for performance monitoring (0.0 to 1.0)
     traces_sample_rate: 0.1
 end
-

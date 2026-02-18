@@ -229,6 +229,19 @@ defmodule FastCheck.EventsTest do
   end
 
   describe "Tickera credential helpers" do
+    test "event changeset mirrors tickera_site_url into legacy site_url" do
+      changeset =
+        Event.changeset(%Event{}, %{
+          name: "Compatibility",
+          tickera_api_key_encrypted: "encrypted",
+          mobile_access_secret_encrypted: "secret",
+          tickera_site_url: "https://compat.example.com"
+        })
+
+      assert Changeset.get_field(changeset, :tickera_site_url) == "https://compat.example.com"
+      assert Changeset.get_field(changeset, :site_url) == "https://compat.example.com"
+    end
+
     test "set_tickera_credentials encrypts and returns struct" do
       api_key = "new-key-#{System.unique_integer([:positive])}"
 
@@ -242,6 +255,7 @@ defmodule FastCheck.EventsTest do
         )
 
       assert cred_struct.tickera_site_url == "https://demo.example.com"
+      assert cred_struct.site_url == "https://demo.example.com"
       assert cred_struct.status == "active"
       assert cred_struct.tickera_api_key_last4 == String.slice(api_key, -4, 4)
       assert {:ok, decrypted} = Events.get_tickera_api_key(cred_struct)
@@ -256,6 +270,7 @@ defmodule FastCheck.EventsTest do
         Events.set_tickera_credentials(event, "https://rotated.example.com", api_key, nil, nil)
 
       assert updated.tickera_site_url == "https://rotated.example.com"
+      assert updated.site_url == "https://rotated.example.com"
       assert updated.tickera_api_key_last4 == String.slice(api_key, -4, 4)
       assert {:ok, decrypted} = Events.get_tickera_api_key(updated)
       assert decrypted == api_key
