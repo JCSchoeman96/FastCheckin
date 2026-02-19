@@ -403,16 +403,23 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 </p>
               </div>
 
-              <.button
-                id="scanner-menu-toggle"
-                type="button"
-                phx-click="toggle_menu"
-                variant="bordered"
-                color="natural"
-                size="small"
+              <div
+                x-data="{pressed:false}"
+                x-on:click="pressed = true; setTimeout(() => pressed = false, 140)"
+                x-bind:class="pressed ? 'scale-95' : ''"
+                class="transition-transform"
               >
-                <.icon name="hero-bars-3" class="size-4" />
-              </.button>
+                <.button
+                  id="scanner-menu-toggle"
+                  type="button"
+                  phx-click="toggle_menu"
+                  variant="bordered"
+                  color="natural"
+                  size="small"
+                >
+                  <.icon name="hero-bars-3" class="size-4" />
+                </.button>
+              </div>
             </div>
 
             <div class="mt-4 flex flex-wrap items-center gap-2">
@@ -473,29 +480,46 @@ defmodule FastCheckWeb.ScannerPortalLive do
           padding="small"
         >
           <.card_content>
-            <div class="space-y-2">
-              <.button
-                id="scanner-menu-sync"
-                type="button"
-                phx-click="start_incremental_sync"
-                variant="bordered"
-                color="secondary"
-                full_width
-                disabled={@syncing}
+            <div
+              class="space-y-2"
+              x-data="{pendingAction: null, mark(action){ this.pendingAction = action }}"
+            >
+              <div
+                x-on:click="mark('sync')"
+                x-bind:class="pendingAction === 'sync' ? 'opacity-70' : ''"
+                class="transition-opacity"
               >
-                {if(@syncing, do: "Syncing...", else: "Run incremental sync")}
-              </.button>
+                <.button
+                  id="scanner-menu-sync"
+                  type="button"
+                  phx-click="start_incremental_sync"
+                  variant="bordered"
+                  color="secondary"
+                  full_width
+                  disabled={@syncing}
+                >
+                  <span :if={!@syncing} x-show="pendingAction !== 'sync'">Run incremental sync</span>
+                  <span :if={!@syncing} x-show="pendingAction === 'sync'">Starting...</span>
+                  <span :if={@syncing}>Syncing...</span>
+                </.button>
+              </div>
 
-              <.button
-                id="scanner-menu-change-operator"
-                type="button"
-                phx-click="toggle_operator_form"
-                variant="bordered"
-                color="natural"
-                full_width
+              <div
+                x-on:click="mark('operator')"
+                x-bind:class="pendingAction === 'operator' ? 'opacity-70' : ''"
+                class="transition-opacity"
               >
-                {if(@operator_form_open, do: "Cancel operator change", else: "Change operator")}
-              </.button>
+                <.button
+                  id="scanner-menu-change-operator"
+                  type="button"
+                  phx-click="toggle_operator_form"
+                  variant="bordered"
+                  color="natural"
+                  full_width
+                >
+                  {if(@operator_form_open, do: "Cancel operator change", else: "Change operator")}
+                </.button>
+              </div>
 
               <.form
                 :if={@operator_form_open}
@@ -518,25 +542,34 @@ defmodule FastCheckWeb.ScannerPortalLive do
                   autocomplete="name"
                   required
                 />
-                <.button
-                  id="scanner-menu-operator-save"
-                  type="submit"
-                  color="primary"
-                  variant="shadow"
-                  full_width
-                >
-                  Save operator
-                </.button>
+                <div x-data="{saving:false}" x-on:click="saving = true" class="transition-opacity">
+                  <.button
+                    id="scanner-menu-operator-save"
+                    type="submit"
+                    color="primary"
+                    variant="shadow"
+                    full_width
+                  >
+                    <span x-show="!saving">Save operator</span>
+                    <span x-show="saving">Saving...</span>
+                  </.button>
+                </div>
               </.form>
 
-              <.link
-                id="scanner-menu-logout"
-                href={~p"/scanner/logout"}
-                method="delete"
-                class="inline-flex w-full items-center justify-center rounded-xl border border-fc-border-default px-4 py-2 text-sm font-medium text-fc-text-primary transition hover:bg-fc-surface-raised"
+              <div
+                x-on:click="mark('logout')"
+                x-bind:class="pendingAction === 'logout' ? 'opacity-70' : ''"
+                class="transition-opacity"
               >
-                Log out
-              </.link>
+                <.link
+                  id="scanner-menu-logout"
+                  href={~p"/scanner/logout"}
+                  method="delete"
+                  class="inline-flex w-full items-center justify-center rounded-xl border border-fc-border-default px-4 py-2 text-sm font-medium text-fc-text-primary transition hover:bg-fc-surface-raised"
+                >
+                  Log out
+                </.link>
+              </div>
             </div>
           </.card_content>
         </.card>
@@ -551,26 +584,35 @@ defmodule FastCheckWeb.ScannerPortalLive do
           {@scans_disabled_message || "Event archived, scanning disabled"}
         </.alert>
 
-        <.alert
+        <div
           :if={@sync_status}
           id="scanner-sync-status"
-          kind={@sync_status_kind}
-          variant="bordered"
-          rounded="large"
+          x-data="{open: true}"
+          x-show="open"
+          x-transition:enter="transition ease-out duration-200"
+          x-transition:enter-start="opacity-0 translate-y-1"
+          x-transition:enter-end="opacity-100 translate-y-0"
+          x-transition:leave="transition ease-in duration-150"
+          x-transition:leave-start="opacity-100"
+          x-transition:leave-end="opacity-0"
         >
-          <div class="flex items-start justify-between gap-3">
-            <p class="text-sm">{@sync_status}</p>
-            <.button
-              type="button"
-              size="extra_small"
-              variant="transparent"
-              color="natural"
-              phx-click="close_sync_status"
-            >
-              <.icon name="hero-x-mark" class="size-4" />
-            </.button>
-          </div>
-        </.alert>
+          <.alert kind={@sync_status_kind} variant="bordered" rounded="large">
+            <div class="flex items-start justify-between gap-3">
+              <p class="text-sm">{@sync_status}</p>
+              <div x-on:click="open = false">
+                <.button
+                  type="button"
+                  size="extra_small"
+                  variant="transparent"
+                  color="natural"
+                  phx-click="close_sync_status"
+                >
+                  <.icon name="hero-x-mark" class="size-4" />
+                </.button>
+              </div>
+            </div>
+          </.alert>
+        </div>
 
         <.card
           :if={@last_scan_status}
@@ -844,19 +886,26 @@ defmodule FastCheckWeb.ScannerPortalLive do
           </.button>
 
           <div class="flex justify-center">
-            <.button
-              id="scanner-tab-button-camera"
-              type="button"
-              phx-click="set_tab"
-              phx-value-tab="camera"
-              color={if(@active_tab == "camera", do: "primary", else: "secondary")}
-              variant={if(@active_tab == "camera", do: "shadow", else: "base")}
-              rounded="full"
-              class="h-14 w-14 -translate-y-2 shadow-lg"
+            <div
+              x-data="{pressed:false}"
+              x-on:click="pressed = true; setTimeout(() => pressed = false, 160)"
+              x-bind:class="pressed ? 'scale-95' : ''"
+              class="transition-transform"
             >
-              <.icon name="hero-camera" class="size-6" />
-              <span class="sr-only">Camera</span>
-            </.button>
+              <.button
+                id="scanner-tab-button-camera"
+                type="button"
+                phx-click="set_tab"
+                phx-value-tab="camera"
+                color={if(@active_tab == "camera", do: "primary", else: "secondary")}
+                variant={if(@active_tab == "camera", do: "shadow", else: "base")}
+                rounded="full"
+                class="h-14 w-14 -translate-y-2 shadow-lg"
+              >
+                <.icon name="hero-camera" class="size-6" />
+                <span class="sr-only">Camera</span>
+              </.button>
+            </div>
           </div>
 
           <.button

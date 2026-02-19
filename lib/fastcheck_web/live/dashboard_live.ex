@@ -831,7 +831,11 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
 
                 <div class="mt-6 space-y-3">
-                  <div :if={!archived_event} class="space-y-3">
+                  <div
+                    :if={!archived_event}
+                    class="space-y-3"
+                    x-data="{pendingAction: null, setPending(action){ this.pendingAction = action }}"
+                  >
                     <div
                       :if={@selected_event_id != event.id || @sync_progress == nil}
                       class="grid gap-2 cq-card:grid-cols-2"
@@ -912,58 +916,93 @@ defmodule FastCheckWeb.DashboardLive do
                     </div>
 
                     <div class="grid gap-2 cq-card:grid-cols-2">
-                      <.button_link
-                        navigate={~p"/scan/#{event.id}"}
+                      <div
+                        class="w-full"
+                        x-on:click="setPending('open-scanner')"
+                        x-bind:class="pendingAction === 'open-scanner' ? 'opacity-70' : ''"
+                      >
+                        <.button_link
+                          navigate={~p"/scan/#{event.id}"}
+                          variant="bordered"
+                          color="secondary"
+                          full_width
+                        >
+                          <span x-show="pendingAction !== 'open-scanner'">Open scanner</span>
+                          <span x-show="pendingAction === 'open-scanner'">Opening...</span>
+                        </.button_link>
+                      </div>
+
+                      <div
+                        class="w-full"
+                        x-on:click="setPending('sync-history')"
+                        x-bind:class="pendingAction === 'sync-history' ? 'opacity-70' : ''"
+                      >
+                        <.button
+                          id={"show-sync-history-#{event.id}"}
+                          type="button"
+                          phx-click="show_sync_history"
+                          phx-value-event_id={event.id}
+                          variant="bordered"
+                          color="natural"
+                          full_width
+                        >
+                          <span x-show="pendingAction !== 'sync-history'">Sync history</span>
+                          <span x-show="pendingAction === 'sync-history'">Opening...</span>
+                        </.button>
+                      </div>
+                    </div>
+
+                    <div
+                      class="w-full"
+                      x-on:click="setPending('edit-event')"
+                      x-bind:class="pendingAction === 'edit-event' ? 'opacity-70' : ''"
+                    >
+                      <.button
+                        id={"show-edit-event-#{event.id}"}
+                        type="button"
+                        phx-click="show_edit_form"
+                        phx-value-event_id={event.id}
                         variant="bordered"
                         color="secondary"
                         full_width
                       >
-                        Open scanner
-                      </.button_link>
-
-                      <.button
-                        id={"show-sync-history-#{event.id}"}
-                        type="button"
-                        phx-click="show_sync_history"
-                        phx-value-event_id={event.id}
-                        variant="bordered"
-                        color="natural"
-                        full_width
-                      >
-                        Sync history
+                        <span x-show="pendingAction !== 'edit-event'">Edit event</span>
+                        <span x-show="pendingAction === 'edit-event'">Opening...</span>
                       </.button>
                     </div>
 
-                    <.button
-                      id={"show-edit-event-#{event.id}"}
-                      type="button"
-                      phx-click="show_edit_form"
-                      phx-value-event_id={event.id}
-                      variant="bordered"
-                      color="secondary"
-                      full_width
-                    >
-                      Edit event
-                    </.button>
-
                     <div class="grid gap-2 cq-card:grid-cols-2">
-                      <.button_link
-                        href={~p"/export/attendees/#{event.id}"}
-                        variant="bordered"
-                        color="success"
-                        full_width
+                      <div
+                        class="w-full"
+                        x-on:click="setPending('export-attendees')"
+                        x-bind:class="pendingAction === 'export-attendees' ? 'opacity-70' : ''"
                       >
-                        Export attendees
-                      </.button_link>
+                        <.button_link
+                          href={~p"/export/attendees/#{event.id}"}
+                          variant="bordered"
+                          color="success"
+                          full_width
+                        >
+                          <span x-show="pendingAction !== 'export-attendees'">Export attendees</span>
+                          <span x-show="pendingAction === 'export-attendees'">Preparing...</span>
+                        </.button_link>
+                      </div>
 
-                      <.button_link
-                        href={~p"/export/check-ins/#{event.id}"}
-                        variant="bordered"
-                        color="success"
-                        full_width
+                      <div
+                        class="w-full"
+                        x-on:click="setPending('export-checkins')"
+                        x-bind:class="pendingAction === 'export-checkins' ? 'opacity-70' : ''"
                       >
-                        Export check-ins
-                      </.button_link>
+                        <.button_link
+                          href={~p"/export/check-ins/#{event.id}"}
+                          variant="bordered"
+                          color="success"
+                          full_width
+                        >
+                          <span x-show="pendingAction !== 'export-checkins'">Export check-ins</span>
+                          <span x-show="pendingAction === 'export-checkins'">Preparing...</span>
+                        </.button_link>
+                      </div>
                     </div>
 
                     <.button
