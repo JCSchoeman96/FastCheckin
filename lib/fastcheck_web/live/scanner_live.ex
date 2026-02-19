@@ -636,80 +636,156 @@ defmodule FastCheckWeb.ScannerLive do
           phx-hook="CameraPermission"
           data-storage-key={"fastcheck:camera-permission:event-#{@event_id}"}
         >
-          <.card
-            variant="outline"
-            color="natural"
-            rounded="large"
-            padding="large"
-            class="fc-card-container"
-          >
-            <.card_content>
-              <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
-                <div>
-                  <p
-                    style="font-size: var(--fc-text-xs)"
-                    class="uppercase tracking-[0.35em] text-fc-text-muted"
+          <div class="space-y-4">
+            <.card
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="large"
+              class="fc-card-container"
+            >
+              <.card_content>
+                <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                  <div>
+                    <p
+                      style="font-size: var(--fc-text-xs)"
+                      class="uppercase tracking-[0.35em] text-fc-text-muted"
+                    >
+                      Camera status
+                    </p>
+                    <h2
+                      style="font-size: var(--fc-text-2xl)"
+                      class="mt-2 font-semibold text-fc-text-primary"
+                    >
+                      Ready the QR scanner
+                    </h2>
+                    <p class="mt-2 text-sm text-fc-text-secondary">
+                      Your decision is saved for this device.
+                    </p>
+                  </div>
+
+                  <.badge
+                    color={camera_permission_badge_color(@camera_permission.status)}
+                    variant="bordered"
+                    rounded="full"
                   >
-                    Camera status
-                  </p>
-                  <h2
-                    style="font-size: var(--fc-text-2xl)"
-                    class="mt-2 font-semibold text-fc-text-primary"
-                  >
-                    Ready the QR scanner
-                  </h2>
-                  <p class="mt-2 text-sm text-fc-text-secondary">
-                    Your decision is saved for this device.
-                  </p>
+                    {camera_permission_status_label(@camera_permission.status)}
+                  </.badge>
                 </div>
 
-                <.badge
-                  color={camera_permission_badge_color(@camera_permission.status)}
+                <.alert
+                  kind={camera_permission_alert_kind(@camera_permission.status)}
                   variant="bordered"
-                  rounded="full"
+                  rounded="large"
+                  class="mt-6"
                 >
-                  {camera_permission_status_label(@camera_permission.status)}
-                </.badge>
-              </div>
+                  <p class="font-semibold">
+                    {camera_permission_status_label(@camera_permission.status)}
+                  </p>
+                  <p class="mt-1 text-sm">
+                    {@camera_permission.message ||
+                      camera_permission_default_message(@camera_permission.status)}
+                  </p>
+                </.alert>
 
-              <.alert
-                kind={camera_permission_alert_kind(@camera_permission.status)}
-                variant="bordered"
-                rounded="large"
-                class="mt-6"
-              >
-                <p class="font-semibold">
-                  {camera_permission_status_label(@camera_permission.status)}
-                </p>
-                <p class="mt-1 text-sm">
-                  {@camera_permission.message ||
-                    camera_permission_default_message(@camera_permission.status)}
-                </p>
-              </.alert>
+                <div class="mt-6 flex flex-wrap items-center gap-3">
+                  <.button
+                    :if={@camera_permission.status != :granted}
+                    id="camera-enable-button"
+                    type="button"
+                    data-camera-request
+                    color="success"
+                    variant="shadow"
+                    disabled={@camera_permission.status == :unsupported}
+                  >
+                    Enable camera
+                  </.button>
 
-              <div class="mt-6 flex flex-wrap items-center gap-3">
-                <.button
-                  :if={@camera_permission.status != :granted}
-                  id="camera-enable-button"
-                  type="button"
-                  data-camera-request
-                  color="success"
-                  variant="shadow"
-                  disabled={@camera_permission.status == :unsupported}
-                >
-                  Enable camera
-                </.button>
+                  <p class="text-xs text-fc-text-muted">
+                    {if @camera_permission.remembered do
+                      "Preference synced from this device."
+                    else
+                      "Your decision will be remembered for future check-ins."
+                    end}
+                  </p>
+                </div>
+              </.card_content>
+            </.card>
 
-                <p class="text-xs text-fc-text-muted">
-                  {if @camera_permission.remembered do
-                    "Preference synced from this device."
-                  else
-                    "Your decision will be remembered for future check-ins."
-                  end}
+            <.card
+              id="qr-camera-scanner"
+              phx-hook="QrCameraScanner"
+              data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
+              variant="outline"
+              color="natural"
+              rounded="large"
+              padding="large"
+              class="fc-card-container"
+            >
+              <.card_content>
+                <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                  <div>
+                    <h3
+                      style="font-size: var(--fc-text-xl)"
+                      class="font-semibold text-fc-text-primary"
+                    >
+                      Live QR camera scan
+                    </h3>
+                    <p class="mt-2 text-sm text-fc-text-secondary">
+                      Start the camera to decode QR codes directly in-browser.
+                    </p>
+                  </div>
+
+                  <.badge color="secondary" variant="bordered" rounded="full">
+                    Browser decoder
+                  </.badge>
+                </div>
+
+                <div class="mt-5 overflow-hidden rounded-2xl border border-fc-border bg-black">
+                  <video
+                    id="qr-camera-preview"
+                    data-qr-video
+                    class="h-56 w-full object-cover md:h-72"
+                    autoplay
+                    muted
+                    playsinline
+                  >
+                  </video>
+                </div>
+
+                <p data-qr-status class="mt-3 text-sm text-fc-text-secondary">
+                  Camera is idle. Start scanning when ready.
                 </p>
-              </div>
-            </.card_content>
-          </.card>
+                <p data-qr-last class="mt-1 text-xs text-fc-text-muted"></p>
+
+                <div class="mt-4 grid gap-2 cq-sm:grid-cols-2">
+                  <.button
+                    id="start-camera-scan"
+                    type="button"
+                    data-qr-start
+                    color="success"
+                    variant="shadow"
+                    full_width
+                    disabled={@scans_disabled?}
+                  >
+                    Start camera scan
+                  </.button>
+
+                  <.button
+                    id="stop-camera-scan"
+                    type="button"
+                    data-qr-stop
+                    variant="bordered"
+                    color="natural"
+                    full_width
+                    disabled
+                  >
+                    Stop camera
+                  </.button>
+                </div>
+              </.card_content>
+            </.card>
+          </div>
         </section>
 
         <section id="scanner-keyboard-shortcuts" phx-hook="ScannerKeyboardShortcuts">
@@ -777,6 +853,7 @@ defmodule FastCheckWeb.ScannerLive do
                   class="cq-sm:max-w-md mx-auto"
                 >
                   <.input
+                    id="scanner-ticket-code"
                     field={@scan_form[:ticket_code]}
                     type="text"
                     placeholder="Point scanner at QR code"

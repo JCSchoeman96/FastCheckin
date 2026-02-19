@@ -21,7 +21,7 @@ defmodule FastCheckWeb.Plugs.SecurityHeaders do
     |> put_resp_header("x-frame-options", "DENY")
     |> put_resp_header("x-xss-protection", "1; mode=block")
     |> put_resp_header("referrer-policy", "strict-origin-when-cross-origin")
-    |> put_resp_header("permissions-policy", "geolocation=(), microphone=(), camera=()")
+    |> put_resp_header("permissions-policy", "geolocation=(), microphone=(), camera=(self)")
   end
 
   defp content_security_policy do
