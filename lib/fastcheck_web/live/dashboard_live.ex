@@ -9,6 +9,7 @@ defmodule FastCheckWeb.DashboardLive do
   alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  require Logger
   alias Phoenix.LiveView.JS
 
   @max_sync_attempts 3
@@ -195,7 +196,7 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("show_edit_form", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         %Event{} = event <- Events.get_event!(event_id) do
+         {:ok, %Event{} = event} <- fetch_event_for_edit(event_id) do
       edit_form = build_edit_form(event)
 
       {:noreply,
@@ -203,6 +204,12 @@ defmodule FastCheckWeb.DashboardLive do
        |> assign(:editing_event_id, event_id)
        |> assign(:edit_form, edit_form)}
     else
+      {:error, :not_found} ->
+        {:noreply, assign(socket, :sync_status, "Event not found")}
+
+      {:error, :load_failed} ->
+        {:noreply, assign(socket, :sync_status, "Unable to load event for editing")}
+
       _ ->
         {:noreply, assign(socket, :sync_status, "Event not found")}
     end
@@ -332,12 +339,20 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("show_sync_history", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param) do
-      sync_history = Events.list_event_sync_logs(event_id, 10)
+      case list_sync_history_safe(event_id) do
+        {:ok, sync_history} ->
+          {:noreply,
+           socket
+           |> assign(:viewing_sync_history_for, event_id)
+           |> assign(:sync_history, sync_history)}
 
-      {:noreply,
-       socket
-       |> assign(:viewing_sync_history_for, event_id)
-       |> assign(:sync_history, sync_history)}
+        {:error, _reason} ->
+          {:noreply,
+           socket
+           |> assign(:viewing_sync_history_for, nil)
+           |> assign(:sync_history, [])
+           |> assign(:sync_status, "Unable to load sync history for this event")}
+      end
     else
       _ ->
         {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
@@ -773,7 +788,7 @@ defmodule FastCheckWeb.DashboardLive do
                     <h3 class="mt-2 text-xl font-semibold text-fc-text-primary">{event.name}</h3>
                     <p class="mt-1 text-xs text-fc-text-muted">Event ID {event.id}</p>
                     <p class="mt-1 text-xs text-fc-text-muted">
-                      Scanner code {event.scanner_login_code || "Unavailable"}
+                      Scanner code {event_scanner_code(event)}
                     </p>
                   </div>
 
@@ -1048,7 +1063,7 @@ defmodule FastCheckWeb.DashboardLive do
             Event ID {@editing_event_id}
           </p>
           <p :if={@edit_form} class="text-sm text-fc-text-secondary">
-            Scanner code {@edit_form[:scanner_login_code].value || "Unavailable"}
+            Scanner code {safe_form_value(@edit_form, :scanner_login_code) || "Unavailable"}
           </p>
 
           <.form
@@ -1233,7 +1248,7 @@ defmodule FastCheckWeb.DashboardLive do
       "name" => event.name,
       "tickera_site_url" => event.tickera_site_url,
       "tickera_api_key_last4" => event.tickera_api_key_last4,
-      "scanner_login_code" => event.scanner_login_code,
+      "scanner_login_code" => event_scanner_code_value(event),
       "location" => event.location,
       "entrance_name" => event.entrance_name,
       # Don't show existing secret
@@ -1255,6 +1270,48 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp parse_event_id(_), do: {:error, "Invalid event identifier"}
+
+  defp fetch_event_for_edit(event_id) do
+    {:ok, Events.get_event!(event_id)}
+  rescue
+    Ecto.NoResultsError ->
+      {:error, :not_found}
+
+    exception ->
+      Logger.error("Failed to load event #{event_id} for edit: #{Exception.message(exception)}")
+      {:error, :load_failed}
+  end
+
+  defp list_sync_history_safe(event_id) do
+    {:ok, Events.list_event_sync_logs(event_id, 10)}
+  rescue
+    exception ->
+      Logger.error(
+        "Failed to load sync history for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      {:error, :sync_history_unavailable}
+  end
+
+  defp event_scanner_code(event), do: event_scanner_code_value(event) || "Unavailable"
+
+  defp event_scanner_code_value(event) when is_map(event) do
+    case Map.get(event, :scanner_login_code) do
+      value when is_binary(value) and value != "" -> value
+      _ -> nil
+    end
+  end
+
+  defp event_scanner_code_value(_event), do: nil
+
+  defp safe_form_value(form, field_name) when is_atom(field_name) do
+    form
+    |> Map.get(field_name)
+    |> case do
+      %{value: value} -> value
+      _ -> nil
+    end
+  end
 
   defp start_sync_task(event_id, opts) do
     parent = self()

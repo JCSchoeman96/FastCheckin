@@ -45,11 +45,11 @@ defmodule FastCheckWeb.ExportController do
   """
   def export_check_ins(conn, %{"event_id" => event_id_param}) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         {:ok, %Events.Event{}} <- fetch_event(event_id) do
+         {:ok, %Events.Event{} = event} <- fetch_event(event_id) do
       check_ins = Attendees.list_event_check_ins(event_id)
 
       csv_content = generate_check_ins_csv(check_ins)
-      filename = "check_ins_#{event_id}_#{date_suffix()}.csv"
+      filename = "#{sanitize_filename(event.name)}_check_ins_#{date_suffix()}.csv"
 
       conn
       |> put_resp_content_type("text/csv")
@@ -143,13 +143,7 @@ defmodule FastCheckWeb.ExportController do
 
     rows =
       Enum.map(check_ins, fn check_in ->
-        attendee_name =
-          if check_in.attendee do
-            "#{check_in.attendee.first_name || ""} #{check_in.attendee.last_name || ""}"
-            |> String.trim()
-          else
-            ""
-          end
+        attendee_name = attendee_name_for_export(check_in)
 
         [
           check_in.ticket_code || "",
@@ -193,6 +187,18 @@ defmodule FastCheckWeb.ExportController do
   defp format_datetime(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")
   defp format_datetime(%NaiveDateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")
   defp format_datetime(_), do: ""
+
+  defp attendee_name_for_export(%{attendee: attendee}) do
+    if Ecto.assoc_loaded?(attendee) and is_map(attendee) do
+      first_name = Map.get(attendee, :first_name) || ""
+      last_name = Map.get(attendee, :last_name) || ""
+      String.trim("#{first_name} #{last_name}")
+    else
+      ""
+    end
+  end
+
+  defp attendee_name_for_export(_), do: ""
 
   defp sanitize_filename(name) when is_binary(name) do
     name

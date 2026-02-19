@@ -111,6 +111,23 @@ defmodule FastCheckWeb.DashboardLiveTest do
     end
   end
 
+  describe "sync history modal" do
+    test "opens sync history modal even when no sync logs exist", %{conn: conn} do
+      event = insert_event!(%{name: "No Logs Event"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      assert has_element?(view, "#show-sync-history-#{event.id}")
+
+      view
+      |> element("#show-sync-history-#{event.id}")
+      |> render_click()
+
+      assert has_element?(view, "#sync-history-modal")
+      assert render(view) =~ "No sync history available for this event."
+    end
+  end
+
   defp mount_dashboard(conn) do
     conn
     |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
