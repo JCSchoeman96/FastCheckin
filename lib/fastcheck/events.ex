@@ -763,20 +763,50 @@ defmodule FastCheck.Events do
       Map.get(essentials, "event_date_time") ||
         Map.get(essentials, :event_date_time)
 
-    {event_date, event_time} = split_datetime(event_datetime)
+    {derived_event_date, derived_event_time} = split_datetime(event_datetime)
     {tickera_start_date, tickera_end_date} = resolve_tickera_window(attrs, essentials)
 
+    name_override = fetch_attr(attrs, "name") |> normalize_non_empty_binary()
+
+    name_from_essentials =
+      (Map.get(essentials, "event_name") || Map.get(essentials, :event_name))
+      |> normalize_non_empty_binary()
+
+    location_override = fetch_attr(attrs, "location") |> normalize_non_empty_binary()
+    entrance_override = fetch_attr(attrs, "entrance_name") |> normalize_non_empty_binary()
+
+    event_location =
+      (Map.get(essentials, "event_location") ||
+         Map.get(essentials, :event_location))
+      |> normalize_non_empty_binary()
+
+    event_date_override = fetch_attr(attrs, "event_date")
+    event_time_override = fetch_attr(attrs, "event_time")
+
+    total_tickets =
+      (Map.get(essentials, "total_tickets") ||
+         Map.get(essentials, :total_tickets) ||
+         Map.get(essentials, "sold_tickets") ||
+         Map.get(essentials, :sold_tickets))
+      |> normalize_non_negative_integer()
+
+    checked_in_count =
+      (Map.get(essentials, "checked_tickets") ||
+         Map.get(essentials, :checked_tickets))
+      |> normalize_non_negative_integer()
+
     %{
-      name:
-        fetch_attr(attrs, "name") || Map.get(essentials, "event_name") ||
-          Map.get(essentials, :event_name),
+      name: name_override || name_from_essentials,
       scanner_login_code:
         normalize_scanner_login_code_attr(fetch_attr(attrs, "scanner_login_code")),
-      entrance_name: fetch_attr(attrs, "entrance_name"),
-      location: fetch_attr(attrs, "location"),
-      total_tickets: Map.get(essentials, "total_tickets") || Map.get(essentials, :total_tickets),
-      event_date: fetch_attr(attrs, "event_date") || event_date,
-      event_time: fetch_attr(attrs, "event_time") || event_time,
+      entrance_name: entrance_override || "Main Gate",
+      location: location_override || event_location,
+      total_tickets: total_tickets,
+      checked_in_count: checked_in_count,
+      event_date:
+        if(blank_value?(event_date_override), do: derived_event_date, else: event_date_override),
+      event_time:
+        if(blank_value?(event_time_override), do: derived_event_time, else: event_time_override),
       tickera_start_date: tickera_start_date,
       tickera_end_date: tickera_end_date,
       last_sync_at: fetch_attr(attrs, "last_sync_at"),
@@ -967,8 +997,26 @@ defmodule FastCheck.Events do
 
   defp normalize_non_empty_binary(_value), do: nil
 
+  defp normalize_non_negative_integer(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_non_negative_integer(value) when is_integer(value), do: 0
+  defp normalize_non_negative_integer(value) when is_float(value) and value >= 0, do: trunc(value)
+  defp normalize_non_negative_integer(value) when is_float(value), do: 0
+
+  defp normalize_non_negative_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, _rest} when parsed >= 0 -> parsed
+      _ -> 0
+    end
+  end
+
+  defp normalize_non_negative_integer(_value), do: 0
+
   defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""
   defp present_binary?(_value), do: false
+
+  defp blank_value?(nil), do: true
+  defp blank_value?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank_value?(_value), do: false
 
   defp credential_check_passed?(%{"pass" => pass}) when pass in [true, "true", "1", 1], do: true
   defp credential_check_passed?(%{"pass" => _}), do: false

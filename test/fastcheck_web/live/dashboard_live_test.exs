@@ -8,9 +8,30 @@ defmodule FastCheckWeb.DashboardLiveTest do
   alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias Req.Response
 
   setup do
     _ = Cache.invalidate_events_list_cache()
+
+    previous_request_fun = Application.get_env(:fastcheck, :tickera_request_fun)
+    previous_default_site_url = Application.get_env(:fastcheck, :default_tickera_site_url)
+
+    Application.put_env(:fastcheck, :default_tickera_site_url, "https://voelgoed.co.za")
+
+    on_exit(fn ->
+      if is_nil(previous_request_fun) do
+        Application.delete_env(:fastcheck, :tickera_request_fun)
+      else
+        Application.put_env(:fastcheck, :tickera_request_fun, previous_request_fun)
+      end
+
+      if is_nil(previous_default_site_url) do
+        Application.delete_env(:fastcheck, :default_tickera_site_url)
+      else
+        Application.put_env(:fastcheck, :default_tickera_site_url, previous_default_site_url)
+      end
+    end)
+
     :ok
   end
 
@@ -174,6 +195,122 @@ defmodule FastCheckWeb.DashboardLiveTest do
     end
   end
 
+  describe "create event flow" do
+    test "create form is minimal by default and pre-fills Tickera site URL", %{conn: conn} do
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#show-new-event-form-button")
+      |> render_click()
+
+      assert has_element?(
+               view,
+               "#create-event-form input[name='event[tickera_api_key_encrypted]']"
+             )
+
+      assert has_element?(view, "#create-event-form input[name='event[mobile_access_code]']")
+      refute has_element?(view, "#create-event-form input[name='event[name]']")
+      assert has_element?(view, "#create-event-advanced")
+      refute has_element?(view, "#create-event-advanced[open]")
+
+      site_url_input_html =
+        view
+        |> element("#create-event-form input[name='event[tickera_site_url]']")
+        |> render()
+
+      assert site_url_input_html =~ ~s(value="https://voelgoed.co.za")
+    end
+
+    test "submitting minimal create form auto-starts full sync in background", %{conn: conn} do
+      mock_tickera_requests(
+        %{
+          "event_name" => "Auto Sync Event",
+          "event_date_time" => "2026-02-19T19:00:00Z",
+          "event_location" => "Auto Venue",
+          "sold_tickets" => 75,
+          "checked_tickets" => 3,
+          "pass" => true
+        },
+        ticket_delay_ms: 250
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#show-new-event-form-button")
+      |> render_click()
+
+      view
+      |> form("#create-event-form", %{
+        "event" => %{
+          "tickera_api_key_encrypted" => "live-api-key-12345",
+          "mobile_access_code" => "door-secret",
+          "tickera_site_url" => "https://voelgoed.co.za",
+          "location" => "",
+          "entrance_name" => ""
+        }
+      })
+      |> render_submit()
+
+      created =
+        Events.list_events()
+        |> Enum.find(&(&1.name == "Auto Sync Event"))
+
+      assert %Event{} = created
+      assert created.entrance_name == "Main Gate"
+
+      html = render(view)
+
+      assert html =~
+               "Event created: ID #{created.id}, scanner code #{created.scanner_login_code}."
+
+      assert html =~ "Starting full attendee sync"
+      refute has_element?(view, "#create-event-form")
+    end
+
+    test "create flow warns when another sync is already running", %{conn: conn} do
+      existing_event = insert_event!(%{name: "Running Sync Event"})
+
+      mock_tickera_requests(
+        %{
+          "event_name" => "Second Event",
+          "event_date_time" => "2026-02-20T20:00:00Z",
+          "event_location" => "Second Venue",
+          "sold_tickets" => 20,
+          "checked_tickets" => 0,
+          "pass" => true
+        },
+        ticket_delay_ms: 700
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#full-sync-#{existing_event.id}")
+      |> render_click()
+
+      assert render(view) =~ "Starting full attendee sync (attempt 1/3)..."
+
+      view
+      |> element("#show-new-event-form-button")
+      |> render_click()
+
+      view
+      |> form("#create-event-form", %{
+        "event" => %{
+          "tickera_api_key_encrypted" => "new-live-api-key",
+          "mobile_access_code" => "second-door-secret",
+          "tickera_site_url" => "https://voelgoed.co.za",
+          "location" => "",
+          "entrance_name" => ""
+        }
+      })
+      |> render_submit()
+
+      assert render(view) =~ "Auto full sync not started because another sync is already running."
+    end
+  end
+
   defp mount_dashboard(conn) do
     conn
     |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
@@ -207,5 +344,30 @@ defmodule FastCheckWeb.DashboardLiveTest do
     %Event{}
     |> Event.changeset(params)
     |> Repo.insert!()
+  end
+
+  defp mock_tickera_requests(event_essentials, opts) do
+    ticket_delay_ms = Keyword.get(opts, :ticket_delay_ms, 0)
+
+    Application.put_env(:fastcheck, :tickera_request_fun, fn req ->
+      path = req.url.path || ""
+
+      cond do
+        String.ends_with?(path, "/check_credentials") ->
+          {:ok, %Response{status: 200, body: %{"pass" => true}}}
+
+        String.ends_with?(path, "/event_essentials") ->
+          {:ok, %Response{status: 200, body: Map.put_new(event_essentials, "pass", true)}}
+
+        String.contains?(path, "/tickets_info/") ->
+          if ticket_delay_ms > 0, do: Process.sleep(ticket_delay_ms)
+
+          {:ok,
+           %Response{status: 200, body: %{"data" => [], "additional" => %{"results_count" => 0}}}}
+
+        true ->
+          {:ok, %Response{status: 404, body: %{"error" => "not-found"}}}
+      end
+    end)
   end
 end

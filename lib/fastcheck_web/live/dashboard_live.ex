@@ -9,6 +9,7 @@ defmodule FastCheckWeb.DashboardLive do
   alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  alias FastCheck.Repo
   require Logger
   alias Phoenix.LiveView.JS
 
@@ -18,6 +19,7 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def mount(_params, _session, socket) do
     events = Events.list_events()
+    default_site_url = default_tickera_site_url()
 
     {:ok,
      socket
@@ -41,7 +43,8 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:sync_attempt, nil)
      |> assign(:viewing_sync_history_for, nil)
      |> assign(:sync_history, [])
-     |> assign(:form, empty_event_form())}
+     |> assign(:default_tickera_site_url, default_site_url)
+     |> assign(:form, empty_event_form(default_site_url))}
   end
 
   @impl true
@@ -56,17 +59,63 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("create_event", %{"event" => event_params}, socket) do
-    case Events.create_event(event_params) do
-      {:ok, _event} ->
-        refreshed_events = Events.list_events()
+    socket = clear_stale_sync_runtime(socket)
 
-        {:noreply,
-         socket
-         |> assign(:events, refreshed_events)
-         |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-         |> assign(:show_new_event_form, false)
-         |> assign(:sync_status, "Event created successfully")
-         |> assign(:form, empty_event_form())}
+    case Events.create_event(event_params) do
+      {:ok, %Event{} = event} ->
+        refreshed_events = Events.list_events()
+        scanner_code = event_scanner_code(event)
+        created_status = "Event created: ID #{event.id}, scanner code #{scanner_code}."
+
+        socket_after_create =
+          socket
+          |> assign(:events, refreshed_events)
+          |> assign(
+            :filtered_events,
+            filter_events(refreshed_events, socket.assigns.search_query)
+          )
+          |> assign(:show_new_event_form, false)
+          |> assign(:form, empty_event_form(socket.assigns.default_tickera_site_url))
+
+        if sync_task_running?(socket_after_create) do
+          {:noreply,
+           assign(
+             socket_after_create,
+             :sync_status,
+             created_status <>
+               " Auto full sync not started because another sync is already running."
+           )}
+        else
+          case start_sync_task(event.id, incremental: false) do
+            {:ok, task_meta} ->
+              start_time = System.monotonic_time(:second)
+
+              {:noreply,
+               socket_after_create
+               |> assign(:selected_event_id, event.id)
+               |> assign(:sync_progress, {0, 0, 0})
+               |> assign(:sync_start_time, start_time)
+               |> assign(:sync_timing_data, [])
+               |> assign(:sync_paused, false)
+               |> assign(:sync_task_pid, task_meta.pid)
+               |> assign(:sync_task_ref, task_meta.monitor_ref)
+               |> assign(:sync_run_ref, task_meta.run_ref)
+               |> assign(:sync_attempt, 1)
+               |> assign(
+                 :sync_status,
+                 created_status <>
+                   " Starting full attendee sync (attempt 1/#{@max_sync_attempts})..."
+               )}
+
+            {:error, reason} ->
+              {:noreply,
+               assign(
+                 socket_after_create,
+                 :sync_status,
+                 created_status <> " Auto full sync could not start: #{format_error(reason)}"
+               )}
+          end
+        end
 
       {:error, %Changeset{} = changeset} ->
         {:noreply,
@@ -78,7 +127,10 @@ defmodule FastCheckWeb.DashboardLive do
         {:noreply,
          socket
          |> assign(:sync_status, "Unable to create event: #{format_error(reason)}")
-         |> assign(:form, sticky_event_form(event_params))}
+         |> assign(
+           :form,
+           sticky_event_form(event_params, socket.assigns.default_tickera_site_url)
+         )}
     end
   end
 
@@ -635,43 +687,63 @@ defmodule FastCheckWeb.DashboardLive do
               class="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2"
             >
               <.input
-                field={@form[:name]}
-                type="text"
-                label="Event name"
-                placeholder="Tech Summit 2026"
-              />
-              <.input
-                field={@form[:tickera_site_url]}
-                type="url"
-                label="Site URL"
-                placeholder="https://example.com"
-              />
-
-              <.input
                 field={@form[:tickera_api_key_encrypted]}
                 type="password"
                 label="Tickera API key"
                 placeholder="Paste API key"
+                required
               />
 
               <.input
                 field={@form[:mobile_access_code]}
                 type="password"
-                label="Mobile access code"
+                label="Scanner password"
                 placeholder="Required for scanner login"
                 required
               />
+
               <p class="md:col-span-2 -mt-3 text-xs text-fc-text-muted">
-                Scanner login uses a 6-character event code + mobile access code + operator name.
+                Event name, date, and ticket counts are pulled from Tickera automatically.
+              </p>
+              <p class="md:col-span-2 -mt-3 text-xs text-fc-text-muted">
+                Scanner login uses a 6-character event code + scanner password + operator name.
               </p>
 
-              <.input field={@form[:location]} type="text" label="Location" placeholder="Main venue" />
-              <.input
-                field={@form[:entrance_name]}
-                type="text"
-                label="Entrance name"
-                placeholder="Main gate"
-              />
+              <details
+                id="create-event-advanced"
+                class="md:col-span-2 rounded-xl border border-fc-border p-3"
+              >
+                <summary
+                  id="create-event-advanced-toggle"
+                  class="cursor-pointer text-sm font-semibold text-fc-text-primary"
+                >
+                  Advanced options (optional)
+                </summary>
+
+                <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <.input
+                    field={@form[:tickera_site_url]}
+                    type="url"
+                    label="Tickera site URL"
+                    value={safe_form_value(@form, :tickera_site_url) || @default_tickera_site_url}
+                    placeholder="https://voelgoed.co.za"
+                  />
+
+                  <.input
+                    field={@form[:entrance_name]}
+                    type="text"
+                    label="Entrance name (optional)"
+                    placeholder="Main Gate"
+                  />
+
+                  <.input
+                    field={@form[:location]}
+                    type="text"
+                    label="Location (optional)"
+                    placeholder="Main venue"
+                  />
+                </div>
+              </details>
 
               <div class="md:col-span-2 flex flex-wrap items-center gap-3">
                 <.button
@@ -681,7 +753,7 @@ defmodule FastCheckWeb.DashboardLive do
                   variant="shadow"
                   phx-disable-with="Creating..."
                 >
-                  Create event
+                  Create event and start sync
                 </.button>
 
                 <.button
@@ -1287,17 +1359,21 @@ defmodule FastCheckWeb.DashboardLive do
     """
   end
 
-  defp empty_event_form do
-    %Event{}
-    |> Event.changeset(%{})
-    |> to_form()
+  defp empty_event_form(default_site_url) when is_binary(default_site_url) do
+    default_create_event_params(default_site_url)
+    |> to_form(as: :event)
   end
 
-  defp sticky_event_form(params) do
-    %Event{}
-    |> Event.changeset(params)
-    |> to_form()
+  defp sticky_event_form(params, default_site_url)
+       when is_map(params) and is_binary(default_site_url) do
+    params =
+      default_create_event_params(default_site_url)
+      |> Map.merge(stringify_form_keys(params))
+
+    to_form(params, as: :event)
   end
+
+  defp sticky_event_form(_params, default_site_url), do: empty_event_form(default_site_url)
 
   defp build_edit_form(%Event{} = event) do
     event
@@ -1368,14 +1444,50 @@ defmodule FastCheckWeb.DashboardLive do
     end
   end
 
+  defp default_create_event_params(default_site_url) do
+    %{
+      "tickera_api_key_encrypted" => "",
+      "mobile_access_code" => "",
+      "tickera_site_url" => default_site_url,
+      "location" => "",
+      "entrance_name" => ""
+    }
+  end
+
+  defp stringify_form_keys(params) when is_map(params) do
+    Enum.reduce(params, %{}, fn
+      {key, value}, acc when is_binary(key) ->
+        Map.put(acc, key, value)
+
+      {key, value}, acc when is_atom(key) ->
+        Map.put(acc, Atom.to_string(key), value)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp default_tickera_site_url do
+    Application.get_env(:fastcheck, :default_tickera_site_url, "https://voelgoed.co.za")
+    |> to_string()
+    |> String.trim()
+    |> case do
+      "" -> "https://voelgoed.co.za"
+      value -> value
+    end
+  end
+
   defp start_sync_task(event_id, opts) do
     parent = self()
+    caller = self()
     incremental = Keyword.get(opts, :incremental, false)
     max_attempts = Keyword.get(opts, :max_attempts, @max_sync_attempts)
     attempt_timeout_ms = Keyword.get(opts, :attempt_timeout_ms, @sync_attempt_timeout_ms)
     run_ref = make_ref()
 
     case Task.start(fn ->
+           maybe_allow_sandbox_connection(caller)
+
            run_sync_with_retries(
              parent,
              run_ref,
@@ -1574,6 +1686,26 @@ defmodule FastCheckWeb.DashboardLive do
       pid when is_pid(pid) -> Process.alive?(pid)
       _ -> false
     end
+  end
+
+  defp maybe_allow_sandbox_connection(caller) when is_pid(caller) do
+    if sandbox_pool?() do
+      try do
+        Ecto.Adapters.SQL.Sandbox.allow(Repo, caller, self())
+      rescue
+        _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp maybe_allow_sandbox_connection(_caller), do: :ok
+
+  defp sandbox_pool? do
+    Application.get_env(:fastcheck, Repo, [])
+    |> Keyword.get(:pool)
+    |> Kernel.==(Ecto.Adapters.SQL.Sandbox)
   end
 
   defp maybe_demonitor_sync_task(socket) do

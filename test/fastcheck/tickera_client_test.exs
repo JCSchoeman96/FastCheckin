@@ -108,6 +108,62 @@ defmodule FastCheck.TickeraClientTest do
     assert parsed.payment_status == "completed"
   end
 
+  test "fetch_all_attendees parses list-root tickets_info payload with data/additional envelope" do
+    requests_key = {:tickera_mock_requests, make_ref()}
+    responses_key = {:tickera_mock_responses, make_ref()}
+
+    list_root_payload =
+      Jason.encode!([
+        %{
+          "data" => %{
+            "checksum" => "91123-3",
+            "buyer_first" => "Carlynn",
+            "buyer_last" => "Adams",
+            "payment_date" => "Februarie 17 2026 - 7:56 nm",
+            "transaction_id" => "91123-3",
+            "allowed_checkins" => "1",
+            "custom_fields" => [
+              ["Ticket Type", "Early Bird"],
+              ["Buyer E-mail", "example@example.com"]
+            ],
+            "custom_field_count" => "2",
+            "custom_ticket_info" => []
+          }
+        },
+        %{
+          "additional" => %{
+            "results_count" => "1",
+            "execution_time" => "0.123"
+          }
+        }
+      ])
+
+    set_request_sequence(
+      [
+        {:ok,
+         %Response{
+           status: 200,
+           body: list_root_payload,
+           headers: [{"content-type", "application/json"}]
+         }}
+      ],
+      requests_key,
+      responses_key
+    )
+
+    assert {:ok, attendees, total_count} =
+             TickeraClient.fetch_all_attendees("https://example.com", "api-789", 100)
+
+    assert total_count == 1
+    assert length(attendees) == 1
+
+    attendee = hd(attendees)
+    assert attendee.ticket_code == "91123-3"
+    assert attendee.first_name == "Carlynn"
+    assert attendee.last_name == "Adams"
+    assert attendee.email == "example@example.com"
+  end
+
   defp set_request_sequence(responses, requests_key, responses_key) do
     Process.put(requests_key, [])
     Process.put(responses_key, responses)

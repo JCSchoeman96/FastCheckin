@@ -66,6 +66,20 @@ config :fastcheck, :dashboard_auth, %{
   password: dashboard_password
 }
 
+default_tickera_site_url =
+  case System.get_env("DEFAULT_TICKERA_SITE_URL", "https://voelgoed.co.za") do
+    nil ->
+      "https://voelgoed.co.za"
+
+    value ->
+      case String.trim(value) do
+        "" -> "https://voelgoed.co.za"
+        trimmed -> trimmed
+      end
+  end
+
+config :fastcheck, :default_tickera_site_url, default_tickera_site_url
+
 # Cache defaults shared across all environments. The values can be overridden
 # via environment variables without recompiling the release.
 cache_enabled = System.get_env("CACHE_ENABLED", "true") == "true"

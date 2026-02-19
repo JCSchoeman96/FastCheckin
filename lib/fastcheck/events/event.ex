@@ -111,6 +111,8 @@ defmodule FastCheck.Events.Event do
       :tickera_start_date,
       :tickera_end_date,
       :status,
+      :total_tickets,
+      :checked_in_count,
       :entrance_name,
       :event_date,
       :event_time,
@@ -128,6 +130,8 @@ defmodule FastCheck.Events.Event do
     |> unique_constraint(:scanner_login_code, name: :idx_events_scanner_login_code)
     |> check_constraint(:scanner_login_code, name: "events_scanner_login_code_format")
     |> validate_inclusion(:status, ["active", "syncing", "archived"])
+    |> validate_number(:total_tickets, greater_than_or_equal_to: 0)
+    |> validate_number(:checked_in_count, greater_than_or_equal_to: 0)
     |> check_constraint(:status, name: "events_status_must_be_valid")
     |> validate_required([
       :name,

@@ -1,0 +1,57 @@
+{
+  "captured_at_utc": "2026-02-19T16:50:00Z",
+  "source": "https://voelgoed.co.za",
+  "notes": [
+    "Sanitized schema fixture captured from live Tickera responses.",
+    "Contains endpoint and key structure only. No secrets or attendee values."
+  ],
+  "endpoints": {
+    "check_credentials": {
+      "status": 200,
+      "top_level_keys": [
+        "admin_email",
+        "check_type",
+        "execution_time",
+        "license_key",
+        "pass",
+        "tc_iw_is_pr"
+      ]
+    },
+    "event_essentials": {
+      "status": 200,
+      "top_level_keys": [
+        "checked_tickets",
+        "event_date_time",
+        "event_location",
+        "event_name",
+        "execution_time",
+        "pass",
+        "sold_tickets"
+      ]
+    },
+    "tickets_info_100_1": {
+      "status": 200,
+      "root_type": "list",
+      "item_count": 101,
+      "item_keys": [
+        "data"
+      ],
+      "data_keys": [
+        "allowed_checkins",
+        "buyer_first",
+        "buyer_last",
+        "checksum",
+        "custom_field_count",
+        "custom_fields",
+        "custom_ticket_info",
+        "date_checked",
+        "payment_date",
+        "transaction_id"
+      ],
+      "additional_keys": [
+        "execution_time",
+        "results_count"
+      ]
+    }
+  }
+}
