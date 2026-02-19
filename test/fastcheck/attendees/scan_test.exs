@@ -5,27 +5,32 @@ defmodule FastCheck.Attendees.ScanTest do
 
   describe "module exports" do
     test "exports check_in/4" do
-      assert function_exported?(Scan, :check_in, 4)
+      assert_exported(Scan, :check_in, 4)
     end
 
     test "exports check_in_advanced/5" do
-      assert function_exported?(Scan, :check_in_advanced, 5)
+      assert_exported(Scan, :check_in_advanced, 5)
     end
 
     test "exports bulk_check_in/2" do
-      assert function_exported?(Scan, :bulk_check_in, 2)
+      assert_exported(Scan, :bulk_check_in, 2)
     end
 
-    test "exports check_out/2" do
-      assert function_exported?(Scan, :check_out, 2)
+    test "exports check_out/4" do
+      assert_exported(Scan, :check_out, 4)
     end
 
-    test "exports reset_scan_counters/1" do
-      assert function_exported?(Scan, :reset_scan_counters, 1)
+    test "exports reset_scan_counters/2" do
+      assert_exported(Scan, :reset_scan_counters, 2)
     end
 
-    test "exports mark_manual_entry/2" do
-      assert function_exported?(Scan, :mark_manual_entry, 2)
+    test "exports mark_manual_entry/5" do
+      assert_exported(Scan, :mark_manual_entry, 5)
     end
+  end
+
+  defp assert_exported(module, function, arity) do
+    Code.ensure_loaded!(module)
+    assert function_exported?(module, function, arity)
   end
 end

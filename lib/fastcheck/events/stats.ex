@@ -404,13 +404,22 @@ defmodule FastCheck.Events.Stats do
   @spec broadcast_occupancy_breakdown(integer()) :: :ok
   def broadcast_occupancy_breakdown(event_id) when is_integer(event_id) do
     Task.start(fn ->
-      breakdown = FastCheck.Attendees.get_occupancy_breakdown(event_id)
+      try do
+        # Compute directly from DB for broadcast so we don't warm or reuse the
+        # short-lived UI cache with potentially stale intermediate values.
+        breakdown = FastCheck.Attendees.Query.compute_occupancy_breakdown(event_id)
 
-      Phoenix.PubSub.broadcast(
-        FastCheck.PubSub,
-        "event:#{event_id}:occupancy",
-        {:occupancy_breakdown_updated, event_id, breakdown}
-      )
+        Phoenix.PubSub.broadcast(
+          FastCheck.PubSub,
+          "event:#{event_id}:occupancy",
+          {:occupancy_breakdown_updated, event_id, breakdown}
+        )
+      rescue
+        exception ->
+          Logger.error(
+            "Failed to broadcast occupancy breakdown for event #{event_id}: #{Exception.message(exception)}"
+          )
+      end
     end)
 
     :ok

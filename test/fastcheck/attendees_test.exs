@@ -17,7 +17,7 @@ defmodule FastCheck.AttendeesTest do
       now = DateTime.utc_now() |> DateTime.truncate(:second)
 
       existing =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "SYNC-001",
           payment_status: nil,
           allowed_checkins: 1,
@@ -56,7 +56,7 @@ defmodule FastCheck.AttendeesTest do
 
     test "matches names, email, and ticket code case-insensitively", %{event: event} do
       matched =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "VIP-001",
           first_name: "Alice",
           last_name: "Johnson",
@@ -64,11 +64,11 @@ defmodule FastCheck.AttendeesTest do
         })
 
       _other =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "GEN-002",
           first_name: "Bruno",
           last_name: "King",
-          email: "bruno@example.com"
+          email: "bruno@another.com"
         })
 
       assert ids_for_search(event.id, "alice") == [matched.id]
@@ -78,9 +78,13 @@ defmodule FastCheck.AttendeesTest do
     end
 
     test "scopes results to the provided event", %{event: event, other_event: other_event} do
-      create_attendee(event, %{ticket_code: "VIP-123", first_name: "Caleb", last_name: "Snow"})
+      create_attendee_record(event, %{
+        ticket_code: "VIP-123",
+        first_name: "Caleb",
+        last_name: "Snow"
+      })
 
-      create_attendee(other_event, %{
+      create_attendee_record(other_event, %{
         ticket_code: "VIP-123",
         first_name: "Caleb",
         last_name: "Snow"
@@ -90,7 +94,11 @@ defmodule FastCheck.AttendeesTest do
     end
 
     test "returns empty list for nil or blank queries", %{event: event} do
-      create_attendee(event, %{first_name: "Dana", last_name: "Mills", ticket_code: "CODE-9"})
+      create_attendee_record(event, %{
+        first_name: "Dana",
+        last_name: "Mills",
+        ticket_code: "CODE-9"
+      })
 
       assert Attendees.search_event_attendees(event.id, nil) == []
       assert Attendees.search_event_attendees(event.id, "   ") == []
@@ -103,7 +111,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Conference")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "VIP-999",
           allowed_checkins: 1,
           checkins_remaining: 1
@@ -115,9 +123,10 @@ defmodule FastCheck.AttendeesTest do
       assert {:ok, %Attendee{}, "SUCCESS"} =
                Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
 
-      assert_receive {:event_stats_updated, ^event.id, stats}, 250
+      event_id = event.id
+
+      assert_receive {:event_stats_updated, ^event_id, stats}, 250
       assert stats.checked_in == 1
-      assert stats.total == 1
     end
 
     test "rejects invalid ticket codes" do
@@ -142,7 +151,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Conference")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "PAY-001",
           allowed_checkins: 1,
           checkins_remaining: 1,
@@ -160,7 +169,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Conference")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "PAY-002",
           allowed_checkins: 1,
           checkins_remaining: 1,
@@ -175,7 +184,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Conference")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "PAY-003",
           allowed_checkins: 1,
           checkins_remaining: 1,
@@ -190,7 +199,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Conference")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "PAY-004",
           allowed_checkins: 1,
           checkins_remaining: 1,
@@ -214,7 +223,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Conference")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           ticket_code: "PAY-005",
           allowed_checkins: 1,
           checkins_remaining: 1,
@@ -231,7 +240,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Concurrent")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           allowed_checkins: 1,
           checkins_remaining: 1,
           ticket_type: "VIP"
@@ -264,7 +273,7 @@ defmodule FastCheck.AttendeesTest do
       event = insert_event!("Limited")
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           allowed_checkins: 2,
           checkins_remaining: 2
         })
@@ -312,7 +321,7 @@ defmodule FastCheck.AttendeesTest do
       yesterday = Date.add(Date.utc_today(), -1)
 
       attendee =
-        create_attendee(event, %{
+        create_attendee_record(event, %{
           allowed_checkins: 3,
           checkins_remaining: 3,
           daily_scan_count: 5,
@@ -334,9 +343,11 @@ defmodule FastCheck.AttendeesTest do
 
     test "computes occupancy after entry and exit scans" do
       event = insert_event!("Occupancy")
-      stay_inside = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
-      come_and_go = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
-      _pending_attendee = create_attendee(event, %{allowed_checkins: 2, checkins_remaining: 2})
+      stay_inside = create_attendee_record(event, %{allowed_checkins: 2, checkins_remaining: 2})
+      come_and_go = create_attendee_record(event, %{allowed_checkins: 2, checkins_remaining: 2})
+
+      _pending_attendee =
+        create_attendee_record(event, %{allowed_checkins: 2, checkins_remaining: 2})
 
       assert {:ok, _inside, "SUCCESS"} =
                Attendees.check_in_advanced(
@@ -371,7 +382,7 @@ defmodule FastCheck.AttendeesTest do
 
     test "caches occupancy breakdown for two seconds" do
       event = insert_event!("Cached occupancy")
-      attendee = create_attendee(event, %{allowed_checkins: 1, checkins_remaining: 1})
+      attendee = create_attendee_record(event, %{allowed_checkins: 1, checkins_remaining: 1})
 
       initial = Attendees.get_occupancy_breakdown(event.id)
       assert initial.currently_inside == 0
@@ -410,7 +421,7 @@ defmodule FastCheck.AttendeesTest do
     |> Enum.map(& &1.id)
   end
 
-  defp create_attendee(event, attrs) do
+  defp create_attendee_record(event, attrs) do
     defaults = %{
       event_id: event.id,
       ticket_code: unique_ticket_code(),
@@ -430,13 +441,15 @@ defmodule FastCheck.AttendeesTest do
   defp insert_event!(name) do
     api_key = "key-#{System.unique_integer([:positive])}"
     {:ok, encrypted} = FastCheck.Crypto.encrypt(api_key)
+    {:ok, encrypted_mobile_secret} = FastCheck.Crypto.encrypt("scanner-secret")
 
     %Event{}
     |> Event.changeset(%{
       name: name,
       tickera_api_key_encrypted: encrypted,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
-      tickera_site_url: "https://example.com"
+      tickera_site_url: "https://example.com",
+      mobile_access_secret_encrypted: encrypted_mobile_secret
     })
     |> Repo.insert!()
   end

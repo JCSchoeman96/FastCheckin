@@ -31,11 +31,15 @@ defmodule FastCheckWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
 
+  attr :show_nav, :boolean, default: true, doc: "whether to render the app navbar"
+  attr :main_class, :string, default: "fc-app-container fc-container", doc: "main wrapper classes"
+
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
     <.navbar
+      :if={@show_nav}
       id="fc-navbar"
       variant="shadow"
       color="natural"
@@ -62,7 +66,7 @@ defmodule FastCheckWeb.Layouts do
       </:end_content>
     </.navbar>
 
-    <main class="fc-app-container fc-container" style="padding-block: var(--fc-space-section)">
+    <main class={@main_class} style="padding-block: var(--fc-space-section)">
       {render_slot(@inner_block)}
     </main>
     <.flash_group flash={@flash} />

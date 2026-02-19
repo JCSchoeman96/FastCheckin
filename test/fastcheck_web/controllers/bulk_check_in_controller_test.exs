@@ -3,6 +3,7 @@ defmodule FastCheckWeb.BulkCheckInControllerTest do
 
   alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
 
@@ -28,7 +29,7 @@ defmodule FastCheckWeb.BulkCheckInControllerTest do
           ]
         })
 
-      assert %{"results" => results} = json_response(conn, 200)
+      assert %{"data" => %{"results" => results}, "error" => nil} = json_response(conn, 200)
       assert length(results) == 1
       result = List.first(results)
       assert result["status"] == "SUCCESS"
@@ -45,15 +46,18 @@ defmodule FastCheckWeb.BulkCheckInControllerTest do
 
     test "handles missing scans", %{conn: conn} do
       conn = post(conn, ~p"/api/v1/check-in/batch", %{})
-      assert json_response(conn, 400)["error"] == "INVALID_PAYLOAD"
+      assert %{"error" => %{"code" => "INVALID_PAYLOAD"}} = json_response(conn, 400)
     end
   end
 
   defp create_event do
+    {:ok, encrypted_mobile_secret} = Crypto.encrypt("scanner-secret")
+
     params = %{
       name: "Test Event",
       tickera_site_url: "https://example.com",
       tickera_api_key_encrypted: "encrypted_key",
+      mobile_access_secret_encrypted: encrypted_mobile_secret,
       status: "active"
     }
 

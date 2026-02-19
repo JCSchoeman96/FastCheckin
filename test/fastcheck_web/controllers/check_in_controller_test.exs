@@ -3,6 +3,7 @@ defmodule FastCheckWeb.CheckInControllerTest do
 
   alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
 
@@ -43,10 +44,13 @@ defmodule FastCheckWeb.CheckInControllerTest do
   end
 
   defp create_event do
+    {:ok, encrypted_mobile_secret} = Crypto.encrypt("scanner-secret")
+
     params = %{
       name: "Test Event",
       tickera_site_url: "https://example.com",
       tickera_api_key_encrypted: "encrypted_key",
+      mobile_access_secret_encrypted: encrypted_mobile_secret,
       status: "active"
     }
 

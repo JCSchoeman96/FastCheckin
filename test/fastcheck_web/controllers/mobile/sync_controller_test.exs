@@ -1,15 +1,19 @@
 defmodule FastCheckWeb.Mobile.SyncControllerTest do
   use FastCheckWeb.ConnCase, async: true
 
-  alias FastCheck.{Repo, Events.Event, Attendees.Attendee, Mobile.Token}
+  alias FastCheck.{Repo, Events.Event, Attendees.Attendee, Mobile.Token, Crypto}
 
   setup do
+    {:ok, encrypted_secret} = Crypto.encrypt("scanner-secret")
+
     # Create test event
     event =
       %Event{
         name: "Sync Test Event",
+        site_url: "https://sync.example.com",
         tickera_site_url: "https://sync.example.com",
         tickera_api_key_encrypted: "encrypted_key",
+        mobile_access_secret_encrypted: encrypted_secret,
         status: "active"
       }
       |> Repo.insert!()
@@ -18,8 +22,10 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     other_event =
       %Event{
         name: "Other Event",
+        site_url: "https://other.example.com",
         tickera_site_url: "https://other.example.com",
         tickera_api_key_encrypted: "encrypted_key2",
+        mobile_access_secret_encrypted: encrypted_secret,
         status: "active"
       }
       |> Repo.insert!()
@@ -32,7 +38,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         first_name: "John",
         last_name: "Doe",
         email: "john@example.com",
-        payment_status: "paid",
+        payment_status: "completed",
         allowed_checkins: 1,
         checkins_remaining: 1
       }
@@ -71,7 +77,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         ticket_code: "OTHER001",
         first_name: "Other",
         last_name: "Person",
-        payment_status: "paid",
+        payment_status: "completed",
         allowed_checkins: 1,
         checkins_remaining: 1
       }
@@ -90,9 +96,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     }
   end
 
-  describe "GET /api/mobile/attendees - sync down" do
+  describe "GET /api/v1/mobile/attendees - sync down" do
     test "requires authentication (401 without token)", %{conn: conn} do
-      conn = get(conn, ~p"/api/mobile/attendees")
+      conn = get(conn, ~p"/api/v1/mobile/attendees")
       assert json_response(conn, 401)["error"] == "missing_authorization_header"
     end
 
@@ -100,7 +106,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer invalid-token")
-        |> get(~p"/api/mobile/attendees")
+        |> get(~p"/api/v1/mobile/attendees")
 
       assert json_response(conn, 401)["error"] in ["invalid_signature", "malformed_token"]
     end
@@ -114,13 +120,16 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/mobile/attendees")
+        |> get(~p"/api/v1/mobile/attendees")
 
       assert %{
-               "server_time" => server_time,
-               "attendees" => attendees,
-               "count" => count,
-               "sync_type" => "full"
+               "data" => %{
+                 "server_time" => server_time,
+                 "attendees" => attendees,
+                 "count" => count,
+                 "sync_type" => "full"
+               },
+               "error" => nil
              } = json_response(conn, 200)
 
       assert is_binary(server_time)
@@ -138,9 +147,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/mobile/attendees")
+        |> get(~p"/api/v1/mobile/attendees")
 
-      assert %{"attendees" => attendees} = json_response(conn, 200)
+      assert %{"data" => %{"attendees" => attendees}} = json_response(conn, 200)
 
       # Should not include OTHER001 from other event
       ticket_codes = Enum.map(attendees, & &1["ticket_code"])
@@ -151,9 +160,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/mobile/attendees")
+        |> get(~p"/api/v1/mobile/attendees")
 
-      assert %{"attendees" => [first_attendee | _]} = json_response(conn, 200)
+      assert %{"data" => %{"attendees" => [first_attendee | _]}} = json_response(conn, 200)
 
       # Verify all required fields are present
       assert Map.has_key?(first_attendee, "id")
@@ -185,9 +194,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/mobile/attendees?since=#{past_time}")
+        |> get(~p"/api/v1/mobile/attendees?since=#{past_time}")
 
-      assert %{"sync_type" => "incremental", "attendees" => attendees} =
+      assert %{"data" => %{"sync_type" => "incremental", "attendees" => attendees}} =
                json_response(conn, 200)
 
       # Should include updated attendee
@@ -198,15 +207,15 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/mobile/attendees?since=invalid-date")
+        |> get(~p"/api/v1/mobile/attendees?since=invalid-date")
 
-      assert %{"sync_type" => "full"} = json_response(conn, 200)
+      assert %{"data" => %{"sync_type" => "full"}} = json_response(conn, 200)
     end
   end
 
-  describe "POST /api/mobile/scans - batch upload" do
+  describe "POST /api/v1/mobile/scans - batch upload" do
     test "requires authentication (401 without token)", %{conn: conn} do
-      conn = post(conn, ~p"/api/mobile/scans", %{"scans" => []})
+      conn = post(conn, ~p"/api/v1/mobile/scans", %{"scans" => []})
       assert json_response(conn, 401)["error"] == "missing_authorization_header"
     end
 
@@ -224,9 +233,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => scans})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => scans})
 
-      assert %{"results" => [result], "processed" => 1} = json_response(conn, 200)
+      assert %{"data" => %{"results" => [result], "processed" => 1}, "error" => nil} =
+               json_response(conn, 200)
+
       assert result["idempotency_key"] == "scan-123-abc"
       assert result["status"] == "success"
       assert result["message"] =~ "Check-in successful"
@@ -247,18 +258,18 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn1 =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
-      assert %{"results" => [result1]} = json_response(conn1, 200)
+      assert %{"data" => %{"results" => [result1]}} = json_response(conn1, 200)
       assert result1["status"] == "success"
 
       # Second upload with same idempotency key
       conn2 =
         build_conn()
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
-      assert %{"results" => [result2]} = json_response(conn2, 200)
+      assert %{"data" => %{"results" => [result2]}} = json_response(conn2, 200)
       assert result2["status"] == "duplicate"
       assert result2["message"] =~ "Already processed"
     end
@@ -274,9 +285,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
-      assert %{"results" => [result]} = json_response(conn, 200)
+      assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
       assert result["status"] == "error"
       assert result["message"] =~ "Payment invalid"
       assert result["message"] =~ "refunded"
@@ -293,9 +304,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
-      assert %{"results" => [result]} = json_response(conn, 200)
+      assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
       assert result["status"] == "error"
       assert result["message"] =~ "Ticket not found"
     end
@@ -317,9 +328,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => scans})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => scans})
 
-      assert %{"results" => results, "processed" => 2} = json_response(conn, 200)
+      assert %{"data" => %{"results" => results, "processed" => 2}} = json_response(conn, 200)
       assert length(results) == 2
       assert Enum.all?(results, &(&1["status"] == "success"))
     end
@@ -334,9 +345,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
-      assert %{"results" => [result]} = json_response(conn, 200)
+      assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
       assert result["status"] == "error"
       assert result["message"] =~ "ticket_code"
     end
@@ -351,9 +362,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
-      assert %{"results" => [result]} = json_response(conn, 200)
+      assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
       assert result["status"] == "error"
       assert result["message"] =~ "Invalid direction"
     end
@@ -362,9 +373,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{})
+        |> post(~p"/api/v1/mobile/scans", %{})
 
-      assert %{"error" => "invalid_request"} = json_response(conn, 400)
+      assert %{"error" => %{"code" => "invalid_request"}} = json_response(conn, 400)
     end
   end
 
@@ -395,10 +406,10 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post(~p"/api/mobile/scans", %{"scans" => [scan]})
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
 
       # Should fail because ticket doesn't exist in authenticated event
-      assert %{"results" => [result]} = json_response(conn, 200)
+      assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
       assert result["status"] == "error"
       assert result["message"] =~ "Ticket not found"
     end

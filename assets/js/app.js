@@ -47,16 +47,27 @@ import MishkaComponents from "../vendor/mishka_components.js";
 import { QrCameraScanner } from "./qr_scanner_hook";
 
 const ScannerKeyboardShortcuts = {
+  refreshRefs() {
+    this.ticketInput =
+      this.el.querySelector("#scanner-ticket-code") || document.getElementById("scanner-ticket-code");
+    this.directionButtons = this.el.querySelectorAll("button[data-check-in-type]");
+    this.scanForm = this.el.querySelector('form[phx-submit="scan"]');
+    this.scanButton = this.el.querySelector("#process-scan-button");
+  },
+
   mounted() {
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.scannerContainer = this.el;
-    this.ticketInput = this.el.querySelector('input[type="text"][name*="ticket_code"]');
-    this.directionButtons = this.el.querySelectorAll('button[phx-click="set_check_in_type"]');
+    this.refreshRefs();
     
     // Only enable on desktop (not mobile)
     if (window.innerWidth >= 640) {
       document.addEventListener("keydown", this.handleKeyDown);
     }
+  },
+
+  updated() {
+    this.refreshRefs();
   },
 
   destroyed() {
@@ -88,7 +99,7 @@ const ScannerKeyboardShortcuts = {
     // Tab key: Toggle check-in direction (only when not in input)
     if (event.key === "Tab" && !isInputFocused) {
       // Check if scanner is disabled
-      const isDisabled = this.scannerContainer.querySelector('[disabled][aria-disabled="true"]');
+      const isDisabled = this.scanButton?.disabled === true;
       if (!isDisabled && this.directionButtons.length >= 2) {
         event.preventDefault();
         event.stopPropagation();
@@ -99,8 +110,8 @@ const ScannerKeyboardShortcuts = {
   },
 
   triggerScan() {
-    const form = this.scannerContainer.querySelector('form[phx-submit="scan"]');
-    if (form) {
+    const form = this.scanForm || this.scannerContainer.querySelector('form[phx-submit="scan"]');
+    if (form && !this.scanButton?.disabled) {
       // Trigger form submit
       const submitEvent = new Event("submit", { bubbles: true, cancelable: true });
       form.dispatchEvent(submitEvent);
@@ -109,8 +120,8 @@ const ScannerKeyboardShortcuts = {
 
   toggleDirection() {
     // Find the currently active direction button
-    const activeButton = Array.from(this.directionButtons).find(btn => 
-      btn.classList.contains("bg-green-600") || btn.classList.contains("bg-orange-600")
+    const activeButton = Array.from(this.directionButtons).find(
+      (btn) => btn.getAttribute("aria-pressed") === "true"
     );
     
     if (activeButton) {
@@ -339,35 +350,30 @@ const SoundToggle = {
       // Sync with LiveView if needed
       this.pushEvent("sound_toggle", { enabled: enabled });
     };
-    
+
     this.el.addEventListener("click", this.handleClick);
-    
+
     // Initialize button state from localStorage
     const enabled = SoundFeedback.isEnabled();
     this.updateButton(enabled);
   },
-  
+
   destroyed() {
     // Remove click listener to prevent memory leaks and duplicate handlers
     if (this.handleClick) {
       this.el.removeEventListener("click", this.handleClick);
     }
   },
-  
+
   updateButton(enabled) {
-    // Regex pattern matches both plain and prefixed Tailwind classes (hover:, focus:, etc.)
-    const classCleanupPattern = /(?:hover:|focus:)?(?:bg-slate-700\/\d+|text-slate-\d+|bg-green-600\/\d+|text-green-\d+)/g;
-    
     if (enabled) {
-      this.el.textContent = "🔊 Sound On";
-      this.el.className = this.el.className.replace(classCleanupPattern, "").replace(/\s+/g, " ").trim();
-      this.el.classList.add("bg-green-600/20", "text-green-300", "hover:bg-green-600/30");
+      this.el.textContent = "Sound on";
       this.el.setAttribute("aria-label", "Disable sound feedback");
+      this.el.dataset.soundEnabled = "true";
     } else {
-      this.el.textContent = "🔇 Sound Off";
-      this.el.className = this.el.className.replace(classCleanupPattern, "").replace(/\s+/g, " ").trim();
-      this.el.classList.add("bg-slate-700/50", "text-slate-400", "hover:bg-slate-700/70");
+      this.el.textContent = "Sound off";
       this.el.setAttribute("aria-label", "Enable sound feedback");
+      this.el.dataset.soundEnabled = "false";
     }
   }
 };
@@ -455,3 +461,4 @@ if (process.env.NODE_ENV === "development") {
     },
   );
 }
+

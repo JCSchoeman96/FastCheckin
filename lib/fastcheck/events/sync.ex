@@ -761,7 +761,7 @@ defmodule FastCheck.Events.Sync do
 
   defp update_sync_timestamp(event_id, updates, _timestamp) do
     from(e in Event, where: e.id == ^event_id)
-    |> Repo.update_all(set: updates)
+    |> Repo.update_all(set: Map.to_list(updates))
     |> case do
       {1, _} ->
         Cache.invalidate_event_cache(event_id)

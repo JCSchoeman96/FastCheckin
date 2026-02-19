@@ -11,12 +11,15 @@ defmodule FastCheck.Fixtures do
   def create_event(attrs \\ %{}) do
     api_key = Map.get(attrs, :tickera_api_key, "test-api-key-1234")
     {:ok, encrypted} = Crypto.encrypt(api_key)
+    mobile_access_code = Map.get(attrs, :mobile_access_code, "scanner-secret")
+    {:ok, encrypted_mobile_secret} = Crypto.encrypt(mobile_access_code)
 
     default_attrs = %{
       name: "Test Event #{System.unique_integer([:positive])}",
       tickera_site_url: "https://test.example.com",
       tickera_api_key_encrypted: encrypted,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
+      mobile_access_secret_encrypted: encrypted_mobile_secret,
       status: "active",
       entrance_name: "Main Gate",
       total_tickets: 0,

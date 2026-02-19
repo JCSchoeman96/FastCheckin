@@ -13,7 +13,9 @@ defmodule FastCheck.Repo.Migrations.AddMissingAttendeeScanColumns do
     end
 
     create_if_not_exists(
-      index(:attendees, [:event_id, :last_checked_in_date], name: :idx_attendees_event_last_checked_date)
+      index(:attendees, [:event_id, :last_checked_in_date],
+        name: :idx_attendees_event_last_checked_date
+      )
     )
   end
 end

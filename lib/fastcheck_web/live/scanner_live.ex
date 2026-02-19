@@ -320,17 +320,13 @@ defmodule FastCheckWeb.ScannerLive do
   def handle_info({:process_bulk_codes_async, codes}, socket) do
     check_in_type = socket.assigns.check_in_type || "entry"
     event_id = socket.assigns.event_id
+    entrance_name = socket.assigns.event.entrance_name || "Main"
+    bulk_operator = if(check_in_type == "exit", do: "Bulk Exit", else: "Bulk Entry")
 
     # Process each code sequentially
     results =
       Enum.map(codes, fn code ->
-        case Attendees.check_in_advanced(
-               event_id,
-               code,
-               check_in_type,
-               socket.assigns.event.entrance_name || "Main",
-               "Bulk Entry"
-             ) do
+        case perform_scan_action(event_id, code, check_in_type, entrance_name, bulk_operator) do
           {:ok, attendee, message} ->
             scan_entry =
               build_scan_history_entry(code, attendee, :success, message, check_in_type)
@@ -411,7 +407,11 @@ defmodule FastCheckWeb.ScannerLive do
 
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="min-h-screen space-y-6 sm:space-y-8">
+      <div
+        id="admin-scanner-root"
+        phx-hook="ScannerKeyboardShortcuts"
+        class="min-h-screen space-y-6 sm:space-y-8"
+      >
         <.card variant="shadow" color="natural" rounded="large" padding="large">
           <.card_content>
             <p
@@ -488,6 +488,8 @@ defmodule FastCheckWeb.ScannerLive do
                   type="button"
                   phx-click="set_check_in_type"
                   phx-value-type="entry"
+                  data-check-in-type="entry"
+                  aria-pressed={@check_in_type == "entry"}
                   color={if(@check_in_type == "entry", do: "success", else: "natural")}
                   variant={if(@check_in_type == "entry", do: "shadow", else: "bordered")}
                   class="w-full"
@@ -503,6 +505,8 @@ defmodule FastCheckWeb.ScannerLive do
                   type="button"
                   phx-click="set_check_in_type"
                   phx-value-type="exit"
+                  data-check-in-type="exit"
+                  aria-pressed={@check_in_type == "exit"}
                   color={if(@check_in_type == "exit", do: "warning", else: "natural")}
                   variant={if(@check_in_type == "exit", do: "shadow", else: "bordered")}
                   class="w-full"
@@ -603,6 +607,7 @@ defmodule FastCheckWeb.ScannerLive do
         <.card
           :if={@last_scan_status}
           id="scan-result"
+          data-test="scan-status"
           variant="base"
           color={scan_result_color(@last_scan_status, @check_in_type)}
           rounded="large"
@@ -804,7 +809,7 @@ defmodule FastCheckWeb.ScannerLive do
           </div>
         </section>
 
-        <section id="scanner-keyboard-shortcuts" phx-hook="ScannerKeyboardShortcuts">
+        <section id="scanner-keyboard-shortcuts">
           <.card
             variant="outline"
             color="natural"
@@ -1035,6 +1040,7 @@ defmodule FastCheckWeb.ScannerLive do
                       type="button"
                       phx-click="manual_check_in"
                       phx-value-ticket_code={attendee.ticket_code}
+                      data-test={"manual-check-in-#{attendee.ticket_code}"}
                       color="success"
                       variant="bordered"
                       size="small"
@@ -1171,7 +1177,7 @@ defmodule FastCheckWeb.ScannerLive do
     check_in_type = socket.assigns.check_in_type || "entry"
     operator = operator_name(socket)
 
-    case Attendees.check_in_advanced(event_id, code, check_in_type, entrance_name, operator) do
+    case perform_scan_action(event_id, code, check_in_type, entrance_name, operator) do
       {:ok, attendee, _message} ->
         stats = Attendees.get_event_stats(event_id)
         updated_results = update_search_results(socket.assigns.search_results, attendee)
@@ -1330,6 +1336,16 @@ defmodule FastCheckWeb.ScannerLive do
     end
   end
 
+  defp perform_scan_action(event_id, code, check_in_type, entrance_name, operator) do
+    case check_in_type do
+      "exit" ->
+        Attendees.check_out(event_id, code, entrance_name, operator)
+
+      _ ->
+        Attendees.check_in_advanced(event_id, code, "entry", entrance_name, operator)
+    end
+  end
+
   # Scan History Helpers
 
   defp build_scan_history_entry(ticket_code, attendee, status, message, check_in_type) do
@@ -1372,6 +1388,7 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_status_color(:error), do: "danger"
   defp scan_status_color(:not_found), do: "danger"
   defp scan_status_color(:already_inside), do: "warning"
+  defp scan_status_color(:not_checked_in), do: "danger"
   defp scan_status_color(:archived), do: "natural"
   defp scan_status_color(:invalid_code), do: "danger"
   defp scan_status_color(:invalid_ticket), do: "danger"
@@ -1389,6 +1406,7 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_status_label(:error), do: "Error"
   defp scan_status_label(:not_found), do: "Not found"
   defp scan_status_label(:already_inside), do: "Already inside"
+  defp scan_status_label(:not_checked_in), do: "Not checked in"
   defp scan_status_label(:archived), do: "Archived"
   defp scan_status_label(:invalid_code), do: "Invalid code"
   defp scan_status_label(:invalid_ticket), do: "Invalid ticket"
@@ -1406,6 +1424,7 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_status_icon(:error), do: "hero-x-circle"
   defp scan_status_icon(:not_found), do: "hero-x-circle"
   defp scan_status_icon(:already_inside), do: "hero-exclamation-triangle"
+  defp scan_status_icon(:not_checked_in), do: "hero-x-circle"
   defp scan_status_icon(:archived), do: "hero-pause-circle"
   defp scan_status_icon(:invalid_code), do: "hero-x-circle"
   defp scan_status_icon(:invalid_ticket), do: "hero-x-circle"
@@ -1417,6 +1436,7 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_result_color(:success, "entry"), do: "success"
   defp scan_result_color(:success, "exit"), do: "warning"
   defp scan_result_color(:duplicate_today, _), do: "warning"
+  defp scan_result_color(:not_checked_in, _), do: "danger"
   defp scan_result_color(:archived, _), do: "natural"
   defp scan_result_color(:invalid, _), do: "danger"
   defp scan_result_color(:limit_exceeded, _), do: "danger"
@@ -1428,6 +1448,7 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_result_title(:success, "entry"), do: "Entry confirmed"
   defp scan_result_title(:success, "exit"), do: "Exit confirmed"
   defp scan_result_title(:duplicate_today, _), do: "Duplicate scan"
+  defp scan_result_title(:not_checked_in, _), do: "Cannot check out"
   defp scan_result_title(:limit_exceeded, _), do: "Check-in limit reached"
   defp scan_result_title(:not_yet_valid, _), do: "Ticket not yet valid"
   defp scan_result_title(:expired, _), do: "Ticket expired"
@@ -1455,6 +1476,8 @@ defmodule FastCheckWeb.ScannerLive do
     "ERROR" => :error,
     "NOT_FOUND" => :not_found,
     "ALREADY_INSIDE" => :already_inside,
+    "NOT_CHECKED_IN" => :not_checked_in,
+    "SESSION_NOT_FOUND" => :not_checked_in,
     "ARCHIVED" => :archived,
     "INVALID_CODE" => :invalid_code,
     "INVALID_TICKET" => :invalid_ticket,

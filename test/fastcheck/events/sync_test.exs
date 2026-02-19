@@ -6,20 +6,20 @@ defmodule FastCheck.Events.SyncTest do
   alias FastCheck.Events.Sync
 
   describe "module exports" do
-    test "exports sync_event/2" do
-      assert function_exported?(Sync, :sync_event, 2)
+    test "exports sync_event/3" do
+      assert_exported(Sync, :sync_event, 3)
     end
 
     test "exports get_tickera_api_key/1" do
-      assert function_exported?(Sync, :get_tickera_api_key, 1)
+      assert_exported(Sync, :get_tickera_api_key, 1)
     end
 
     test "exports touch_last_sync/1" do
-      assert function_exported?(Sync, :touch_last_sync, 1)
+      assert_exported(Sync, :touch_last_sync, 1)
     end
 
     test "exports touch_last_soft_sync/1" do
-      assert function_exported?(Sync, :touch_last_soft_sync, 1)
+      assert_exported(Sync, :touch_last_soft_sync, 1)
     end
   end
 
@@ -37,5 +37,10 @@ defmodule FastCheck.Events.SyncTest do
 
       assert {:error, :decryption_failed} = Sync.get_tickera_api_key(event)
     end
+  end
+
+  defp assert_exported(module, function, arity) do
+    Code.ensure_loaded!(module)
+    assert function_exported?(module, function, arity)
   end
 end

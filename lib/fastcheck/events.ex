@@ -486,6 +486,7 @@ defmodule FastCheck.Events do
     |> normalize_site_url_attrs(event)
     |> maybe_encrypt_api_key(event)
     |> maybe_update_last4(event)
+    |> maybe_encrypt_mobile_access_code(event)
   end
 
   defp normalize_site_url_attrs(attrs, event) do
@@ -540,6 +541,29 @@ defmodule FastCheck.Events do
       attrs
     else
       Map.put(attrs, "tickera_api_key_last4", event.tickera_api_key_last4)
+    end
+  end
+
+  defp maybe_encrypt_mobile_access_code(attrs, _event) do
+    mobile_access_code =
+      (Map.get(attrs, "mobile_access_code") || Map.get(attrs, "mobile_access_secret"))
+      |> normalize_non_empty_binary()
+
+    if mobile_access_code do
+      case Crypto.encrypt(mobile_access_code) do
+        {:ok, encrypted_secret} ->
+          attrs
+          |> Map.put("mobile_access_secret_encrypted", encrypted_secret)
+          |> Map.delete("mobile_access_code")
+          |> Map.delete("mobile_access_secret")
+
+        _ ->
+          attrs
+      end
+    else
+      attrs
+      |> Map.delete("mobile_access_code")
+      |> Map.delete("mobile_access_secret")
     end
   end
 

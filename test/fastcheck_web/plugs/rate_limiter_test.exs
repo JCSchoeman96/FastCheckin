@@ -8,6 +8,8 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
   end
 
   test "login endpoint is strictly rate limited to 5 attempts", %{conn: conn} do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.9")
+
     # Make 5 allowed requests
     for _i <- 1..5 do
       conn = post(conn, "/api/v1/mobile/login", %{"event_id" => 1, "credential" => "wrong"})
@@ -23,6 +25,8 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
   end
 
   test "dashboard login is also rate limited", %{conn: conn} do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.10")
+
     # Make 5 allowed requests
     for _i <- 1..5 do
       conn = post(conn, "/login", %{"session" => %{"username" => "admin", "password" => "wrong"}})

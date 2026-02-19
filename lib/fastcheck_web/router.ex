@@ -16,6 +16,10 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.BrowserAuth
   end
 
+  pipeline :scanner_auth do
+    plug FastCheckWeb.Plugs.ScannerAuth
+  end
+
   pipeline :api do
     plug :accepts, ["json"]
     plug FastCheckWeb.Plugs.LoggerMetadata
@@ -55,6 +59,17 @@ defmodule FastCheckWeb.Router do
 
     get "/login", SessionController, :new
     post "/login", SessionController, :create
+
+    get "/scanner/login", ScannerSessionController, :new
+    post "/scanner/login", ScannerSessionController, :create
+    delete "/scanner/logout", ScannerSessionController, :delete
+  end
+
+  scope "/scanner", FastCheckWeb do
+    pipe_through [:browser, :scanner_auth]
+
+    post "/:event_id/operator", ScannerSessionController, :update_operator
+    live "/:event_id", ScannerPortalLive, :index
   end
 
   scope "/api/v1", FastCheckWeb do

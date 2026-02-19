@@ -46,139 +46,135 @@ defmodule FastCheck.Attendees.Scan do
         )
 
       try do
-        Repo.transaction(fn ->
-          case Repo.one(query) do
-            nil ->
-              Logger.warning("Invalid ticket #{sanitized_code} for event #{event_id}")
+        transaction_result =
+          Repo.transaction(fn ->
+            case Repo.one(query) do
+              nil ->
+                Logger.warning("Invalid ticket #{sanitized_code} for event #{event_id}")
 
-              record_check_in(
-                %{ticket_code: sanitized_code},
-                event_id,
-                "invalid",
-                sanitized_entrance,
-                operator_name
-              )
+                record_check_in(
+                  %{ticket_code: sanitized_code},
+                  event_id,
+                  "invalid",
+                  sanitized_entrance,
+                  operator_name
+                )
 
-              broadcast_event_stats_async(event_id)
-              {:error, "INVALID", "Ticket not found"}
+                {:error, "INVALID", "Ticket not found"}
 
-            %Attendee{} = attendee ->
-              remaining = attendee.checkins_remaining || attendee.allowed_checkins || 0
+              %Attendee{} = attendee ->
+                remaining = attendee.checkins_remaining || attendee.allowed_checkins || 0
 
-              cond do
-                # Reject tickets with invalid payment status
-                not is_payment_status_valid?(attendee.payment_status) ->
-                  rejection_message = payment_rejection_message(attendee.payment_status)
+                cond do
+                  # Reject tickets with invalid payment status
+                  not is_payment_status_valid?(attendee.payment_status) ->
+                    rejection_message = payment_rejection_message(attendee.payment_status)
 
-                  Logger.warning(
-                    "Check-in rejected due to non-completed order status: #{attendee.payment_status}",
-                    ticket_code: sanitized_code,
-                    event_id: event_id,
-                    payment_status: attendee.payment_status
-                  )
+                    Logger.warning(
+                      "Check-in rejected due to non-completed order status: #{attendee.payment_status}",
+                      ticket_code: sanitized_code,
+                      event_id: event_id,
+                      payment_status: attendee.payment_status
+                    )
 
-                  record_check_in(
-                    attendee,
-                    event_id,
-                    "payment_invalid",
-                    sanitized_entrance,
-                    operator_name
-                  )
+                    record_check_in(
+                      attendee,
+                      event_id,
+                      "payment_invalid",
+                      sanitized_entrance,
+                      operator_name
+                    )
 
-                  broadcast_event_stats_async(event_id)
+                    {:error, "PAYMENT_INVALID", rejection_message}
 
-                  {:error, "PAYMENT_INVALID", rejection_message}
+                  attendee.checked_in_at && remaining <= 0 ->
+                    Logger.warning("Duplicate ticket #{sanitized_code} for event #{event_id}")
 
-                attendee.checked_in_at && remaining <= 0 ->
-                  Logger.warning("Duplicate ticket #{sanitized_code} for event #{event_id}")
+                    record_check_in(
+                      attendee,
+                      event_id,
+                      "duplicate",
+                      sanitized_entrance,
+                      operator_name
+                    )
 
-                  record_check_in(
-                    attendee,
-                    event_id,
-                    "duplicate",
-                    sanitized_entrance,
-                    operator_name
-                  )
+                    {:error, "DUPLICATE",
+                     "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
 
-                  broadcast_event_stats_async(event_id)
+                  true ->
+                    now = DateTime.utc_now() |> DateTime.truncate(:second)
+                    new_remaining = max(remaining - 1, 0)
 
-                  {:error, "DUPLICATE",
-                   "Already checked in at #{format_datetime(attendee.checked_in_at)}"}
+                    attrs = %{
+                      checked_in_at: now,
+                      last_checked_in_at: now,
+                      checkins_remaining: new_remaining
+                    }
 
-                true ->
-                  now = DateTime.utc_now() |> DateTime.truncate(:second)
-                  new_remaining = max(remaining - 1, 0)
+                    case Attendee.changeset(attendee, attrs) |> Repo.update() do
+                      {:ok, updated} ->
+                        invalidate_check_in_caches(updated, event_id, sanitized_code)
+                        refresh_event_occupancy(event_id)
 
-                  attrs = %{
-                    checked_in_at: now,
-                    last_checked_in_at: now,
-                    checkins_remaining: new_remaining
-                  }
+                        record_check_in(
+                          updated,
+                          event_id,
+                          "success",
+                          sanitized_entrance,
+                          operator_name
+                        )
 
-                  case Attendee.changeset(attendee, attrs) |> Repo.update() do
-                    {:ok, updated} ->
-                      invalidate_check_in_caches(updated, event_id, sanitized_code)
-                      refresh_event_occupancy(event_id)
+                        log_check_in(:success, %{
+                          event_id: event_id,
+                          attendee_id: updated.id,
+                          entrance_name: sanitized_entrance,
+                          response_time_ms: elapsed_time_ms(started_at),
+                          ticket_code: sanitized_code,
+                          remaining_checkins: new_remaining,
+                          operator_name: operator_name
+                        })
 
-                      record_check_in(
-                        updated,
-                        event_id,
-                        "success",
-                        sanitized_entrance,
-                        operator_name
-                      )
+                        {:ok, updated, "SUCCESS"}
 
-                      broadcast_event_stats_async(event_id)
+                      {:error, changeset} ->
+                        log_check_in(:update_failed, %{
+                          event_id: event_id,
+                          attendee_id: attendee.id,
+                          entrance_name: sanitized_entrance,
+                          response_time_ms: elapsed_time_ms(started_at),
+                          ticket_code: sanitized_code,
+                          error: inspect(changeset.errors)
+                        })
 
-                      log_check_in(:success, %{
-                        event_id: event_id,
-                        attendee_id: updated.id,
-                        entrance_name: sanitized_entrance,
-                        response_time_ms: elapsed_time_ms(started_at),
-                        ticket_code: sanitized_code,
-                        remaining_checkins: new_remaining,
-                        operator_name: operator_name
-                      })
+                        Repo.rollback({:changeset, "Failed to update attendee"})
+                    end
+                end
+            end
+          end)
+          |> case do
+            {:ok, result} ->
+              result
 
-                      {:ok, updated, "SUCCESS"}
+            {:error, {:changeset, message}} ->
+              {:error, "ERROR", message}
 
-                    {:error, changeset} ->
-                      log_check_in(:update_failed, %{
-                        event_id: event_id,
-                        attendee_id: attendee.id,
-                        entrance_name: sanitized_entrance,
-                        response_time_ms: elapsed_time_ms(started_at),
-                        ticket_code: sanitized_code,
-                        error: inspect(changeset.errors)
-                      })
+            {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} ->
+              {:error, "TICKET_IN_USE_ELSEWHERE", "Ticket is currently being processed"}
 
-                      Repo.rollback({:changeset, "Failed to update attendee"})
-                  end
-              end
+            {:error, reason} ->
+              log_check_in(:transaction_failed, %{
+                event_id: event_id,
+                attendee_id: nil,
+                entrance_name: sanitized_entrance,
+                response_time_ms: elapsed_time_ms(started_at),
+                ticket_code: sanitized_code,
+                error: inspect(reason)
+              })
+
+              {:error, "ERROR", "Unable to process check-in"}
           end
-        end)
-        |> case do
-          {:ok, result} ->
-            result
 
-          {:error, {:changeset, message}} ->
-            {:error, "ERROR", message}
-
-          {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} ->
-            {:error, "TICKET_IN_USE_ELSEWHERE", "Ticket is currently being processed"}
-
-          {:error, reason} ->
-            log_check_in(:transaction_failed, %{
-              event_id: event_id,
-              attendee_id: nil,
-              entrance_name: sanitized_entrance,
-              response_time_ms: elapsed_time_ms(started_at),
-              ticket_code: sanitized_code,
-              error: inspect(reason)
-            })
-
-            {:error, "ERROR", "Unable to process check-in"}
-        end
+        maybe_broadcast_stats_for_scan(event_id, transaction_result)
       rescue
         exception ->
           log_check_in(:exception, %{
@@ -772,36 +768,86 @@ defmodule FastCheck.Attendees.Scan do
   end
 
   defp record_check_in(attendee, event_id, status, entrance_name, operator_name) do
+    attendee_id = attendee && Map.get(attendee, :id)
     ticket_code = attendee && Map.get(attendee, :ticket_code)
 
-    attrs = %{
-      attendee_id: attendee && Map.get(attendee, :id),
-      event_id: event_id,
-      ticket_code: ticket_code,
-      entrance_name: entrance_name,
-      operator_name: operator_name,
-      status: status,
-      checked_in_at: DateTime.utc_now() |> DateTime.truncate(:second)
-    }
+    if is_integer(attendee_id) do
+      attrs = %{
+        attendee_id: attendee_id,
+        event_id: event_id,
+        ticket_code: ticket_code,
+        entrance_name: entrance_name,
+        operator_name: operator_name,
+        status: status,
+        checked_in_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      }
 
-    %CheckIn{}
-    |> CheckIn.changeset(attrs)
-    |> Repo.insert()
-    |> case do
-      {:ok, check_in} ->
-        {:ok, check_in}
+      %CheckIn{}
+      |> CheckIn.changeset(attrs)
+      |> Repo.insert()
+      |> case do
+        {:ok, check_in} ->
+          {:ok, check_in}
 
-      {:error, changeset} ->
-        Logger.error(
-          "Failed to record check-in for #{ticket_code || "unknown"}: #{inspect(changeset.errors)}"
-        )
+        {:error, changeset} ->
+          Logger.error(
+            "Failed to record check-in for #{ticket_code || "unknown"}: #{inspect(changeset.errors)}"
+          )
 
-        {:error, changeset}
+          {:error, changeset}
+      end
+    else
+      Logger.debug("Skipping check-in audit insert without attendee_id",
+        event_id: event_id,
+        status: status,
+        ticket_code: ticket_code
+      )
+
+      {:error, :missing_attendee}
     end
   end
 
-  defp broadcast_event_stats_async(event_id) when is_integer(event_id) do
-    Task.start(fn ->
+  defp broadcast_event_stats_async(event_id, opts) when is_integer(event_id) do
+    caller = Keyword.get(opts, :caller)
+
+    cond do
+      stats_broadcast_tasks_disabled?() ->
+        :ok
+
+      sandbox_pool?() ->
+        do_broadcast_event_stats(event_id)
+
+      true ->
+        Task.start(fn ->
+          maybe_allow_sandbox_connection(caller)
+          do_broadcast_event_stats(event_id)
+        end)
+    end
+
+    :ok
+  end
+
+  defp broadcast_event_stats_async(_event_id, _opts), do: :ok
+
+  defp maybe_broadcast_stats_for_scan(event_id, result) when is_integer(event_id) do
+    if should_broadcast_stats_for_scan?(result),
+      do: broadcast_event_stats_async(event_id, caller: self())
+
+    result
+  end
+
+  defp maybe_broadcast_stats_for_scan(_event_id, result), do: result
+
+  defp should_broadcast_stats_for_scan?({:ok, %Attendee{}, _}), do: true
+
+  defp should_broadcast_stats_for_scan?({:error, code, _})
+       when code in ["INVALID", "PAYMENT_INVALID", "DUPLICATE"],
+       do: true
+
+  defp should_broadcast_stats_for_scan?(_), do: false
+
+  defp do_broadcast_event_stats(event_id) do
+    try do
       stats = Events.get_event_stats(event_id)
 
       PubSub.broadcast(
@@ -809,12 +855,42 @@ defmodule FastCheck.Attendees.Scan do
         "event:#{event_id}:stats",
         {:event_stats_updated, event_id, stats}
       )
-    end)
+    rescue
+      exception ->
+        Logger.error(
+          "Failed to compute/broadcast event stats for event #{event_id}: #{Exception.message(exception)}"
+        )
+    catch
+      kind, reason ->
+        Logger.error(
+          "Stats broadcast task crashed for event #{event_id}: #{inspect({kind, reason})}"
+        )
+    end
+  end
+
+  defp maybe_allow_sandbox_connection(caller) when is_pid(caller) do
+    if sandbox_pool?() do
+      try do
+        Ecto.Adapters.SQL.Sandbox.allow(FastCheck.Repo, caller, self())
+      rescue
+        _ -> :ok
+      end
+    end
 
     :ok
   end
 
-  defp broadcast_event_stats_async(_event_id), do: :ok
+  defp maybe_allow_sandbox_connection(_caller), do: :ok
+
+  defp sandbox_pool? do
+    Application.get_env(:fastcheck, FastCheck.Repo, [])
+    |> Keyword.get(:pool)
+    |> Kernel.==(Ecto.Adapters.SQL.Sandbox)
+  end
+
+  defp stats_broadcast_tasks_disabled? do
+    Application.get_env(:fastcheck, :disable_stats_broadcast_tasks, false)
+  end
 
   defp elapsed_time_ms(started_at) when is_integer(started_at) do
     System.monotonic_time(:millisecond) - started_at
@@ -1024,7 +1100,7 @@ defmodule FastCheck.Attendees.Scan do
          event_id,
          broadcast?
        ) do
-    if broadcast?, do: broadcast_occupancy_breakdown(event_id)
+    if broadcast? and not occupancy_tasks_disabled?(), do: broadcast_occupancy_breakdown(event_id)
     {:ok, attendee, message}
   end
 

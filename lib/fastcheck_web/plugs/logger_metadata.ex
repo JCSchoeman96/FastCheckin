@@ -52,16 +52,23 @@ defmodule FastCheckWeb.Plugs.LoggerMetadata do
   # Extract event_id from JWT claims, params, or session
   defp extract_event_id(conn) do
     cond do
+      # From assigned authenticated context
+      is_integer(conn.assigns[:current_event_id]) ->
+        conn.assigns.current_event_id
+
       # From JWT claims (mobile API)
       jwt_claims = conn.assigns[:jwt_claims] ->
         jwt_claims["event_id"]
+
+      token_claims = conn.assigns[:token_claims] ->
+        token_claims["event_id"]
 
       # From query params or body params
       conn.params["event_id"] ->
         parse_int(conn.params["event_id"])
 
       # From session
-      get_session(conn, :current_event_id) ->
+      session_fetched?(conn) and get_session(conn, :current_event_id) ->
         get_session(conn, :current_event_id)
 
       true ->
@@ -71,10 +78,10 @@ defmodule FastCheckWeb.Plugs.LoggerMetadata do
 
   # Extract device_id from JWT claims
   defp extract_device_id(conn) do
-    if jwt_claims = conn.assigns[:jwt_claims] do
-      jwt_claims["device_id"]
-    else
-      nil
+    cond do
+      token_claims = conn.assigns[:token_claims] -> token_claims["device_id"]
+      jwt_claims = conn.assigns[:jwt_claims] -> jwt_claims["device_id"]
+      true -> nil
     end
   end
 
@@ -106,4 +113,8 @@ defmodule FastCheckWeb.Plugs.LoggerMetadata do
 
   defp parse_int(value) when is_integer(value), do: value
   defp parse_int(_), do: nil
+
+  defp session_fetched?(conn) do
+    Map.get(conn.private, :plug_session_fetch) == :done
+  end
 end

@@ -12,6 +12,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
     event =
       %Event{
         name: "Test Event",
+        site_url: "https://test.example.com",
         tickera_site_url: "https://test.example.com",
         tickera_api_key_encrypted: "encrypted_key",
         mobile_access_secret_encrypted: encrypted_secret,
@@ -61,7 +62,9 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
     test "rejects missing event_id with 400", %{conn: conn} do
       conn = post(conn, ~p"/api/v1/mobile/login", %{"credential" => @credential})
 
-      assert %{"error" => "invalid_request", "message" => message} = json_response(conn, 400)
+      assert %{"error" => %{"code" => "invalid_request", "message" => message}} =
+               json_response(conn, 400)
+
       assert message =~ "event_id is required"
     end
 
@@ -71,7 +74,9 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
           "event_id" => "not-a-number"
         })
 
-      assert %{"error" => "invalid_request", "message" => message} = json_response(conn, 400)
+      assert %{"error" => %{"code" => "invalid_request", "message" => message}} =
+               json_response(conn, 400)
+
       assert message =~ "must be a positive integer"
     end
 
@@ -82,7 +87,9 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
           "credential" => @credential
         })
 
-      assert %{"error" => "invalid_request", "message" => message} = json_response(conn, 400)
+      assert %{"error" => %{"code" => "invalid_request", "message" => message}} =
+               json_response(conn, 400)
+
       assert message =~ "must be a positive integer"
     end
 
@@ -93,7 +100,9 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
           "credential" => @credential
         })
 
-      assert %{"error" => "invalid_request", "message" => message} = json_response(conn, 400)
+      assert %{"error" => %{"code" => "invalid_request", "message" => message}} =
+               json_response(conn, 400)
+
       assert message =~ "must be a positive integer"
     end
 
@@ -106,7 +115,9 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
           "credential" => @credential
         })
 
-      assert %{"error" => "event_not_found", "message" => message} = json_response(conn, 404)
+      assert %{"error" => %{"code" => "event_not_found", "message" => message}} =
+               json_response(conn, 404)
+
       assert message =~ "does not exist"
     end
 

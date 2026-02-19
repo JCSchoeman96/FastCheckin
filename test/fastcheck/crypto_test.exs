@@ -1,6 +1,6 @@
 defmodule FastCheck.CryptoTest do
   use ExUnit.Case, async: true
-  use Bitwise
+  import Bitwise
 
   alias FastCheck.Crypto
 

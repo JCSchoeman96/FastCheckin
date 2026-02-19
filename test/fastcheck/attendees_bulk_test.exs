@@ -6,9 +6,9 @@ defmodule FastCheck.AttendeesBulkTest do
 
   describe "bulk_check_in/2" do
     setup do
-      event = event_fixture()
-      attendee = attendee_fixture(event, %{ticket_code: "TICKET-1", allowed_checkins: 1})
-      attendee2 = attendee_fixture(event, %{ticket_code: "TICKET-2", allowed_checkins: 1})
+      event = create_event()
+      attendee = create_attendee(event, %{ticket_code: "TICKET-1", allowed_checkins: 1})
+      attendee2 = create_attendee(event, %{ticket_code: "TICKET-2", allowed_checkins: 1})
 
       %{event: event, attendees: [attendee, attendee2]}
     end

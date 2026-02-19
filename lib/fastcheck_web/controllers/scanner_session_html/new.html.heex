@@ -1,0 +1,71 @@
+<div class="mx-auto max-w-md space-y-6 py-8">
+  <div class="text-center space-y-2">
+    <p style="font-size: var(--fc-text-xs)" class="uppercase tracking-[0.35em] text-fc-text-muted">
+      Scanner access
+    </p>
+    <h1 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+      Sign in to event scanner
+    </h1>
+    <p class="text-sm text-fc-text-secondary">
+      Use your Event ID, scanner password, and operator name.
+    </p>
+  </div>
+
+  <.card variant="outline" color="natural" padding="large" rounded="large">
+    <.card_content>
+      <.form
+        for={@form}
+        action={~p"/scanner/login"}
+        id="scanner-login-form"
+        method="post"
+        class="space-y-4"
+      >
+        <.input
+          field={@form[:event_id]}
+          type="number"
+          inputmode="numeric"
+          min="1"
+          label="Event ID"
+          required
+          placeholder="123"
+        />
+
+        <.input
+          field={@form[:credential]}
+          type="password"
+          label="Scanner password"
+          required
+          autocomplete="current-password"
+        />
+
+        <.input
+          field={@form[:operator_name]}
+          type="text"
+          label="Operator name"
+          required
+          autocomplete="name"
+          placeholder="Door 1 - Alice"
+        />
+
+        <input :if={@redirect_to} type="hidden" name="redirect_to" value={@redirect_to} />
+
+        <.button id="scanner-login-submit" color="primary" type="submit" full_width>
+          Open scanner
+        </.button>
+
+        <.link
+          id="scanner-login-logout"
+          href={~p"/scanner/logout"}
+          method="delete"
+          class="inline-flex w-full items-center justify-center rounded-xl border border-fc-border-default px-4 py-2 text-sm font-medium text-fc-text-primary transition hover:bg-fc-surface-raised"
+        >
+          Log out scanner session
+        </.link>
+
+        <p :if={@error_message} class="text-sm text-danger-light dark:text-danger-dark">
+          {@error_message}
+        </p>
+      </.form>
+    </.card_content>
+  </.card>
+</div>

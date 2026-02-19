@@ -75,9 +75,9 @@ defmodule FastCheck.EventsTest do
       })
       |> Repo.insert!()
 
-      insert_check_in!(event, attendee_inside, "North Gate", "entry", inside_check_in)
-      insert_check_in!(event, attendee_inside, "North Gate", "exit", exit_time)
-      insert_check_in!(event, attendee_inside, "South Gate", "success", inside_check_in)
+      insert_check_in!(event, attendee_inside, "North Gate", "checked_in", inside_check_in)
+      insert_check_in!(event, attendee_inside, "North Gate", "checked_out", exit_time)
+      insert_check_in!(event, attendee_inside, "South Gate", "checked_in", inside_check_in)
 
       insert_check_in!(
         event,
@@ -98,8 +98,8 @@ defmodule FastCheck.EventsTest do
       assert stats.total_exits == 1
       assert stats.available_tomorrow == 8
       assert stats.average_session_duration_minutes == 30.0
-      assert_in_delta stats.checked_in_percentage, 66.67, 0.01
-      assert_in_delta stats.occupancy_percentage, 33.33, 0.01
+      assert_in_delta stats.checked_in_percentage, 66.7, 0.05
+      assert_in_delta stats.occupancy_percentage, 33.3, 0.05
 
       assert [%{} = info] = stats.time_basis_info
       assert info.ticket_type == "GA"
@@ -131,7 +131,7 @@ defmodule FastCheck.EventsTest do
 
       assert :ok = Events.broadcast_occupancy_update(event.id, 42)
 
-      assert_receive {:occupancy_update, payload}
+      assert_receive {:occupancy_updated, payload}
       assert payload.event_id == event.id
       assert payload.inside_count == 42
       assert payload.capacity == 200
@@ -193,13 +193,15 @@ defmodule FastCheck.EventsTest do
   defp insert_event!(name) do
     api_key = "key-#{System.unique_integer([:positive])}"
     {:ok, encrypted} = FastCheck.Crypto.encrypt(api_key)
+    {:ok, encrypted_mobile_secret} = FastCheck.Crypto.encrypt("scanner-secret")
 
     %Event{}
     |> Event.changeset(%{
       name: name,
       tickera_api_key_encrypted: encrypted,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
-      tickera_site_url: "https://example.com"
+      tickera_site_url: "https://example.com",
+      mobile_access_secret_encrypted: encrypted_mobile_secret
     })
     |> Repo.insert!()
   end

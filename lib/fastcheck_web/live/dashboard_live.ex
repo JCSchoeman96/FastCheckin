@@ -640,7 +640,11 @@ defmodule FastCheckWeb.DashboardLive do
                 type="password"
                 label="Mobile access code"
                 placeholder="Required for scanner login"
+                required
               />
+              <p class="md:col-span-2 -mt-3 text-xs text-fc-text-muted">
+                Scanner login uses Event ID + mobile access code + operator name.
+              </p>
 
               <.input field={@form[:location]} type="text" label="Location" placeholder="Main venue" />
               <.input
@@ -767,6 +771,7 @@ defmodule FastCheckWeb.DashboardLive do
                       {event.location || "Unassigned"}
                     </p>
                     <h3 class="mt-2 text-xl font-semibold text-fc-text-primary">{event.name}</h3>
+                    <p class="mt-1 text-xs text-fc-text-muted">Event ID {event.id}</p>
                   </div>
 
                   <div class="flex flex-col items-end gap-2">
@@ -1036,6 +1041,10 @@ defmodule FastCheckWeb.DashboardLive do
           color="natural"
           on_cancel={JS.push("hide_edit_form")}
         >
+          <p :if={@editing_event_id} class="text-sm text-fc-text-secondary">
+            Event ID {@editing_event_id}
+          </p>
+
           <.form
             :if={@edit_form}
             id="edit-event-form"
@@ -1078,6 +1087,9 @@ defmodule FastCheckWeb.DashboardLive do
               label="Mobile access code"
               placeholder="Enter new code to change"
             />
+            <p class="-mt-3 text-xs text-fc-text-muted">
+              Leave blank to keep the current scanner login code.
+            </p>
 
             <.input field={@edit_form[:location]} type="text" label="Location" />
             <.input field={@edit_form[:entrance_name]} type="text" label="Entrance name" />
