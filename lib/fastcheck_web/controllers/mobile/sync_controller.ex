@@ -2,24 +2,9 @@ defmodule FastCheckWeb.Mobile.SyncController do
   @moduledoc """
   Handles mobile client data synchronization operations.
 
-  This controller provides endpoints for mobile scanner devices to:
-  - Download attendee data for offline use (sync down)
-  - Upload scanned check-ins when connectivity is restored (sync up)
-
-  All sync operations are scoped to the authenticated event (via JWT token's
-  `current_event_id`), ensuring devices can only access and modify data for
-  their assigned event.
-
-  ## Server Time Reference
-
-  The controller returns `server_time` with all responses to help mobile
-  clients track incremental sync state. Clients should use server_time
-  (not device time) as the `since` parameter for subsequent syncs.
-
-  ## Event Isolation
-
-  All operations automatically filter by `current_event_id` from the JWT
-  token, preventing cross-event data leakage.
+  Mobile scanners use this controller to:
+  - Download attendee data for offline mode (sync down)
+  - Upload queued scans when connectivity returns (sync up)
   """
 
   use FastCheckWeb, :controller
@@ -29,75 +14,25 @@ defmodule FastCheckWeb.Mobile.SyncController do
   require Logger
 
   import Ecto.Query
-  alias FastCheck.Repo
+
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Mobile.MobileIdempotencyLog
+  alias FastCheck.Repo
+
+  @default_mobile_sync_parallel true
+  @default_mobile_sync_max_concurrency 16
+  @default_mobile_sync_task_timeout_ms 10_000
+
+  @idempotency_pending_result "__pending__"
+  @idempotency_poll_attempts 10
+  @idempotency_poll_interval_ms 25
+  @idempotency_pending_stale_multiplier 2
+  @idempotency_pending_stale_floor_ms 15_000
 
   @doc """
   Returns attendee data for the authenticated event (sync down).
-
-  This endpoint allows mobile clients to download attendee data for offline
-  use. Supports both full sync (all attendees) and incremental sync (only
-  attendees updated since a given timestamp).
-
-  ## Query Parameters
-
-  - `since` (optional) - ISO 8601 timestamp for incremental sync
-    - If provided and valid, returns only attendees updated after this time
-    - If invalid or not provided, returns all attendees (full sync)
-
-  ## Success Response (200 OK)
-
-  ```json
-  {
-    "server_time": "2025-11-20T10:22:30Z",
-    "attendees": [
-      {
-        "id": 1,
-        "event_id": 123,
-        "ticket_code": "ABC123",
-        "first_name": "John",
-        "last_name": "Doe",
-        "email": "john@example.com",
-        "ticket_type": "General Admission",
-        "allowed_checkins": 1,
-        "checkins_remaining": 1,
-        "payment_status": "paid",
-        "is_currently_inside": false,
-        "checked_in_at": null,
-        "checked_out_at": null,
-        "updated_at": "2025-11-20T09:15:00Z"
-      }
-    ],
-    "count": 1,
-    "sync_type": "full"
-  }
-  ```
-
-  ## Error Responses
-
-  **401 Unauthorized** - JWT token invalid or missing (handled by MobileAuth plug)
-
-  **500 Internal Server Error** - Database error:
-  ```json
-  {
-    "error": "sync_failed",
-    "message": "Unable to retrieve attendee data"
-  }
-  ```
-
-  ## Examples
-
-      # Full sync (all attendees)
-      GET /api/mobile/attendees
-
-      # Incremental sync (attendees updated since timestamp)
-      GET /api/mobile/attendees?since=2025-11-20T08:00:00Z
-
-      # Invalid since parameter (falls back to full sync)
-      GET /api/mobile/attendees?since=invalid
   """
   def get_attendees(conn, params) do
-    # current_event_id is set by MobileAuth plug from verified JWT token
     event_id = conn.assigns.current_event_id
 
     with {:ok, since_timestamp} <- parse_since_parameter(params),
@@ -130,104 +65,41 @@ defmodule FastCheckWeb.Mobile.SyncController do
           ip: get_peer_ip(conn)
         )
 
-        server_error(
-          conn,
-          "sync_failed",
-          "Unable to retrieve attendee data"
-        )
+        server_error(conn, "sync_failed", "Unable to retrieve attendee data")
     end
   end
 
   @doc """
   Accepts a batch of scanned check-ins from mobile clients (sync up).
-
-  This endpoint processes scans that were queued on mobile devices (typically
-  during offline operation) and ensures idempotent processing so duplicate
-  uploads don't cause double check-ins.
-
-  ## Request Body
-
-  JSON payload with a `scans` array, where each scan contains:
-  - `idempotency_key` (required) - Client-generated unique ID for this scan
-  - `ticket_code` (required) - The ticket that was scanned
-  - `direction` (required) - Either "in" or "out"
-  - `scanned_at` (optional) - ISO 8601 timestamp of when scan occurred
-  - `entrance_name` (optional) - Entrance where scan occurred (default: "Mobile")
-  - `operator_name` (optional) - Name of operator (default: "Mobile Scanner")
-
-  ## Success Response (200 OK)
-
-  ```json
-  {
-    "data": {
-      "results": [
-        {
-          "idempotency_key": "abc123",
-          "status": "success",
-          "message": "Check-in successful"
-        },
-        {
-          "idempotency_key": "def456",
-          "status": "duplicate",
-          "message": "Already processed"
-        },
-        {
-          "idempotency_key": "ghi789",
-          "status": "error",
-          "message": "Ticket not found"
-        }
-      ],
-      "processed": 3
-    },
-    "error": null
-  }
-  ```
-
-  ## Error Responses
-
-  **400 Bad Request** - Invalid request format:
-  ```json
-  {
-    "data": null,
-    "error": {
-      "code": "invalid_request",
-      "message": "Request body must contain 'scans' array"
-    }
-  }
-  ```
-
-  **500 Internal Server Error** - Processing failed
-
-  ## Examples
-
-      POST /api/mobile/scans
-      {
-        "scans": [
-          {
-            "idempotency_key": "mobile-1234-5678",
-            "ticket_code": "ABC123",
-            "direction": "in",
-            "scanned_at": "2025-11-20T10:15:00Z",
-            "entrance_name": "Main Gate"
-          }
-        ]
-      }
   """
   def upload_scans(conn, %{"scans" => scans}) when is_list(scans) do
-    # current_event_id is set by MobileAuth plug from verified JWT token
     event_id = conn.assigns.current_event_id
+    started_at = System.monotonic_time(:millisecond)
+    sync_config = mobile_sync_config()
 
     Logger.info("Mobile scan upload started",
       event_id: event_id,
       scan_count: length(scans),
-      ip: get_peer_ip(conn)
+      ip: get_peer_ip(conn),
+      parallel: sync_config.parallel,
+      max_concurrency: sync_config.max_concurrency
     )
 
-    results = Enum.map(scans, fn scan -> process_scan(event_id, scan) end)
+    results = process_scans_batch(event_id, scans, sync_config)
 
     success_count = Enum.count(results, &(&1.status == "success"))
     duplicate_count = Enum.count(results, &(&1.status == "duplicate"))
     error_count = Enum.count(results, &(&1.status == "error"))
+    duration_ms = System.monotonic_time(:millisecond) - started_at
+
+    emit_mobile_sync_batch_telemetry(
+      event_id,
+      length(results),
+      success_count,
+      duplicate_count,
+      error_count,
+      duration_ms
+    )
 
     Logger.info("Mobile scan upload completed",
       event_id: event_id,
@@ -235,6 +107,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
       success: success_count,
       duplicate: duplicate_count,
       error: error_count,
+      duration_ms: duration_ms,
       ip: get_peer_ip(conn)
     )
 
@@ -255,30 +128,77 @@ defmodule FastCheckWeb.Mobile.SyncController do
   # Scan Processing Helpers
   # ========================================================================
 
-  # Processes a single scan with idempotency checking.
-  #
-  # Flow:
-  # 1. Validate scan structure
-  # 2. Check idempotency log (have we seen this before?)
-  # 3. If duplicate → return stored result
-  # 4. If new → delegate to check-in/out logic
-  # 5. Record result in idempotency log
-  # 6. Return result to client
-  defp process_scan(event_id, scan) do
-    with {:ok, validated_scan} <- validate_scan(scan),
-         {:ok, result} <- check_or_process_scan(event_id, validated_scan) do
-      result
-    else
-      {:error, reason} ->
-        %{
-          idempotency_key: scan["idempotency_key"] || "unknown",
-          status: "error",
-          message: reason
-        }
-    end
+  defp process_scans_batch(event_id, scans, %{parallel: true} = sync_config)
+       when is_integer(event_id) and is_list(scans) and length(scans) > 1 do
+    indexed_scans = Enum.with_index(scans)
+
+    indexed_scans
+    |> Enum.zip(
+      Task.async_stream(
+        indexed_scans,
+        fn {scan, index} -> {index, process_scan(event_id, scan, sync_config)} end,
+        max_concurrency: sync_config.max_concurrency,
+        timeout: sync_config.task_timeout_ms,
+        on_timeout: :kill_task,
+        ordered: true
+      )
+    )
+    |> Enum.map(fn {{scan, index}, task_result} ->
+      case task_result do
+        {:ok, {_result_index, result}} ->
+          {index, result}
+
+        {:exit, reason} ->
+          _ = release_pending_reservation(event_id, scan)
+          {index, task_exit_result(scan, reason)}
+      end
+    end)
+    |> Enum.sort_by(fn {index, _result} -> index end)
+    |> Enum.map(fn {_index, result} -> result end)
   end
 
-  # Validates that a scan has all required fields.
+  defp process_scans_batch(event_id, scans, sync_config)
+       when is_integer(event_id) and is_list(scans) do
+    scans
+    |> Enum.with_index()
+    |> Enum.map(fn {scan, index} -> {index, process_scan(event_id, scan, sync_config)} end)
+    |> Enum.sort_by(fn {index, _result} -> index end)
+    |> Enum.map(fn {_index, result} -> result end)
+  end
+
+  defp process_scans_batch(_event_id, scans, _sync_config) when is_list(scans) do
+    Enum.map(scans, fn scan ->
+      %{
+        idempotency_key: Map.get(scan, "idempotency_key", "unknown"),
+        status: "error",
+        message: "Invalid event context"
+      }
+    end)
+  end
+
+  defp process_scan(event_id, scan, sync_config) do
+    started_at = System.monotonic_time(:millisecond)
+
+    result =
+      with {:ok, validated_scan} <- validate_scan(scan),
+           {:ok, reservation_status} <- reserve_idempotency(event_id, validated_scan),
+           {:ok, processed_result} <-
+             process_reserved_scan(event_id, validated_scan, reservation_status, sync_config) do
+        processed_result
+      else
+        {:error, reason} ->
+          %{
+            idempotency_key: Map.get(scan, "idempotency_key", "unknown"),
+            status: "error",
+            message: reason
+          }
+      end
+
+    duration_ms = System.monotonic_time(:millisecond) - started_at
+    emit_mobile_sync_scan_telemetry(event_id, result.status, duration_ms)
+    result
+  end
+
   defp validate_scan(scan) when is_map(scan) do
     with {:ok, key} <- extract_field(scan, "idempotency_key"),
          {:ok, ticket_code} <- extract_field(scan, "ticket_code"),
@@ -298,60 +218,301 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp validate_scan(_), do: {:error, "Invalid scan format"}
 
-  # Extracts a required field from the scan map.
   defp extract_field(scan, field) do
     case Map.get(scan, field) do
-      nil -> {:error, "Missing required field: #{field}"}
-      "" -> {:error, "Empty value for required field: #{field}"}
-      value -> {:ok, value}
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+
+        if trimmed == "" do
+          {:error, "Empty value for required field: #{field}"}
+        else
+          {:ok, trimmed}
+        end
+
+      nil ->
+        {:error, "Missing required field: #{field}"}
+
+      _ ->
+        {:error, "Invalid value for required field: #{field}"}
     end
   end
 
-  # Validates that direction is either "in" or "out".
   defp validate_direction("in"), do: :ok
   defp validate_direction("out"), do: :ok
 
   defp validate_direction(invalid),
     do: {:error, "Invalid direction: #{invalid}. Must be 'in' or 'out'"}
 
-  # Checks idempotency log and either returns cached result or processes scan.
-  defp check_or_process_scan(event_id, scan) do
-    case check_idempotency(event_id, scan.idempotency_key) do
-      {:cached, stored_result} ->
-        # This scan was already processed - return stored result
+  defp mobile_sync_config do
+    config = Application.get_env(:fastcheck, :mobile_sync_performance, [])
+
+    %{
+      parallel: normalize_boolean(Keyword.get(config, :parallel, @default_mobile_sync_parallel)),
+      max_concurrency:
+        normalize_integer(
+          Keyword.get(config, :max_concurrency, @default_mobile_sync_max_concurrency),
+          @default_mobile_sync_max_concurrency
+        ),
+      task_timeout_ms:
+        normalize_integer(
+          Keyword.get(config, :task_timeout_ms, @default_mobile_sync_task_timeout_ms),
+          @default_mobile_sync_task_timeout_ms
+        )
+    }
+  end
+
+  defp normalize_boolean(value) when value in [true, false], do: value
+
+  defp normalize_boolean(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      normalized when normalized in ["1", "true", "yes", "on"] -> true
+      _ -> false
+    end
+  end
+
+  defp normalize_boolean(_value), do: false
+
+  defp normalize_integer(value, _default) when is_integer(value) and value > 0, do: value
+
+  defp normalize_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _rest} when int > 0 -> int
+      _ -> default
+    end
+  end
+
+  defp normalize_integer(_value, default), do: default
+
+  defp reserve_idempotency(event_id, scan) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    values = [
+      %{
+        event_id: event_id,
+        idempotency_key: scan.idempotency_key,
+        ticket_code: scan.ticket_code,
+        result: @idempotency_pending_result,
+        metadata: %{
+          "status" => "pending",
+          "direction" => scan.direction,
+          "scanned_at" => scan.scanned_at,
+          "reserved_at" => DateTime.to_iso8601(now)
+        },
+        inserted_at: now,
+        updated_at: now
+      }
+    ]
+
+    case Repo.insert_all(MobileIdempotencyLog, values,
+           on_conflict: :nothing,
+           conflict_target: [:event_id, :idempotency_key]
+         ) do
+      {1, _rows} -> {:ok, :reserved}
+      {0, _rows} -> {:ok, :duplicate}
+      _ -> {:error, "Unable to reserve scan idempotency record"}
+    end
+  rescue
+    exception ->
+      Logger.warning(
+        "Idempotency reservation failed for event #{event_id} key #{scan.idempotency_key}: #{Exception.message(exception)}"
+      )
+
+      {:error, "Unable to reserve scan idempotency record"}
+  end
+
+  defp process_reserved_scan(event_id, scan, :reserved, _sync_config) do
+    with {:ok, api_result} <- execute_scan(event_id, scan),
+         :ok <- persist_idempotency_result(event_id, scan, api_result) do
+      {:ok, api_result}
+    end
+  end
+
+  defp process_reserved_scan(event_id, scan, :duplicate, sync_config) do
+    case await_idempotency_result(event_id, scan.idempotency_key, @idempotency_poll_attempts) do
+      {:ok, %{result: @idempotency_pending_result} = row} ->
+        handle_pending_duplicate(event_id, scan, row, sync_config)
+
+      {:ok, %{result: result, metadata: metadata}} ->
         {:ok,
          %{
            idempotency_key: scan.idempotency_key,
            status: "duplicate",
-           message: "Already processed: #{stored_result}"
+           message: duplicate_message(result, metadata)
          }}
 
-      :new ->
-        # First time seeing this scan - process it
-        execute_scan(event_id, scan)
+      :not_found ->
+        {:ok,
+         %{
+           idempotency_key: scan.idempotency_key,
+           status: "duplicate",
+           message: "Already processed"
+         }}
     end
   end
 
-  # Checks if a scan has been processed before via idempotency log.
-  #
-  # Returns:
-  # - {:cached, result} if scan was already processed
-  # - :new if this is the first time seeing this scan
-  defp check_idempotency(event_id, idempotency_key) do
+  defp process_reserved_scan(_event_id, _scan, _reservation_status, _sync_config),
+    do: {:error, "Invalid reservation status"}
+
+  defp await_idempotency_result(event_id, idempotency_key, attempts_left)
+       when attempts_left > 0 do
+    case fetch_idempotency_result(event_id, idempotency_key) do
+      {:ok, %{result: @idempotency_pending_result}} ->
+        Process.sleep(@idempotency_poll_interval_ms)
+        await_idempotency_result(event_id, idempotency_key, attempts_left - 1)
+
+      {:ok, row} ->
+        {:ok, row}
+
+      :not_found ->
+        :not_found
+    end
+  end
+
+  defp await_idempotency_result(event_id, idempotency_key, _attempts_left) do
+    case fetch_idempotency_result(event_id, idempotency_key) do
+      {:ok, row} -> {:ok, row}
+      :not_found -> :not_found
+    end
+  end
+
+  defp fetch_idempotency_result(event_id, idempotency_key) do
     query =
-      from l in FastCheck.Mobile.MobileIdempotencyLog,
-        where: l.event_id == ^event_id and l.idempotency_key == ^idempotency_key,
-        select: l.result
+      from log in MobileIdempotencyLog,
+        where: log.event_id == ^event_id and log.idempotency_key == ^idempotency_key,
+        select: %{result: log.result, metadata: log.metadata, updated_at: log.updated_at}
 
     case Repo.one(query) do
-      nil -> :new
-      result -> {:cached, result}
+      nil -> :not_found
+      row -> {:ok, row}
     end
   end
 
-  # Executes the actual scan processing (check-in or check-out).
+  defp duplicate_message(result, metadata) do
+    stored_message = metadata_message(metadata)
+
+    cond do
+      is_binary(stored_message) and String.trim(stored_message) != "" ->
+        "Already processed: #{stored_message}"
+
+      is_binary(result) and String.trim(result) != "" and result != @idempotency_pending_result ->
+        "Already processed: #{result}"
+
+      true ->
+        "Already processed"
+    end
+  end
+
+  defp metadata_message(metadata) when is_map(metadata) do
+    Map.get(metadata, "message") || Map.get(metadata, :message)
+  end
+
+  defp metadata_message(_metadata), do: nil
+
+  defp handle_pending_duplicate(event_id, scan, row, sync_config) do
+    if pending_stale?(row, sync_config.task_timeout_ms) do
+      _ = release_pending_reservation(event_id, scan.idempotency_key)
+      {:error, "Previous scan attempt timed out. Please retry."}
+    else
+      {:error, "Scan is still being processed. Retry shortly."}
+    end
+  end
+
+  defp pending_stale?(%{updated_at: %DateTime{} = updated_at}, task_timeout_ms) do
+    stale_after_ms =
+      max(
+        task_timeout_ms * @idempotency_pending_stale_multiplier,
+        @idempotency_pending_stale_floor_ms
+      )
+
+    DateTime.diff(DateTime.utc_now(), updated_at, :millisecond) >= stale_after_ms
+  end
+
+  defp pending_stale?(_row, _task_timeout_ms), do: true
+
+  defp release_pending_reservation(event_id, scan) when is_integer(event_id) and is_map(scan) do
+    case Map.get(scan, "idempotency_key") do
+      key when is_binary(key) ->
+        release_pending_reservation(event_id, key)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp release_pending_reservation(event_id, idempotency_key)
+       when is_integer(event_id) and is_binary(idempotency_key) do
+    normalized = String.trim(idempotency_key)
+
+    if normalized == "" do
+      :ok
+    else
+      query =
+        from log in MobileIdempotencyLog,
+          where:
+            log.event_id == ^event_id and
+              log.idempotency_key == ^normalized and
+              log.result == ^@idempotency_pending_result
+
+      case Repo.delete_all(query) do
+        {deleted, _} when deleted > 0 ->
+          Logger.warning("Released stale mobile idempotency reservation",
+            event_id: event_id,
+            idempotency_key: normalized,
+            removed: deleted
+          )
+
+          :ok
+
+        _ ->
+          :ok
+      end
+    end
+  rescue
+    exception ->
+      Logger.warning(
+        "Failed to release mobile idempotency reservation for event #{event_id} key #{idempotency_key}: #{Exception.message(exception)}"
+      )
+
+      :ok
+  end
+
+  defp release_pending_reservation(_event_id, _idempotency_key), do: :ok
+
+  defp persist_idempotency_result(event_id, scan, result) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    query =
+      from log in MobileIdempotencyLog,
+        where: log.event_id == ^event_id and log.idempotency_key == ^scan.idempotency_key
+
+    Repo.update_all(query,
+      set: [
+        result: result.status,
+        metadata: %{
+          "status" => result.status,
+          "message" => result.message,
+          "direction" => scan.direction,
+          "scanned_at" => scan.scanned_at,
+          "processed_at" => DateTime.to_iso8601(now)
+        },
+        updated_at: now
+      ]
+    )
+
+    :ok
+  rescue
+    exception ->
+      Logger.warning(
+        "Idempotency result persistence failed for event #{event_id} key #{scan.idempotency_key}: #{Exception.message(exception)}"
+      )
+
+      :ok
+  end
+
   defp execute_scan(event_id, scan) do
-    # Delegate to appropriate domain function
     domain_result =
       case scan.direction do
         "in" ->
@@ -363,23 +524,25 @@ defmodule FastCheckWeb.Mobile.SyncController do
           )
 
         "out" ->
-          # Check-out functionality to be implemented in future
           {:error, "NOT_IMPLEMENTED", "Check-out functionality not yet available"}
       end
 
-    # Map domain result to API response and record in idempotency log
-    api_result = map_domain_result(scan.idempotency_key, domain_result)
-    record_idempotency(event_id, scan, api_result)
-
-    {:ok, api_result}
+    {:ok, map_domain_result(scan.idempotency_key, domain_result)}
   end
 
-  # Maps domain function results to API response format.
   defp map_domain_result(key, {:ok, _attendee, "SUCCESS"}) do
     %{
       idempotency_key: key,
       status: "success",
       message: "Check-in successful"
+    }
+  end
+
+  defp map_domain_result(key, {:ok, _attendee, message}) do
+    %{
+      idempotency_key: key,
+      status: "success",
+      message: to_string(message)
     }
   end
 
@@ -391,7 +554,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
     }
   end
 
-  defp map_domain_result(key, {:error, "DUPLICATE", message}) do
+  defp map_domain_result(key, {:error, code, message})
+       when code in ["DUPLICATE", "DUPLICATE_TODAY", "ALREADY_INSIDE"] do
     %{
       idempotency_key: key,
       status: "error",
@@ -423,38 +587,45 @@ defmodule FastCheckWeb.Mobile.SyncController do
     }
   end
 
-  # Records the scan result in the idempotency log for future duplicate detection.
-  defp record_idempotency(event_id, scan, result) do
-    attrs = %{
-      event_id: event_id,
-      idempotency_key: scan.idempotency_key,
-      ticket_code: scan.ticket_code,
-      result: result.status,
-      metadata: %{
-        message: result.message,
-        direction: scan.direction,
-        scanned_at: scan.scanned_at,
-        processed_at: DateTime.utc_now() |> DateTime.to_iso8601()
-      }
+  defp task_exit_result(scan, reason) do
+    %{
+      idempotency_key: Map.get(scan, "idempotency_key", "unknown"),
+      status: "error",
+      message: "Scan processing task failed: #{inspect(reason)}"
     }
+  end
 
-    %FastCheck.Mobile.MobileIdempotencyLog{}
-    |> FastCheck.Mobile.MobileIdempotencyLog.changeset(attrs)
-    |> Repo.insert()
-
-    # We ignore errors here because:
-    # 1. The scan has already been processed
-    # 2. If insert fails due to duplicate key, that's fine (race condition)
-    # 3. Next upload will still check the log first
-    :ok
+  defp emit_mobile_sync_scan_telemetry(event_id, status, duration_ms) do
+    :telemetry.execute(
+      [:fastcheck, :mobile_sync, :scan, :duration],
+      %{duration_ms: duration_ms},
+      %{event_id: event_id, status: status}
+    )
   rescue
-    _error ->
-      Logger.warning("Failed to record idempotency log",
-        event_id: event_id,
-        idempotency_key: scan.idempotency_key
-      )
+    _ -> :ok
+  end
 
-      :ok
+  defp emit_mobile_sync_batch_telemetry(
+         event_id,
+         total,
+         success_count,
+         duplicate_count,
+         error_count,
+         duration_ms
+       ) do
+    :telemetry.execute(
+      [:fastcheck, :mobile_sync, :batch, :duration],
+      %{duration_ms: duration_ms},
+      %{
+        event_id: event_id,
+        total: total,
+        success: success_count,
+        duplicate: duplicate_count,
+        error: error_count
+      }
+    )
+  rescue
+    _ -> :ok
   end
 
   # Sends a 400 Bad Request response with structured JSON error
@@ -474,46 +645,28 @@ defmodule FastCheckWeb.Mobile.SyncController do
   # Private Helpers
   # ========================================================================
 
-  # Parses the optional 'since' query parameter for incremental sync.
-  #
-  # Returns:
-  # - {:ok, nil} if not provided (full sync)
-  # - {:ok, datetime} if valid ISO 8601 timestamp
-  # - {:ok, nil} if invalid (falls back to full sync with warning)
   defp parse_since_parameter(%{"since" => since_str}) when is_binary(since_str) do
     case DateTime.from_iso8601(since_str) do
       {:ok, datetime, _offset} ->
         {:ok, datetime}
 
       {:error, _reason} ->
-        Logger.warning("Invalid 'since' parameter, falling back to full sync",
-          since: since_str
-        )
-
+        Logger.warning("Invalid 'since' parameter, falling back to full sync", since: since_str)
         {:ok, nil}
     end
   end
 
   defp parse_since_parameter(_params), do: {:ok, nil}
 
-  # Fetches attendees for the given event, optionally filtered by update time.
-  #
-  # Parameters:
-  # - event_id: The event to fetch attendees for
-  # - since: Optional datetime to filter by updated_at
-  #
-  # Returns:
-  # - {:ok, [attendee]} on success
-  # - {:error, reason} on database error
   defp fetch_attendees(event_id, since) do
     query =
-      from a in Attendee,
-        where: a.event_id == ^event_id,
-        order_by: [asc: a.ticket_code]
+      from attendee in Attendee,
+        where: attendee.event_id == ^event_id,
+        order_by: [asc: attendee.ticket_code]
 
     query =
       if since do
-        from a in query, where: a.updated_at > ^since
+        from attendee in query, where: attendee.updated_at > ^since
       else
         query
       end
@@ -524,15 +677,6 @@ defmodule FastCheckWeb.Mobile.SyncController do
       {:error, error}
   end
 
-  # Serializes an Attendee struct to JSON-friendly map with all fields
-  # needed by the mobile client.
-  #
-  # The mobile client needs:
-  # - Identity: id, event_id, ticket_code
-  # - Person info: first_name, last_name, email
-  # - Ticket info: ticket_type, payment_status
-  # - Check-in state: allowed_checkins, checkins_remaining, is_currently_inside
-  # - Timestamps: checked_in_at, checked_out_at, updated_at
   defp serialize_attendee(attendee) do
     %{
       id: attendee.id,
@@ -552,7 +696,6 @@ defmodule FastCheckWeb.Mobile.SyncController do
     }
   end
 
-  # Serializes a DateTime to ISO 8601 string or returns null.
   defp serialize_datetime(nil), do: nil
 
   defp serialize_datetime(datetime) when is_struct(datetime, DateTime) do
@@ -561,7 +704,6 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp serialize_datetime(_), do: nil
 
-  # Helper: Get peer IP address for logging (handles proxies)
   defp get_peer_ip(conn) do
     case get_req_header(conn, "x-forwarded-for") do
       [ip | _] ->
@@ -573,7 +715,6 @@ defmodule FastCheckWeb.Mobile.SyncController do
     end
   end
 
-  # Sends a 500 Internal Server Error response with structured JSON error
   defp server_error(conn, error_code, message) do
     conn
     |> put_status(:internal_server_error)

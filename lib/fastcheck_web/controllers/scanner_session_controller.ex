@@ -6,6 +6,7 @@ defmodule FastCheckWeb.ScannerSessionController do
   use FastCheckWeb, :controller
 
   import Phoenix.Component, only: [to_form: 2]
+  require Logger
 
   alias FastCheck.Events
   alias FastCheck.Events.Event
@@ -33,6 +34,7 @@ defmodule FastCheckWeb.ScannerSessionController do
          {:ok, operator_name} <- extract_operator_name(session_params),
          :ok <- ensure_event_scannable(event),
          :ok <- verify_credential(event, credential) do
+      maybe_warm_event_cache(event)
       redirect_to = normalize_scanner_redirect_to(params["redirect_to"], event.id)
 
       conn
@@ -342,4 +344,66 @@ defmodule FastCheckWeb.ScannerSessionController do
   end
 
   defp ensure_safe_path(_), do: nil
+
+  defp maybe_warm_event_cache(%Event{} = event) do
+    cond do
+      not scanner_warmup_enabled?() ->
+        :ok
+
+      sandbox_pool?() ->
+        Events.warm_event_cache(event)
+        :ok
+
+      true ->
+        caller = self()
+
+        case Task.start(fn ->
+               maybe_allow_sandbox_connection(caller)
+               Events.warm_event_cache(event)
+             end) do
+          {:ok, _pid} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "Unable to start scanner cache warmup for event #{event.id}: #{inspect(reason)}"
+            )
+
+            :ok
+        end
+    end
+  rescue
+    exception ->
+      Logger.warning(
+        "Scanner cache warmup failed for event #{event.id}: #{Exception.message(exception)}"
+      )
+
+      :ok
+  end
+
+  defp scanner_warmup_enabled? do
+    :fastcheck
+    |> Application.get_env(:scanner_performance, [])
+    |> Keyword.get(:warmup_on_login, true)
+  end
+
+  defp maybe_allow_sandbox_connection(caller) when is_pid(caller) do
+    if sandbox_pool?() do
+      try do
+        Ecto.Adapters.SQL.Sandbox.allow(FastCheck.Repo, caller, self())
+      rescue
+        _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp maybe_allow_sandbox_connection(_caller), do: :ok
+
+  defp sandbox_pool? do
+    Application.get_env(:fastcheck, FastCheck.Repo, [])
+    |> Keyword.get(:pool)
+    |> Kernel.==(Ecto.Adapters.SQL.Sandbox)
+  end
 end

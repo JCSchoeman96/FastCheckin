@@ -35,6 +35,7 @@ defmodule FastCheck.Integration.EndToEndTest do
         tickera_api_key_encrypted: encrypted_key,
         tickera_api_key_last4: String.slice(api_key, -4, 4),
         mobile_access_secret_encrypted: encrypted_mobile_secret,
+        scanner_login_code: unique_scanner_code(),
         status: "active",
         entrance_name: "Main Gate",
         total_tickets: 0,
@@ -210,5 +211,12 @@ defmodule FastCheck.Integration.EndToEndTest do
 
       Plug.Conn.resp(conn, 200, Jason.encode!(response))
     end)
+  end
+
+  defp unique_scanner_code do
+    System.unique_integer([:positive])
+    |> rem(1_000_000)
+    |> Integer.to_string()
+    |> String.pad_leading(6, "0")
   end
 end

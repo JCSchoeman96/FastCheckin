@@ -11,6 +11,7 @@ defmodule FastCheck.Events.Config do
   alias FastCheck.Events.Event
   alias FastCheck.Events.CheckInConfiguration
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Cache.CacheManager
   alias FastCheck.TickeraClient
   alias FastCheck.Events.Sync
   alias FastCheck.Events.Cache
@@ -249,6 +250,7 @@ defmodule FastCheck.Events.Config do
       {1, _} ->
         Cache.invalidate_event_cache(event_id)
         Cache.invalidate_events_list_cache()
+        _ = CacheManager.invalidate_ticket_config(event_id)
         :ok
 
       _ ->

@@ -183,7 +183,7 @@ defmodule FastCheck.Cache.CacheManager do
     {"attendee:", :infinity}
   ]
 
-  @config_cache_prefix "event_config:"
+  @config_cache_prefix "ticket_config:event:"
   @ticket_types_prefix "ticket_types:"
   @occupancy_event_prefix "occupancy:event:"
   @occupancy_gate_prefix "occupancy:gate:"
@@ -466,7 +466,7 @@ defmodule FastCheck.Cache.CacheManager do
   @spec put_event_config(integer(), list() | map()) :: cache_result(true)
   def put_event_config(event_id, config) when is_integer(event_id) do
     normalized = ensure_ticket_config_cache_entry(config)
-    EtsLayer.put_event_config(event_id, normalized)
+    EtsLayer.put_ticket_config(event_id, normalized)
     put(event_config_key(event_id), normalized, ttl: :timer.hours(1))
   end
 
@@ -488,6 +488,19 @@ defmodule FastCheck.Cache.CacheManager do
   @spec put_ticket_types(integer(), list()) :: cache_result(true)
   def put_ticket_types(event_id, ticket_types) when is_integer(event_id) do
     put(ticket_types_key(event_id), ticket_types, ttl: :timer.hours(1))
+  end
+
+  @doc """
+  Invalidates cached ticket configuration payloads for an event.
+  """
+  @spec invalidate_ticket_config(integer()) :: :ok | :error
+  def invalidate_ticket_config(event_id) when is_integer(event_id) do
+    EtsLayer.invalidate_ticket_config(event_id)
+
+    case delete(event_config_key(event_id)) do
+      {:ok, true} -> :ok
+      {:error, _reason} -> :error
+    end
   end
 
   @doc """
@@ -762,7 +775,7 @@ defmodule FastCheck.Cache.CacheManager do
   end
 
   defp fetch_or_cache_event_configs(cache_key, event_id) do
-    case EtsLayer.get_event_config(event_id) do
+    case EtsLayer.get_ticket_config(event_id) do
       {:ok, %{records: _records, by_id: _by_id, by_label: _by_label} = entry} ->
         {:ok, entry}
 
@@ -801,7 +814,7 @@ defmodule FastCheck.Cache.CacheManager do
   defp load_event_configs_from_db(cache_key, event_id) do
     with {:ok, configs} <- fetch_ticket_configs_from_db(event_id) do
       entry = build_ticket_config_cache_entry(configs)
-      EtsLayer.put_event_config(event_id, entry)
+      EtsLayer.put_ticket_config(event_id, entry)
       _ = put(cache_key, entry, ttl: :timer.hours(1))
       {:ok, entry}
     end

@@ -113,6 +113,7 @@ defmodule FastCheckWeb.FallbackController do
   defp error_code_to_status("DUPLICATE"), do: :conflict
   defp error_code_to_status("DUPLICATE_TODAY"), do: :conflict
   defp error_code_to_status("ALREADY_INSIDE"), do: :conflict
+  defp error_code_to_status("TICKET_IN_USE_ELSEWHERE"), do: :conflict
   defp error_code_to_status("LIMIT_EXCEEDED"), do: :forbidden
   defp error_code_to_status("NOT_YET_VALID"), do: :forbidden
   defp error_code_to_status("EXPIRED"), do: :forbidden

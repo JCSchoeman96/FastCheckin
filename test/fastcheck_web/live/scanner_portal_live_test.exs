@@ -140,6 +140,19 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
     end
   end
 
+  describe "metrics reconcile" do
+    test "handles immediate reconcile message without rescheduling loops", %{
+      conn: conn,
+      event: event
+    } do
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      send(view.pid, :reconcile_scanner_metrics_now)
+
+      assert has_element?(view, "#scanner-portal")
+    end
+  end
+
   defp insert_event(attrs \\ %{}) do
     api_key = "api-key-#{System.unique_integer([:positive])}"
     {:ok, encrypted_key} = Crypto.encrypt(api_key)

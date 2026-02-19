@@ -11,6 +11,7 @@ defmodule FastCheck.Cache.EtsLayer do
 
   @attendee_table :fastcheck_attendees
   @event_table :fastcheck_events
+  @ticket_config_table :fastcheck_ticket_configs
   @entrance_table :fastcheck_entrances
 
   # ========= PUBLIC API =========
@@ -24,7 +25,8 @@ defmodule FastCheck.Cache.EtsLayer do
     Logger.info("Initializing FastCheck ETS L1 cache tables")
 
     create_table(@attendee_table, read_concurrency: true, write_concurrency: true)
-    create_table(@event_table, read_concurrency: true)
+    create_table(@event_table, read_concurrency: true, write_concurrency: true)
+    create_table(@ticket_config_table, read_concurrency: true, write_concurrency: true)
     create_table(@entrance_table, read_concurrency: true, write_concurrency: true)
 
     :ok
@@ -94,7 +96,7 @@ defmodule FastCheck.Cache.EtsLayer do
   # ----- Events -----
 
   @doc """
-  Cache event configuration by event_id.
+  Cache event struct by event_id.
 
   Key: event_id
   """
@@ -104,7 +106,7 @@ defmodule FastCheck.Cache.EtsLayer do
   end
 
   @doc """
-  Fetch event configuration from ETS.
+  Fetch event struct from ETS.
 
   Returns {:ok, event} | :not_found.
   """
@@ -120,6 +122,34 @@ defmodule FastCheck.Cache.EtsLayer do
   """
   def invalidate_event_config(event_id) do
     :ets.delete(@event_table, event_id)
+    :ok
+  end
+
+  @doc """
+  Cache ticket configuration payload by event_id.
+  """
+  def put_ticket_config(event_id, ticket_config_payload) do
+    :ets.insert(@ticket_config_table, {event_id, ticket_config_payload})
+    :ok
+  end
+
+  @doc """
+  Fetch ticket configuration payload from ETS.
+
+  Returns {:ok, payload} | :not_found.
+  """
+  def get_ticket_config(event_id) do
+    case :ets.lookup(@ticket_config_table, event_id) do
+      [{^event_id, payload}] -> {:ok, payload}
+      [] -> :not_found
+    end
+  end
+
+  @doc """
+  Invalidate a single ticket configuration cache entry.
+  """
+  def invalidate_ticket_config(event_id) do
+    :ets.delete(@ticket_config_table, event_id)
     :ok
   end
 
@@ -190,6 +220,7 @@ defmodule FastCheck.Cache.EtsLayer do
   def flush_all do
     :ets.delete_all_objects(@attendee_table)
     :ets.delete_all_objects(@event_table)
+    :ets.delete_all_objects(@ticket_config_table)
     :ets.delete_all_objects(@entrance_table)
     :ok
   end
@@ -201,6 +232,7 @@ defmodule FastCheck.Cache.EtsLayer do
     %{
       attendees: table_size(@attendee_table),
       events: table_size(@event_table),
+      ticket_configs: table_size(@ticket_config_table),
       entrances: table_size(@entrance_table)
     }
   end

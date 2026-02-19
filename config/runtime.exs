@@ -97,6 +97,27 @@ config :fastcheck,
   cache_ttl: cache_ttl,
   redis_url: redis_url
 
+# Scanner runtime tuning for launch performance.
+config :fastcheck, :scanner_performance,
+  stats_reconcile_ms: String.to_integer(System.get_env("SCANNER_STATS_RECONCILE_MS") || "30000"),
+  force_refresh_every_n_scans:
+    String.to_integer(System.get_env("SCANNER_FORCE_REFRESH_EVERY_N_SCANS") || "20"),
+  warmup_on_login:
+    (System.get_env("SCANNER_WARMUP_ON_LOGIN", "true")
+     |> String.trim()
+     |> String.downcase()) in ["1", "true", "yes", "on"],
+  scanning_allowed_cache_ttl_ms:
+    String.to_integer(System.get_env("SCANNER_SCANNING_ALLOWED_TTL_MS") || "5000")
+
+# Mobile sync runtime tuning for launch performance.
+config :fastcheck, :mobile_sync_performance,
+  parallel:
+    (System.get_env("MOBILE_SYNC_PARALLEL", "true")
+     |> String.trim()
+     |> String.downcase()) in ["1", "true", "yes", "on"],
+  max_concurrency: String.to_integer(System.get_env("MOBILE_SYNC_MAX_CONCURRENCY") || "16"),
+  task_timeout_ms: String.to_integer(System.get_env("MOBILE_SYNC_TASK_TIMEOUT_MS") || "10000")
+
 allow_unknown_payment_status =
   case System.get_env("ALLOW_UNKNOWN_PAYMENT_STATUS", "false")
        |> String.trim()
@@ -205,9 +226,9 @@ config :fastcheck, FastCheck.RateLimiter,
   sync_period: 300_000,
   occupancy_limit: String.to_integer(System.get_env("RATE_LIMIT_OCCUPANCY") || "10"),
   occupancy_period: 60_000,
-  checkin_limit: String.to_integer(System.get_env("RATE_LIMIT_CHECKIN") || "30"),
+  checkin_limit: String.to_integer(System.get_env("RATE_LIMIT_CHECKIN") || "200"),
   checkin_period: 60_000,
-  scan_limit: String.to_integer(System.get_env("RATE_LIMIT_SCAN") || "50"),
+  scan_limit: String.to_integer(System.get_env("RATE_LIMIT_SCAN") || "400"),
   scan_period: 60_000,
   dashboard_limit: String.to_integer(System.get_env("RATE_LIMIT_DASHBOARD") || "100"),
   dashboard_period: 60_000

@@ -121,6 +121,23 @@ defmodule FastCheckWeb.Telemetry do
         description: "Total critical slow queries"
       ),
 
+      # Scanner and mobile sync performance metrics
+      summary("fastcheck.scanner.scan.duration.duration_ms",
+        unit: {:millisecond, :millisecond},
+        tags: [:operation, :status],
+        description: "Scanner hot-path duration in milliseconds"
+      ),
+      summary("fastcheck.mobile_sync.batch.duration.duration_ms",
+        unit: {:millisecond, :millisecond},
+        tags: [:event_id],
+        description: "Mobile sync batch processing duration in milliseconds"
+      ),
+      summary("fastcheck.mobile_sync.scan.duration.duration_ms",
+        unit: {:millisecond, :millisecond},
+        tags: [:status],
+        description: "Single mobile scan processing duration in milliseconds"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

@@ -72,7 +72,8 @@ defmodule FastCheck.Attendees.Query do
   @doc """
   Fetches an attendee with a database lock for update operations.
 
-  Uses `FOR UPDATE` to lock the row for safe concurrent updates.
+  Uses `FOR UPDATE NOWAIT` to lock the row for safe concurrent updates while
+  fast-failing under lock contention.
   Returns `{:ok, attendee}` or `{:error, code, message}`.
 
   Includes a 5-second timeout to prevent long-running queries.
@@ -84,7 +85,7 @@ defmodule FastCheck.Attendees.Query do
     query =
       from(a in Attendee,
         where: a.event_id == ^event_id and a.ticket_code == ^ticket_code,
-        lock: "FOR UPDATE"
+        lock: "FOR UPDATE NOWAIT"
       )
 
     case Repo.one(query, timeout: 5_000) do
@@ -97,15 +98,20 @@ defmodule FastCheck.Attendees.Query do
     end
   rescue
     exception ->
-      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
-        Logger.error(
-          "Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}"
-        )
+      cond do
+        lock_not_available?(exception) ->
+          {:error, "TICKET_IN_USE_ELSEWHERE", "Ticket is currently being processed"}
 
-        {:error, "TIMEOUT", "Database query timed out"}
-      else
-        Logger.error("Database error fetching attendee: #{Exception.message(exception)}")
-        {:error, "ERROR", "Database error"}
+        is_exception(exception) and exception.__struct__ == DBConnection.QueryError ->
+          Logger.error(
+            "Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}"
+          )
+
+          {:error, "TIMEOUT", "Database query timed out"}
+
+        true ->
+          Logger.error("Database error fetching attendee: #{Exception.message(exception)}")
+          {:error, "ERROR", "Database error"}
       end
   end
 
@@ -252,35 +258,41 @@ defmodule FastCheck.Attendees.Query do
           percentage: float()
         }
   def get_event_stats(event_id) when is_integer(event_id) do
-    try do
-      total =
-        from(a in Attendee,
-          where: a.event_id == ^event_id,
-          select: count(a.id)
-        )
-        |> Repo.one()
-        |> Kernel.||(0)
+    query =
+      from(a in Attendee,
+        where: a.event_id == ^event_id,
+        select: %{
+          total: count(a.id),
+          checked_in: fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_in_at)
+        }
+      )
 
-      checked_in =
-        from(a in Attendee,
-          where: a.event_id == ^event_id and not is_nil(a.checked_in_at),
-          select: count(a.id)
-        )
-        |> Repo.one()
-        |> Kernel.||(0)
-
-      pending = max(total - checked_in, 0)
-      percentage = if total == 0, do: 0.0, else: Float.round(checked_in / total * 100, 2)
-
-      %{total: total, checked_in: checked_in, pending: pending, percentage: percentage}
-    rescue
-      exception ->
-        Logger.error(
-          "Failed to compute stats for event #{event_id}: #{Exception.message(exception)}"
-        )
-
+    case Repo.one(query) do
+      nil ->
         %{total: 0, checked_in: 0, pending: 0, percentage: 0.0}
+
+      %{total: total, checked_in: checked_in} ->
+        total_int = normalize_count(total)
+        checked_in_int = normalize_count(checked_in)
+        pending = max(total_int - checked_in_int, 0)
+
+        percentage =
+          if total_int == 0, do: 0.0, else: Float.round(checked_in_int / total_int * 100, 2)
+
+        %{
+          total: total_int,
+          checked_in: checked_in_int,
+          pending: pending,
+          percentage: percentage
+        }
     end
+  rescue
+    exception ->
+      Logger.error(
+        "Failed to compute stats for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      %{total: 0, checked_in: 0, pending: 0, percentage: 0.0}
   end
 
   def get_event_stats(_), do: %{total: 0, checked_in: 0, pending: 0, percentage: 0.0}
@@ -317,4 +329,7 @@ defmodule FastCheck.Attendees.Query do
   end
 
   defp escape_like(term), do: term
+
+  defp lock_not_available?(%Postgrex.Error{postgres: %{code: :lock_not_available}}), do: true
+  defp lock_not_available?(_), do: false
 end

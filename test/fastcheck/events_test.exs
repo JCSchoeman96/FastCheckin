@@ -1,12 +1,25 @@
 defmodule FastCheck.EventsTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   alias Ecto.Changeset
   alias FastCheck.Events
-  alias FastCheck.Events.{Event, CheckInConfiguration}
+  alias FastCheck.Events.{CheckInConfiguration, Event}
   alias FastCheck.Attendees.{Attendee, CheckIn}
+  alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Repo
+
+  setup do
+    _ = CacheManager.reset()
+    EtsLayer.flush_all()
+
+    on_exit(fn ->
+      _ = CacheManager.reset()
+      EtsLayer.flush_all()
+    end)
+
+    :ok
+  end
 
   describe "list_events/0" do
     test "returns attendee counts per event" do

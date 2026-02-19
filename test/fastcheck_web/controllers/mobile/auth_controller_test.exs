@@ -16,6 +16,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
         tickera_site_url: "https://test.example.com",
         tickera_api_key_encrypted: "encrypted_key",
         mobile_access_secret_encrypted: encrypted_secret,
+        scanner_login_code: unique_scanner_code(),
         status: "active"
       }
       |> Repo.insert!()
@@ -162,5 +163,12 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
       assert is_integer(claims["exp"])
       assert is_integer(claims["iat"])
     end
+  end
+
+  defp unique_scanner_code do
+    System.unique_integer([:positive])
+    |> rem(1_000_000)
+    |> Integer.to_string()
+    |> String.pad_leading(6, "0")
   end
 end

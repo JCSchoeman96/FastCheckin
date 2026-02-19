@@ -148,7 +148,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Tier 2: High frequency scanner operations
   rule "throttle_check_in", conn do
     if check_in_operation?(conn) do
-      key = "check_in:#{get_peer_ip(conn)}"
+      key = "check_in:#{normalize_event_scope(get_event_id(conn))}:#{request_identity(conn)}"
       # Configurable limit per minute per IP
       throttle(key,
         limit: get_limit(:checkin_limit, 30),
@@ -162,7 +162,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   rule "throttle_scan", conn do
     if scan_operation?(conn) do
-      key = "scan:#{get_peer_ip(conn)}"
+      key = "scan:#{normalize_event_scope(get_event_id(conn))}:#{request_identity(conn)}"
       # Configurable limit per minute per IP
       throttle(key,
         limit: get_limit(:scan_limit, 50),
@@ -176,13 +176,18 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   # Tier 3: General dashboard/read operations (lenient)
   rule "throttle_dashboard", conn do
-    key = "general:#{get_peer_ip(conn)}"
-    # Configurable limit per minute per IP
-    throttle(key,
-      limit: get_limit(:dashboard_limit, 100),
-      period: 60_000,
-      storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
-    )
+    if dashboard_operation?(conn) do
+      key = "general:dashboard:#{request_identity(conn)}"
+
+      # Configurable limit per minute per identity
+      throttle(key,
+        limit: get_limit(:dashboard_limit, 100),
+        period: 60_000,
+        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+      )
+    else
+      nil
+    end
   end
 
   # Handle allowed requests (including those tracked by throttle rules)
@@ -285,6 +290,12 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     conn.request_path =~ ~r/\/scan/ or conn.request_path =~ ~r/\/validate_ticket/
   end
 
+  defp dashboard_operation?(conn) do
+    conn.request_path in ["/", "/dashboard"] or
+      String.starts_with?(conn.request_path, "/dashboard/") or
+      String.starts_with?(conn.request_path, "/export/")
+  end
+
   # Helper: Extract event ID from path or params
   defp get_event_id(conn) do
     cond do
@@ -302,6 +313,52 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
         conn.params["event_id"] || "unknown"
     end
   end
+
+  defp normalize_event_scope(event_id) when is_integer(event_id) and event_id > 0,
+    do: Integer.to_string(event_id)
+
+  defp normalize_event_scope(event_id) when is_binary(event_id) do
+    trimmed = String.trim(event_id)
+    if trimmed == "", do: "unknown", else: trimmed
+  end
+
+  defp normalize_event_scope(_), do: "unknown"
+
+  defp request_identity(conn) do
+    cond do
+      is_map(conn.assigns[:token_claims]) ->
+        claims = conn.assigns[:token_claims]
+        token_subject = claims["sub"] || claims["jti"] || claims["event_id"]
+        "jwt:" <> normalize_identity_segment(token_subject)
+
+      bearer_token = bearer_token(conn) ->
+        "token:" <> token_fingerprint(bearer_token)
+
+      true ->
+        "ip:" <> normalize_identity_segment(get_peer_ip(conn))
+    end
+  end
+
+  defp bearer_token(conn) do
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> token | _] -> token
+      _ -> nil
+    end
+  end
+
+  defp token_fingerprint(token) when is_binary(token) do
+    token
+    |> :crypto.hash(:sha256)
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 16)
+  end
+
+  defp normalize_identity_segment(nil), do: "unknown"
+
+  defp normalize_identity_segment(value) when is_binary(value),
+    do: String.replace(value, ~r/[^a-zA-Z0-9\-_:.]/, "_")
+
+  defp normalize_identity_segment(value), do: value |> to_string() |> normalize_identity_segment()
 
   # Helper: Get peer IP address (handles proxies and IPv6)
   defp get_peer_ip(conn) do

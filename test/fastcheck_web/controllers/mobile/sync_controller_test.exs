@@ -1,7 +1,14 @@
 defmodule FastCheckWeb.Mobile.SyncControllerTest do
   use FastCheckWeb.ConnCase, async: true
 
-  alias FastCheck.{Repo, Events.Event, Attendees.Attendee, Mobile.Token, Crypto}
+  alias FastCheck.{
+    Repo,
+    Events.Event,
+    Attendees.Attendee,
+    Mobile.Token,
+    Mobile.MobileIdempotencyLog,
+    Crypto
+  }
 
   setup do
     {:ok, encrypted_secret} = Crypto.encrypt("scanner-secret")
@@ -14,6 +21,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         tickera_site_url: "https://sync.example.com",
         tickera_api_key_encrypted: "encrypted_key",
         mobile_access_secret_encrypted: encrypted_secret,
+        scanner_login_code: unique_scanner_code(),
         status: "active"
       }
       |> Repo.insert!()
@@ -26,6 +34,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         tickera_site_url: "https://other.example.com",
         tickera_api_key_encrypted: "encrypted_key2",
         mobile_access_secret_encrypted: encrypted_secret,
+        scanner_login_code: unique_scanner_code(),
         status: "active"
       }
       |> Repo.insert!()
@@ -335,6 +344,107 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert Enum.all?(results, &(&1["status"] == "success"))
     end
 
+    test "handles duplicate idempotency keys inside one batch", %{conn: conn, token: token} do
+      scans = [
+        %{
+          "idempotency_key" => "same-batch-dup",
+          "ticket_code" => "TEST001",
+          "direction" => "in"
+        },
+        %{
+          "idempotency_key" => "same-batch-dup",
+          "ticket_code" => "TEST001",
+          "direction" => "in"
+        }
+      ]
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => scans})
+
+      assert %{"data" => %{"results" => results, "processed" => 2}} = json_response(conn, 200)
+
+      statuses =
+        results
+        |> Enum.map(& &1["status"])
+        |> Enum.sort()
+
+      assert statuses == ["duplicate", "success"]
+    end
+
+    test "clears stale pending idempotency reservations and returns retryable error", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
+      stale_time = DateTime.utc_now() |> DateTime.add(-120, :second) |> DateTime.truncate(:second)
+
+      Repo.insert!(%MobileIdempotencyLog{
+        event_id: event.id,
+        idempotency_key: "stale-pending-key",
+        ticket_code: "TEST001",
+        result: "__pending__",
+        metadata: %{"status" => "pending"},
+        inserted_at: stale_time,
+        updated_at: stale_time
+      })
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{
+          "scans" => [
+            %{
+              "idempotency_key" => "stale-pending-key",
+              "ticket_code" => "TEST001",
+              "direction" => "in"
+            }
+          ]
+        })
+
+      assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
+      assert result["status"] == "error"
+      assert result["message"] =~ "timed out"
+
+      refute Repo.get_by(MobileIdempotencyLog,
+               event_id: event.id,
+               idempotency_key: "stale-pending-key"
+             )
+    end
+
+    test "preserves input order in mixed-result batches", %{conn: conn, token: token} do
+      scans = [
+        %{
+          "idempotency_key" => "order-1",
+          "ticket_code" => "NONEXISTENT",
+          "direction" => "in"
+        },
+        %{
+          "idempotency_key" => "order-2",
+          "ticket_code" => "TEST001",
+          "direction" => "in"
+        },
+        %{
+          "idempotency_key" => "order-3",
+          "ticket_code" => "TEST002",
+          "direction" => "out"
+        }
+      ]
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => scans})
+
+      assert %{"data" => %{"results" => results, "processed" => 3}} = json_response(conn, 200)
+
+      assert Enum.map(results, & &1["idempotency_key"]) == ["order-1", "order-2", "order-3"]
+      assert Enum.at(results, 0)["status"] == "error"
+      assert Enum.at(results, 1)["status"] == "success"
+      assert Enum.at(results, 2)["status"] == "error"
+    end
+
     test "validates required fields in scan", %{conn: conn, token: token} do
       # Missing ticket_code
       scan = %{
@@ -413,5 +523,12 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert result["status"] == "error"
       assert result["message"] =~ "Ticket not found"
     end
+  end
+
+  defp unique_scanner_code do
+    System.unique_integer([:positive])
+    |> rem(1_000_000)
+    |> Integer.to_string()
+    |> String.pad_leading(6, "0")
   end
 end

@@ -98,6 +98,17 @@ defmodule FastCheckWeb.ScannerLiveTest do
     end
   end
 
+  describe "metrics reconcile" do
+    test "handles immediate reconcile message without rescheduling loops", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      send(view.pid, :reconcile_scanner_metrics_now)
+
+      assert has_element?(view, "form#attendee-search-form")
+    end
+  end
+
   defp insert_event(attrs \\ %{}) do
     attrs = Map.merge(@valid_event_attrs, attrs)
     api_key = Map.get(attrs, :tickera_api_key, @api_key)

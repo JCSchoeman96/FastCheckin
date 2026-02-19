@@ -12,6 +12,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   @default_camera_permission %{status: :unknown, remembered: false, message: nil}
   @valid_tabs ~w(overview camera attendees)
+  @default_stats_reconcile_ms 30_000
+  @default_force_refresh_every_n_scans 20
 
   @impl true
   def mount(%{"event_id" => event_id_param} = params, session, socket) do
@@ -24,6 +26,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
       occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
       active_tab = normalize_tab(Map.get(params, "tab"))
       operator_name = session_value(session, :scanner_operator_name) || "Scanner"
+      stats_reconcile_ms = scanner_stats_reconcile_ms()
+      force_refresh_every_n_scans = scanner_force_refresh_every_n_scans()
 
       socket =
         socket
@@ -43,6 +47,9 @@ defmodule FastCheckWeb.ScannerPortalLive do
           stats: stats,
           current_occupancy: current_occupancy,
           occupancy_percentage: occupancy_percentage,
+          successful_scan_count: 0,
+          stats_reconcile_ms: stats_reconcile_ms,
+          force_refresh_every_n_scans: force_refresh_every_n_scans,
           search_query: "",
           search_results: [],
           search_loading: false,
@@ -60,7 +67,10 @@ defmodule FastCheckWeb.ScannerPortalLive do
         if connected?(socket) do
           PubSub.subscribe(FastCheck.PubSub, event_topic(event_id))
           PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
-          schedule_event_state_refresh(socket)
+
+          socket
+          |> schedule_event_state_refresh()
+          |> schedule_stats_reconcile()
         else
           socket
         end
@@ -344,6 +354,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   def handle_info({:scanner_sync_complete, {:ok, message}}, socket) do
+    maybe_warm_event_cache(socket.assigns.event)
+
     {:noreply,
      socket
      |> refresh_stats()
@@ -366,6 +378,14 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   def handle_info(:refresh_event_state, socket) do
     {:noreply, socket |> assign_event_state() |> schedule_event_state_refresh()}
+  end
+
+  def handle_info(:reconcile_scanner_metrics, socket) do
+    {:noreply, socket |> refresh_stats() |> schedule_stats_reconcile()}
+  end
+
+  def handle_info(:reconcile_scanner_metrics_now, socket) do
+    {:noreply, refresh_stats(socket)}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -976,7 +996,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
         socket =
           socket
-          |> refresh_stats()
           |> assign(
             last_scan_status: :success,
             last_scan_result: success_message(attendee, mode),
@@ -984,6 +1003,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
             ticket_code: "",
             scan_history: add_to_scan_history(socket.assigns.scan_history, entry)
           )
+          |> apply_optimistic_scan_metrics(mode)
+          |> maybe_force_scan_reconcile()
           |> push_event("scan_result", %{status: "success"})
 
         {:noreply, socket}
@@ -1040,7 +1061,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   defp assign_event_state(socket) do
-    event = socket.assigns.event_id |> Events.get_event_with_stats()
+    event = socket.assigns.event_id |> Events.get_event!()
     lifecycle_state = Events.event_lifecycle_state(event)
 
     {scans_disabled?, scans_disabled_message} =
@@ -1061,6 +1082,11 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp schedule_event_state_refresh(socket) do
     Process.send_after(self(), :refresh_event_state, 30_000)
+    socket
+  end
+
+  defp schedule_stats_reconcile(socket) do
+    Process.send_after(self(), :reconcile_scanner_metrics, socket.assigns.stats_reconcile_ms)
     socket
   end
 
@@ -1242,7 +1268,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp parse_event_id(_), do: {:error, :invalid_event_id}
 
   defp fetch_event(event_id) do
-    {:ok, Events.get_event_with_stats(event_id)}
+    {:ok, Events.get_event!(event_id)}
   rescue
     Ecto.NoResultsError -> {:error, :not_found}
   end
@@ -1415,4 +1441,113 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp truthy?(value) when value in [true, "true", "1", 1, "yes", "on"], do: true
   defp truthy?(_), do: false
+
+  defp apply_optimistic_scan_metrics(socket, mode) do
+    current_stats = socket.assigns.stats || %{total: 0, checked_in: 0, pending: 0}
+    total = Map.get(current_stats, :total, 0)
+    checked_in = Map.get(current_stats, :checked_in, 0)
+    pending = Map.get(current_stats, :pending, 0)
+    current_occupancy = socket.assigns.current_occupancy || 0
+    successful_scan_count = (socket.assigns.successful_scan_count || 0) + 1
+
+    {updated_checked_in, updated_pending, updated_occupancy} =
+      case mode do
+        "exit" ->
+          {checked_in, pending, max(current_occupancy - 1, 0)}
+
+        _ ->
+          {min(checked_in + 1, total), max(pending - 1, 0), current_occupancy + 1}
+      end
+
+    updated_stats =
+      current_stats
+      |> Map.put(:checked_in, updated_checked_in)
+      |> Map.put(:pending, updated_pending)
+
+    assign(socket,
+      stats: updated_stats,
+      current_occupancy: updated_occupancy,
+      occupancy_percentage: calculate_occupancy_percentage(updated_occupancy, total),
+      successful_scan_count: successful_scan_count
+    )
+  end
+
+  defp maybe_force_scan_reconcile(socket) do
+    force_every =
+      socket.assigns.force_refresh_every_n_scans || @default_force_refresh_every_n_scans
+
+    count = socket.assigns.successful_scan_count || 0
+
+    if force_every > 0 and rem(count, force_every) == 0 do
+      send(self(), :reconcile_scanner_metrics_now)
+    end
+
+    socket
+  end
+
+  defp scanner_stats_reconcile_ms do
+    :fastcheck
+    |> Application.get_env(:scanner_performance, [])
+    |> Keyword.get(:stats_reconcile_ms, @default_stats_reconcile_ms)
+  end
+
+  defp scanner_force_refresh_every_n_scans do
+    :fastcheck
+    |> Application.get_env(:scanner_performance, [])
+    |> Keyword.get(:force_refresh_every_n_scans, @default_force_refresh_every_n_scans)
+  end
+
+  defp maybe_warm_event_cache(event) when is_map(event) do
+    cond do
+      not scanner_warmup_enabled?() ->
+        :ok
+
+      sandbox_pool?() ->
+        Events.warm_event_cache(event)
+        :ok
+
+      true ->
+        caller = self()
+
+        case Task.start(fn ->
+               maybe_allow_sandbox_connection(caller)
+               Events.warm_event_cache(event)
+             end) do
+          {:ok, _pid} -> :ok
+          {:error, reason} -> Logger.warning("Scanner cache warmup failed: #{inspect(reason)}")
+        end
+    end
+  rescue
+    exception ->
+      Logger.warning("Scanner cache warmup raised: #{Exception.message(exception)}")
+      :ok
+  end
+
+  defp maybe_warm_event_cache(_event), do: :ok
+
+  defp scanner_warmup_enabled? do
+    :fastcheck
+    |> Application.get_env(:scanner_performance, [])
+    |> Keyword.get(:warmup_on_login, true)
+  end
+
+  defp maybe_allow_sandbox_connection(caller) when is_pid(caller) do
+    if sandbox_pool?() do
+      try do
+        Ecto.Adapters.SQL.Sandbox.allow(FastCheck.Repo, caller, self())
+      rescue
+        _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp maybe_allow_sandbox_connection(_caller), do: :ok
+
+  defp sandbox_pool? do
+    Application.get_env(:fastcheck, FastCheck.Repo, [])
+    |> Keyword.get(:pool)
+    |> Kernel.==(Ecto.Adapters.SQL.Sandbox)
+  end
 end

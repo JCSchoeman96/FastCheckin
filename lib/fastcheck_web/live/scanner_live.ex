@@ -11,6 +11,8 @@ defmodule FastCheckWeb.ScannerLive do
   require Logger
 
   @default_camera_permission %{status: :unknown, remembered: false, message: nil}
+  @default_stats_reconcile_ms 30_000
+  @default_force_refresh_every_n_scans 20
 
   @impl true
   def mount(%{"event_id" => event_id_param}, _session, socket) do
@@ -20,6 +22,8 @@ defmodule FastCheckWeb.ScannerLive do
       occupancy = Attendees.get_occupancy_breakdown(event_id)
       current_occupancy = Map.get(occupancy, :currently_inside, 0)
       occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
+      stats_reconcile_ms = scanner_stats_reconcile_ms()
+      force_refresh_every_n_scans = scanner_force_refresh_every_n_scans()
 
       socket =
         socket
@@ -36,6 +40,9 @@ defmodule FastCheckWeb.ScannerLive do
           check_in_type: "entry",
           current_occupancy: current_occupancy,
           occupancy_percentage: occupancy_percentage,
+          successful_scan_count: 0,
+          stats_reconcile_ms: stats_reconcile_ms,
+          force_refresh_every_n_scans: force_refresh_every_n_scans,
           search_query: "",
           search_results: [],
           search_loading: false,
@@ -54,7 +61,10 @@ defmodule FastCheckWeb.ScannerLive do
         if connected?(socket) do
           PubSub.subscribe(FastCheck.PubSub, event_topic(event_id))
           PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
-          schedule_event_state_refresh(socket)
+
+          socket
+          |> schedule_event_state_refresh()
+          |> schedule_stats_reconcile()
         else
           socket
         end
@@ -314,6 +324,35 @@ defmodule FastCheckWeb.ScannerLive do
 
   def handle_info(:refresh_event_state, socket) do
     {:noreply, socket |> assign_event_state() |> schedule_event_state_refresh()}
+  end
+
+  def handle_info(:reconcile_scanner_metrics, socket) do
+    event_id = socket.assigns.event_id
+    stats = Attendees.get_event_stats(event_id)
+    occupancy = Attendees.get_occupancy_breakdown(event_id)
+    current_occupancy = Map.get(occupancy, :currently_inside, 0)
+    occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
+
+    {:noreply,
+     socket
+     |> assign(:stats, stats)
+     |> assign(:current_occupancy, current_occupancy)
+     |> assign(:occupancy_percentage, occupancy_percentage)
+     |> schedule_stats_reconcile()}
+  end
+
+  def handle_info(:reconcile_scanner_metrics_now, socket) do
+    event_id = socket.assigns.event_id
+    stats = Attendees.get_event_stats(event_id)
+    occupancy = Attendees.get_occupancy_breakdown(event_id)
+    current_occupancy = Map.get(occupancy, :currently_inside, 0)
+    occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
+
+    {:noreply,
+     socket
+     |> assign(:stats, stats)
+     |> assign(:current_occupancy, current_occupancy)
+     |> assign(:occupancy_percentage, occupancy_percentage)}
   end
 
   @impl true
@@ -1179,7 +1218,6 @@ defmodule FastCheckWeb.ScannerLive do
 
     case perform_scan_action(event_id, code, check_in_type, entrance_name, operator) do
       {:ok, attendee, _message} ->
-        stats = Attendees.get_event_stats(event_id)
         updated_results = update_search_results(socket.assigns.search_results, attendee)
         {allowed, used} = check_in_usage(attendee)
 
@@ -1205,11 +1243,12 @@ defmodule FastCheckWeb.ScannerLive do
            last_scan_checkins_used: used,
            last_scan_checkins_allowed: allowed,
            last_scan_reason: nil,
-           stats: stats,
            ticket_code: "",
            search_results: updated_results,
            scan_history: add_to_scan_history(socket.assigns.scan_history, scan_entry)
-         )}
+         )
+         |> apply_optimistic_scan_metrics(check_in_type)
+         |> maybe_force_scan_reconcile()}
 
       {:error, code, message} when code in ["DUPLICATE_TODAY", "DUPLICATE", "ALREADY_INSIDE"] ->
         scan_entry = build_scan_history_entry(code, nil, :duplicate_today, message, check_in_type)
@@ -1525,6 +1564,14 @@ defmodule FastCheckWeb.ScannerLive do
     socket
   end
 
+  defp schedule_stats_reconcile(socket) do
+    if connected?(socket) do
+      Process.send_after(self(), :reconcile_scanner_metrics, socket.assigns.stats_reconcile_ms)
+    end
+
+    socket
+  end
+
   defp scanner_lifecycle_badge_color(:archived), do: "danger"
   defp scanner_lifecycle_badge_color(:grace), do: "warning"
   defp scanner_lifecycle_badge_color(:upcoming), do: "natural"
@@ -1664,7 +1711,7 @@ defmodule FastCheckWeb.ScannerLive do
   defp parse_event_id(_), do: {:error, :invalid_event_id}
 
   defp fetch_event(event_id) do
-    {:ok, Events.get_event_with_stats(event_id)}
+    {:ok, Events.get_event!(event_id)}
   rescue
     Ecto.NoResultsError -> {:error, :not_found}
   end
@@ -1735,6 +1782,61 @@ defmodule FastCheckWeb.ScannerLive do
     do: normalize_percentage_override(value / 1)
 
   defp normalize_percentage_override(_), do: nil
+
+  defp apply_optimistic_scan_metrics(socket, check_in_type) do
+    current_stats = socket.assigns.stats || %{total: 0, checked_in: 0, pending: 0}
+    total = Map.get(current_stats, :total, 0)
+    checked_in = Map.get(current_stats, :checked_in, 0)
+    pending = Map.get(current_stats, :pending, 0)
+    current_occupancy = socket.assigns.current_occupancy || 0
+    successful_scan_count = (socket.assigns.successful_scan_count || 0) + 1
+
+    {updated_checked_in, updated_pending, updated_occupancy} =
+      case check_in_type do
+        "exit" ->
+          {checked_in, pending, max(current_occupancy - 1, 0)}
+
+        _ ->
+          {min(checked_in + 1, total), max(pending - 1, 0), current_occupancy + 1}
+      end
+
+    updated_stats =
+      current_stats
+      |> Map.put(:checked_in, updated_checked_in)
+      |> Map.put(:pending, updated_pending)
+
+    assign(socket,
+      stats: updated_stats,
+      current_occupancy: updated_occupancy,
+      occupancy_percentage: calculate_occupancy_percentage(updated_occupancy, total),
+      successful_scan_count: successful_scan_count
+    )
+  end
+
+  defp maybe_force_scan_reconcile(socket) do
+    force_every =
+      socket.assigns.force_refresh_every_n_scans || @default_force_refresh_every_n_scans
+
+    count = socket.assigns.successful_scan_count || 0
+
+    if force_every > 0 and rem(count, force_every) == 0 do
+      send(self(), :reconcile_scanner_metrics_now)
+    end
+
+    socket
+  end
+
+  defp scanner_stats_reconcile_ms do
+    :fastcheck
+    |> Application.get_env(:scanner_performance, [])
+    |> Keyword.get(:stats_reconcile_ms, @default_stats_reconcile_ms)
+  end
+
+  defp scanner_force_refresh_every_n_scans do
+    :fastcheck
+    |> Application.get_env(:scanner_performance, [])
+    |> Keyword.get(:force_refresh_every_n_scans, @default_force_refresh_every_n_scans)
+  end
 
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value
   defp normalize_capacity(value) when is_float(value) and value > 0, do: trunc(value)
