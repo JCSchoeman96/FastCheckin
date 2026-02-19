@@ -15,8 +15,14 @@ defmodule FastCheckWeb.DashboardLiveTest do
   end
 
   describe "edit event modal" do
-    test "opens edit modal and renders optional API key input safely", %{conn: conn} do
-      event = insert_event!(%{name: "Modal Smoke Event"})
+    test "opens edit modal with existing values prefilled", %{conn: conn} do
+      event =
+        insert_event!(%{
+          name: "Modal Smoke Event",
+          tickera_site_url: "https://prefill.example.com",
+          location: "Prefill Venue",
+          entrance_name: "North Gate"
+        })
 
       {:ok, view, _html} = mount_dashboard(conn)
 
@@ -28,6 +34,27 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert has_element?(view, "#edit-event-form")
       assert has_element?(view, "#edit-event-new-api-key")
+      name_input_html = view |> element("#edit-event-form input[name='event[name]']") |> render()
+
+      site_url_input_html =
+        view
+        |> element("#edit-event-form input[name='event[tickera_site_url]']")
+        |> render()
+
+      location_input_html =
+        view
+        |> element("#edit-event-form input[name='event[location]']")
+        |> render()
+
+      entrance_input_html =
+        view
+        |> element("#edit-event-form input[name='event[entrance_name]']")
+        |> render()
+
+      assert name_input_html =~ ~s(value="Modal Smoke Event")
+      assert site_url_input_html =~ ~s(value="https://prefill.example.com")
+      assert location_input_html =~ ~s(value="Prefill Venue")
+      assert entrance_input_html =~ ~s(value="North Gate")
     end
 
     test "submitting edit form with blank API key keeps existing API key", %{conn: conn} do

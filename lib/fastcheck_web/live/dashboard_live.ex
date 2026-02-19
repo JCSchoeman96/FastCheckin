@@ -28,6 +28,7 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:selected_event_id, nil)
      |> assign(:show_new_event_form, false)
      |> assign(:editing_event_id, nil)
+     |> assign(:editing_event, nil)
      |> assign(:edit_form, nil)
      |> assign(:sync_progress, nil)
      |> assign(:sync_start_time, nil)
@@ -202,6 +203,7 @@ defmodule FastCheckWeb.DashboardLive do
       {:noreply,
        socket
        |> assign(:editing_event_id, event_id)
+       |> assign(:editing_event, event)
        |> assign(:edit_form, edit_form)}
     else
       {:error, :not_found} ->
@@ -224,6 +226,7 @@ defmodule FastCheckWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:editing_event_id, nil)
+     |> assign(:editing_event, nil)
      |> assign(:edit_form, nil)}
   end
 
@@ -244,6 +247,7 @@ defmodule FastCheckWeb.DashboardLive do
              filter_events(refreshed_events, socket.assigns.search_query)
            )
            |> assign(:editing_event_id, nil)
+           |> assign(:editing_event, nil)
            |> assign(:edit_form, nil)
            |> assign(:sync_status, "Event updated successfully")}
 
@@ -1079,11 +1083,24 @@ defmodule FastCheckWeb.DashboardLive do
             phx-submit="update_event"
             class="space-y-4"
           >
-            <.input field={@edit_form[:name]} type="text" label="Event name" required />
+            <.input
+              field={@edit_form[:name]}
+              type="text"
+              label="Event name"
+              value={edit_form_value(@edit_form, :name, @editing_event && @editing_event.name)}
+              required
+            />
             <.input
               field={@edit_form[:tickera_site_url]}
               type="url"
               label="Tickera site URL"
+              value={
+                edit_form_value(
+                  @edit_form,
+                  :tickera_site_url,
+                  @editing_event && (@editing_event.tickera_site_url || @editing_event.site_url)
+                )
+              }
               required
             />
 
@@ -1091,6 +1108,13 @@ defmodule FastCheckWeb.DashboardLive do
               field={@edit_form[:tickera_api_key_last4]}
               type="text"
               label="API key (last 4)"
+              value={
+                edit_form_value(
+                  @edit_form,
+                  :tickera_api_key_last4,
+                  @editing_event && @editing_event.tickera_api_key_last4
+                )
+              }
               disabled
             />
 
@@ -1098,6 +1122,13 @@ defmodule FastCheckWeb.DashboardLive do
               field={@edit_form[:scanner_login_code]}
               type="text"
               label="Scanner event code"
+              value={
+                edit_form_value(
+                  @edit_form,
+                  :scanner_login_code,
+                  @editing_event && event_scanner_code_value(@editing_event)
+                )
+              }
               disabled
             />
 
@@ -1121,14 +1152,33 @@ defmodule FastCheckWeb.DashboardLive do
               field={@edit_form[:mobile_access_code]}
               type="password"
               label="Mobile access code"
+              value={edit_form_value(@edit_form, :mobile_access_code, "")}
               placeholder="Enter new code to change"
             />
             <p class="-mt-3 text-xs text-fc-text-muted">
               Leave blank to keep the current scanner login code.
             </p>
 
-            <.input field={@edit_form[:location]} type="text" label="Location" />
-            <.input field={@edit_form[:entrance_name]} type="text" label="Entrance name" />
+            <.input
+              field={@edit_form[:location]}
+              type="text"
+              label="Location"
+              value={
+                edit_form_value(@edit_form, :location, @editing_event && @editing_event.location)
+              }
+            />
+            <.input
+              field={@edit_form[:entrance_name]}
+              type="text"
+              label="Entrance name"
+              value={
+                edit_form_value(
+                  @edit_form,
+                  :entrance_name,
+                  @editing_event && @editing_event.entrance_name
+                )
+              }
+            />
 
             <div class="pt-3 grid gap-2 sm:grid-cols-2">
               <.button
@@ -1250,20 +1300,8 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp build_edit_form(%Event{} = event) do
-    # Build form with current event values, excluding encrypted fields
-    attrs = %{
-      "name" => event.name,
-      "tickera_site_url" => event.tickera_site_url,
-      "tickera_api_key_last4" => event.tickera_api_key_last4,
-      "scanner_login_code" => event_scanner_code_value(event),
-      "location" => event.location,
-      "entrance_name" => event.entrance_name,
-      # Don't show existing secret
-      "mobile_access_code" => ""
-    }
-
     event
-    |> Event.changeset(attrs)
+    |> Event.changeset(%{})
     |> to_form()
   end
 
@@ -1317,6 +1355,16 @@ defmodule FastCheckWeb.DashboardLive do
     |> case do
       %{value: value} -> value
       _ -> nil
+    end
+  end
+
+  defp edit_form_value(form, field_name, fallback) when is_atom(field_name) do
+    case safe_form_value(form, field_name) do
+      nil ->
+        fallback || ""
+
+      value ->
+        value
     end
   end
 
