@@ -1005,15 +1005,48 @@ defmodule FastCheck.TickeraClient do
         [~r/\bticket\b.*\bstatus\b/i, ~r/\bscan\b.*\bstatus\b/i]
       )
 
+    payment_date_status = infer_payment_date_status(ticket_data, custom_map)
+
     ticket_data_status
     |> case do
-      nil -> custom_status
+      nil -> custom_status || payment_date_status
       value -> value
     end
     |> canonical_payment_status()
   end
 
   defp resolve_payment_status(_ticket_data, _custom_map), do: nil
+
+  defp infer_payment_date_status(ticket_data, custom_map)
+       when is_map(ticket_data) and is_map(custom_map) do
+    payment_date =
+      pick_field(ticket_data, [
+        "payment_date",
+        :payment_date,
+        "paid_date",
+        :paid_date
+      ]) ||
+        find_custom_field_value(
+          custom_map,
+          [~r/\bpayment\b.*\bdate\b/i, ~r/\bpaid\b.*\bdate\b/i]
+        )
+
+    case payment_date do
+      nil ->
+        nil
+
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          _ -> "completed"
+        end
+
+      _ ->
+        "completed"
+    end
+  end
+
+  defp infer_payment_date_status(_ticket_data, _custom_map), do: nil
 
   defp canonical_payment_status(nil), do: nil
 

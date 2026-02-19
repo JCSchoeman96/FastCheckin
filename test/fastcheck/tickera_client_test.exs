@@ -98,6 +98,16 @@ defmodule FastCheck.TickeraClientTest do
     assert is_nil(parsed.payment_status)
   end
 
+  test "parse_attendee infers completed from payment_date when status fields are missing" do
+    parsed =
+      TickeraClient.parse_attendee(%{
+        "checksum" => "ABC-125",
+        "payment_date" => "Februarie 19 2026 - 8:14 vm"
+      })
+
+    assert parsed.payment_status == "completed"
+  end
+
   defp set_request_sequence(responses, requests_key, responses_key) do
     Process.put(requests_key, [])
     Process.put(responses_key, responses)
