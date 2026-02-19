@@ -221,6 +221,10 @@ defmodule FastCheck.Events do
           {:ok, String.t()} | {:error, String.t()}
   defdelegate sync_event(event_id, progress_callback \\ nil, opts \\ []), to: Sync
 
+  @doc "Force-resets sync state when an external worker exits unexpectedly."
+  @spec force_reset_sync(integer(), term()) :: :ok
+  defdelegate force_reset_sync(event_id, reason \\ :unspecified), to: Sync
+
   @doc "Returns event with refreshed stats."
   @spec get_event_with_stats(integer()) :: Event.t()
   defdelegate get_event_with_stats(event_id), to: FastCheck.Events.Stats

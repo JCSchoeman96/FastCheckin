@@ -220,6 +220,53 @@ defmodule FastCheck.Events.Sync do
 
   def touch_last_soft_sync(_), do: {:error, :invalid_event}
 
+  @doc """
+  Force-resets sync runtime state for an event.
+
+  This is used by external workers (for example LiveView background sync tasks)
+  when a sync attempt is terminated early due to timeout, cancellation, or crash.
+  """
+  @spec force_reset_sync(integer(), term()) :: :ok
+  def force_reset_sync(event_id, reason \\ :unspecified)
+
+  def force_reset_sync(event_id, reason) when is_integer(event_id) and event_id > 0 do
+    SyncState.clear_state(event_id)
+
+    case Repo.get(Event, event_id) do
+      %Event{} = event ->
+        if syncing_status?(event) do
+          now = current_timestamp()
+
+          event
+          |> Event.changeset(%{status: "active", last_soft_sync_at: now})
+          |> Repo.update()
+          |> case do
+            {:ok, updated} ->
+              Cache.invalidate_event_cache(updated.id)
+              Cache.invalidate_events_list_cache()
+              :ok
+
+            {:error, update_reason} ->
+              Logger.warning(
+                "Failed to force-reset sync state for event #{event_id}: #{inspect(update_reason)}"
+              )
+
+              :ok
+          end
+        else
+          :ok
+        end
+
+      _ ->
+        :ok
+    end
+
+    Logger.warning("Force reset sync runtime for event #{event_id}: #{inspect(reason)}")
+    :ok
+  end
+
+  def force_reset_sync(_event_id, _reason), do: :ok
+
   # Private Helpers
 
   defp mark_syncing(%Event{} = event) do
@@ -729,6 +776,12 @@ defmodule FastCheck.Events.Sync do
   defp current_timestamp do
     DateTime.utc_now() |> DateTime.truncate(:second)
   end
+
+  defp syncing_status?(%Event{status: status}) when is_binary(status) do
+    String.downcase(String.trim(status)) == "syncing"
+  end
+
+  defp syncing_status?(_), do: false
 
   defp same_datetime?(nil, nil), do: true
   defp same_datetime?(nil, _other), do: false

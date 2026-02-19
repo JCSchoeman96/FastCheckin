@@ -11,6 +11,9 @@ defmodule FastCheckWeb.DashboardLive do
   alias FastCheck.Events.Event
   alias Phoenix.LiveView.JS
 
+  @max_sync_attempts 3
+  @sync_attempt_timeout_ms 120_000
+
   @impl true
   def mount(_params, _session, socket) do
     events = Events.list_events()
@@ -31,6 +34,9 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:sync_status, nil)
      |> assign(:sync_paused, false)
      |> assign(:sync_task_pid, nil)
+     |> assign(:sync_task_ref, nil)
+     |> assign(:sync_run_ref, nil)
+     |> assign(:sync_attempt, nil)
      |> assign(:viewing_sync_history_for, nil)
      |> assign(:sync_history, [])
      |> assign(:form, empty_event_form())}
@@ -81,12 +87,13 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("start_sync", %{"event_id" => event_id_param} = params, socket) do
     incremental = Map.get(params, "incremental", "false") == "true"
+    socket = clear_stale_sync_runtime(socket)
 
-    if is_pid(socket.assigns.sync_task_pid) do
+    if sync_task_running?(socket) do
       {:noreply, assign(socket, :sync_status, "A sync is already running for this dashboard")}
     else
       with {:ok, event_id} <- parse_event_id(event_id_param),
-           {:ok, pid} <- start_sync_task(event_id, incremental: incremental) do
+           {:ok, task_meta} <- start_sync_task(event_id, incremental: incremental) do
         start_time = System.monotonic_time(:second)
         sync_type = if incremental, do: "incremental", else: "full"
 
@@ -97,8 +104,14 @@ defmodule FastCheckWeb.DashboardLive do
          |> assign(:sync_start_time, start_time)
          |> assign(:sync_timing_data, [])
          |> assign(:sync_paused, false)
-         |> assign(:sync_task_pid, pid)
-         |> assign(:sync_status, "Starting #{sync_type} attendee sync...")}
+         |> assign(:sync_task_pid, task_meta.pid)
+         |> assign(:sync_task_ref, task_meta.monitor_ref)
+         |> assign(:sync_run_ref, task_meta.run_ref)
+         |> assign(:sync_attempt, 1)
+         |> assign(
+           :sync_status,
+           "Starting #{sync_type} attendee sync (attempt 1/#{@max_sync_attempts})..."
+         )}
       else
         {:error, reason} ->
           {:noreply, assign(socket, :sync_status, reason)}
@@ -290,14 +303,22 @@ defmodule FastCheckWeb.DashboardLive do
   def handle_event("cancel_sync", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param) do
       FastCheck.Events.SyncState.cancel_sync(event_id)
+      Events.force_reset_sync(event_id, :cancelled)
+
+      if is_pid(socket.assigns.sync_task_pid) and Process.alive?(socket.assigns.sync_task_pid) do
+        Process.exit(socket.assigns.sync_task_pid, :kill)
+      end
+
+      refreshed_events = Events.list_events()
 
       {:noreply,
        socket
-       |> assign(:sync_progress, nil)
-       |> assign(:sync_paused, false)
+       |> maybe_demonitor_sync_task()
+       |> assign(:events, refreshed_events)
+       |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+       |> reset_sync_runtime()
        |> assign(:sync_status, "Sync cancelled")
-       |> assign(:sync_start_time, nil)
-       |> assign(:sync_timing_data, [])}
+       |> assign(:selected_event_id, nil)}
     else
       _ ->
         {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
@@ -341,7 +362,8 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info({:sync_progress, page, total, count}, socket) do
+  def handle_info({:sync_progress, run_ref, page, total, count}, socket)
+      when run_ref == socket.assigns.sync_run_ref do
     # Track timing data for estimation
     current_time = System.monotonic_time(:second)
     start_time = socket.assigns.sync_start_time || current_time
@@ -375,12 +397,66 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info({:sync_error, message}, socket) do
-    {:noreply, assign(socket, :sync_status, "Sync failed: #{message}")}
+  def handle_info({:sync_progress, _run_ref, _page, _total, _count}, socket) do
+    {:noreply, socket}
   end
 
   @impl true
-  def handle_info(:sync_complete, socket) do
+  def handle_info({:sync_retry, run_ref, attempt, max_attempts, reason}, socket)
+      when run_ref == socket.assigns.sync_run_ref do
+    next_attempt = min(attempt + 1, max_attempts)
+
+    {:noreply,
+     socket
+     |> assign(:sync_attempt, next_attempt)
+     |> assign(
+       :sync_status,
+       "Sync attempt #{attempt}/#{max_attempts} failed (#{reason}). Retrying attempt #{next_attempt}/#{max_attempts}..."
+     )}
+  end
+
+  @impl true
+  def handle_info({:sync_retry, _run_ref, _attempt, _max_attempts, _reason}, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:sync_error, run_ref, message}, socket)
+      when run_ref == socket.assigns.sync_run_ref do
+    refreshed_events = Events.list_events()
+
+    {:noreply,
+     socket
+     |> maybe_demonitor_sync_task()
+     |> assign(:events, refreshed_events)
+     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+     |> reset_sync_runtime()
+     |> assign(:sync_status, "Sync failed: #{message}")
+     |> assign(:selected_event_id, nil)}
+  end
+
+  @impl true
+  def handle_info({:sync_error, _run_ref, _message}, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:sync_error, message}, socket) do
+    refreshed_events = Events.list_events()
+
+    {:noreply,
+     socket
+     |> maybe_demonitor_sync_task()
+     |> assign(:events, refreshed_events)
+     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+     |> reset_sync_runtime()
+     |> assign(:sync_status, "Sync failed: #{message}")
+     |> assign(:selected_event_id, nil)}
+  end
+
+  @impl true
+  def handle_info({:sync_complete, run_ref}, socket)
+      when run_ref == socket.assigns.sync_run_ref do
     refreshed_events = Events.list_events()
 
     final_status =
@@ -392,14 +468,58 @@ defmodule FastCheckWeb.DashboardLive do
 
     {:noreply,
      socket
+     |> maybe_demonitor_sync_task()
      |> assign(:events, refreshed_events)
      |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-     |> assign(:sync_progress, nil)
-     |> assign(:sync_start_time, nil)
-     |> assign(:sync_timing_data, [])
-     |> assign(:sync_paused, false)
-     |> assign(:sync_task_pid, nil)
+     |> reset_sync_runtime()
      |> assign(:sync_status, final_status)
+     |> assign(:selected_event_id, nil)}
+  end
+
+  @impl true
+  def handle_info({:sync_complete, _run_ref}, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info(:sync_complete, socket) do
+    refreshed_events = Events.list_events()
+
+    {:noreply,
+     socket
+     |> maybe_demonitor_sync_task()
+     |> assign(:events, refreshed_events)
+     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+     |> reset_sync_runtime()
+     |> assign(:sync_status, "Sync complete!")
+     |> assign(:selected_event_id, nil)}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, socket)
+      when ref == socket.assigns.sync_task_ref do
+    refreshed_events = Events.list_events()
+    selected_event_id = socket.assigns.selected_event_id
+
+    status_message =
+      case reason do
+        :normal ->
+          socket.assigns.sync_status || "Sync complete!"
+
+        _ ->
+          if is_integer(selected_event_id) do
+            Events.force_reset_sync(selected_event_id, {:worker_exit, reason})
+          end
+
+          "Sync failed: worker exited unexpectedly (#{inspect(reason)})"
+      end
+
+    {:noreply,
+     socket
+     |> assign(:events, refreshed_events)
+     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+     |> reset_sync_runtime()
+     |> assign(:sync_status, status_message)
      |> assign(:selected_event_id, nil)}
   end
 
@@ -1111,25 +1231,243 @@ defmodule FastCheckWeb.DashboardLive do
   defp start_sync_task(event_id, opts) do
     parent = self()
     incremental = Keyword.get(opts, :incremental, false)
+    max_attempts = Keyword.get(opts, :max_attempts, @max_sync_attempts)
+    attempt_timeout_ms = Keyword.get(opts, :attempt_timeout_ms, @sync_attempt_timeout_ms)
+    run_ref = make_ref()
 
-    Task.start_link(fn ->
-      result =
-        Events.sync_event(
-          event_id,
-          fn page, total, count ->
-            send(parent, {:sync_progress, page, total, count})
-          end,
-          incremental: incremental
+    case Task.start(fn ->
+           run_sync_with_retries(
+             parent,
+             run_ref,
+             event_id,
+             incremental,
+             max_attempts,
+             attempt_timeout_ms
+           )
+         end) do
+      {:ok, pid} ->
+        {:ok, %{pid: pid, monitor_ref: Process.monitor(pid), run_ref: run_ref}}
+
+      error ->
+        error
+    end
+  end
+
+  defp run_sync_with_retries(
+         parent,
+         run_ref,
+         event_id,
+         incremental,
+         max_attempts,
+         attempt_timeout_ms
+       ) do
+    do_run_sync_attempt(
+      parent,
+      run_ref,
+      event_id,
+      incremental,
+      1,
+      max_attempts,
+      attempt_timeout_ms
+    )
+  rescue
+    exception ->
+      Events.force_reset_sync(event_id, {:retry_worker_exception, exception})
+      send(parent, {:sync_error, run_ref, "Sync worker crashed: #{Exception.message(exception)}"})
+      send(parent, {:sync_complete, run_ref})
+  catch
+    kind, reason ->
+      Events.force_reset_sync(event_id, {:retry_worker_throw, {kind, reason}})
+      send(parent, {:sync_error, run_ref, "Sync worker crashed: #{inspect({kind, reason})}"})
+      send(parent, {:sync_complete, run_ref})
+  end
+
+  defp do_run_sync_attempt(
+         parent,
+         run_ref,
+         event_id,
+         incremental,
+         attempt,
+         max_attempts,
+         attempt_timeout_ms
+       ) do
+    case run_sync_attempt(event_id, incremental, parent, run_ref, attempt_timeout_ms) do
+      {:ok, _message} ->
+        send(parent, {:sync_complete, run_ref})
+
+      {:error, reason} when attempt < max_attempts ->
+        Events.force_reset_sync(event_id, {:retrying_after_error, reason})
+
+        send(
+          parent,
+          {:sync_retry, run_ref, attempt, max_attempts, shorten_reason(format_error(reason))}
         )
 
-      if match?({:error, _}, result) do
-        {:error, reason} = result
-        send(parent, {:sync_error, format_error(reason)})
-      end
+        do_run_sync_attempt(
+          parent,
+          run_ref,
+          event_id,
+          incremental,
+          attempt + 1,
+          max_attempts,
+          attempt_timeout_ms
+        )
 
-      send(parent, :sync_complete)
-    end)
+      {:error, reason} ->
+        Events.force_reset_sync(event_id, {:final_failure, reason})
+
+        send(
+          parent,
+          {:sync_error, run_ref,
+           "Failed to sync after #{max_attempts} attempts: #{shorten_reason(format_error(reason))}"}
+        )
+
+        send(parent, {:sync_complete, run_ref})
+    end
   end
+
+  defp run_sync_attempt(event_id, incremental, parent, run_ref, attempt_timeout_ms) do
+    caller = self()
+    attempt_ref = make_ref()
+
+    {:ok, pid} =
+      Task.start(fn ->
+        result =
+          try do
+            Events.sync_event(
+              event_id,
+              fn page, total, count ->
+                send(caller, {:attempt_progress, attempt_ref, page, total, count})
+              end,
+              incremental: incremental
+            )
+          rescue
+            exception -> {:error, Exception.message(exception)}
+          catch
+            :throw, {:sync_cancelled, ^event_id} -> {:error, "Sync cancelled"}
+            kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+          end
+
+        send(caller, {:attempt_result, attempt_ref, result})
+      end)
+
+    monitor_ref = Process.monitor(pid)
+    await_sync_attempt_result(parent, run_ref, pid, monitor_ref, attempt_ref, attempt_timeout_ms)
+  end
+
+  defp await_sync_attempt_result(
+         parent,
+         run_ref,
+         pid,
+         monitor_ref,
+         attempt_ref,
+         attempt_timeout_ms
+       ) do
+    receive do
+      {:attempt_progress, ^attempt_ref, page, total, count} ->
+        send(parent, {:sync_progress, run_ref, page, total, count})
+
+        await_sync_attempt_result(
+          parent,
+          run_ref,
+          pid,
+          monitor_ref,
+          attempt_ref,
+          attempt_timeout_ms
+        )
+
+      {:attempt_progress, _other_attempt_ref, _page, _total, _count} ->
+        await_sync_attempt_result(
+          parent,
+          run_ref,
+          pid,
+          monitor_ref,
+          attempt_ref,
+          attempt_timeout_ms
+        )
+
+      {:attempt_result, ^attempt_ref, result} ->
+        Process.demonitor(monitor_ref, [:flush])
+        result
+
+      {:attempt_result, _other_attempt_ref, _result} ->
+        await_sync_attempt_result(
+          parent,
+          run_ref,
+          pid,
+          monitor_ref,
+          attempt_ref,
+          attempt_timeout_ms
+        )
+
+      {:DOWN, ^monitor_ref, :process, _attempt_pid, reason} ->
+        {:error, "Sync worker exited: #{inspect(reason)}"}
+
+      {:DOWN, _other_monitor_ref, :process, _attempt_pid, _reason} ->
+        await_sync_attempt_result(
+          parent,
+          run_ref,
+          pid,
+          monitor_ref,
+          attempt_ref,
+          attempt_timeout_ms
+        )
+    after
+      attempt_timeout_ms ->
+        Process.exit(pid, :kill)
+        {:error, "Sync attempt timed out after #{div(attempt_timeout_ms, 1000)}s"}
+    end
+  end
+
+  defp clear_stale_sync_runtime(socket) do
+    if sync_task_running?(socket) do
+      socket
+    else
+      socket
+      |> maybe_demonitor_sync_task()
+      |> reset_sync_runtime()
+    end
+  end
+
+  defp sync_task_running?(socket) do
+    case socket.assigns.sync_task_pid do
+      pid when is_pid(pid) -> Process.alive?(pid)
+      _ -> false
+    end
+  end
+
+  defp maybe_demonitor_sync_task(socket) do
+    case Map.get(socket.assigns, :sync_task_ref) do
+      ref when is_reference(ref) ->
+        Process.demonitor(ref, [:flush])
+        socket
+
+      _ ->
+        socket
+    end
+  end
+
+  defp reset_sync_runtime(socket) do
+    socket
+    |> assign(:sync_progress, nil)
+    |> assign(:sync_start_time, nil)
+    |> assign(:sync_timing_data, [])
+    |> assign(:sync_paused, false)
+    |> assign(:sync_task_pid, nil)
+    |> assign(:sync_task_ref, nil)
+    |> assign(:sync_run_ref, nil)
+    |> assign(:sync_attempt, nil)
+  end
+
+  defp shorten_reason(reason) when is_binary(reason) do
+    if String.length(reason) > 220 do
+      String.slice(reason, 0, 220) <> "..."
+    else
+      reason
+    end
+  end
+
+  defp shorten_reason(reason), do: format_error(reason)
 
   defp progress_status(page, total, count, estimated_remaining) do
     base_status =
