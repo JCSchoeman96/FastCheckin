@@ -624,7 +624,8 @@ defmodule FastCheck.Attendees.Scan do
     do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
 
   defp is_payment_status_valid?(status) do
-    normalize_payment_status(status) in ["completed", "unknown"]
+    normalized = normalize_payment_status(status)
+    normalized == "completed" or (normalized == "unknown" and allow_unknown_payment_status?())
   end
 
   defp payment_rejection_message(status) do
@@ -1107,4 +1108,8 @@ defmodule FastCheck.Attendees.Scan do
   end
 
   defp maybe_trim(value), do: value
+
+  defp allow_unknown_payment_status? do
+    Application.get_env(:fastcheck, :allow_unknown_payment_status, false)
+  end
 end

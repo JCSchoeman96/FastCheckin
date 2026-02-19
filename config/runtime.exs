@@ -83,6 +83,16 @@ config :fastcheck,
   cache_ttl: cache_ttl,
   redis_url: redis_url
 
+allow_unknown_payment_status =
+  case System.get_env("ALLOW_UNKNOWN_PAYMENT_STATUS", "false")
+       |> String.trim()
+       |> String.downcase() do
+    value when value in ["1", "true", "yes", "on"] -> true
+    _ -> false
+  end
+
+config :fastcheck, :allow_unknown_payment_status, allow_unknown_payment_status
+
 # config/runtime.exs is executed for all environments and is the right place to
 # read secrets that should not be baked into the release.
 # Note: PHX_SERVER is not needed — the prod block below sets server: true.

@@ -151,12 +151,36 @@ defmodule FastCheck.AttendeesTest do
                Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
     end
 
-    test "accepts missing payment status when Tickera does not provide order state" do
+    test "rejects missing payment status in strict mode" do
       event = insert_event!("Conference")
 
       attendee =
         create_attendee(event, %{
           ticket_code: "PAY-004",
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          payment_status: nil
+        })
+
+      assert {:error, "PAYMENT_INVALID", message} =
+               Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
+
+      assert message =~ "unknown"
+    end
+
+    test "can allow missing payment status when permissive flag is enabled" do
+      previous = Application.get_env(:fastcheck, :allow_unknown_payment_status, false)
+      Application.put_env(:fastcheck, :allow_unknown_payment_status, true)
+
+      on_exit(fn ->
+        Application.put_env(:fastcheck, :allow_unknown_payment_status, previous)
+      end)
+
+      event = insert_event!("Conference")
+
+      attendee =
+        create_attendee(event, %{
+          ticket_code: "PAY-005",
           allowed_checkins: 1,
           checkins_remaining: 1,
           payment_status: nil
