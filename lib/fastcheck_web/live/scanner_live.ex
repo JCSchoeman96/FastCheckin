@@ -774,6 +774,7 @@ defmodule FastCheckWeb.ScannerLive do
             <.card
               id="qr-camera-scanner"
               phx-hook="QrCameraScanner"
+              phx-update="ignore"
               data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
               variant="outline"
               color="natural"

@@ -186,6 +186,7 @@ const CameraPermission = {
       .then((stream) => {
         stream.getTracks().forEach((track) => track.stop());
         this.reportStatus("granted", "Camera access granted. You can start scanning.");
+        window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-granted"));
       })
       .catch((error) => {
         const deniedErrors = ["NotAllowedError", "PermissionDeniedError"];

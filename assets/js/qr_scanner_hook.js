@@ -26,8 +26,10 @@ export const QrCameraScanner = {
 
     this.handleStartClick = this.handleStartClick.bind(this);
     this.handleStopClick = this.handleStopClick.bind(this);
+    this.handlePermissionGranted = this.handlePermissionGranted.bind(this);
 
     this.refreshDomReferences();
+    window.addEventListener("fastcheck:camera-permission-granted", this.handlePermissionGranted);
 
     if (!this.cameraSupported) {
       this.updateStatus(
@@ -60,6 +62,7 @@ export const QrCameraScanner = {
 
   destroyed() {
     this.unbindControlListeners();
+    window.removeEventListener("fastcheck:camera-permission-granted", this.handlePermissionGranted);
     this.stopScanner();
   },
 
@@ -95,6 +98,7 @@ export const QrCameraScanner = {
     }
 
     if (this.running && this.stream && this.videoElement && this.videoElement.srcObject !== this.stream) {
+      this.prepareVideoElement();
       this.videoElement.srcObject = this.stream;
       this.videoElement.play().catch(() => {});
     }
@@ -118,6 +122,14 @@ export const QrCameraScanner = {
   handleStopClick(event) {
     event.preventDefault();
     this.stopScanner("Camera stopped.");
+  },
+
+  handlePermissionGranted() {
+    if (this.running || this.scansDisabled || !this.cameraSupported) {
+      return;
+    }
+
+    this.startScanner();
   },
 
   syncButtonState() {
@@ -145,20 +157,15 @@ export const QrCameraScanner = {
       return;
     }
 
+    this.updateStatus("Starting camera...");
+
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
+      this.stream = await this.requestCameraStream();
     } catch (error) {
       const denied = ["NotAllowedError", "PermissionDeniedError"].includes(error?.name);
       const message = denied
         ? "Camera permission denied. Enable camera access in browser settings."
-        : "Could not start the camera. Check browser permissions and try again.";
+        : this.cameraStartErrorMessage(error);
 
       this.updateStatus(message);
       this.pushEvent("camera_permission_sync", {
@@ -175,12 +182,20 @@ export const QrCameraScanner = {
       return;
     }
 
+    this.prepareVideoElement();
     this.videoElement.srcObject = this.stream;
 
     try {
       await this.videoElement.play();
     } catch (_error) {
       this.stopScanner("Camera stream started but playback was blocked.");
+      return;
+    }
+
+    const hasPreviewFrames = await this.waitForVideoDimensions();
+
+    if (!hasPreviewFrames) {
+      this.stopScanner("Camera opened, but no preview frames arrived. Try starting again.");
       return;
     }
 
@@ -200,6 +215,116 @@ export const QrCameraScanner = {
     });
 
     this.runDetectionLoop();
+  },
+
+  async requestCameraStream() {
+    const profiles = this.cameraConstraintProfiles();
+    let lastError = null;
+
+    for (const videoConstraints of profiles) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
+      } catch (error) {
+        lastError = error;
+
+        if (["NotAllowedError", "PermissionDeniedError"].includes(error?.name)) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error("Could not open a camera stream.");
+  },
+
+  cameraConstraintProfiles() {
+    return [
+      {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      {
+        facingMode: { ideal: "environment" },
+      },
+      true,
+    ];
+  },
+
+  cameraStartErrorMessage(error) {
+    switch (error?.name) {
+      case "NotReadableError":
+      case "TrackStartError":
+        return "Camera is already in use by another app. Close it and try again.";
+      case "OverconstrainedError":
+      case "ConstraintNotSatisfiedError":
+        return "This device could not satisfy the camera profile. Try again.";
+      case "NotFoundError":
+      case "DevicesNotFoundError":
+        return "No camera was found on this device.";
+      default:
+        return "Could not start the camera. Check browser permissions and try again.";
+    }
+  },
+
+  prepareVideoElement() {
+    if (!this.videoElement) {
+      return;
+    }
+
+    this.videoElement.muted = true;
+    this.videoElement.setAttribute("autoplay", "");
+    this.videoElement.setAttribute("playsinline", "");
+  },
+
+  waitForVideoDimensions(timeoutMs = 2000) {
+    if (!this.videoElement) {
+      return Promise.resolve(false);
+    }
+
+    if ((this.videoElement.videoWidth || 0) > 0 && (this.videoElement.videoHeight || 0) > 0) {
+      return Promise.resolve(true);
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const cleanup = () => {
+        if (!this.videoElement) {
+          return;
+        }
+
+        this.videoElement.removeEventListener("loadedmetadata", onReady);
+        this.videoElement.removeEventListener("playing", onReady);
+      };
+
+      const finish = (result) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        window.clearTimeout(timeoutId);
+        resolve(result);
+      };
+
+      const onReady = () => {
+        const width = this.videoElement?.videoWidth || 0;
+        const height = this.videoElement?.videoHeight || 0;
+
+        if (width > 0 && height > 0) {
+          finish(true);
+        }
+      };
+
+      const timeoutId = window.setTimeout(() => finish(false), timeoutMs);
+      this.videoElement.addEventListener("loadedmetadata", onReady);
+      this.videoElement.addEventListener("playing", onReady);
+      onReady();
+    });
   },
 
   buildBarcodeDetector() {
