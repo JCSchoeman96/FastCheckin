@@ -1051,9 +1051,10 @@ defmodule FastCheckWeb.DashboardLive do
         </section>
 
         <.modal
+          :if={@editing_event_id != nil}
           id="edit-event-modal"
           title="Edit Event"
-          show={@editing_event_id != nil}
+          show
           size="double_large"
           rounded="large"
           color="natural"
@@ -1150,9 +1151,10 @@ defmodule FastCheckWeb.DashboardLive do
         </.modal>
 
         <.modal
+          :if={@viewing_sync_history_for != nil}
           id="sync-history-modal"
           title="Sync History"
-          show={@viewing_sync_history_for != nil}
+          show
           size="triple_large"
           rounded="large"
           color="natural"
