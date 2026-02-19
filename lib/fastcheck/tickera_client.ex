@@ -720,15 +720,7 @@ defmodule FastCheck.TickeraClient do
         Map.get(ticket_data, "check_outs")
         |> normalize_non_negative_int()
 
-    payment_status =
-      pick_field(ticket_data, [
-        "order_status",
-        :order_status,
-        "payment_status",
-        :payment_status,
-        "status",
-        :status
-      ])
+    payment_status = resolve_payment_status(ticket_data, custom_map)
 
     buyer_first =
       pick_field(ticket_data, ["buyer_first", :buyer_first, "purchaser_first", :purchaser_first])
@@ -987,6 +979,82 @@ defmodule FastCheck.TickeraClient do
     keys
     |> Enum.find_value(fn key -> normalize_optional_string(Map.get(map, key)) end)
   end
+
+  defp resolve_payment_status(ticket_data, custom_map)
+       when is_map(ticket_data) and is_map(custom_map) do
+    ticket_data_status =
+      pick_field(ticket_data, [
+        "order_status",
+        :order_status,
+        "payment_status",
+        :payment_status,
+        "wc_order_status",
+        :wc_order_status,
+        "woocommerce_order_status",
+        :woocommerce_order_status
+      ])
+
+    custom_status =
+      find_custom_field_value(
+        custom_map,
+        [
+          ~r/\border\b.*\bstatus\b/i,
+          ~r/\bpayment\b.*\bstatus\b/i,
+          ~r/\bwoocommerce\b.*\bstatus\b/i
+        ],
+        [~r/\bticket\b.*\bstatus\b/i, ~r/\bscan\b.*\bstatus\b/i]
+      )
+
+    ticket_data_status
+    |> case do
+      nil -> custom_status
+      value -> value
+    end
+    |> canonical_payment_status()
+  end
+
+  defp resolve_payment_status(_ticket_data, _custom_map), do: nil
+
+  defp canonical_payment_status(nil), do: nil
+
+  defp canonical_payment_status(value) when is_binary(value) do
+    normalized =
+      value
+      |> String.trim()
+      |> String.downcase()
+      |> String.replace_prefix("wc-", "")
+
+    cond do
+      normalized == "" ->
+        nil
+
+      Regex.match?(~r/\bcompleted?\b/, normalized) ->
+        "completed"
+
+      Regex.match?(~r/\brefunded?\b/, normalized) ->
+        "refunded"
+
+      Regex.match?(~r/\bcancell?ed\b/, normalized) ->
+        "cancelled"
+
+      Regex.match?(~r/\bfailed?\b/, normalized) ->
+        "failed"
+
+      Regex.match?(~r/\bpending\b/, normalized) or Regex.match?(~r/\bon[\s_-]?hold\b/, normalized) ->
+        "pending"
+
+      Regex.match?(~r/\bprocessing\b/, normalized) ->
+        "processing"
+
+      Regex.match?(~r/\bpaid\b/, normalized) ->
+        "paid"
+
+      true ->
+        normalized
+    end
+  end
+
+  defp canonical_payment_status(value), do: canonical_payment_status(to_string(value))
 
   defp find_custom_field_value(custom_map, include_patterns, exclude_patterns \\ [])
 

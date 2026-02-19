@@ -632,12 +632,21 @@ defmodule FastCheck.Attendees.Scan do
   defp normalize_payment_status(nil), do: "unknown"
 
   defp normalize_payment_status(status) when is_binary(status) do
-    status
-    |> String.trim()
-    |> String.downcase()
-    |> case do
-      "" -> "unknown"
-      value -> value
+    normalized =
+      status
+      |> String.trim()
+      |> String.downcase()
+      |> String.replace_prefix("wc-", "")
+
+    cond do
+      normalized == "" ->
+        "unknown"
+
+      Regex.match?(~r/\bcompleted?\b/, normalized) ->
+        "completed"
+
+      true ->
+        normalized
     end
   end
 

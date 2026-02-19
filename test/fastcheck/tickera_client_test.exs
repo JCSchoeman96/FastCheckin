@@ -77,6 +77,27 @@ defmodule FastCheck.TickeraClientTest do
     assert Fallback.unreachable?({:http_error, :empty_body, ""})
   end
 
+  test "parse_attendee prefers order/payment status over generic status" do
+    parsed =
+      TickeraClient.parse_attendee(%{
+        "checksum" => "ABC-123",
+        "status" => "unknown",
+        "custom_fields" => [["Order Status", "Completed"]]
+      })
+
+    assert parsed.payment_status == "completed"
+  end
+
+  test "parse_attendee does not treat generic status as payment status" do
+    parsed =
+      TickeraClient.parse_attendee(%{
+        "checksum" => "ABC-124",
+        "status" => "unknown"
+      })
+
+    assert is_nil(parsed.payment_status)
+  end
+
   defp set_request_sequence(responses, requests_key, responses_key) do
     Process.put(requests_key, [])
     Process.put(responses_key, responses)
