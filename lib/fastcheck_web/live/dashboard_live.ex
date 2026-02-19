@@ -1077,6 +1077,8 @@ defmodule FastCheckWeb.DashboardLive do
                   name="event[tickera_api_key_encrypted]"
                   type="password"
                   label="New API key (optional)"
+                  value=""
+                  autocomplete="new-password"
                 />
               </.card_content>
             </.card>

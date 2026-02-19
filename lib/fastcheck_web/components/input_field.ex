@@ -59,7 +59,7 @@ defmodule FastCheckWeb.Components.InputField do
   attr :id, :any, default: nil, doc: "A unique identifier is used to manage state and interaction"
   attr :name, :any, doc: "Name of input"
   attr :label, :string, default: nil
-  attr :value, :any, doc: "Value of input"
+  attr :value, :any, default: nil, doc: "Value of input"
 
   attr :type, :string,
     default: "text",
