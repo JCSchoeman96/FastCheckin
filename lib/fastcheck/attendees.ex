@@ -70,33 +70,26 @@ defmodule FastCheck.Attendees do
         _ ->
           conflict_target = [:event_id, :ticket_code]
 
+          # Always upsert so syncs can correct stale fields (for example payment_status)
+          # while preserving scan-state fields managed locally during check-in flow.
           {count, _} =
-            if incremental do
-              # Use upsert to update existing records
-              Repo.insert_all(
-                Attendee,
-                entries,
-                on_conflict:
-                  {:replace_all_except,
-                   [
-                     :id,
-                     :checked_in_at,
-                     :last_checked_in_at,
-                     :checkins_remaining,
-                     :is_currently_inside,
-                     :inserted_at
-                   ]},
-                conflict_target: conflict_target
-              )
-            else
-              # Only insert new records
-              Repo.insert_all(Attendee, entries,
-                on_conflict: :nothing,
-                conflict_target: conflict_target
-              )
-            end
+            Repo.insert_all(
+              Attendee,
+              entries,
+              on_conflict:
+                {:replace_all_except,
+                 [
+                   :id,
+                   :checked_in_at,
+                   :last_checked_in_at,
+                   :checkins_remaining,
+                   :is_currently_inside,
+                   :inserted_at
+                 ]},
+              conflict_target: conflict_target
+            )
 
-          action = if incremental, do: "Upserted", else: "Inserted"
+          action = if incremental, do: "Upserted", else: "Synced"
           Logger.info("#{action} #{count} attendees for event #{event_id}")
           {:ok, count}
       end

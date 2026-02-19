@@ -11,6 +11,41 @@ defmodule FastCheck.AttendeesTest do
 
   setup :disable_occupancy_tasks
 
+  describe "create_bulk/3" do
+    test "full sync upserts existing attendees and refreshes sync fields" do
+      event = insert_event!("Bulk Sync")
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      existing =
+        create_attendee(event, %{
+          ticket_code: "SYNC-001",
+          payment_status: nil,
+          allowed_checkins: 1,
+          checkins_remaining: 0,
+          checked_in_at: now
+        })
+
+      payload = [
+        %{
+          "checksum" => "SYNC-001",
+          "allowed_checkins" => "1",
+          "payment_date" => "Februarie 19 2026 - 8:14 vm",
+          "custom_fields" => [["Buyer Name", "Sync User"], ["Buyer E-mail", "sync@example.com"]]
+        }
+      ]
+
+      assert {:ok, 1} = Attendees.create_bulk(event.id, payload, incremental: false)
+
+      refreshed =
+        Repo.get_by!(Attendee, event_id: event.id, ticket_code: existing.ticket_code)
+
+      assert refreshed.payment_status == "completed"
+      # Local scan-state fields are preserved across sync updates.
+      assert refreshed.checkins_remaining == 0
+      assert refreshed.checked_in_at == existing.checked_in_at
+    end
+  end
+
   describe "search_event_attendees/3" do
     setup do
       event = insert_event!("Summit")
