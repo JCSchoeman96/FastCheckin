@@ -26,6 +26,26 @@ defmodule FastCheck.EventsTest do
     end
   end
 
+  describe "scanner login codes" do
+    test "autogenerates a 6-character uppercase scanner login code for new events" do
+      event = insert_event!("Scanner Code Event")
+
+      assert is_binary(event.scanner_login_code)
+      assert String.length(event.scanner_login_code) == 6
+      assert event.scanner_login_code =~ ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+    end
+
+    test "get_event_by_scanner_login_code/1 resolves scanner codes case-insensitively" do
+      event = insert_event!("Lookup Event")
+
+      assert %Event{id: found_id} =
+               Events.get_event_by_scanner_login_code(String.downcase(event.scanner_login_code))
+
+      assert found_id == event.id
+      assert Events.get_event_by_scanner_login_code("abc12") == nil
+    end
+  end
+
   describe "event_lifecycle_state/1" do
     test "respects manually archived status even without Tickera dates" do
       event = %Event{status: "archived", tickera_start_date: nil, tickera_end_date: nil}

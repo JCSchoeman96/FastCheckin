@@ -399,7 +399,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
                   {@event.name}
                 </h1>
                 <p class="mt-1 text-xs text-fc-text-secondary">
-                  Event ID {@event_id} - {@operator_name}
+                  Code {@event.scanner_login_code || "------"} - {@operator_name}
                 </p>
               </div>
 

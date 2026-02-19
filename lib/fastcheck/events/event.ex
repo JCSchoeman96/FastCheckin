@@ -11,6 +11,11 @@ defmodule FastCheck.Events.Event do
 
   alias FastCheck.Security.Sanitizer
 
+  @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+  @scanner_code_length 6
+  @scanner_code_space 1_073_741_824
+  @scanner_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+
   @type t :: %__MODULE__{
           id: integer() | nil,
           name: String.t() | nil,
@@ -21,6 +26,7 @@ defmodule FastCheck.Events.Event do
           tickera_start_date: DateTime.t() | nil,
           tickera_end_date: DateTime.t() | nil,
           mobile_access_secret_encrypted: String.t() | nil,
+          scanner_login_code: String.t() | nil,
           status: String.t() | nil,
           total_tickets: integer() | nil,
           checked_in_count: integer() | nil,
@@ -48,6 +54,7 @@ defmodule FastCheck.Events.Event do
     field :tickera_api_key_encrypted, :string
     field :tickera_api_key_last4, :string
     field :mobile_access_secret_encrypted, :string
+    field :scanner_login_code, :string
     # URL of the WordPress site hosting Tickera
     field :tickera_site_url, :string
     field :tickera_start_date, :utc_datetime
@@ -99,6 +106,7 @@ defmodule FastCheck.Events.Event do
       :tickera_api_key_encrypted,
       :tickera_api_key_last4,
       :mobile_access_secret_encrypted,
+      :scanner_login_code,
       :tickera_site_url,
       :tickera_start_date,
       :tickera_end_date,
@@ -112,6 +120,13 @@ defmodule FastCheck.Events.Event do
     ])
     |> sanitize_string_fields()
     |> synchronize_site_urls()
+    |> maybe_put_scanner_login_code()
+    |> validate_length(:scanner_login_code, is: @scanner_code_length)
+    |> validate_format(:scanner_login_code, @scanner_code_regex,
+      message: "must be 6 uppercase characters using letters and numbers"
+    )
+    |> unique_constraint(:scanner_login_code, name: :idx_events_scanner_login_code)
+    |> check_constraint(:scanner_login_code, name: "events_scanner_login_code_format")
     |> validate_inclusion(:status, ["active", "syncing", "archived"])
     |> check_constraint(:status, name: "events_status_must_be_valid")
     |> validate_required([
@@ -119,7 +134,8 @@ defmodule FastCheck.Events.Event do
       :tickera_api_key_encrypted,
       :site_url,
       :tickera_site_url,
-      :mobile_access_secret_encrypted
+      :mobile_access_secret_encrypted,
+      :scanner_login_code
     ])
   end
 
@@ -130,6 +146,7 @@ defmodule FastCheck.Events.Event do
     |> update_change(:location, &Sanitizer.sanitize_name/1)
     |> update_change(:entrance_name, &Sanitizer.sanitize_name/1)
     |> update_change(:tickera_site_url, &Sanitizer.sanitize_url/1)
+    |> update_change(:scanner_login_code, &normalize_scanner_login_code/1)
   end
 
   defp synchronize_site_urls(changeset) do
@@ -146,6 +163,44 @@ defmodule FastCheck.Events.Event do
       true ->
         changeset
     end
+  end
+
+  defp maybe_put_scanner_login_code(changeset) do
+    case get_field(changeset, :scanner_login_code) do
+      nil ->
+        put_change(changeset, :scanner_login_code, generate_scanner_login_code())
+
+      _value ->
+        changeset
+    end
+  end
+
+  defp normalize_scanner_login_code(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> String.upcase(trimmed)
+    end
+  end
+
+  defp normalize_scanner_login_code(_value), do: nil
+
+  defp generate_scanner_login_code do
+    System.unique_integer([:positive, :monotonic])
+    |> rem(@scanner_code_space)
+    |> encode_scanner_code([])
+    |> IO.iodata_to_binary()
+    |> String.pad_leading(@scanner_code_length, "0")
+  end
+
+  defp encode_scanner_code(value, acc) when value < 32 do
+    [<<Enum.at(@scanner_code_alphabet, value)>> | acc]
+  end
+
+  defp encode_scanner_code(value, acc) do
+    remainder = rem(value, 32)
+    quotient = div(value, 32)
+
+    encode_scanner_code(quotient, [<<Enum.at(@scanner_code_alphabet, remainder)>> | acc])
   end
 
   defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""

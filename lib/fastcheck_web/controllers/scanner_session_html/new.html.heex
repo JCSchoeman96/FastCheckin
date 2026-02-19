@@ -7,7 +7,7 @@
       Sign in to event scanner
     </h1>
     <p class="text-sm text-fc-text-secondary">
-      Use your Event ID, scanner password, and operator name.
+      Use your 6-character scanner code, scanner password, and operator name.
     </p>
   </div>
 
@@ -21,13 +21,16 @@
         class="space-y-4"
       >
         <.input
-          field={@form[:event_id]}
-          type="number"
-          inputmode="numeric"
-          min="1"
-          label="Event ID"
+          field={@form[:scanner_code]}
+          type="text"
+          inputmode="text"
+          maxlength="6"
+          minlength="6"
+          pattern="[0-9A-HJKMNP-TV-Z]{6}"
+          autocapitalize="characters"
+          label="Event scanner code"
           required
-          placeholder="123"
+          placeholder="A1B2C3"
         />
 
         <.input

@@ -643,7 +643,7 @@ defmodule FastCheckWeb.DashboardLive do
                 required
               />
               <p class="md:col-span-2 -mt-3 text-xs text-fc-text-muted">
-                Scanner login uses Event ID + mobile access code + operator name.
+                Scanner login uses a 6-character event code + mobile access code + operator name.
               </p>
 
               <.input field={@form[:location]} type="text" label="Location" placeholder="Main venue" />
@@ -772,6 +772,9 @@ defmodule FastCheckWeb.DashboardLive do
                     </p>
                     <h3 class="mt-2 text-xl font-semibold text-fc-text-primary">{event.name}</h3>
                     <p class="mt-1 text-xs text-fc-text-muted">Event ID {event.id}</p>
+                    <p class="mt-1 text-xs text-fc-text-muted">
+                      Scanner code {event.scanner_login_code || "Unavailable"}
+                    </p>
                   </div>
 
                   <div class="flex flex-col items-end gap-2">
@@ -1044,6 +1047,9 @@ defmodule FastCheckWeb.DashboardLive do
           <p :if={@editing_event_id} class="text-sm text-fc-text-secondary">
             Event ID {@editing_event_id}
           </p>
+          <p :if={@edit_form} class="text-sm text-fc-text-secondary">
+            Scanner code {@edit_form[:scanner_login_code].value || "Unavailable"}
+          </p>
 
           <.form
             :if={@edit_form}
@@ -1064,6 +1070,13 @@ defmodule FastCheckWeb.DashboardLive do
               field={@edit_form[:tickera_api_key_last4]}
               type="text"
               label="API key (last 4)"
+              disabled
+            />
+
+            <.input
+              field={@edit_form[:scanner_login_code]}
+              type="text"
+              label="Scanner event code"
               disabled
             />
 
@@ -1220,6 +1233,7 @@ defmodule FastCheckWeb.DashboardLive do
       "name" => event.name,
       "tickera_site_url" => event.tickera_site_url,
       "tickera_api_key_last4" => event.tickera_api_key_last4,
+      "scanner_login_code" => event.scanner_login_code,
       "location" => event.location,
       "entrance_name" => event.entrance_name,
       # Don't show existing secret

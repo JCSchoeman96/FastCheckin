@@ -9,19 +9,19 @@ defmodule FastCheck.Events do
 
   alias Ecto.Changeset
   alias FastCheck.Attendees.{Attendee, CheckIn}
+  alias FastCheck.Cache.EtsLayer
   alias FastCheck.Repo
+  alias FastCheck.TickeraClient
 
   alias FastCheck.{
     Attendees,
     Crypto,
-    Events.Event,
     Events.Cache,
     Events.Config,
+    Events.Event,
     Events.Sync
   }
 
-  alias FastCheck.TickeraClient
-  alias FastCheck.Cache.EtsLayer
   alias Plug.Crypto, as: PlugCrypto
 
   @attr_atom_lookup %{
@@ -32,6 +32,7 @@ defmodule FastCheck.Events do
     "tickera_api_key_last4" => :tickera_api_key_last4,
     "mobile_access_code" => :mobile_access_code,
     "mobile_access_secret_encrypted" => :mobile_access_secret_encrypted,
+    "scanner_login_code" => :scanner_login_code,
     "name" => :name,
     "status" => :status,
     "entrance_name" => :entrance_name,
@@ -56,6 +57,7 @@ defmodule FastCheck.Events do
   ]
 
   @seconds_per_day 86_400
+  @scanner_login_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
 
   @doc """
   Warm up ETS cache for a given event.
@@ -211,6 +213,24 @@ defmodule FastCheck.Events do
   @doc "Fetches an event by ID, raises if not found."
   @spec get_event!(integer()) :: Event.t()
   defdelegate get_event!(event_id), to: Cache
+
+  @doc "Fetches an event by its 6-character scanner login code."
+  @spec get_event_by_scanner_login_code(String.t()) :: Event.t() | nil
+  def get_event_by_scanner_login_code(scanner_login_code) when is_binary(scanner_login_code) do
+    case normalize_scanner_login_code(scanner_login_code) do
+      {:ok, normalized_code} ->
+        from(event in Event,
+          where: event.scanner_login_code == ^normalized_code,
+          limit: 1
+        )
+        |> Repo.one()
+
+      {:error, _reason} ->
+        nil
+    end
+  end
+
+  def get_event_by_scanner_login_code(_), do: nil
 
   @doc "Synchronizes attendees for the specified event."
   @spec sync_event(
@@ -750,6 +770,8 @@ defmodule FastCheck.Events do
       name:
         fetch_attr(attrs, "name") || Map.get(essentials, "event_name") ||
           Map.get(essentials, :event_name),
+      scanner_login_code:
+        normalize_scanner_login_code_attr(fetch_attr(attrs, "scanner_login_code")),
       entrance_name: fetch_attr(attrs, "entrance_name"),
       location: fetch_attr(attrs, "location"),
       total_tickets: Map.get(essentials, "total_tickets") || Map.get(essentials, :total_tickets),
@@ -979,6 +1001,35 @@ defmodule FastCheck.Events do
 
   defp credential_error_message(reason) when is_binary(reason), do: reason
   defp credential_error_message(reason), do: inspect(reason)
+
+  defp normalize_scanner_login_code(scanner_login_code) when is_binary(scanner_login_code) do
+    normalized =
+      scanner_login_code
+      |> String.trim()
+      |> String.upcase()
+
+    cond do
+      normalized == "" ->
+        {:error, :invalid_scanner_login_code}
+
+      Regex.match?(@scanner_login_code_regex, normalized) ->
+        {:ok, normalized}
+
+      true ->
+        {:error, :invalid_scanner_login_code}
+    end
+  end
+
+  defp normalize_scanner_login_code(_), do: {:error, :invalid_scanner_login_code}
+
+  defp normalize_scanner_login_code_attr(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> String.upcase(trimmed)
+    end
+  end
+
+  defp normalize_scanner_login_code_attr(value), do: value
 
   defp fetch_attr(attrs, key) when is_map(attrs) and is_binary(key) do
     cond do

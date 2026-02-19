@@ -14,6 +14,8 @@ defmodule FastCheckWeb.ScannerSessionController do
   @scanner_event_id_key :scanner_event_id
   @scanner_event_name_key :scanner_event_name
   @scanner_operator_name_key :scanner_operator_name
+  @scanner_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+  @scanner_code_length 6
 
   def new(conn, params) do
     render(conn, :new,
@@ -24,19 +26,19 @@ defmodule FastCheckWeb.ScannerSessionController do
   end
 
   def create(conn, %{"scanner_session" => session_params} = params) do
-    with {:ok, event_id} <- extract_event_id(session_params),
-         :ok <- ensure_login_event_lock(conn, event_id),
+    with {:ok, scanner_code} <- extract_scanner_code(session_params),
+         {:ok, %Event{} = event} <- fetch_event_by_scanner_code(scanner_code),
+         :ok <- ensure_login_event_lock(conn, event),
          {:ok, credential} <- extract_credential(session_params),
          {:ok, operator_name} <- extract_operator_name(session_params),
-         {:ok, %Event{} = event} <- fetch_event(event_id),
          :ok <- ensure_event_scannable(event),
          :ok <- verify_credential(event, credential) do
-      redirect_to = normalize_scanner_redirect_to(params["redirect_to"], event_id)
+      redirect_to = normalize_scanner_redirect_to(params["redirect_to"], event.id)
 
       conn
       |> put_session(@scanner_authenticated_key, true)
-      |> put_session(@scanner_event_id_key, event_id)
-      |> put_session(@scanner_event_name_key, event.name || "Event #{event_id}")
+      |> put_session(@scanner_event_id_key, event.id)
+      |> put_session(@scanner_event_name_key, event.name || "Event #{event.id}")
       |> put_session(@scanner_operator_name_key, operator_name)
       |> redirect(to: redirect_to)
     else
@@ -118,22 +120,22 @@ defmodule FastCheckWeb.ScannerSessionController do
   end
 
   defp scanner_login_form(
-         params \\ %{"event_id" => "", "credential" => "", "operator_name" => ""}
+         params \\ %{"scanner_code" => "", "credential" => "", "operator_name" => ""}
        ) do
     to_form(params, as: "scanner_session")
   end
 
   defp sticky_form_params(params) do
     %{
-      "event_id" => Map.get(params, "event_id", ""),
+      "scanner_code" => Map.get(params, "scanner_code", ""),
       "credential" => "",
       "operator_name" => Map.get(params, "operator_name", "")
     }
   end
 
-  defp extract_event_id(%{"event_id" => value}), do: parse_event_id_value(value)
+  defp extract_scanner_code(%{"scanner_code" => value}), do: parse_scanner_code_value(value)
 
-  defp extract_event_id(_params), do: {:error, :bad_request, "Event ID is required"}
+  defp extract_scanner_code(_params), do: {:error, :bad_request, "Scanner code is required"}
 
   defp extract_credential(%{"credential" => credential}) when is_binary(credential) do
     if String.trim(credential) == "" do
@@ -163,12 +165,12 @@ defmodule FastCheckWeb.ScannerSessionController do
 
   defp extract_operator_name(_params), do: {:error, :bad_request, "Operator name is required"}
 
-  defp ensure_login_event_lock(conn, target_event_id) do
+  defp ensure_login_event_lock(conn, %Event{} = target_event) do
     if get_session(conn, @scanner_authenticated_key) == true do
       case parse_event_id_value(get_session(conn, @scanner_event_id_key)) do
-        {:ok, locked_event_id} when locked_event_id != target_event_id ->
+        {:ok, locked_event_id} when locked_event_id != target_event.id ->
           {:error, :forbidden,
-           "Scanner is locked to Event ID #{locked_event_id}. Log out before switching events.",
+           "Scanner is locked to #{locked_event_description(locked_event_id)}. Log out before switching events.",
            :preserve_session}
 
         _ ->
@@ -190,11 +192,14 @@ defmodule FastCheckWeb.ScannerSessionController do
     end
   end
 
-  defp fetch_event(event_id) do
-    {:ok, Events.get_event!(event_id)}
-  rescue
-    Ecto.NoResultsError ->
-      {:error, :not_found, "Event with ID #{event_id} does not exist"}
+  defp fetch_event_by_scanner_code(scanner_code) do
+    case Events.get_event_by_scanner_login_code(scanner_code) do
+      %Event{} = event ->
+        {:ok, event}
+
+      nil ->
+        {:error, :not_found, "Event with scanner code #{scanner_code} does not exist"}
+    end
   end
 
   defp ensure_event_scannable(%Event{} = event) do
@@ -269,6 +274,47 @@ defmodule FastCheckWeb.ScannerSessionController do
 
   defp parse_event_id_value(_value),
     do: {:error, :bad_request, "Event ID must be a positive integer"}
+
+  defp parse_scanner_code_value(value) when is_binary(value) do
+    normalized =
+      value
+      |> String.trim()
+      |> String.upcase()
+
+    cond do
+      normalized == "" ->
+        {:error, :bad_request, "Scanner code is required"}
+
+      Regex.match?(@scanner_code_regex, normalized) ->
+        {:ok, normalized}
+
+      true ->
+        {:error, :bad_request,
+         "Scanner code must be exactly #{@scanner_code_length} uppercase letters/numbers"}
+    end
+  end
+
+  defp parse_scanner_code_value(_value),
+    do:
+      {:error, :bad_request,
+       "Scanner code must be exactly #{@scanner_code_length} uppercase letters/numbers"}
+
+  defp locked_event_description(event_id) do
+    case safe_get_event(event_id) do
+      %Event{} = event ->
+        code = event.scanner_login_code || "unknown"
+        "#{event.name || "Event #{event_id}"} (#{code})"
+
+      _ ->
+        "Event ID #{event_id}"
+    end
+  end
+
+  defp safe_get_event(event_id) do
+    Events.get_event!(event_id)
+  rescue
+    Ecto.NoResultsError -> nil
+  end
 
   defp normalize_redirect_to(nil), do: nil
   defp normalize_redirect_to(""), do: nil
