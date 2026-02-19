@@ -128,6 +128,25 @@ defmodule FastCheckWeb.DashboardLiveTest do
     end
   end
 
+  describe "event card actions" do
+    test "renders stable action labels without pending placeholder text", %{conn: conn} do
+      event = insert_event!(%{name: "Actions Event"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      assert has_element?(view, "#open-scanner-#{event.id}", "Open scanner")
+      assert has_element?(view, "#show-sync-history-#{event.id}", "Sync history")
+      assert has_element?(view, "#show-edit-event-#{event.id}", "Edit event")
+      assert has_element?(view, "#export-attendees-#{event.id}", "Export attendees")
+      assert has_element?(view, "#export-checkins-#{event.id}", "Export check-ins")
+      refute has_element?(view, "#open-scanner-#{event.id}", "Opening...")
+      refute has_element?(view, "#show-sync-history-#{event.id}", "Opening...")
+      refute has_element?(view, "#show-edit-event-#{event.id}", "Opening...")
+      refute has_element?(view, "#export-attendees-#{event.id}", "Preparing...")
+      refute has_element?(view, "#export-checkins-#{event.id}", "Preparing...")
+    end
+  end
+
   defp mount_dashboard(conn) do
     conn
     |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
