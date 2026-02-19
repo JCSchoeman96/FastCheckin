@@ -89,6 +89,21 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   @impl true
+  def handle_event("scan_camera_decoded", %{"ticket_code" => code_param}, socket) do
+    code = code_param |> to_string() |> String.trim()
+
+    if code == "" do
+      {:noreply, socket}
+    else
+      process_scan(code, socket)
+    end
+  end
+
+  def handle_event("scan_camera_decoded", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("set_check_in_type", %{"type" => type}, socket) do
     case normalize_check_in_type(type) do
       nil -> {:noreply, socket}
@@ -751,6 +766,7 @@ defmodule FastCheckWeb.ScannerLive do
                     playsinline
                   >
                   </video>
+                  <canvas data-qr-canvas class="hidden"></canvas>
                 </div>
 
                 <p data-qr-status class="mt-3 text-sm text-fc-text-secondary">
