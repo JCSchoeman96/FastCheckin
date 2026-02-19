@@ -150,6 +150,21 @@ defmodule FastCheck.AttendeesTest do
       assert {:ok, %Attendee{}, "SUCCESS"} =
                Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
     end
+
+    test "accepts missing payment status when Tickera does not provide order state" do
+      event = insert_event!("Conference")
+
+      attendee =
+        create_attendee(event, %{
+          ticket_code: "PAY-004",
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          payment_status: nil
+        })
+
+      assert {:ok, %Attendee{}, "SUCCESS"} =
+               Attendees.check_in(event.id, attendee.ticket_code, "Main", "Operator")
+    end
   end
 
   describe "check_in_advanced/5" do

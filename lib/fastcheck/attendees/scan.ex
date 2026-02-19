@@ -623,7 +623,9 @@ defmodule FastCheck.Attendees.Scan do
   defp invalid_error(:entrance_name, message),
     do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
 
-  defp is_payment_status_valid?(status), do: normalize_payment_status(status) == "completed"
+  defp is_payment_status_valid?(status) do
+    normalize_payment_status(status) in ["completed", "unknown"]
+  end
 
   defp payment_rejection_message(status) do
     "Entry denied: order status '#{normalize_payment_status(status)}' is not completed"
