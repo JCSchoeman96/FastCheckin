@@ -404,8 +404,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
       show_nav={false}
       main_class="mx-auto w-full max-w-screen-md px-4 pb-28 pt-4"
     >
-      <div id="scanner-portal" class="space-y-4">
-        <.card variant="shadow" color="natural" rounded="large" padding="medium">
+      <div id="scanner-portal" class="space-y-4 bg-scanner-dark">
+        <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card glass-sheen glass-card-deep">
           <.card_content>
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -498,6 +498,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           color="natural"
           rounded="large"
           padding="small"
+          class="glass-card glass-sheen"
         >
           <.card_content>
             <div
@@ -656,7 +657,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           <% "overview" -> %>
             <section id="scanner-tab-overview" class="space-y-3" data-test="scanner-tab-overview">
               <div class="grid grid-cols-2 gap-3">
-                <.card variant="outline" color="natural" rounded="large" padding="medium">
+                <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
                     <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">
                       Total attendees
@@ -665,21 +666,21 @@ defmodule FastCheckWeb.ScannerPortalLive do
                   </.card_content>
                 </.card>
 
-                <.card variant="outline" color="success" rounded="large" padding="medium">
+                <.card variant="outline" color="success" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
                     <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
                     <p class="mt-2 text-2xl font-semibold">{@stats.checked_in}</p>
                   </.card_content>
                 </.card>
 
-                <.card variant="outline" color="warning" rounded="large" padding="medium">
+                <.card variant="outline" color="warning" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
                     <p class="text-xs uppercase tracking-[0.3em] opacity-80">Remaining</p>
                     <p class="mt-2 text-2xl font-semibold">{@stats.pending}</p>
                   </.card_content>
                 </.card>
 
-                <.card variant="outline" color="secondary" rounded="large" padding="medium">
+                <.card variant="outline" color="secondary" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
                     <p class="text-xs uppercase tracking-[0.3em] opacity-80">Currently inside</p>
                     <p class="mt-2 text-2xl font-semibold">{@current_occupancy}</p>
@@ -687,7 +688,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 </.card>
               </div>
 
-              <.card variant="outline" color="natural" rounded="large" padding="medium">
+              <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card">
                 <.card_content>
                   <div class="flex items-center justify-between">
                     <p class="text-sm text-fc-text-secondary">Crowd load</p>
@@ -746,6 +747,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 color="natural"
                 rounded="large"
                 padding="medium"
+                class="glass-card glass-sheen"
               >
                 <.card_content>
                   <div class="overflow-hidden rounded-2xl border border-fc-border bg-black">
@@ -810,7 +812,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
             </section>
           <% "attendees" -> %>
             <section id="scanner-tab-attendees" class="space-y-3" data-test="scanner-tab-attendees">
-              <.card variant="outline" color="natural" rounded="large" padding="medium">
+              <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card glass-sheen">
                 <.card_content>
                   <.form
                     id="scanner-portal-search-form"
@@ -890,7 +892,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
       <nav
         id="scanner-bottom-nav"
-        class="fixed inset-x-0 bottom-0 border-t border-fc-border-default bg-fc-surface-raised/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur"
+        class="fixed inset-x-0 bottom-0 border-t border-fc-border-default dark:border-glass-border bg-fc-surface-raised/95 dark:bg-[rgba(15,23,42,0.92)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 glass-blur-md"
       >
         <div class="mx-auto grid max-w-screen-md grid-cols-3 items-end gap-3">
           <.button

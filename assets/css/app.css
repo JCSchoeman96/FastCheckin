@@ -50,7 +50,7 @@
 /* ──────────────────────────────────────────────────────────
    Warm surface tokens — auto-switch with data-theme
    ────────────────────────────────────────────────────────── */
-[data-theme=light], :root:not([data-theme]) {
+[data-theme=light] {
     --fc-surface-page: #faf8f6;
     --fc-surface-raised: #f5f0ed;
     --fc-surface-overlay: #ede8e4;
@@ -61,15 +61,89 @@
     --fc-border-subtle: #f5f5f4;
 }
 
+/* Dark-first: unset root matches dark so no flash-of-light on load */
+:root:not([data-theme]), [data-theme=dark] {
+    /* Deep slate/ink — OLED-friendly, liquid glass base */
+    --fc-surface-page: #020617;
+    --fc-surface-raised: #0f172a;
+    --fc-surface-overlay: #1e293b;
+    --fc-text-primary: #f8fafc;
+    --fc-text-secondary: #94a3b8;
+    --fc-text-muted: #64748b;
+    --fc-border-default: #1e293b;
+    --fc-border-subtle: #0f172a;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Liquid glass tokens (dark mode only — glass on dark ink)
+   ────────────────────────────────────────────────────────── */
 [data-theme=dark] {
-    --fc-surface-page: #2a2725;
-    --fc-surface-raised: #353230;
-    --fc-surface-overlay: #403d3a;
-    --fc-text-primary: #fafaf9;
-    --fc-text-secondary: #a8a29e;
-    --fc-text-muted: #78716c;
-    --fc-border-default: #44403c;
-    --fc-border-subtle: #292524;
+    --glass-bg: rgba(255, 255, 255, 0.07);
+    --glass-bg-hover: rgba(255, 255, 255, 0.11);
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --glass-border-hover: rgba(255, 255, 255, 0.18);
+    --glass-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+    --glass-shadow-sm: 0 8px 20px rgba(0, 0, 0, 0.4);
+    --glass-sheen: linear-gradient(135deg, rgba(255,255,255,0.10) 0%, transparent 50%);
+    --glass-accent: #22d3ee;
+    --glass-accent-violet: #a78bfa;
+    --glass-accent-glow: rgba(34, 211, 238, 0.15);
+}
+
+/* Glass card — depth via layers, not blur */
+.glass-card {
+    position: relative;
+    border-radius: var(--fc-radius-card);
+    overflow: hidden;
+    background: var(--glass-bg, transparent);
+    border: 1px solid var(--glass-border, transparent);
+    box-shadow: var(--glass-shadow-sm, none);
+    transition: background 150ms ease, border-color 150ms ease;
+}
+.glass-card:hover {
+    background: var(--glass-bg-hover, var(--glass-bg, transparent));
+    border-color: var(--glass-border-hover, var(--glass-border, transparent));
+}
+
+/* Fake sheen overlay — cheap gradient, no filter */
+.glass-sheen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--glass-sheen, none);
+    pointer-events: none;
+    border-radius: inherit;
+    z-index: 1;
+}
+
+/* Deep glass — stronger shadow for hero/jumbotron cards */
+.glass-card-deep {
+    box-shadow: var(--glass-shadow, none);
+}
+
+/* Scanner background — static radial gradients, no animation */
+.bg-scanner-dark {
+    background-image:
+        radial-gradient(circle at 0 0, rgba(34, 211, 238, 0.15), transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(167, 139, 250, 0.12), transparent 55%),
+        linear-gradient(to bottom, #020617, #020617);
+    background-attachment: fixed;
+}
+
+/* Desktop-only backdrop blur (mobile perf guard per skill.md rule) */
+@media (min-width: 768px) {
+    .glass-blur-md {
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+    }
+}
+
+/* Respect reduced-motion — disable transitions globally */
+@media (prefers-reduced-motion: reduce) {
+    .glass-card,
+    .glass-card:hover {
+        transition: none;
+    }
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -155,6 +229,15 @@
 /* This file is for your main application CSS */
 
 @theme {
+    /* Liquid glass tokens (usable as bg-glass-*, text-glass-*, border-glass-*) */
+    --color-glass-bg: var(--glass-bg);
+    --color-glass-bg-hover: var(--glass-bg-hover);
+    --color-glass-border: var(--glass-border);
+    --color-glass-border-hover: var(--glass-border-hover);
+    --color-glass-accent: var(--glass-accent);
+    --color-glass-accent-violet: var(--glass-accent-violet);
+    --color-glass-accent-glow: var(--glass-accent-glow);
+
     /* FastCheck surface tokens */
     --color-fc-surface-page: var(--fc-surface-page);
     --color-fc-surface-raised: var(--fc-surface-raised);

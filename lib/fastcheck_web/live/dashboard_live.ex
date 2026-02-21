@@ -634,7 +634,7 @@ defmodule FastCheckWeb.DashboardLive do
           </.button>
         </section>
 
-        <.card :if={@sync_status} variant="outline" color="natural" rounded="large" padding="large">
+        <.card :if={@sync_status} variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
           <.card_content>
             <p class="text-sm text-fc-text-secondary">Sync status</p>
             <p class="mt-1 text-base font-semibold text-fc-text-primary">{@sync_status}</p>
@@ -656,6 +656,7 @@ defmodule FastCheckWeb.DashboardLive do
           color="natural"
           rounded="large"
           padding="large"
+          class="glass-card glass-sheen"
         >
           <.card_content>
             <div class="flex items-center justify-between gap-3">
@@ -812,7 +813,7 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
 
-          <div class="inline-flex w-full sm:w-auto rounded-xl border border-fc-border bg-fc-surface-overlay p-1">
+          <div class="inline-flex w-full sm:w-auto rounded-xl border border-fc-border dark:border-glass-border bg-fc-surface-overlay dark:bg-glass-bg p-1">
             <.button
               id="events-tab-active"
               type="button"
@@ -847,7 +848,7 @@ defmodule FastCheckWeb.DashboardLive do
               color="natural"
               rounded="large"
               padding="large"
-              class={"fc-card-container #{if(@selected_event_id == event.id, do: "ring-2 ring-primary-light", else: "")}"}
+              class={"fc-card-container glass-card glass-sheen #{if(@selected_event_id == event.id, do: "ring-2 ring-primary-light", else: "")}"}
             >
               <.card_content>
                 <% lifecycle_state = Events.event_lifecycle_state(event) %>
@@ -884,21 +885,21 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
 
                 <div class="mt-5 grid gap-3 cq-card:grid-cols-3 text-center">
-                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-3">
+                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-3">
                     <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
                     <p class="mt-1 text-xl font-semibold text-fc-text-primary">
                       {event.total_tickets || 0}
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-3">
+                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-3">
                     <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Checked in</p>
                     <p class="mt-1 text-xl font-semibold text-fc-text-primary">
                       {event.checked_in_count || 0}
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-3">
+                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-3">
                     <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Attendees</p>
                     <p class="mt-1 text-xl font-semibold text-fc-text-primary">
                       {event.attendee_count || 0}
@@ -1088,7 +1089,7 @@ defmodule FastCheckWeb.DashboardLive do
               color="natural"
               rounded="large"
               padding="large"
-              class="col-span-full text-center"
+              class="col-span-full text-center glass-card glass-sheen"
             >
               <.card_content>
                 <p class="text-lg font-semibold text-fc-text-primary">No events found</p>
@@ -1102,7 +1103,7 @@ defmodule FastCheckWeb.DashboardLive do
               color="natural"
               rounded="large"
               padding="large"
-              class="col-span-full text-center"
+              class="col-span-full text-center glass-card glass-sheen"
             >
               <.card_content>
                 <%= if @events_tab == "active" do %>

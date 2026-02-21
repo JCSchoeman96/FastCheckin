@@ -24,7 +24,7 @@
           }
         };
 
-        applyTheme(localStorage.getItem("phx:theme") || "system");
+        applyTheme(localStorage.getItem("phx:theme") || "dark");
 
         window.addEventListener("storage", (e) => {
           if (e.key === "phx:theme") applyTheme(e.newValue || "system");

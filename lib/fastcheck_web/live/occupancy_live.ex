@@ -75,9 +75,9 @@ defmodule FastCheckWeb.OccupancyLive do
 
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="min-h-screen space-y-6 sm:space-y-8">
+      <div class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark">
         <%!-- Header --%>
-        <.card variant="shadow" color="natural" rounded="large" padding="large">
+        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep">
           <.card_content>
             <p
               style="font-size: var(--fc-text-xs)"
@@ -195,7 +195,7 @@ defmodule FastCheckWeb.OccupancyLive do
             </.card_content>
           </.card>
 
-          <.card variant="outline" color="natural" rounded="large" padding="large">
+          <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
             <.card_content>
               <p class="text-sm uppercase tracking-[0.3em] text-fc-text-muted">Flow summary</p>
 
@@ -260,7 +260,7 @@ defmodule FastCheckWeb.OccupancyLive do
               color="natural"
               rounded="large"
               padding="medium"
-              class="fc-card-container"
+              class="fc-card-container glass-card glass-sheen"
             >
               <.card_content>
                 <p class="text-sm uppercase tracking-[0.3em] text-fc-text-muted">
@@ -277,7 +277,7 @@ defmodule FastCheckWeb.OccupancyLive do
                 <p class="text-sm text-fc-text-secondary">Currently inside</p>
 
                 <div class="mt-6 grid grid-cols-3 gap-2 text-center text-sm">
-                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-2">
+                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-2">
                     <p
                       style="font-size: var(--fc-text-xs)"
                       class="uppercase tracking-[0.3em] text-fc-text-muted"
@@ -289,7 +289,7 @@ defmodule FastCheckWeb.OccupancyLive do
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-2">
+                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-2">
                     <p
                       style="font-size: var(--fc-text-xs)"
                       class="uppercase tracking-[0.3em] text-fc-text-muted"
@@ -301,7 +301,7 @@ defmodule FastCheckWeb.OccupancyLive do
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-fc-surface-overlay px-3 py-2">
+                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-2">
                     <p
                       style="font-size: var(--fc-text-xs)"
                       class="uppercase tracking-[0.3em] text-fc-text-muted"
@@ -319,7 +319,7 @@ defmodule FastCheckWeb.OccupancyLive do
 
           <div
             :if={!Enum.any?(@per_entrance)}
-            class="rounded-2xl border border-dashed border-fc-border-default bg-fc-surface-raised p-8 text-center text-sm text-fc-text-muted"
+            class="rounded-2xl border border-dashed border-fc-border-default dark:border-glass-border bg-fc-surface-raised dark:bg-glass-bg p-8 text-center text-sm text-fc-text-muted"
           >
             Entrance-level analytics will appear as soon as check-ins stream in.
           </div>
@@ -346,7 +346,7 @@ defmodule FastCheckWeb.OccupancyLive do
               color="natural"
               rounded="large"
               padding="small"
-              class="transition hover:shadow-lg"
+              class="glass-card"
             >
               <.card_content>
                 <p

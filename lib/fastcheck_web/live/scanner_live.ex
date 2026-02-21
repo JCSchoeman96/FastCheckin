@@ -449,9 +449,9 @@ defmodule FastCheckWeb.ScannerLive do
       <div
         id="admin-scanner-root"
         phx-hook="ScannerKeyboardShortcuts"
-        class="min-h-screen space-y-6 sm:space-y-8"
+        class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark"
       >
-        <.card variant="shadow" color="natural" rounded="large" padding="large">
+        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep">
           <.card_content>
             <p
               style="font-size: var(--fc-text-xs)"
@@ -495,7 +495,7 @@ defmodule FastCheckWeb.ScannerLive do
           color="natural"
           rounded="large"
           padding="large"
-          class="fc-card-container"
+          class="fc-card-container glass-card glass-sheen"
         >
           <.card_content>
             <div class="flex flex-col gap-6">
@@ -602,7 +602,7 @@ defmodule FastCheckWeb.ScannerLive do
             color="natural"
             rounded="large"
             padding="medium"
-            class="fc-card-container"
+            class="fc-card-container glass-card"
           >
             <.card_content>
               <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
@@ -617,7 +617,7 @@ defmodule FastCheckWeb.ScannerLive do
             color="success"
             rounded="large"
             padding="medium"
-            class="fc-card-container"
+            class="fc-card-container glass-card"
           >
             <.card_content>
               <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
@@ -632,7 +632,7 @@ defmodule FastCheckWeb.ScannerLive do
             color="warning"
             rounded="large"
             padding="medium"
-            class="fc-card-container"
+            class="fc-card-container glass-card"
           >
             <.card_content>
               <p class="text-xs uppercase tracking-[0.3em] opacity-80">Pending</p>
@@ -701,7 +701,7 @@ defmodule FastCheckWeb.ScannerLive do
               color="natural"
               rounded="large"
               padding="large"
-              class="fc-card-container"
+              class="fc-card-container glass-card glass-sheen"
             >
               <.card_content>
                 <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
@@ -780,7 +780,7 @@ defmodule FastCheckWeb.ScannerLive do
               color="natural"
               rounded="large"
               padding="large"
-              class="fc-card-container"
+              class="fc-card-container glass-card glass-sheen"
             >
               <.card_content>
                 <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
@@ -855,7 +855,7 @@ defmodule FastCheckWeb.ScannerLive do
             color="natural"
             rounded="large"
             padding="large"
-            class="fc-card-container"
+            class="fc-card-container glass-card glass-sheen"
           >
             <.card_content>
               <div class="flex flex-col gap-4 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
@@ -1023,7 +1023,7 @@ defmodule FastCheckWeb.ScannerLive do
           </.card>
         </section>
 
-        <.card variant="outline" color="natural" rounded="large" padding="large">
+        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
           <.card_content>
             <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
               Find attendee
@@ -1118,6 +1118,7 @@ defmodule FastCheckWeb.ScannerLive do
           color="natural"
           rounded="large"
           padding="large"
+          class="glass-card glass-sheen"
         >
           <.card_content>
             <div class="flex items-center justify-between">
