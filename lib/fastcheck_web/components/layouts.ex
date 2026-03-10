@@ -33,6 +33,7 @@ defmodule FastCheckWeb.Layouts do
 
   attr :show_nav, :boolean, default: true, doc: "whether to render the app navbar"
   attr :main_class, :string, default: "fc-app-container fc-container", doc: "main wrapper classes"
+  attr :breadcrumb, :string, default: nil, doc: "optional breadcrumb context text"
 
   slot :inner_block, required: true
 
@@ -44,13 +45,17 @@ defmodule FastCheckWeb.Layouts do
       variant="shadow"
       color="natural"
       padding="small"
-      class="px-4 sm:px-6 lg:px-8"
+      class="px-4 sm:px-6 lg:px-8 dark:bg-[rgba(2,6,23,0.85)] glass-blur-md dark:border-b dark:border-glass-border"
     >
       <:start_content>
         <a href="/" class="flex items-center gap-2.5">
           <img src={~p"/images/logo.svg"} width="36" alt="FastCheck" />
           <span class="text-lg font-bold text-fc-text-primary">FastCheck</span>
         </a>
+        <span :if={@breadcrumb} class="hidden sm:inline-flex items-center gap-2 text-sm text-fc-text-muted">
+          <.icon name="hero-chevron-right-mini" class="size-3 opacity-50" />
+          {@breadcrumb}
+        </span>
       </:start_content>
 
       <:end_content>

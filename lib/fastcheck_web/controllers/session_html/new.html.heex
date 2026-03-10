@@ -1,31 +1,35 @@
-<div class="mx-auto max-w-md space-y-6 py-10">
-  <div class="text-center space-y-2">
-    <h1 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
-      Sign in to FastCheck
-    </h1>
+<div class="flex min-h-screen items-center justify-center bg-scanner-dark px-4 py-10">
+  <div class="w-full max-w-md space-y-6">
+    <div class="flex flex-col items-center space-y-3">
+      <img src={~p"/images/logo.svg"} width="56" alt="" class="drop-shadow-lg" />
+      <h1 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
+        Sign in to FastCheck
+      </h1>
+      <p class="text-sm text-fc-text-secondary">Enter your dashboard credentials to continue.</p>
+    </div>
 
-    <p class="text-sm text-fc-text-secondary">Enter your dashboard credentials to continue.</p>
+    <.card variant="outline" color="natural" padding="large" rounded="large" class="glass-card glass-sheen glass-card-deep">
+      <.card_content>
+        <.form for={@form} action={~p"/login"} id="login-form" method="post" class="space-y-4">
+          <.input field={@form[:username]} label="Username" required autocomplete="username" />
+          <.input
+            field={@form[:password]}
+            type="password"
+            label="Password"
+            required
+            autocomplete="current-password"
+          />
+          <input type="hidden" name="redirect_to" value={@redirect_to} />
+          <div class="flex items-center justify-between gap-4">
+            <.button color="primary" type="submit" class="fc-hover-lift">Sign in</.button>
+            <p :if={@error_message} class="text-sm text-danger-light dark:text-danger-dark">
+              {@error_message}
+            </p>
+          </div>
+        </.form>
+      </.card_content>
+    </.card>
+
+    <p class="text-center text-xs text-fc-text-muted">FastCheck &mdash; Secure event management</p>
   </div>
-
-  <.card variant="outline" color="natural" padding="large" rounded="large">
-    <.card_content>
-      <.form for={@form} action={~p"/login"} id="login-form" method="post" class="space-y-4">
-        <.input field={@form[:username]} label="Username" required autocomplete="username" />
-        <.input
-          field={@form[:password]}
-          type="password"
-          label="Password"
-          required
-          autocomplete="current-password"
-        />
-        <input type="hidden" name="redirect_to" value={@redirect_to} />
-        <div class="flex items-center justify-between gap-4">
-          <.button color="primary" type="submit">Sign in</.button>
-          <p :if={@error_message} class="text-sm text-danger-light dark:text-danger-dark">
-            {@error_message}
-          </p>
-        </div>
-      </.form>
-    </.card_content>
-  </.card>
 </div>

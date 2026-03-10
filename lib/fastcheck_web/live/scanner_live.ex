@@ -445,13 +445,13 @@ defmodule FastCheckWeb.ScannerLive do
       |> assign(:bulk_form, to_form(%{"codes" => assigns.bulk_codes}))
 
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} breadcrumb={"Scanner \u2014 #{@event.name}"}>
       <div
         id="admin-scanner-root"
         phx-hook="ScannerKeyboardShortcuts"
         class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark"
       >
-        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep">
+        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep glass-card-elevated">
           <.card_content>
             <p
               style="font-size: var(--fc-text-xs)"
@@ -605,7 +605,10 @@ defmodule FastCheckWeb.ScannerLive do
             class="fc-card-container glass-card"
           >
             <.card_content>
-              <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
+              <div class="flex items-center gap-2">
+                <.icon name="hero-ticket" class="size-4 text-fc-text-muted" />
+                <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
+              </div>
               <p style="font-size: var(--fc-text-2xl)" class="mt-2 font-semibold text-fc-text-primary">
                 {@stats.total}
               </p>
@@ -620,7 +623,10 @@ defmodule FastCheckWeb.ScannerLive do
             class="fc-card-container glass-card"
           >
             <.card_content>
-              <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
+              <div class="flex items-center gap-2">
+                <.icon name="hero-check-circle" class="size-4" />
+                <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
+              </div>
               <p style="font-size: var(--fc-text-2xl)" class="mt-2 font-semibold">
                 {@stats.checked_in}
               </p>
@@ -635,7 +641,10 @@ defmodule FastCheckWeb.ScannerLive do
             class="fc-card-container glass-card"
           >
             <.card_content>
-              <p class="text-xs uppercase tracking-[0.3em] opacity-80">Pending</p>
+              <div class="flex items-center gap-2">
+                <.icon name="hero-clock" class="size-4" />
+                <p class="text-xs uppercase tracking-[0.3em] opacity-80">Pending</p>
+              </div>
               <p style="font-size: var(--fc-text-2xl)" class="mt-2 font-semibold">
                 {@stats.pending}
               </p>
@@ -651,41 +660,47 @@ defmodule FastCheckWeb.ScannerLive do
           color={scan_result_color(@last_scan_status, @check_in_type)}
           rounded="large"
           padding="large"
+          class="fc-scan-pulse"
           phx-remove={JS.add_class("opacity-0", transition: "transition-opacity duration-300")}
         >
           <.card_content>
-            <div class="space-y-3">
-              <p class="text-xs uppercase tracking-[0.3em] opacity-80">
-                {scan_result_title(@last_scan_status, @check_in_type)}
-              </p>
-
-              <p style="font-size: var(--fc-text-2xl)" class="font-semibold">
-                {@last_scan_result}
-              </p>
-
-              <p :if={@last_scan_reason} class="text-sm opacity-85">
-                {@last_scan_reason}
-              </p>
-
-              <div
-                :if={@last_scan_status == :success and @last_scan_checkins_allowed > 1}
-                class="space-y-2"
-              >
-                <p class="text-sm opacity-90">
-                  Check-ins used: {@last_scan_checkins_used} of {@last_scan_checkins_allowed}
-                </p>
-                <.progress
-                  value={
-                    checkins_used_percentage(@last_scan_checkins_used, @last_scan_checkins_allowed)
-                  }
-                  color={scan_result_color(@last_scan_status, @check_in_type)}
-                  size="small"
-                />
+            <div class="flex items-start gap-4">
+              <div class="shrink-0 rounded-2xl bg-white/10 p-3">
+                <.icon name={scan_result_icon(@last_scan_status, @check_in_type)} class="size-8" />
               </div>
+              <div class="space-y-2 min-w-0">
+                <p class="text-xs uppercase tracking-[0.3em] opacity-80">
+                  {scan_result_title(@last_scan_status, @check_in_type)}
+                </p>
 
-              <p class="text-sm opacity-85">
-                Current occupancy: {@current_occupancy} inside
-              </p>
+                <p style="font-size: var(--fc-text-2xl)" class="font-semibold">
+                  {@last_scan_result}
+                </p>
+
+                <p :if={@last_scan_reason} class="text-sm opacity-85">
+                  {@last_scan_reason}
+                </p>
+
+                <div
+                  :if={@last_scan_status == :success and @last_scan_checkins_allowed > 1}
+                  class="space-y-2"
+                >
+                  <p class="text-sm opacity-90">
+                    Check-ins used: {@last_scan_checkins_used} of {@last_scan_checkins_allowed}
+                  </p>
+                  <.progress
+                    value={
+                      checkins_used_percentage(@last_scan_checkins_used, @last_scan_checkins_allowed)
+                    }
+                    color={scan_result_color(@last_scan_status, @check_in_type)}
+                    size="small"
+                  />
+                </div>
+
+                <p class="text-sm opacity-85">
+                  Current occupancy: {@current_occupancy} inside
+                </p>
+              </div>
             </div>
           </.card_content>
         </.card>
@@ -1497,6 +1512,15 @@ defmodule FastCheckWeb.ScannerLive do
   defp scan_result_title(:archived, _), do: "Scanning unavailable"
   defp scan_result_title(:error, _), do: "Scan error"
   defp scan_result_title(_, _), do: "Scan status"
+
+  defp scan_result_icon(:success, "entry"), do: "hero-check-circle"
+  defp scan_result_icon(:success, "exit"), do: "hero-arrow-left-circle"
+  defp scan_result_icon(:duplicate_today, _), do: "hero-exclamation-triangle"
+  defp scan_result_icon(:not_checked_in, _), do: "hero-x-circle"
+  defp scan_result_icon(:limit_exceeded, _), do: "hero-no-symbol"
+  defp scan_result_icon(:invalid, _), do: "hero-x-circle"
+  defp scan_result_icon(:error, _), do: "hero-x-circle"
+  defp scan_result_icon(_, _), do: "hero-question-mark-circle"
 
   defp checkins_used_percentage(used, allowed)
        when is_integer(used) and is_integer(allowed) and allowed > 0 do

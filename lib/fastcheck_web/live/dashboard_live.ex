@@ -629,6 +629,7 @@ defmodule FastCheckWeb.DashboardLive do
             phx-click="show_new_event_form"
             color="primary"
             variant="shadow"
+            class="fc-hover-lift"
           >
             New Event
           </.button>
@@ -813,7 +814,7 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
 
-          <div class="inline-flex w-full sm:w-auto rounded-xl border border-fc-border dark:border-glass-border bg-fc-surface-overlay dark:bg-glass-bg p-1">
+          <div class="fc-tab-bar">
             <.button
               id="events-tab-active"
               type="button"
@@ -824,7 +825,10 @@ defmodule FastCheckWeb.DashboardLive do
               size="small"
               class="flex-1 sm:flex-none"
             >
-              Active ({@active_events_count})
+              <span class="inline-flex items-center gap-1.5">
+                <.icon name="hero-bolt-mini" class="size-3.5" />
+                Active ({@active_events_count})
+              </span>
             </.button>
 
             <.button
@@ -837,7 +841,10 @@ defmodule FastCheckWeb.DashboardLive do
               size="small"
               class="flex-1 sm:flex-none"
             >
-              Archived ({@archived_events_count})
+              <span class="inline-flex items-center gap-1.5">
+                <.icon name="hero-archive-box-mini" class="size-3.5" />
+                Archived ({@archived_events_count})
+              </span>
             </.button>
           </div>
 
@@ -885,22 +892,31 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
 
                 <div class="mt-5 grid gap-3 cq-card:grid-cols-3 text-center">
-                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-3">
-                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total tickets</p>
+                  <div class="glass-card-recessed px-3 py-3">
+                    <div class="flex items-center justify-center gap-2">
+                      <.icon name="hero-ticket" class="size-4 text-fc-text-muted" />
+                      <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Tickets</p>
+                    </div>
                     <p class="mt-1 text-xl font-semibold text-fc-text-primary">
                       {event.total_tickets || 0}
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-3">
-                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Checked in</p>
+                  <div class="glass-card-recessed px-3 py-3">
+                    <div class="flex items-center justify-center gap-2">
+                      <.icon name="hero-check-circle" class="size-4 text-success-dark" />
+                      <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">In</p>
+                    </div>
                     <p class="mt-1 text-xl font-semibold text-fc-text-primary">
                       {event.checked_in_count || 0}
                     </p>
                   </div>
 
-                  <div class="rounded-xl bg-fc-surface-overlay dark:bg-glass-bg dark:border dark:border-glass-border px-3 py-3">
-                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Attendees</p>
+                  <div class="glass-card-recessed px-3 py-3">
+                    <div class="flex items-center justify-center gap-2">
+                      <.icon name="hero-users" class="size-4 text-fc-text-muted" />
+                      <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total</p>
+                    </div>
                     <p class="mt-1 text-xl font-semibold text-fc-text-primary">
                       {event.attendee_count || 0}
                     </p>
@@ -909,42 +925,7 @@ defmodule FastCheckWeb.DashboardLive do
 
                 <div class="mt-6 space-y-3">
                   <div :if={!archived_event} class="space-y-3">
-                    <div
-                      :if={@selected_event_id != event.id || @sync_progress == nil}
-                      class="grid gap-2 cq-card:grid-cols-2"
-                    >
-                      <.button
-                        id={"full-sync-#{event.id}"}
-                        type="button"
-                        color="secondary"
-                        variant="shadow"
-                        full_width
-                        phx-click="start_sync"
-                        phx-value-event_id={event.id}
-                        phx-value-incremental="false"
-                        phx-disable-with="Syncing..."
-                        disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                      >
-                        Full sync
-                      </.button>
-
-                      <.button
-                        id={"incremental-sync-#{event.id}"}
-                        type="button"
-                        color="success"
-                        variant="shadow"
-                        full_width
-                        phx-click="start_sync"
-                        phx-value-event_id={event.id}
-                        phx-value-incremental="true"
-                        phx-disable-with="Syncing..."
-                        disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
-                        title="Only sync new or updated attendees"
-                      >
-                        Incremental sync
-                      </.button>
-                    </div>
-
+                    <%!-- Sync controls during active sync --%>
                     <div
                       :if={@selected_event_id == event.id && @sync_progress != nil}
                       class="grid gap-2 cq-card:grid-cols-3"
@@ -988,16 +969,58 @@ defmodule FastCheckWeb.DashboardLive do
                       </.button>
                     </div>
 
-                    <div class="grid gap-2 cq-card:grid-cols-2">
+                    <%!-- Primary actions: Open scanner + Sync --%>
+                    <div
+                      :if={@selected_event_id != event.id || @sync_progress == nil}
+                      class="grid gap-2 cq-card:grid-cols-2"
+                    >
                       <.button_link
                         id={"open-scanner-#{event.id}"}
                         navigate={~p"/scan/#{event.id}"}
-                        variant="bordered"
+                        variant="shadow"
+                        color="primary"
+                        full_width
+                        class="fc-hover-lift"
+                      >
+                        <span class="inline-flex items-center gap-2">
+                          <.icon name="hero-qr-code" class="size-4" /> Scanner
+                        </span>
+                      </.button_link>
+
+                      <.button
+                        id={"incremental-sync-#{event.id}"}
+                        type="button"
                         color="secondary"
+                        variant="shadow"
+                        full_width
+                        phx-click="start_sync"
+                        phx-value-event_id={event.id}
+                        phx-value-incremental="true"
+                        phx-disable-with="Syncing..."
+                        disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                        title="Sync new or updated attendees"
+                      >
+                        <span class="inline-flex items-center gap-2">
+                          <.icon name="hero-arrow-path" class="size-4" /> Sync
+                        </span>
+                      </.button>
+                    </div>
+
+                    <%!-- Secondary actions: Edit + History + Full sync --%>
+                    <div class="grid gap-2 cq-card:grid-cols-3">
+                      <.button
+                        id={"show-edit-event-#{event.id}"}
+                        type="button"
+                        phx-click="show_edit_form"
+                        phx-value-event_id={event.id}
+                        phx-disable-with="Opening..."
+                        variant="bordered"
+                        color="natural"
+                        size="small"
                         full_width
                       >
-                        Open scanner
-                      </.button_link>
+                        Edit
+                      </.button>
 
                       <.button
                         id={"show-sync-history-#{event.id}"}
@@ -1007,59 +1030,78 @@ defmodule FastCheckWeb.DashboardLive do
                         phx-disable-with="Opening..."
                         variant="bordered"
                         color="natural"
+                        size="small"
                         full_width
                       >
-                        Sync history
+                        History
+                      </.button>
+
+                      <.button
+                        id={"full-sync-#{event.id}"}
+                        type="button"
+                        phx-click="start_sync"
+                        phx-value-event_id={event.id}
+                        phx-value-incremental="false"
+                        phx-disable-with="Syncing..."
+                        disabled={lifecycle_state == :archived || !is_nil(@sync_task_pid)}
+                        variant="bordered"
+                        color="natural"
+                        size="small"
+                        full_width
+                        title="Full re-sync all attendees from Tickera"
+                      >
+                        Full sync
                       </.button>
                     </div>
 
-                    <.button
-                      id={"show-edit-event-#{event.id}"}
-                      type="button"
-                      phx-click="show_edit_form"
-                      phx-value-event_id={event.id}
-                      phx-disable-with="Opening..."
-                      variant="bordered"
-                      color="secondary"
-                      full_width
+                    <%!-- Overflow: Export + Archive --%>
+                    <details
+                      id={"event-more-actions-#{event.id}"}
+                      class="rounded-xl border border-fc-border-default dark:border-glass-border p-2"
                     >
-                      Edit event
-                    </.button>
+                      <summary class="cursor-pointer text-xs uppercase tracking-[0.3em] text-fc-text-muted hover:text-fc-text-secondary transition-colors">
+                        More actions
+                      </summary>
 
-                    <div class="grid gap-2 cq-card:grid-cols-2">
-                      <.button_link
-                        id={"export-attendees-#{event.id}"}
-                        href={~p"/export/attendees/#{event.id}"}
-                        variant="bordered"
-                        color="success"
-                        full_width
-                      >
-                        Export attendees
-                      </.button_link>
+                      <div class="mt-2 grid gap-2 cq-card:grid-cols-2">
+                        <.button_link
+                          id={"export-attendees-#{event.id}"}
+                          href={~p"/export/attendees/#{event.id}"}
+                          variant="bordered"
+                          color="natural"
+                          size="small"
+                          full_width
+                        >
+                          Export attendees
+                        </.button_link>
 
-                      <.button_link
-                        id={"export-checkins-#{event.id}"}
-                        href={~p"/export/check-ins/#{event.id}"}
-                        variant="bordered"
-                        color="success"
-                        full_width
-                      >
-                        Export check-ins
-                      </.button_link>
-                    </div>
+                        <.button_link
+                          id={"export-checkins-#{event.id}"}
+                          href={~p"/export/check-ins/#{event.id}"}
+                          variant="bordered"
+                          color="natural"
+                          size="small"
+                          full_width
+                        >
+                          Export check-ins
+                        </.button_link>
 
-                    <.button
-                      id={"archive-event-#{event.id}"}
-                      type="button"
-                      phx-click="archive_event"
-                      phx-value-event_id={event.id}
-                      variant="bordered"
-                      color="danger"
-                      full_width
-                      data-confirm="Archive this event? Archived events cannot be synced or scanned."
-                    >
-                      Archive event
-                    </.button>
+                        <.button
+                          id={"archive-event-#{event.id}"}
+                          type="button"
+                          phx-click="archive_event"
+                          phx-value-event_id={event.id}
+                          variant="bordered"
+                          color="danger"
+                          size="small"
+                          full_width
+                          class="cq-card:grid-cols-2 col-span-full"
+                          data-confirm="Archive this event? Archived events cannot be synced or scanned."
+                        >
+                          Archive event
+                        </.button>
+                      </div>
+                    </details>
                   </div>
 
                   <div :if={archived_event} class="space-y-2">
@@ -1089,11 +1131,16 @@ defmodule FastCheckWeb.DashboardLive do
               color="natural"
               rounded="large"
               padding="large"
-              class="col-span-full text-center glass-card glass-sheen"
+              class="col-span-full glass-card glass-sheen"
             >
               <.card_content>
-                <p class="text-lg font-semibold text-fc-text-primary">No events found</p>
-                <p class="mt-2 text-sm text-fc-text-secondary">No events match "{@search_query}".</p>
+                <div class="flex flex-col items-center py-8 text-center">
+                  <div class="rounded-2xl glass-card-recessed p-5 mb-5">
+                    <.icon name="hero-magnifying-glass" class="size-12 text-fc-text-muted" />
+                  </div>
+                  <p class="text-lg font-semibold text-fc-text-primary">No events found</p>
+                  <p class="mt-2 max-w-sm text-sm text-fc-text-secondary">No events match &ldquo;{@search_query}&rdquo;. Try a different search term.</p>
+                </div>
               </.card_content>
             </.card>
 
@@ -1103,29 +1150,39 @@ defmodule FastCheckWeb.DashboardLive do
               color="natural"
               rounded="large"
               padding="large"
-              class="col-span-full text-center glass-card glass-sheen"
+              class="col-span-full glass-card glass-sheen"
             >
               <.card_content>
                 <%= if @events_tab == "active" do %>
-                  <p class="text-lg font-semibold text-fc-text-primary">No active events</p>
-                  <p class="mt-2 text-sm text-fc-text-secondary">
-                    Create your first event to start syncing attendees and scanning tickets.
-                  </p>
-                  <.button
-                    id="empty-state-create-event-button"
-                    type="button"
-                    phx-click="show_new_event_form"
-                    color="primary"
-                    variant="shadow"
-                    class="mt-5"
-                  >
-                    Create event
-                  </.button>
+                  <div class="flex flex-col items-center py-8 text-center">
+                    <div class="rounded-2xl glass-card-recessed p-5 mb-5">
+                      <.icon name="hero-calendar-days" class="size-12 text-fc-text-muted" />
+                    </div>
+                    <p class="text-lg font-semibold text-fc-text-primary">No active events</p>
+                    <p class="mt-2 max-w-sm text-sm text-fc-text-secondary">
+                      Create your first event to start syncing attendees and scanning tickets.
+                    </p>
+                    <.button
+                      id="empty-state-create-event-button"
+                      type="button"
+                      phx-click="show_new_event_form"
+                      color="primary"
+                      variant="shadow"
+                      class="mt-5 fc-hover-lift"
+                    >
+                      Create event
+                    </.button>
+                  </div>
                 <% else %>
-                  <p class="text-lg font-semibold text-fc-text-primary">No archived events</p>
-                  <p class="mt-2 text-sm text-fc-text-secondary">
-                    Archived events will appear here and can be restored with one click.
-                  </p>
+                  <div class="flex flex-col items-center py-8 text-center">
+                    <div class="rounded-2xl glass-card-recessed p-5 mb-5">
+                      <.icon name="hero-archive-box" class="size-12 text-fc-text-muted" />
+                    </div>
+                    <p class="text-lg font-semibold text-fc-text-primary">No archived events</p>
+                    <p class="mt-2 max-w-sm text-sm text-fc-text-secondary">
+                      Archived events will appear here and can be restored with one click.
+                    </p>
+                  </div>
                 <% end %>
               </.card_content>
             </.card>

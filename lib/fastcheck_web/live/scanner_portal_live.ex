@@ -405,7 +405,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
       main_class="mx-auto w-full max-w-screen-md px-4 pb-28 pt-4"
     >
       <div id="scanner-portal" class="space-y-4 bg-scanner-dark">
-        <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card glass-sheen glass-card-deep">
+        <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card glass-sheen glass-card-deep glass-card-elevated">
           <.card_content>
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -642,14 +642,22 @@ defmodule FastCheckWeb.ScannerPortalLive do
           color={scan_result_color(@last_scan_status, @check_in_type)}
           rounded="large"
           padding="medium"
+          class="fc-scan-pulse"
           data-test="scan-status"
         >
           <.card_content>
-            <p class="text-xs uppercase tracking-[0.3em] opacity-80">
-              {scan_result_title(@last_scan_status, @check_in_type)}
-            </p>
-            <p class="mt-2 text-base font-semibold">{@last_scan_result}</p>
-            <p :if={@last_scan_reason} class="mt-1 text-xs opacity-85">{@last_scan_reason}</p>
+            <div class="flex items-start gap-3">
+              <div class="shrink-0 rounded-xl bg-white/10 p-2">
+                <.icon name={scan_result_icon(@last_scan_status, @check_in_type)} class="size-6" />
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs uppercase tracking-[0.3em] opacity-80">
+                  {scan_result_title(@last_scan_status, @check_in_type)}
+                </p>
+                <p class="mt-1 text-base font-semibold">{@last_scan_result}</p>
+                <p :if={@last_scan_reason} class="mt-1 text-xs opacity-85">{@last_scan_reason}</p>
+              </div>
+            </div>
           </.card_content>
         </.card>
 
@@ -659,30 +667,40 @@ defmodule FastCheckWeb.ScannerPortalLive do
               <div class="grid grid-cols-2 gap-3">
                 <.card variant="outline" color="natural" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
-                    <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">
-                      Total attendees
-                    </p>
+                    <div class="flex items-center gap-2">
+                      <.icon name="hero-ticket" class="size-4 text-fc-text-muted" />
+                      <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total</p>
+                    </div>
                     <p class="mt-2 text-2xl font-semibold text-fc-text-primary">{@stats.total}</p>
                   </.card_content>
                 </.card>
 
                 <.card variant="outline" color="success" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
-                    <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
+                    <div class="flex items-center gap-2">
+                      <.icon name="hero-check-circle" class="size-4" />
+                      <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
+                    </div>
                     <p class="mt-2 text-2xl font-semibold">{@stats.checked_in}</p>
                   </.card_content>
                 </.card>
 
                 <.card variant="outline" color="warning" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
-                    <p class="text-xs uppercase tracking-[0.3em] opacity-80">Remaining</p>
+                    <div class="flex items-center gap-2">
+                      <.icon name="hero-clock" class="size-4" />
+                      <p class="text-xs uppercase tracking-[0.3em] opacity-80">Remaining</p>
+                    </div>
                     <p class="mt-2 text-2xl font-semibold">{@stats.pending}</p>
                   </.card_content>
                 </.card>
 
                 <.card variant="outline" color="secondary" rounded="large" padding="medium" class="glass-card">
                   <.card_content>
-                    <p class="text-xs uppercase tracking-[0.3em] opacity-80">Currently inside</p>
+                    <div class="flex items-center gap-2">
+                      <.icon name="hero-user-group" class="size-4" />
+                      <p class="text-xs uppercase tracking-[0.3em] opacity-80">Inside</p>
+                    </div>
                     <p class="mt-2 text-2xl font-semibold">{@current_occupancy}</p>
                   </.card_content>
                 </.card>
@@ -833,9 +851,17 @@ defmodule FastCheckWeb.ScannerPortalLive do
                     {@search_error}
                   </p>
 
-                  <p :if={@search_loading} class="mt-3 text-sm text-fc-text-secondary">
-                    Searching attendees...
-                  </p>
+                  <div :if={@search_loading} class="mt-4 space-y-2">
+                    <div :for={_ <- 1..3} class="glass-card-recessed rounded-xl px-4 py-3">
+                      <div class="flex items-center justify-between gap-3">
+                        <div class="space-y-2">
+                          <div class="h-4 w-32 rounded fc-skeleton-shimmer"></div>
+                          <div class="h-3 w-20 rounded fc-skeleton-shimmer"></div>
+                        </div>
+                        <div class="h-8 w-16 rounded-lg fc-skeleton-shimmer"></div>
+                      </div>
+                    </div>
+                  </div>
 
                   <div :if={@search_results != []} class="mt-4 space-y-2">
                     <.card
@@ -875,15 +901,20 @@ defmodule FastCheckWeb.ScannerPortalLive do
                     </.card>
                   </div>
 
-                  <p
+                  <div
                     :if={
                       @search_results == [] and @search_query != "" and not @search_loading and
                         is_nil(@search_error)
                     }
-                    class="mt-4 text-sm text-fc-text-secondary"
+                    class="mt-6 flex flex-col items-center text-center"
                   >
-                    No attendees found for "{@search_query}".
-                  </p>
+                    <div class="rounded-2xl glass-card-recessed p-4 mb-3">
+                      <.icon name="hero-user-minus" class="size-8 text-fc-text-muted" />
+                    </div>
+                    <p class="text-sm text-fc-text-secondary">
+                      No attendees found for &ldquo;{@search_query}&rdquo;.
+                    </p>
+                  </div>
                 </.card_content>
               </.card>
             </section>
@@ -905,7 +936,10 @@ defmodule FastCheckWeb.ScannerPortalLive do
             size="small"
             full_width
           >
-            Overview
+            <span class="inline-flex flex-col items-center gap-0.5">
+              <.icon name="hero-chart-bar-mini" class="size-4" />
+              <span class="text-[10px]">Overview</span>
+            </span>
           </.button>
 
           <div class="flex justify-center">
@@ -941,7 +975,10 @@ defmodule FastCheckWeb.ScannerPortalLive do
             size="small"
             full_width
           >
-            Attendees
+            <span class="inline-flex flex-col items-center gap-0.5">
+              <.icon name="hero-users-mini" class="size-4" />
+              <span class="text-[10px]">Attendees</span>
+            </span>
           </.button>
         </div>
       </nav>
@@ -1139,6 +1176,16 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp scan_result_title(:archived, _), do: "Scanning unavailable"
   defp scan_result_title(:error, _), do: "Scan error"
   defp scan_result_title(_, _), do: "Scan status"
+
+  defp scan_result_icon(:success, "entry"), do: "hero-check-circle"
+  defp scan_result_icon(:success, "exit"), do: "hero-arrow-left-circle"
+  defp scan_result_icon(:duplicate_today, _), do: "hero-exclamation-triangle"
+  defp scan_result_icon(:already_inside, _), do: "hero-exclamation-triangle"
+  defp scan_result_icon(:not_checked_in, _), do: "hero-x-circle"
+  defp scan_result_icon(:limit_exceeded, _), do: "hero-no-symbol"
+  defp scan_result_icon(:invalid, _), do: "hero-x-circle"
+  defp scan_result_icon(:error, _), do: "hero-x-circle"
+  defp scan_result_icon(_, _), do: "hero-question-mark-circle"
 
   defp normalize_error_code(code) do
     code

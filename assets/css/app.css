@@ -138,11 +138,132 @@
     }
 }
 
+/* ──────────────────────────────────────────────────────────
+   Glass card tiers — visual hierarchy via weight
+   ────────────────────────────────────────────────────────── */
+
+/* Elevated — hero/header cards, feels "closer" to the user */
+.glass-card-elevated {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: var(--glass-shadow, none), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Recessed — stat tiles, inner data, feels "further away" */
+.glass-card-recessed {
+    position: relative;
+    border-radius: var(--fc-radius-card);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+}
+
+/* Light mode tier overrides */
+[data-theme=light] .glass-card-elevated {
+    background: var(--fc-surface-raised);
+    border-color: var(--fc-border-default);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+[data-theme=light] .glass-card-recessed {
+    background: var(--fc-surface-page);
+    border-color: var(--fc-border-subtle);
+    box-shadow: none;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Micro-interactions — all behind prefers-reduced-motion
+   ────────────────────────────────────────────────────────── */
+
+/* Page-level fade-in for LiveView navigations */
+@media (prefers-reduced-motion: no-preference) {
+    .phx-connected [data-phx-main] > * {
+        animation: fc-fade-in 200ms ease-out;
+    }
+}
+
+@keyframes fc-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Scan result attention flash — replays on each LiveView patch */
+@media (prefers-reduced-motion: no-preference) {
+    .fc-scan-pulse {
+        animation: fc-scan-flash 400ms ease-out;
+    }
+}
+
+@keyframes fc-scan-flash {
+    0% { transform: scale(1.02); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Primary CTA hover lift */
+@media (prefers-reduced-motion: no-preference) {
+    .fc-hover-lift {
+        transition: transform 150ms ease;
+    }
+    .fc-hover-lift:hover {
+        transform: translateY(-1px);
+    }
+    .fc-hover-lift:active {
+        transform: translateY(0);
+    }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Skeleton shimmer — loading placeholder animation
+   ────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+    .fc-skeleton-shimmer {
+        background: linear-gradient(
+            90deg,
+            var(--glass-bg, rgba(255,255,255,0.04)) 25%,
+            rgba(255,255,255,0.08) 50%,
+            var(--glass-bg, rgba(255,255,255,0.04)) 75%
+        );
+        background-size: 200% 100%;
+        animation: fc-shimmer 1.5s ease-in-out infinite;
+    }
+}
+
+@keyframes fc-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fc-skeleton-shimmer {
+        animation: none;
+    }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Tab bar — glass-styled tab container
+   ────────────────────────────────────────────────────────── */
+.fc-tab-bar {
+    position: relative;
+    display: inline-flex;
+    width: 100%;
+    border-radius: 0.75rem;
+    border: 1px solid var(--glass-border, var(--fc-border-default));
+    background: var(--glass-bg, var(--fc-surface-overlay));
+    padding: 0.25rem;
+}
+@media (min-width: 640px) {
+    .fc-tab-bar { width: auto; }
+}
+
 /* Respect reduced-motion — disable transitions globally */
 @media (prefers-reduced-motion: reduce) {
     .glass-card,
     .glass-card:hover {
         transition: none;
+    }
+    .fc-hover-lift,
+    .fc-hover-lift:hover {
+        transition: none;
+        transform: none;
     }
 }
 
