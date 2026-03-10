@@ -624,24 +624,25 @@ defmodule FastCheck.TickeraClient do
 
     case get_tickets_info(site_url, api_key, per_page, 1) do
       {:ok, first_resp} ->
-        {data, additional} = extract_tickets_page(first_resp)
-        total_count = extract_results_count(additional, data)
-
-        total_pages =
-          total_count
-          |> max(length(data))
-          |> then(&ceil(&1 / per_page))
-          |> max(1)
+        {data, _additional} = extract_tickets_page(first_resp)
+        page_count = length(data)
 
         parsed = Enum.map(data, &parse_attendee/1)
-        maybe_callback(callback, 1, total_pages, length(data))
+        maybe_callback(callback, 1, nil, page_count)
 
         acc = Enum.reduce(parsed, [], fn attendee, acc -> [attendee | acc] end)
 
-        case do_fetch_attendees(site_url, api_key, per_page, 2, total_pages, callback, acc) do
-          {:ok, attendees} -> {:ok, attendees, total_count}
-          {:fallback, cached, count} -> {:ok, cached, count}
-          {:error, reason, partial} -> {:error, reason, partial}
+        # Tickera's results_count returns per-page count, not total count.
+        # Use "fetch until short page" pagination: keep fetching until a page
+        # returns fewer items than per_page, indicating the last page.
+        if page_count < per_page do
+          {:ok, Enum.reverse(acc), page_count}
+        else
+          case do_fetch_attendees(site_url, api_key, per_page, 2, callback, acc) do
+            {:ok, attendees} -> {:ok, attendees, length(attendees)}
+            {:fallback, cached, count} -> {:ok, cached, count}
+            {:error, reason, partial} -> {:error, reason, partial}
+          end
         end
 
       {:error, reason} ->
@@ -852,21 +853,23 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp do_fetch_attendees(_site_url, _api_key, _per_page, page, total_pages, _callback, acc)
-       when page > total_pages do
-    {:ok, Enum.reverse(acc)}
-  end
-
-  defp do_fetch_attendees(site_url, api_key, per_page, page, total_pages, callback, acc) do
+  defp do_fetch_attendees(site_url, api_key, per_page, page, callback, acc) do
     :timer.sleep(@pagination_delay)
 
     case get_tickets_info(site_url, api_key, per_page, page) do
       {:ok, response} ->
         {data, _additional} = extract_tickets_page(response)
+        page_count = length(data)
         parsed = Enum.map(data, &parse_attendee/1)
-        maybe_callback(callback, page, total_pages, length(data))
+        maybe_callback(callback, page, nil, page_count)
         new_acc = Enum.reduce(parsed, acc, fn attendee, acc -> [attendee | acc] end)
-        do_fetch_attendees(site_url, api_key, per_page, page + 1, total_pages, callback, new_acc)
+
+        if page_count < per_page do
+          # Short page means we've reached the end
+          {:ok, Enum.reverse(new_acc)}
+        else
+          do_fetch_attendees(site_url, api_key, per_page, page + 1, callback, new_acc)
+        end
 
       {:error, reason} ->
         handle_attendee_fallback(site_url, api_key, reason, Enum.reverse(acc))
@@ -920,15 +923,6 @@ defmodule FastCheck.TickeraClient do
   defp merge_additional(acc, %{} = additional), do: Map.merge(acc, additional)
   defp merge_additional(acc, _), do: acc
 
-  defp extract_results_count(additional, data) do
-    additional
-    |> Map.get("results_count", Map.get(additional, :results_count))
-    |> coerce_integer()
-    |> case do
-      count when count > 0 -> count
-      _ -> length(data)
-    end
-  end
 
   defp normalize_custom_fields(fields) when is_list(fields) do
     fields
