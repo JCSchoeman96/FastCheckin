@@ -1,4 +1,4 @@
-package za.co.voelgoed.fastcheck.feature.scanning
+package za.co.voelgoed.fastcheck.feature.scanning.usecase
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
@@ -10,7 +10,6 @@ import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
-import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 
 class ScanCapturePipelineTest {
     @Test
