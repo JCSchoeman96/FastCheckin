@@ -19,8 +19,7 @@ data class ScannerCameraBinding(
 @Singleton
 open class ScannerCameraBinder @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val scannerCameraConfig: ScannerCameraConfig,
-    private val scannerFrameClosingAnalyzer: ScannerFrameClosingAnalyzer
+    private val scannerCameraConfig: ScannerCameraConfig
 ) {
     open fun bindPreview(
         lifecycleOwner: LifecycleOwner,
@@ -37,22 +36,7 @@ open class ScannerCameraBinder @Inject constructor(
         )
     }
 
-    open fun bindCameraPipeline(
-        lifecycleOwner: LifecycleOwner,
-        previewView: PreviewView,
-        onBound: (ScannerCameraBinding) -> Unit,
-        onError: (Throwable) -> Unit
-    ) {
-        bind(
-            lifecycleOwner = lifecycleOwner,
-            previewView = previewView,
-            analyzer = scannerFrameClosingAnalyzer,
-            onBound = onBound,
-            onError = onError
-        )
-    }
-
-    private fun bind(
+    open fun bind(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
         analyzer: ImageAnalysis.Analyzer?,

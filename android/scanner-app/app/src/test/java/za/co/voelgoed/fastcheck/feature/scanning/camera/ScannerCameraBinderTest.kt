@@ -36,14 +36,13 @@ class ScannerCameraBinderTest {
     }
 
     @Test
-    fun primaryPipelineBindingDoesNotRequireAnalyzerParameter() {
-        val bindCameraPipeline =
+    fun genericBindingAcceptsOptionalAnalyzerAtScannerBoundary() {
+        val bind =
             ScannerCameraBinder::class.java.methods.single { method ->
-                method.name == "bindCameraPipeline"
+                method.name == "bind"
             }
 
-        assertThat(bindCameraPipeline.parameterTypes.toList())
-            .doesNotContain(ImageAnalysis.Analyzer::class.java)
+        assertThat(bind.parameterTypes.toList()).contains(ImageAnalysis.Analyzer::class.java)
     }
 
     @Test
@@ -54,8 +53,7 @@ class ScannerCameraBinderTest {
         assertThat(parameterNames)
             .containsExactly(
                 "android.content.Context",
-                ScannerCameraConfig::class.java.name,
-                ScannerFrameClosingAnalyzer::class.java.name
+                ScannerCameraConfig::class.java.name
             )
     }
 }

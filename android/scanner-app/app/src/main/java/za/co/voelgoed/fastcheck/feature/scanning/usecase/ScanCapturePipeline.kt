@@ -5,7 +5,7 @@ import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodedBarcodeHandler
 import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
-import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 
 /**
@@ -13,7 +13,8 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
  * Queueing remains local-first and upload/flush stays outside scanner code.
  */
 class ScanCapturePipeline @Inject constructor(
-    private val queueCapturedScan: QueueCapturedScanUseCase
+    private val queueCapturedScan: QueueCapturedScanUseCase,
+    private val scannerCaptureConfig: ScannerCaptureConfig
 ) : DecodedBarcodeHandler {
     override suspend fun onDecoded(decodedBarcode: DecodedBarcode) {
         val candidate = ScannerCandidate.fromDecoded(decodedBarcode) ?: return
@@ -24,9 +25,9 @@ class ScanCapturePipeline @Inject constructor(
         val queueResult =
             queueCapturedScan.enqueue(
                 ticketCode = candidate.rawValue,
-                direction = ScannerCaptureDefaults.direction,
-                operatorName = ScannerCaptureDefaults.operatorName,
-                entranceName = ScannerCaptureDefaults.entranceName
+                direction = scannerCaptureConfig.direction,
+                operatorName = scannerCaptureConfig.operatorName,
+                entranceName = scannerCaptureConfig.entranceName
             )
 
         return ScannerResultMapper.fromQueueResult(candidate, queueResult)

@@ -5,6 +5,8 @@ import org.junit.Test
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
 
 class ScannerStateMachineTest {
+    private val feedbackConfig = ScannerFeedbackConfig.default
+
     @Test
     fun permissionRequiredTransitionsIntoInitializingAndSeeking() {
         assertThat(ScannerStateMachine.permissionRequired(CameraPermissionState.UNKNOWN))
@@ -35,12 +37,17 @@ class ScannerStateMachineTest {
         assertThat(ScannerStateMachine.onResultVisible(result))
             .isEqualTo(ScannerState.QueuedLocally(result))
 
-        val cooldownState = ScannerStateMachine.onCooldownStarted(result, startedAtEpochMillis = 100L)
+        val cooldownState =
+            ScannerStateMachine.onCooldownStarted(
+                result,
+                startedAtEpochMillis = 100L,
+                cooldownMillis = feedbackConfig.resultCooldownMillis
+            )
         assertThat(cooldownState)
             .isEqualTo(
                 ScannerState.Cooldown(
                     result = result,
-                    cooldown = ScannerCooldown.create(100L, ScannerCaptureDefaults.resultCooldownMillis)
+                    cooldown = ScannerCooldown.create(100L, feedbackConfig.resultCooldownMillis)
                 )
             )
 
@@ -59,11 +66,17 @@ class ScannerStateMachineTest {
             .isEqualTo(ScannerState.ProcessingLock(candidate))
         assertThat(ScannerStateMachine.onResultVisible(result))
             .isEqualTo(ScannerState.ReplaySuppressed(result))
-        assertThat(ScannerStateMachine.onCooldownStarted(result, startedAtEpochMillis = 200L))
+        assertThat(
+            ScannerStateMachine.onCooldownStarted(
+                result,
+                startedAtEpochMillis = 200L,
+                cooldownMillis = feedbackConfig.resultCooldownMillis
+            )
+        )
             .isEqualTo(
                 ScannerState.Cooldown(
                     result = result,
-                    cooldown = ScannerCooldown.create(200L, ScannerCaptureDefaults.resultCooldownMillis)
+                    cooldown = ScannerCooldown.create(200L, feedbackConfig.resultCooldownMillis)
                 )
             )
     }

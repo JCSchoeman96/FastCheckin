@@ -1,22 +1,24 @@
 package za.co.voelgoed.fastcheck.feature.scanning.ui
 
+import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import org.junit.Test
-import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionChecker
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class ScanningViewModelTest {
     private val clock = Clock.fixed(Instant.parse("2026-03-13T08:30:00Z"), ZoneOffset.UTC)
+    private val feedbackConfig = ScannerFeedbackConfig.default
 
     @Test
     fun startupPermissionRefreshUsesCheckerAndDeniedStateKeepsPreviewHidden() {
@@ -24,7 +26,8 @@ class ScanningViewModelTest {
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
-                clock
+                clock,
+                feedbackConfig
             )
 
         viewModel.start()
@@ -47,7 +50,8 @@ class ScanningViewModelTest {
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
-                clock
+                clock,
+                feedbackConfig
             )
 
         viewModel.start()
@@ -65,7 +69,8 @@ class ScanningViewModelTest {
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
-                clock
+                clock,
+                feedbackConfig
             )
         val candidate = ScannerCandidate("VG-5", 10L)
 
@@ -88,12 +93,30 @@ class ScanningViewModelTest {
     }
 
     @Test
+    fun cooldownUsesInjectedScannerFeedbackConfig() {
+        val viewModel =
+            ScanningViewModel(
+                ScanningUiStateFactory(),
+                FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
+                clock,
+                ScannerFeedbackConfig(resultCooldownMillis = 2_400L)
+            )
+        val candidate = ScannerCandidate("VG-55", 10L)
+
+        viewModel.onCooldownStarted(ScannerResult.ReplaySuppressed(candidate))
+
+        val cooldownState = viewModel.uiState.value.scannerState as ScannerState.Cooldown
+        assertThat(cooldownState.cooldown.endsAtEpochMillis).isEqualTo(clock.millis() + 2_400L)
+    }
+
+    @Test
     fun cameraBindFailureStaysScannerLocal() {
         val viewModel =
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
-                clock
+                clock,
+                feedbackConfig
             )
 
         viewModel.start()

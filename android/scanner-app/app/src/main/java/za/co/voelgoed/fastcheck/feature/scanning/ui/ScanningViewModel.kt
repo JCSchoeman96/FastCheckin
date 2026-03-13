@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionChecker
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerStateMachine
@@ -18,7 +19,8 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerStateMachine
 class ScanningViewModel @Inject constructor(
     private val scanningUiStateFactory: ScanningUiStateFactory,
     private val cameraPermissionChecker: CameraPermissionChecker,
-    private val clock: Clock
+    private val clock: Clock,
+    private val scannerFeedbackConfig: ScannerFeedbackConfig
 ) : ViewModel() {
     private val _uiState =
         MutableStateFlow(
@@ -82,7 +84,8 @@ class ScanningViewModel @Inject constructor(
         transitionTo(
             ScannerStateMachine.onCooldownStarted(
                 result = result,
-                startedAtEpochMillis = clock.millis()
+                startedAtEpochMillis = clock.millis(),
+                cooldownMillis = scannerFeedbackConfig.resultCooldownMillis
             )
         )
     }

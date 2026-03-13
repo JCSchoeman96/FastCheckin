@@ -15,16 +15,16 @@ import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.databinding.ScannerScreenBinding
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionChecker
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
-import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinding
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
-import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerFrameClosingAnalyzer
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
 
 @RunWith(RobolectricTestRunner::class)
 class ScannerScreenTest {
     private val clock = Clock.fixed(Instant.parse("2026-03-13T08:30:00Z"), ZoneOffset.UTC)
+    private val feedbackConfig = ScannerFeedbackConfig.default
 
     @Test
     fun renderTogglesPreviewVisibilityAndStatusText() {
@@ -36,13 +36,10 @@ class ScannerScreenTest {
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
-                clock
+                clock,
+                feedbackConfig
             )
-        val binder = ScannerCameraBinder(
-            ApplicationProvider.getApplicationContext(),
-            ScannerCameraConfig.default,
-            ScannerFrameClosingAnalyzer()
-        )
+        val binder = ScannerCameraBinder(ApplicationProvider.getApplicationContext(), ScannerCameraConfig.default)
         val screen =
             ScannerScreen(
                 binding = binding,
@@ -100,7 +97,7 @@ class ScannerScreenTest {
     }
 
     @Test
-    fun renderInitializingCameraTriggersPreviewAndAnalysisBindingPath() {
+    fun renderInitializingCameraTriggersPreviewBindingPath() {
         val binding =
             ScannerScreenBinding.inflate(
                 LayoutInflater.from(ApplicationProvider.getApplicationContext())
@@ -109,7 +106,8 @@ class ScannerScreenTest {
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
-                clock
+                clock,
+                feedbackConfig
             )
         val binder = FakeScannerCameraBinder()
         val screen =
@@ -138,7 +136,7 @@ class ScannerScreenTest {
             )
         )
 
-        assertThat(binder.bindCameraPipelineCalls).isEqualTo(1)
+        assertThat(binder.bindPreviewCalls).isEqualTo(1)
         assertThat(viewModel.uiState.value.scannerState).isEqualTo(ScannerState.Seeking())
     }
 
@@ -152,7 +150,8 @@ class ScannerScreenTest {
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
-                clock
+                clock,
+                feedbackConfig
             )
         val binder = FakeScannerCameraBinder(failureMessage = "Camera unavailable")
         val screen =
@@ -181,7 +180,7 @@ class ScannerScreenTest {
             )
         )
 
-        assertThat(binder.bindCameraPipelineCalls).isEqualTo(1)
+        assertThat(binder.bindPreviewCalls).isEqualTo(1)
         assertThat(viewModel.uiState.value.scannerState)
             .isEqualTo(
                 ScannerState.Seeking(
@@ -198,30 +197,21 @@ class ScannerScreenTest {
 
     private class FakeScannerCameraBinder(
         private val failureMessage: String? = null
-    ) : ScannerCameraBinder(
-        ApplicationProvider.getApplicationContext(),
-        ScannerCameraConfig.default,
-        ScannerFrameClosingAnalyzer()
-    ) {
-        var bindCameraPipelineCalls: Int = 0
+    ) : ScannerCameraBinder(ApplicationProvider.getApplicationContext(), ScannerCameraConfig.default) {
+        var bindPreviewCalls: Int = 0
 
-        override fun bindCameraPipeline(
+        override fun bindPreview(
             lifecycleOwner: LifecycleOwner,
             previewView: androidx.camera.view.PreviewView,
-            onBound: (ScannerCameraBinding) -> Unit,
+            onBound: () -> Unit,
             onError: (Throwable) -> Unit
         ) {
-            bindCameraPipelineCalls += 1
+            bindPreviewCalls += 1
 
             if (failureMessage != null) {
                 onError(IllegalStateException(failureMessage))
             } else {
-                onBound(
-                    ScannerCameraBinding(
-                        config = ScannerCameraConfig.default,
-                        hasImageAnalysis = true
-                    )
-                )
+                onBound()
             }
         }
     }

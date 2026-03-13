@@ -58,8 +58,13 @@ Hilt is used for:
 - secure token vault and DataStore-backed stores
 - repository bindings
 - queue/flush use cases
-- scanner decode handler and ML Kit scanner engine
+- scanner capture/feedback/camera/format config
+- scanner decode handler, real analyzer binding, and ML Kit scanner engine
 - WorkManager worker injection
+
+Scanner replay suppression remains queue/repository-owned. Scanner feedback
+cooldown is a separate scanner config concern. The shared app `Clock` remains
+the only time abstraction; scanner modules must not provide a second clock.
 
 Custom WorkManager initialization exists only because Hilt worker injection
 requires a non-default worker factory. No other custom WorkManager behavior is

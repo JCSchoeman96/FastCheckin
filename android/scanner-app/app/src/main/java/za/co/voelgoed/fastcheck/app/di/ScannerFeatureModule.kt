@@ -1,5 +1,6 @@
 package za.co.voelgoed.fastcheck.app.di
 
+import androidx.camera.core.ImageAnalysis
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import dagger.Binds
 import dagger.Module
@@ -10,10 +11,13 @@ import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodedBarcodeHandler
+import za.co.voelgoed.fastcheck.feature.scanning.analysis.MlKitBarcodeFrameAnalyzer
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.MlKitBarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.MlKitBarcodeScannerFactory
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.ScannerFormatConfig
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 
 @Module
@@ -30,6 +34,11 @@ abstract class ScannerFeatureModule {
         engine: MlKitBarcodeScannerEngine
     ): BarcodeScannerEngine
 
+    @Binds
+    abstract fun bindImageAnalysisAnalyzer(
+        analyzer: MlKitBarcodeFrameAnalyzer
+    ): ImageAnalysis.Analyzer
+
     companion object {
         @Provides
         @Singleton
@@ -42,6 +51,14 @@ abstract class ScannerFeatureModule {
         @Provides
         @Singleton
         fun provideScannerCameraConfig(): ScannerCameraConfig = ScannerCameraConfig.default
+
+        @Provides
+        @Singleton
+        fun provideScannerCaptureConfig(): ScannerCaptureConfig = ScannerCaptureConfig.default
+
+        @Provides
+        @Singleton
+        fun provideScannerFeedbackConfig(): ScannerFeedbackConfig = ScannerFeedbackConfig.default
 
         @Provides
         @Singleton
