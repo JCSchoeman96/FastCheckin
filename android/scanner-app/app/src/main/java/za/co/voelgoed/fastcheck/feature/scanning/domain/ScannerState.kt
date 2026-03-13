@@ -1,5 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.domain
 
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
+
 sealed interface ScannerState {
     fun permissionState(): CameraPermissionState =
         when (this) {

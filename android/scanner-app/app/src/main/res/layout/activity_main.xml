@@ -98,48 +98,12 @@
             android:layout_marginTop="4dp"
             android:text="@string/no_errors" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/scanner_section_title"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/scanner_permission_label"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/scanner_permission_value"
+        <include
+            android:id="@+id/scanner_screen"
+            layout="@layout/scanner_screen"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/scanner_permission_unknown" />
-
-        <Button
-            android:id="@+id/request_camera_permission_button"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/request_camera_permission_button_label" />
-
-        <androidx.camera.view.PreviewView
-            android:id="@+id/scanner_preview"
-            android:layout_width="match_parent"
-            android:layout_height="220dp"
-            android:layout_marginTop="12dp"
-            android:background="#1A1A1A"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/scanner_status_value"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/scanner_status_ready" />
+            android:layout_marginTop="24dp" />
 
         <TextView
             android:layout_width="wrap_content"

@@ -1,5 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.domain
 
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
+
 object ScannerStateMachine {
     fun onPermissionUpdated(isGranted: Boolean): ScannerState =
         if (isGranted) {
