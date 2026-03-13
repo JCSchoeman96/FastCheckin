@@ -9,7 +9,10 @@ import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
+import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 
 class ScanCapturePipelineTest {
     @Test
@@ -17,7 +20,7 @@ class ScanCapturePipelineTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
         val pipeline = ScanCapturePipeline(fakeUseCase)
 
-        pipeline.onDecoded("VG-101")
+        pipeline.onDecoded(DecodedBarcode(rawValue = "VG-101", capturedAtEpochMillis = 1L))
 
         assertThat(fakeUseCase.ticketCode).isEqualTo("VG-101")
         assertThat(fakeUseCase.direction).isEqualTo(ScanDirection.IN)
@@ -34,6 +37,22 @@ class ScanCapturePipelineTest {
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileApi::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileRemoteDataSource::class.java)
         assertThat(constructorParameterTypes).doesNotContain(MobileScanRepository::class.java)
+    }
+
+    @Test
+    fun mapsQueueOutcomeIntoScannerLocalResult() = runTest {
+        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val pipeline = ScanCapturePipeline(fakeUseCase)
+
+        val result =
+            pipeline.processCandidate(
+                ScannerCandidate(
+                    rawValue = "VG-101",
+                    capturedAtEpochMillis = 55L
+                )
+            )
+
+        assertThat(result).isEqualTo(ScannerResult.ReplaySuppressed(ScannerCandidate("VG-101", 55L)))
     }
 
     private class RecordingQueueCapturedScanUseCase : QueueCapturedScanUseCase {

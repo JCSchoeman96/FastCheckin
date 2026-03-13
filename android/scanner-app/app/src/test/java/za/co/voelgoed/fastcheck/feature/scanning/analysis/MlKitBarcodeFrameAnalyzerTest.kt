@@ -69,10 +69,10 @@ class MlKitBarcodeFrameAnalyzerTest {
     }
 
     private class RecordingDecodedBarcodeHandler : DecodedBarcodeHandler {
-        val decodedValues = mutableListOf<String>()
+        val decodedValues = mutableListOf<DecodedBarcode>()
 
-        override suspend fun onDecoded(rawValue: String) {
-            decodedValues += rawValue
+        override suspend fun onDecoded(decodedBarcode: DecodedBarcode) {
+            decodedValues += decodedBarcode
         }
     }
 

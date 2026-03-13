@@ -29,6 +29,7 @@ class RuntimeContractAuditTest {
 
         assertThat(sourceText).contains("feature.queue.QueueViewModel")
         assertThat(sourceText).contains("feature.scanning.ui.ScanningViewModel")
+        assertThat(sourceText).contains("feature.scanning.domain.ScannerState")
         assertThat(sourceText).doesNotContain("domain.model.FlushSummary")
         assertThat(sourceText).doesNotContain("class FlushSummary")
         assertThat(sourceText).doesNotContain("/api/v1/device_sessions")

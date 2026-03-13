@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
 
 class MlKitBarcodeFrameAnalyzer @Inject constructor(
     private val barcodeScannerEngine: BarcodeScannerEngine,
@@ -43,15 +44,15 @@ class MlKitBarcodeFrameAnalyzer @Inject constructor(
         decodedBarcodes: List<DecodedBarcode>,
         imageProxy: ImageProxy
     ) {
-        val rawValue = decodedBarcodes.firstNotNullOfOrNull { barcode ->
-            barcode.rawValue?.trim()?.takeIf { value -> value.isNotEmpty() }
+        val decodedBarcode = decodedBarcodes.firstNotNullOfOrNull { barcode ->
+            ScannerCandidate.fromDecoded(barcode)?.let { barcode }
         }
 
         imageProxy.close()
 
-        if (rawValue != null) {
+        if (decodedBarcode != null) {
             scope.launch {
-                decodedBarcodeHandler.onDecoded(rawValue)
+                decodedBarcodeHandler.onDecoded(decodedBarcode)
             }
         }
     }
