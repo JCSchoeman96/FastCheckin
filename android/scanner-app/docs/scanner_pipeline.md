@@ -15,13 +15,17 @@ Package note:
 
 Pipeline:
 
-1. `ScannerCameraBinder` binds CameraX preview from the scanner UI boundary
-2. real analyzer collaborators are injectable through Hilt, but preview runtime remains preview-only in this pass
-3. ML Kit decode stays behind the scanner analysis boundary
-4. decoded value is handed to `DecodedBarcodeHandler`
-5. `ScanCapturePipeline` forwards the raw value into the existing queue use case using scanner capture config
-6. Room queueing and replay suppression run through the current repository path
-7. WorkManager flushes later
+1. `ScannerScreen` activates `ScannerCameraBinder.bind(...)` with preview plus analyzer
+2. `MlKitBarcodeFrameAnalyzer` reads `ImageProxy.image`
+3. `InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)` builds the ML Kit input without `Bitmap` conversion
+4. `MlKitBarcodeScannerEngine` decodes only the formats allowed by `ScannerFormatConfig`
+5. `ScannerDetectionMapper` converts ML Kit detections into `ScannerDetection`
+6. `ScannerFrameGate` admits at most one detection into the scanner loop while processing/cooldown is active
+7. admitted detections cross the scanner feature boundary as `DecodedBarcode`
+8. `ScannerLoopCoordinator` drives candidate, processing, result, and cooldown events into the scanner loop
+9. `ScanCapturePipeline` forwards the raw value into the existing queue use case using scanner capture config
+10. Room queueing and replay suppression run through the current repository path
+11. WorkManager flushes later
 
 No direct network call is allowed from analyzer code, CameraX integration, or
 the immediate decode handoff path.
@@ -61,6 +65,8 @@ Critical rules:
   callbacks while the immediate local handoff is in flight.
 - `Cooldown` is explicit and time-based in the scanner domain. It is not hidden
   inside UI booleans.
+- `ScannerFrameGate` is admission control only. It does not own scanner state
+  transitions and it is not replay suppression logic.
 - scanner cooldown timing is scanner feedback config, not replay suppression policy
 - Queue/flush diagnostics state stays outside the scanner loop. Scanner UI may
   show queue outcomes only after mapping them into scanner-local result and
@@ -87,9 +93,9 @@ These rules exist to minimize latency and avoid frame backlog.
 
 Scanner capture metadata and scanner cooldown are Hilt-provided scanner config.
 Replay suppression remains repository-owned and separate from scanner cooldown.
-The current scanner screen remains preview-only at runtime. Real analyzer
-collaborators are injectable, but they are not activated in the preview flow in
-this pass.
+The current scanner screen activates the real analyzer at runtime through the
+scanner feature boundary only. `ScannerCameraBinder` stays generic and does not
+own analyzer selection.
 
 ## Direction
 
@@ -99,8 +105,10 @@ The domain type remains future-capable, but runtime decode flows expose only
 ## Unresolved Normalization Question
 
 It is not yet confirmed whether the raw QR payload always equals backend
-`ticket_code`. The current runtime must preserve the scanned payload as-is and
-must not introduce hidden normalization policy.
+`ticket_code`. The current scanner runtime drops null/blank detections, but it
+preserves non-blank raw values unchanged through `ScannerDetection`,
+`DecodedBarcode`, and `ScannerCandidate`. Hidden trimming or parsing is not
+allowed in scanner analysis code.
 
 ## References
 

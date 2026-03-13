@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.viewModels
+import androidx.camera.core.ImageAnalysis
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -28,6 +29,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var scannerCameraBinder: ScannerCameraBinder
 
+    @Inject
+    lateinit var scannerAnalyzer: ImageAnalysis.Analyzer
+
     private val authViewModel: AuthViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
@@ -50,6 +54,7 @@ class MainActivity : ComponentActivity() {
                 lifecycleOwner = this,
                 scanningViewModel = scanningViewModel,
                 scannerCameraBinder = scannerCameraBinder,
+                scannerAnalyzer = scannerAnalyzer,
                 onLaunchPermissionRequest = {
                     cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
                 }

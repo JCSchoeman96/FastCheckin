@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.ui
 
 import android.view.View
+import androidx.camera.core.ImageAnalysis
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -16,6 +17,7 @@ class ScannerScreen(
     private val lifecycleOwner: LifecycleOwner,
     private val scanningViewModel: ScanningViewModel,
     private val scannerCameraBinder: ScannerCameraBinder,
+    private val scannerAnalyzer: ImageAnalysis.Analyzer,
     private val onLaunchPermissionRequest: () -> Unit
 ) {
     private val permissionView =
@@ -70,9 +72,10 @@ class ScannerScreen(
     private fun bindPreview() {
         previewBindingInProgress = true
         scanningViewModel.onScannerBindingStarted()
-        scannerCameraBinder.bindPreview(
+        scannerCameraBinder.bind(
             lifecycleOwner = lifecycleOwner,
             previewView = binding.scannerPreview,
+            analyzer = scannerAnalyzer,
             onBound = {
                 previewBindingInProgress = false
                 previewBound = true

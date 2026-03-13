@@ -19,13 +19,15 @@ import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopController
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopCoordinator
 
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class ScannerFeatureModule {
     @Binds
     abstract fun bindDecodedBarcodeHandler(
-        pipeline: ScanCapturePipeline
+        coordinator: ScannerLoopCoordinator
     ): DecodedBarcodeHandler
 
     @Binds
@@ -33,6 +35,11 @@ abstract class ScannerFeatureModule {
     abstract fun bindBarcodeScannerEngine(
         engine: MlKitBarcodeScannerEngine
     ): BarcodeScannerEngine
+
+    @Binds
+    abstract fun bindScannerLoopController(
+        coordinator: ScannerLoopCoordinator
+    ): ScannerLoopController
 
     @Binds
     abstract fun bindImageAnalysisAnalyzer(

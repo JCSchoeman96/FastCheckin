@@ -12,7 +12,8 @@ import za.co.voelgoed.fastcheck.feature.scanning.analysis.ScannerFormatConfig
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
-import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopController
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopCoordinator
 
 class ScannerFeatureModuleTest {
     @Test
@@ -46,12 +47,17 @@ class ScannerFeatureModuleTest {
         assertThat(methods.getValue("bindDecodedBarcodeHandler").returnType)
             .isEqualTo(DecodedBarcodeHandler::class.java)
         assertThat(methods.getValue("bindDecodedBarcodeHandler").parameterTypes.single())
-            .isEqualTo(ScanCapturePipeline::class.java)
+            .isEqualTo(ScannerLoopCoordinator::class.java)
 
         assertThat(methods.getValue("bindBarcodeScannerEngine").returnType)
             .isEqualTo(BarcodeScannerEngine::class.java)
         assertThat(methods.getValue("bindBarcodeScannerEngine").parameterTypes.single())
             .isEqualTo(MlKitBarcodeScannerEngine::class.java)
+
+        assertThat(methods.getValue("bindScannerLoopController").returnType)
+            .isEqualTo(ScannerLoopController::class.java)
+        assertThat(methods.getValue("bindScannerLoopController").parameterTypes.single())
+            .isEqualTo(ScannerLoopCoordinator::class.java)
 
         assertThat(methods.getValue("bindImageAnalysisAnalyzer").returnType)
             .isEqualTo(ImageAnalysis.Analyzer::class.java)

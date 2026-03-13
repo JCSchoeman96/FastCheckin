@@ -5,6 +5,7 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.MutableSharedFlow
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -14,6 +15,8 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopController
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopEvent
 
 @RunWith(RobolectricTestRunner::class)
 class ScanningViewModelTest {
@@ -27,7 +30,8 @@ class ScanningViewModelTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                FakeScannerLoopController()
             )
 
         viewModel.start()
@@ -51,7 +55,8 @@ class ScanningViewModelTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                FakeScannerLoopController()
             )
 
         viewModel.start()
@@ -65,28 +70,26 @@ class ScanningViewModelTest {
 
     @Test
     fun scannerUiStateWrapsFsmAndOverlayModels() {
+        val loopController = FakeScannerLoopController()
         val viewModel =
             ScanningViewModel(
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                loopController
             )
         val candidate = ScannerCandidate("VG-5", 10L)
 
-        viewModel.onCandidateDetected(candidate)
+        loopController.tryEmit(ScannerLoopEvent.CandidateAccepted(candidate))
         assertThat(viewModel.uiState.value.scannerState)
             .isEqualTo(ScannerState.CandidateDetected(candidate))
 
-        viewModel.onProcessingStarted(candidate)
+        loopController.tryEmit(ScannerLoopEvent.ProcessingStarted(candidate))
         assertThat(viewModel.uiState.value.scannerState)
             .isEqualTo(ScannerState.ProcessingLock(candidate))
 
-        viewModel.onImmediateResult(ScannerResult.ReplaySuppressed(candidate))
-        assertThat(viewModel.uiState.value.scannerState)
-            .isEqualTo(ScannerState.ReplaySuppressed(ScannerResult.ReplaySuppressed(candidate)))
-
-        viewModel.onCooldownStarted(ScannerResult.ReplaySuppressed(candidate))
+        loopController.tryEmit(ScannerLoopEvent.ImmediateResult(ScannerResult.ReplaySuppressed(candidate)))
         assertThat(viewModel.uiState.value.scannerState)
             .isInstanceOf(ScannerState.Cooldown::class.java)
         assertThat(viewModel.uiState.value.overlayModel.cooldownRemainingMillis).isEqualTo(1_500L)
@@ -99,7 +102,8 @@ class ScanningViewModelTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
                 clock,
-                ScannerFeedbackConfig(resultCooldownMillis = 2_400L)
+                ScannerFeedbackConfig(resultCooldownMillis = 2_400L),
+                FakeScannerLoopController()
             )
         val candidate = ScannerCandidate("VG-55", 10L)
 
@@ -116,7 +120,8 @@ class ScanningViewModelTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                FakeScannerLoopController()
             )
 
         viewModel.start()
@@ -135,5 +140,25 @@ class ScanningViewModelTest {
         private val state: CameraPermissionState
     ) : CameraPermissionChecker(ApplicationProvider.getApplicationContext()) {
         override fun currentState(): CameraPermissionState = state
+    }
+
+    private class FakeScannerLoopController : ScannerLoopController {
+        private val mutableEvents = MutableSharedFlow<ScannerLoopEvent>(replay = 1, extraBufferCapacity = 8)
+        var resetCalls: Int = 0
+        var cooldownCompleteCalls: Int = 0
+
+        override val events = mutableEvents
+
+        override fun reset() {
+            resetCalls += 1
+        }
+
+        override fun onCooldownComplete() {
+            cooldownCompleteCalls += 1
+        }
+
+        fun tryEmit(event: ScannerLoopEvent) {
+            mutableEvents.tryEmit(event)
+        }
     }
 }

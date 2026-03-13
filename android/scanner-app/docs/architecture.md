@@ -27,10 +27,10 @@ offline packages until the backend formally promotes a new contract.
 - `domain.usecase`: local-first queue and flush orchestration
 - `feature.queue`: temporary manual/debug queue UI only
 - `feature.scanning.camera`: CameraX preview and binding setup only
-- `feature.scanning.analysis`: ML Kit decode boundary only
+- `feature.scanning.analysis`: ML Kit decode boundary, detection mapping, and frame admission control
 - `feature.scanning.domain`: scanner-local state machine, cooldown, result, overlay, and capture models
-- `feature.scanning.usecase`: decoded-value handoff into queueing only
-- `feature.scanning.ui`: scanner permission/status UI state only
+- `feature.scanning.usecase`: scanner loop orchestration and decoded-value handoff into queueing
+- `feature.scanning.ui`: scanner permission/status UI state and runtime activation boundary
 - `feature.*`: UI/ViewModel state boundaries
 - `worker`: WorkManager queue flush
 
@@ -59,7 +59,7 @@ Hilt is used for:
 - repository bindings
 - queue/flush use cases
 - scanner capture/feedback/camera/format config
-- scanner decode handler, real analyzer binding, and ML Kit scanner engine
+- scanner decode handler, real analyzer binding, frame gate, and ML Kit scanner engine
 - WorkManager worker injection
 
 Scanner replay suppression remains queue/repository-owned. Scanner feedback
