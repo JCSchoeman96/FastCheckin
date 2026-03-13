@@ -11,11 +11,18 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class ScannerCameraBinding(
+    val config: ScannerCameraConfig,
+    val hasImageAnalysis: Boolean
+)
+
 @Singleton
-class ScannerCameraBinder @Inject constructor(
-    @param:ApplicationContext private val context: Context
+open class ScannerCameraBinder @Inject constructor(
+    @param:ApplicationContext private val context: Context,
+    private val scannerCameraConfig: ScannerCameraConfig,
+    private val scannerFrameClosingAnalyzer: ScannerFrameClosingAnalyzer
 ) {
-    fun bindPreview(
+    open fun bindPreview(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
         onBound: () -> Unit,
@@ -25,16 +32,31 @@ class ScannerCameraBinder @Inject constructor(
             lifecycleOwner = lifecycleOwner,
             previewView = previewView,
             analyzer = null,
+            onBound = { onBound() },
+            onError = onError
+        )
+    }
+
+    open fun bindCameraPipeline(
+        lifecycleOwner: LifecycleOwner,
+        previewView: PreviewView,
+        onBound: (ScannerCameraBinding) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        bind(
+            lifecycleOwner = lifecycleOwner,
+            previewView = previewView,
+            analyzer = scannerFrameClosingAnalyzer,
             onBound = onBound,
             onError = onError
         )
     }
 
-    fun bind(
+    private fun bind(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
         analyzer: ImageAnalysis.Analyzer?,
-        onBound: () -> Unit,
+        onBound: (ScannerCameraBinding) -> Unit,
         onError: (Throwable) -> Unit
     ) {
         val executor = ContextCompat.getMainExecutor(context)
@@ -45,13 +67,17 @@ class ScannerCameraBinder @Inject constructor(
                 try {
                     val cameraProvider = cameraProviderFuture.get()
                     val preview =
-                        Preview.Builder().build().also { useCase ->
-                            useCase.surfaceProvider = previewView.surfaceProvider
-                        }
+                        Preview.Builder()
+                            .applyCameraConfig(scannerCameraConfig)
+                            .build()
+                            .also { useCase ->
+                                useCase.surfaceProvider = previewView.surfaceProvider
+                            }
                     val imageAnalysis =
                         analyzer?.let { imageAnalyzer ->
                             ImageAnalysis.Builder()
-                                .setBackpressureStrategy(ScannerCameraConfig.backpressureStrategy)
+                                .applyCameraConfig(scannerCameraConfig)
+                                .setBackpressureStrategy(scannerCameraConfig.backpressureStrategy)
                                 .build()
                                 .also { useCase ->
                                     useCase.setAnalyzer(executor, imageAnalyzer)
@@ -62,18 +88,23 @@ class ScannerCameraBinder @Inject constructor(
                     if (imageAnalysis != null) {
                         cameraProvider.bindToLifecycle(
                             lifecycleOwner,
-                            ScannerCameraConfig.cameraSelector,
+                            scannerCameraConfig.cameraSelector(),
                             preview,
                             imageAnalysis
                         )
                     } else {
                         cameraProvider.bindToLifecycle(
                             lifecycleOwner,
-                            ScannerCameraConfig.cameraSelector,
+                            scannerCameraConfig.cameraSelector(),
                             preview
                         )
                     }
-                    onBound()
+                    onBound(
+                        ScannerCameraBinding(
+                            config = scannerCameraConfig,
+                            hasImageAnalysis = imageAnalysis != null
+                        )
+                    )
                 } catch (throwable: Throwable) {
                     onError(throwable)
                 }
@@ -81,4 +112,28 @@ class ScannerCameraBinder @Inject constructor(
             executor
         )
     }
+
+    @Suppress("DEPRECATION")
+    private fun Preview.Builder.applyCameraConfig(
+        config: ScannerCameraConfig
+    ): Preview.Builder =
+        apply {
+            if (config.targetResolution != null) {
+                setTargetResolution(config.targetResolution)
+            } else {
+                setTargetAspectRatio(config.aspectRatio)
+            }
+        }
+
+    @Suppress("DEPRECATION")
+    private fun ImageAnalysis.Builder.applyCameraConfig(
+        config: ScannerCameraConfig
+    ): ImageAnalysis.Builder =
+        apply {
+            if (config.targetResolution != null) {
+                setTargetResolution(config.targetResolution)
+            } else {
+                setTargetAspectRatio(config.aspectRatio)
+            }
+        }
 }

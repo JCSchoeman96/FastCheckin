@@ -15,12 +15,13 @@ Package note:
 
 Pipeline:
 
-1. camera frame enters image analysis
-2. ML Kit decodes candidate barcode payload
-3. decoded value is handed to `DecodedBarcodeHandler`
-4. `ScanCapturePipeline` forwards the raw value into the existing queue use case
-5. Room queueing and replay suppression run through the current repository path
-6. WorkManager flushes later
+1. `ScannerCameraBinder` binds CameraX `Preview` and `ImageAnalysis` together
+2. image analysis runs with a scanner-owned analyzer seam
+3. ML Kit may decode candidate barcode payload in later scanner-analysis wiring
+4. decoded value is handed to `DecodedBarcodeHandler`
+5. `ScanCapturePipeline` forwards the raw value into the existing queue use case
+6. Room queueing and replay suppression run through the current repository path
+7. WorkManager flushes later
 
 No direct network call is allowed from analyzer code, CameraX integration, or
 the immediate decode handoff path.
@@ -68,7 +69,11 @@ Critical rules:
 ## Performance Rules
 
 - use CameraX `ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST`
-- do not request native camera resolution
+- bind preview and analysis through `feature.scanning.camera.ScannerCameraBinder`
+- the default camera config in `feature.scanning.camera.ScannerCameraConfig` is:
+  back camera, `4:3` aspect ratio, no explicit target resolution, and
+  `KEEP_ONLY_LATEST`
+- do not request native camera resolution by default
 - centralize barcode scanner configuration in
   `feature.scanning.analysis.ScannerFormatConfig`
 - the current FastCheck default allowlist is `QR_CODE`, `CODE_128`, and
@@ -78,6 +83,10 @@ Critical rules:
   `ScannerFormatConfig` to the smallest confirmed set to reduce CPU cost
 
 These rules exist to minimize latency and avoid frame backlog.
+
+The current scanner screen binds the camera frame pipeline only. Business
+decode interpretation and queue handoff remain separate scanner-analysis and
+scanner-use-case concerns.
 
 ## Direction
 

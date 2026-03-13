@@ -15,7 +15,11 @@ import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.databinding.ScannerScreenBinding
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionChecker
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
+import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinding
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
+import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
+import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerFrameClosingAnalyzer
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
 
 @RunWith(RobolectricTestRunner::class)
@@ -34,12 +38,17 @@ class ScannerScreenTest {
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
                 clock
             )
+        val binder = ScannerCameraBinder(
+            ApplicationProvider.getApplicationContext(),
+            ScannerCameraConfig.default,
+            ScannerFrameClosingAnalyzer()
+        )
         val screen =
             ScannerScreen(
                 binding = binding,
                 lifecycleOwner = TestLifecycleOwner(),
                 scanningViewModel = viewModel,
-                scannerCameraBinder = ScannerCameraBinder(ApplicationProvider.getApplicationContext()),
+                scannerCameraBinder = binder,
                 onLaunchPermissionRequest = {}
             )
 
@@ -90,10 +99,131 @@ class ScannerScreenTest {
             .isEqualTo("Point the camera at a ticket QR code.")
     }
 
+    @Test
+    fun renderInitializingCameraTriggersPreviewAndAnalysisBindingPath() {
+        val binding =
+            ScannerScreenBinding.inflate(
+                LayoutInflater.from(ApplicationProvider.getApplicationContext())
+            )
+        val viewModel =
+            ScanningViewModel(
+                ScanningUiStateFactory(),
+                FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
+                clock
+            )
+        val binder = FakeScannerCameraBinder()
+        val screen =
+            ScannerScreen(
+                binding = binding,
+                lifecycleOwner = TestLifecycleOwner(),
+                scanningViewModel = viewModel,
+                scannerCameraBinder = binder,
+                onLaunchPermissionRequest = {}
+            )
+
+        screen.render(
+            ScanningUiState(
+                scannerState = ScannerState.InitializingCamera,
+                cameraPermissionState = CameraPermissionState.GRANTED,
+                permissionUiState =
+                    ScannerPermissionUiState(
+                        visible = false,
+                        headline = "Camera permission",
+                        message = "Camera permission granted.",
+                        requestButtonLabel = "Request Camera Permission",
+                        isRequestEnabled = false
+                    ),
+                scannerStatus = "Preparing camera preview.",
+                isPreviewVisible = true
+            )
+        )
+
+        assertThat(binder.bindCameraPipelineCalls).isEqualTo(1)
+        assertThat(viewModel.uiState.value.scannerState).isEqualTo(ScannerState.Seeking())
+    }
+
+    @Test
+    fun renderInitializingCameraPropagatesCameraBindingFailureAsScannerLocalError() {
+        val binding =
+            ScannerScreenBinding.inflate(
+                LayoutInflater.from(ApplicationProvider.getApplicationContext())
+            )
+        val viewModel =
+            ScanningViewModel(
+                ScanningUiStateFactory(),
+                FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
+                clock
+            )
+        val binder = FakeScannerCameraBinder(failureMessage = "Camera unavailable")
+        val screen =
+            ScannerScreen(
+                binding = binding,
+                lifecycleOwner = TestLifecycleOwner(),
+                scanningViewModel = viewModel,
+                scannerCameraBinder = binder,
+                onLaunchPermissionRequest = {}
+            )
+
+        screen.render(
+            ScanningUiState(
+                scannerState = ScannerState.InitializingCamera,
+                cameraPermissionState = CameraPermissionState.GRANTED,
+                permissionUiState =
+                    ScannerPermissionUiState(
+                        visible = false,
+                        headline = "Camera permission",
+                        message = "Camera permission granted.",
+                        requestButtonLabel = "Request Camera Permission",
+                        isRequestEnabled = false
+                    ),
+                scannerStatus = "Preparing camera preview.",
+                isPreviewVisible = true
+            )
+        )
+
+        assertThat(binder.bindCameraPipelineCalls).isEqualTo(1)
+        assertThat(viewModel.uiState.value.scannerState)
+            .isEqualTo(
+                ScannerState.Seeking(
+                    lastResult = ScannerResult.InitializationFailure("Camera unavailable")
+                )
+            )
+    }
+
     private class FakeCameraPermissionChecker(
         private val state: CameraPermissionState
     ) : CameraPermissionChecker(ApplicationProvider.getApplicationContext()) {
         override fun currentState(): CameraPermissionState = state
+    }
+
+    private class FakeScannerCameraBinder(
+        private val failureMessage: String? = null
+    ) : ScannerCameraBinder(
+        ApplicationProvider.getApplicationContext(),
+        ScannerCameraConfig.default,
+        ScannerFrameClosingAnalyzer()
+    ) {
+        var bindCameraPipelineCalls: Int = 0
+
+        override fun bindCameraPipeline(
+            lifecycleOwner: LifecycleOwner,
+            previewView: androidx.camera.view.PreviewView,
+            onBound: (ScannerCameraBinding) -> Unit,
+            onError: (Throwable) -> Unit
+        ) {
+            bindCameraPipelineCalls += 1
+
+            if (failureMessage != null) {
+                onError(IllegalStateException(failureMessage))
+            } else {
+                onBound(
+                    ScannerCameraBinding(
+                        config = ScannerCameraConfig.default,
+                        hasImageAnalysis = true
+                    )
+                )
+            }
+        }
     }
 
     private class TestLifecycleOwner : LifecycleOwner {

@@ -63,14 +63,14 @@ class ScannerScreen(
             !previewBound &&
             !previewBindingInProgress
         ) {
-            bindPreview()
+            bindCameraPipeline()
         }
     }
 
-    private fun bindPreview() {
+    private fun bindCameraPipeline() {
         previewBindingInProgress = true
         scanningViewModel.onScannerBindingStarted()
-        scannerCameraBinder.bindPreview(
+        scannerCameraBinder.bindCameraPipeline(
             lifecycleOwner = lifecycleOwner,
             previewView = binding.scannerPreview,
             onBound = {
