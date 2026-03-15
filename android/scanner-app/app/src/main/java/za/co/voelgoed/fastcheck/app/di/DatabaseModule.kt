@@ -22,7 +22,7 @@ object DatabaseModule {
             FastCheckDatabase::class.java,
             FastCheckDatabase.DATABASE_NAME
         )
-            .fallbackToDestructiveMigration()
+            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 
     @Provides
