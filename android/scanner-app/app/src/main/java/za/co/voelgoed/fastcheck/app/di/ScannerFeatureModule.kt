@@ -13,6 +13,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodedBarcodeHandler
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.MlKitBarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.MlKitBarcodeScannerFactory
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.ScannerFormatConfig
+import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 
 @Module
@@ -37,6 +38,10 @@ abstract class ScannerFeatureModule {
         @Provides
         @Singleton
         fun provideScannerFormatConfig(): ScannerFormatConfig = ScannerFormatConfig.fastCheckDefault
+
+        @Provides
+        @Singleton
+        fun provideScannerCameraConfig(): ScannerCameraConfig = ScannerCameraConfig.default
 
         @Provides
         @Singleton
