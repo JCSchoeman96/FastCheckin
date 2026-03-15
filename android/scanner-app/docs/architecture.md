@@ -28,7 +28,7 @@ offline packages until the backend formally promotes a new contract.
 - `feature.queue`: temporary manual/debug queue UI only
 - `feature.scanning.camera`: CameraX preview and binding setup only
 - `feature.scanning.analysis`: ML Kit decode boundary only
-- `feature.scanning.domain`: scanner-local models and defaults
+- `feature.scanning.domain`: scanner-local state machine, cooldown, result, overlay, and capture models
 - `feature.scanning.usecase`: decoded-value handoff into queueing only
 - `feature.scanning.ui`: scanner permission/status UI state only
 - `feature.*`: UI/ViewModel state boundaries
@@ -39,7 +39,8 @@ offline packages until the backend formally promotes a new contract.
 - CameraX/ML Kit decode into local queueing only.
 - The temporary manual/debug queue UI lives in `feature.queue` only.
 - `feature.scanning` owns real scanner preview, analyzer, permission, and
-  decode handoff work.
+  decode handoff work. It is the clean home for real scanner capture flow
+  before CameraX code grows further.
 - Scanner analysis must never call network code directly.
 - Room is the structured local source for attendee cache, queued scans, replay
   cache, and sync metadata.
