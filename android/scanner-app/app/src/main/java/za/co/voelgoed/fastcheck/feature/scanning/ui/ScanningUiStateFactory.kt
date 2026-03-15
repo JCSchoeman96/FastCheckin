@@ -1,7 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.ui
 
 import javax.inject.Inject
-import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerOverlayFactory
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
 
@@ -17,6 +17,7 @@ class ScanningUiStateFactory @Inject constructor() {
             scannerState = scannerState,
             overlayModel = overlayModel,
             cameraPermissionState = permissionState,
+            permissionUiState = permissionUiState(scannerState, permissionState),
             permissionSummary = permissionSummary(permissionState),
             scannerStatus = overlayModel.message ?: overlayModel.headline,
             isPreviewVisible = scannerState !is ScannerState.PermissionRequired,
@@ -35,4 +36,16 @@ class ScanningUiStateFactory @Inject constructor() {
             CameraPermissionState.GRANTED ->
                 "Camera permission granted."
         }
+
+    private fun permissionUiState(
+        scannerState: ScannerState,
+        permissionState: CameraPermissionState
+    ): ScannerPermissionUiState =
+        ScannerPermissionUiState(
+            visible = scannerState is ScannerState.PermissionRequired,
+            headline = "Camera permission",
+            message = permissionSummary(permissionState),
+            requestButtonLabel = "Request Camera Permission",
+            isRequestEnabled = scannerState is ScannerState.PermissionRequired
+        )
 }

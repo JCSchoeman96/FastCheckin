@@ -7,7 +7,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionChecker
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
@@ -16,6 +17,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerStateMachine
 @HiltViewModel
 class ScanningViewModel @Inject constructor(
     private val scanningUiStateFactory: ScanningUiStateFactory,
+    private val cameraPermissionChecker: CameraPermissionChecker,
     private val clock: Clock
 ) : ViewModel() {
     private val _uiState =
@@ -28,7 +30,15 @@ class ScanningViewModel @Inject constructor(
     )
     val uiState: StateFlow<ScanningUiState> = _uiState.asStateFlow()
 
-    fun refreshPermissionState(isGranted: Boolean) {
+    fun start() {
+        transitionTo(ScannerStateMachine.onPermissionUpdated(cameraPermissionChecker.currentState().isGranted()))
+    }
+
+    fun refreshPermissionState() {
+        transitionTo(ScannerStateMachine.onPermissionUpdated(cameraPermissionChecker.currentState().isGranted()))
+    }
+
+    fun onPermissionResult(isGranted: Boolean) {
         transitionTo(ScannerStateMachine.onPermissionUpdated(isGranted))
     }
 
@@ -88,4 +98,6 @@ class ScanningViewModel @Inject constructor(
                 nowEpochMillis = clock.millis()
             )
     }
+
+    private fun CameraPermissionState.isGranted(): Boolean = this == CameraPermissionState.GRANTED
 }

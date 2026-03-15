@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.feature.scanning.domain
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraPermissionState
 
 class ScannerOverlayFactoryTest {
     @Test

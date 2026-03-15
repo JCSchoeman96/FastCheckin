@@ -13,12 +13,27 @@ import javax.inject.Singleton
 
 @Singleton
 class ScannerCameraBinder @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
+    fun bindPreview(
+        lifecycleOwner: LifecycleOwner,
+        previewView: PreviewView,
+        onBound: () -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        bind(
+            lifecycleOwner = lifecycleOwner,
+            previewView = previewView,
+            analyzer = null,
+            onBound = onBound,
+            onError = onError
+        )
+    }
+
     fun bind(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
-        analyzer: ImageAnalysis.Analyzer,
+        analyzer: ImageAnalysis.Analyzer?,
         onBound: () -> Unit,
         onError: (Throwable) -> Unit
     ) {
@@ -34,20 +49,30 @@ class ScannerCameraBinder @Inject constructor(
                             useCase.surfaceProvider = previewView.surfaceProvider
                         }
                     val imageAnalysis =
-                        ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ScannerCameraConfig.backpressureStrategy)
-                            .build()
-                            .also { useCase ->
-                                useCase.setAnalyzer(executor, analyzer)
-                            }
+                        analyzer?.let { imageAnalyzer ->
+                            ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ScannerCameraConfig.backpressureStrategy)
+                                .build()
+                                .also { useCase ->
+                                    useCase.setAnalyzer(executor, imageAnalyzer)
+                                }
+                        }
 
                     cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        ScannerCameraConfig.cameraSelector,
-                        preview,
-                        imageAnalysis
-                    )
+                    if (imageAnalysis != null) {
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            ScannerCameraConfig.cameraSelector,
+                            preview,
+                            imageAnalysis
+                        )
+                    } else {
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            ScannerCameraConfig.cameraSelector,
+                            preview
+                        )
+                    }
                     onBound()
                 } catch (throwable: Throwable) {
                     onError(throwable)
