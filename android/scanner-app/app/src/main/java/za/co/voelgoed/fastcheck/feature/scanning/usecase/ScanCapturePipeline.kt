@@ -3,7 +3,10 @@ package za.co.voelgoed.fastcheck.feature.scanning.usecase
 import javax.inject.Inject
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodedBarcodeHandler
+import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 
 /**
  * CameraX and ML Kit hand decoded values into this pipeline only.
@@ -12,12 +15,20 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
 class ScanCapturePipeline @Inject constructor(
     private val queueCapturedScan: QueueCapturedScanUseCase
 ) : DecodedBarcodeHandler {
-    override suspend fun onDecoded(rawValue: String) {
-        queueCapturedScan.enqueue(
-            ticketCode = rawValue,
-            direction = ScannerCaptureDefaults.direction,
-            operatorName = ScannerCaptureDefaults.operatorName,
-            entranceName = ScannerCaptureDefaults.entranceName
-        )
+    override suspend fun onDecoded(decodedBarcode: DecodedBarcode) {
+        val candidate = ScannerCandidate.fromDecoded(decodedBarcode) ?: return
+        processCandidate(candidate)
+    }
+
+    suspend fun processCandidate(candidate: ScannerCandidate): ScannerResult {
+        val queueResult =
+            queueCapturedScan.enqueue(
+                ticketCode = candidate.rawValue,
+                direction = ScannerCaptureDefaults.direction,
+                operatorName = ScannerCaptureDefaults.operatorName,
+                entranceName = ScannerCaptureDefaults.entranceName
+            )
+
+        return ScannerResultMapper.fromQueueResult(candidate, queueResult)
     }
 }
