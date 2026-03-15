@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FastCheck Scanner</string>
+    <string name="app_title">FastCheck Android Scanner</string>
+    <string name="app_subtitle">Current Phoenix mobile API login, attendee sync, manual debug queue, and diagnostics.</string>
+    <string name="login_section_title">Login</string>
+    <string name="event_id_hint">Event ID</string>
+    <string name="credential_hint">Credential</string>
+    <string name="login_button_label">Login and Store Session</string>
+    <string name="sync_section_title">Attendee Sync</string>
+    <string name="sync_button_label">Run Attendee Sync</string>
+    <string name="scanner_section_title">Scanner</string>
+    <string name="scanner_permission_label">Camera Permission</string>
+    <string name="scanner_permission_unknown">Camera permission status unknown.</string>
+    <string name="request_camera_permission_button_label">Request Camera Permission</string>
+    <string name="scanner_status_ready">Scanner scaffold ready. Decoded values will feed the existing local queue only.</string>
+    <string name="manual_queue_section_title">Manual Debug Queue</string>
+    <string name="manual_ticket_code_hint">Raw ticket_code</string>
+    <string name="manual_direction_label">Direction</string>
+    <string name="manual_direction_in">IN</string>
+    <string name="queue_scan_button_label">Queue Manual Scan</string>
+    <string name="flush_queue_button_label">Flush Queued Scans</string>
+    <string name="manual_queue_ready">Manual debug queue ready.</string>
+    <string name="diagnostics_section_title">Diagnostics</string>
+    <string name="refresh_label">Refresh</string>
+    <string name="current_event_label">Current Event</string>
+    <string name="auth_state_label">Auth / Session State</string>
+    <string name="token_expiry_label">Token Expiry State</string>
+    <string name="last_sync_label">Last Attendee Sync</string>
+    <string name="attendee_count_label">Attendee Count</string>
+    <string name="queue_depth_label">Queue Depth</string>
+    <string name="latest_flush_state_label">Latest Flush State</string>
+    <string name="latest_flush_summary_label">Latest Flush Summary</string>
+    <string name="recent_outcome_summary_label">Recent Outcomes</string>
+    <string name="no_active_event">No active event</string>
+    <string name="no_active_session">No active session</string>
+    <string name="no_sync_yet">No attendee sync has run yet.</string>
+    <string name="no_flush_yet">No flush has run yet.</string>
+    <string name="no_recent_outcomes">No recent flush outcomes.</string>
+    <string name="no_errors">No errors</string>
+    <string name="logged_out">Logged out</string>
+    <string name="unknown_value">Unknown</string>
+    <string name="never_value">Never</string>
+</resources>
