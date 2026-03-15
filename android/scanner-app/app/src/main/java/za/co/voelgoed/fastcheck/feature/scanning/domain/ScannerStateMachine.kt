@@ -51,7 +51,7 @@ object ScannerStateMachine {
     fun onCooldownStarted(
         result: ScannerResult,
         startedAtEpochMillis: Long,
-        cooldownMillis: Long = ScannerCaptureDefaults.resultCooldownMillis
+        cooldownMillis: Long
     ): ScannerState =
         ScannerState.Cooldown(
             result = result,

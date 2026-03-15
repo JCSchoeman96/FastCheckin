@@ -15,11 +15,11 @@ Package note:
 
 Pipeline:
 
-1. `ScannerCameraBinder` binds CameraX `Preview` and `ImageAnalysis` together
-2. image analysis runs with a scanner-owned analyzer seam
-3. ML Kit may decode candidate barcode payload in later scanner-analysis wiring
+1. `ScannerCameraBinder` binds CameraX preview from the scanner UI boundary
+2. real analyzer collaborators are injectable through Hilt, but preview runtime remains preview-only in this pass
+3. ML Kit decode stays behind the scanner analysis boundary
 4. decoded value is handed to `DecodedBarcodeHandler`
-5. `ScanCapturePipeline` forwards the raw value into the existing queue use case
+5. `ScanCapturePipeline` forwards the raw value into the existing queue use case using scanner capture config
 6. Room queueing and replay suppression run through the current repository path
 7. WorkManager flushes later
 
@@ -61,6 +61,7 @@ Critical rules:
   callbacks while the immediate local handoff is in flight.
 - `Cooldown` is explicit and time-based in the scanner domain. It is not hidden
   inside UI booleans.
+- scanner cooldown timing is scanner feedback config, not replay suppression policy
 - Queue/flush diagnostics state stays outside the scanner loop. Scanner UI may
   show queue outcomes only after mapping them into scanner-local result and
   overlay models.
@@ -84,9 +85,11 @@ Critical rules:
 
 These rules exist to minimize latency and avoid frame backlog.
 
-The current scanner screen binds the camera frame pipeline only. Business
-decode interpretation and queue handoff remain separate scanner-analysis and
-scanner-use-case concerns.
+Scanner capture metadata and scanner cooldown are Hilt-provided scanner config.
+Replay suppression remains repository-owned and separate from scanner cooldown.
+The current scanner screen remains preview-only at runtime. Real analyzer
+collaborators are injectable, but they are not activated in the preview flow in
+this pass.
 
 ## Direction
 

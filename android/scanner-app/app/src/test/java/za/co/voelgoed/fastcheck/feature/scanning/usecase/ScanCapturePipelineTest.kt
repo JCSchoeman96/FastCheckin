@@ -11,21 +11,23 @@ import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
-import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 
 class ScanCapturePipelineTest {
+    private val scannerCaptureConfig = ScannerCaptureConfig.default
+
     @Test
-    fun handsDecodedValueToLocalQueueWithScannerDefaults() = runTest {
+    fun handsDecodedValueToLocalQueueWithScannerConfig() = runTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
-        val pipeline = ScanCapturePipeline(fakeUseCase)
+        val pipeline = ScanCapturePipeline(fakeUseCase, scannerCaptureConfig)
 
         pipeline.onDecoded(DecodedBarcode(rawValue = "VG-101", capturedAtEpochMillis = 1L))
 
         assertThat(fakeUseCase.ticketCode).isEqualTo("VG-101")
         assertThat(fakeUseCase.direction).isEqualTo(ScanDirection.IN)
-        assertThat(fakeUseCase.operatorName).isEqualTo(ScannerCaptureDefaults.operatorName)
-        assertThat(fakeUseCase.entranceName).isEqualTo(ScannerCaptureDefaults.entranceName)
+        assertThat(fakeUseCase.operatorName).isEqualTo(scannerCaptureConfig.operatorName)
+        assertThat(fakeUseCase.entranceName).isEqualTo(scannerCaptureConfig.entranceName)
     }
 
     @Test
@@ -33,7 +35,8 @@ class ScanCapturePipelineTest {
         val constructorParameterTypes =
             ScanCapturePipeline::class.java.declaredConstructors.single().parameterTypes.toList()
 
-        assertThat(constructorParameterTypes).containsExactly(QueueCapturedScanUseCase::class.java)
+        assertThat(constructorParameterTypes)
+            .containsExactly(QueueCapturedScanUseCase::class.java, ScannerCaptureConfig::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileApi::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileRemoteDataSource::class.java)
         assertThat(constructorParameterTypes).doesNotContain(MobileScanRepository::class.java)
@@ -42,7 +45,7 @@ class ScanCapturePipelineTest {
     @Test
     fun mapsQueueOutcomeIntoScannerLocalResult() = runTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
-        val pipeline = ScanCapturePipeline(fakeUseCase)
+        val pipeline = ScanCapturePipeline(fakeUseCase, scannerCaptureConfig)
 
         val result =
             pipeline.processCandidate(
