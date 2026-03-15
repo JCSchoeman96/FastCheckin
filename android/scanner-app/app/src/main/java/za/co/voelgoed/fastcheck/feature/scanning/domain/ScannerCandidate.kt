@@ -6,8 +6,7 @@ data class ScannerCandidate(
 ) {
     companion object {
         fun fromDecoded(decodedBarcode: DecodedBarcode): ScannerCandidate? {
-            val rawValue = decodedBarcode.rawValue?.trim()?.takeIf { value -> value.isNotEmpty() }
-                ?: return null
+            val rawValue = decodedBarcode.rawValue?.takeUnless(String::isBlank) ?: return null
 
             return ScannerCandidate(
                 rawValue = rawValue,

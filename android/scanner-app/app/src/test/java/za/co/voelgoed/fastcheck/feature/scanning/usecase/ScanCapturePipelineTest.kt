@@ -9,7 +9,6 @@ import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
-import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
@@ -22,7 +21,7 @@ class ScanCapturePipelineTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
         val pipeline = ScanCapturePipeline(fakeUseCase, scannerCaptureConfig)
 
-        pipeline.onDecoded(DecodedBarcode(rawValue = "VG-101", capturedAtEpochMillis = 1L))
+        pipeline.processCandidate(ScannerCandidate(rawValue = "VG-101", capturedAtEpochMillis = 1L))
 
         assertThat(fakeUseCase.ticketCode).isEqualTo("VG-101")
         assertThat(fakeUseCase.direction).isEqualTo(ScanDirection.IN)

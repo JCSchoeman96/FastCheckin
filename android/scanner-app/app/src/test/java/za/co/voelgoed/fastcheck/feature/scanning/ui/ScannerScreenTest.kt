@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.ui
 
 import android.view.LayoutInflater
+import androidx.camera.core.ImageAnalysis
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -9,6 +10,7 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.MutableSharedFlow
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -20,6 +22,8 @@ import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerFeedbackConfig
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerState
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopController
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerLoopEvent
 
 @RunWith(RobolectricTestRunner::class)
 class ScannerScreenTest {
@@ -37,7 +41,8 @@ class ScannerScreenTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.DENIED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                FakeScannerLoopController()
             )
         val binder = ScannerCameraBinder(ApplicationProvider.getApplicationContext(), ScannerCameraConfig.default)
         val screen =
@@ -46,6 +51,7 @@ class ScannerScreenTest {
                 lifecycleOwner = TestLifecycleOwner(),
                 scanningViewModel = viewModel,
                 scannerCameraBinder = binder,
+                scannerAnalyzer = NoOpAnalyzer(),
                 onLaunchPermissionRequest = {}
             )
 
@@ -97,7 +103,7 @@ class ScannerScreenTest {
     }
 
     @Test
-    fun renderInitializingCameraTriggersPreviewBindingPath() {
+    fun renderInitializingCameraTriggersAnalyzerBindingPath() {
         val binding =
             ScannerScreenBinding.inflate(
                 LayoutInflater.from(ApplicationProvider.getApplicationContext())
@@ -107,7 +113,8 @@ class ScannerScreenTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                FakeScannerLoopController()
             )
         val binder = FakeScannerCameraBinder()
         val screen =
@@ -116,6 +123,7 @@ class ScannerScreenTest {
                 lifecycleOwner = TestLifecycleOwner(),
                 scanningViewModel = viewModel,
                 scannerCameraBinder = binder,
+                scannerAnalyzer = NoOpAnalyzer(),
                 onLaunchPermissionRequest = {}
             )
 
@@ -136,7 +144,8 @@ class ScannerScreenTest {
             )
         )
 
-        assertThat(binder.bindPreviewCalls).isEqualTo(1)
+        assertThat(binder.bindCalls).isEqualTo(1)
+        assertThat(binder.lastAnalyzer).isNotNull()
         assertThat(viewModel.uiState.value.scannerState).isEqualTo(ScannerState.Seeking())
     }
 
@@ -151,7 +160,8 @@ class ScannerScreenTest {
                 ScanningUiStateFactory(),
                 FakeCameraPermissionChecker(CameraPermissionState.GRANTED),
                 clock,
-                feedbackConfig
+                feedbackConfig,
+                FakeScannerLoopController()
             )
         val binder = FakeScannerCameraBinder(failureMessage = "Camera unavailable")
         val screen =
@@ -160,6 +170,7 @@ class ScannerScreenTest {
                 lifecycleOwner = TestLifecycleOwner(),
                 scanningViewModel = viewModel,
                 scannerCameraBinder = binder,
+                scannerAnalyzer = NoOpAnalyzer(),
                 onLaunchPermissionRequest = {}
             )
 
@@ -180,7 +191,7 @@ class ScannerScreenTest {
             )
         )
 
-        assertThat(binder.bindPreviewCalls).isEqualTo(1)
+        assertThat(binder.bindCalls).isEqualTo(1)
         assertThat(viewModel.uiState.value.scannerState)
             .isEqualTo(
                 ScannerState.Seeking(
@@ -195,25 +206,52 @@ class ScannerScreenTest {
         override fun currentState(): CameraPermissionState = state
     }
 
+    private class FakeScannerLoopController : ScannerLoopController {
+        override val events = MutableSharedFlow<ScannerLoopEvent>(replay = 1, extraBufferCapacity = 8)
+
+        override fun reset() = Unit
+
+        override fun onCooldownComplete() = Unit
+    }
+
     private class FakeScannerCameraBinder(
         private val failureMessage: String? = null
     ) : ScannerCameraBinder(ApplicationProvider.getApplicationContext(), ScannerCameraConfig.default) {
-        var bindPreviewCalls: Int = 0
+        var bindCalls: Int = 0
+        var lastAnalyzer: ImageAnalysis.Analyzer? = null
 
         override fun bindPreview(
             lifecycleOwner: LifecycleOwner,
             previewView: androidx.camera.view.PreviewView,
             onBound: () -> Unit,
             onError: (Throwable) -> Unit
+        ) = error("Preview-only binding should not be used once live analyzer runtime is active.")
+
+        override fun bind(
+            lifecycleOwner: LifecycleOwner,
+            previewView: androidx.camera.view.PreviewView,
+            analyzer: ImageAnalysis.Analyzer?,
+            onBound: (za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinding) -> Unit,
+            onError: (Throwable) -> Unit
         ) {
-            bindPreviewCalls += 1
+            bindCalls += 1
+            lastAnalyzer = analyzer
 
             if (failureMessage != null) {
                 onError(IllegalStateException(failureMessage))
             } else {
-                onBound()
+                onBound(
+                    za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinding(
+                        config = ScannerCameraConfig.default,
+                        hasImageAnalysis = analyzer != null
+                    )
+                )
             }
         }
+    }
+
+    private class NoOpAnalyzer : ImageAnalysis.Analyzer {
+        override fun analyze(image: androidx.camera.core.ImageProxy) = Unit
     }
 
     private class TestLifecycleOwner : LifecycleOwner {
