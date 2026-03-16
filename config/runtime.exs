@@ -196,11 +196,10 @@ if config_env() == :prod do
   domain = System.get_env("DOMAIN") || System.get_env("PHX_HOST") || "example.com"
   port = String.to_integer(System.get_env("PORT") || "4000")
 
-  mobile_app_origin = System.get_env("MOBILE_APP_ORIGIN")
   dashboard_origin = "https://#{domain}"
 
   cors_origins =
-    [mobile_app_origin, dashboard_origin]
+    [dashboard_origin]
     |> Enum.reject(&is_nil/1)
 
   config :fastcheck, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")

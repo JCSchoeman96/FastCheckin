@@ -21,7 +21,6 @@ Use this file as the project-specific source of truth before making changes.
 - Backend source of truth: Tickera data synced into PostgreSQL, then served locally for browser and scanner flows.
 - Browser runtime: LiveView admin and operations UI for event setup, sync, dashboarding, occupancy, and scanner portal.
 - Active scanner runtime: Kotlin Android app in `android/scanner-app`, built as a local-first queue-and-flush scanner client.
-- Non-primary client: `mobile_app/` exists, but it is not the main scanning contract for current AGENTS guidance unless a task explicitly targets it.
 
 Current high-level split:
 

@@ -43,5 +43,19 @@ npm-debug.log
 /.credo_cache/
 /.sobelow/
 
-# Android scanner app local configuration
+# Android scanner app local configuration and build artifacts
 android/scanner-app/local.properties
+android/scanner-app/.gradle/
+android/scanner-app/app/build/
+
+# IDE/project files
+.idea/
+*.iml
+.vscode/
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+~$*
