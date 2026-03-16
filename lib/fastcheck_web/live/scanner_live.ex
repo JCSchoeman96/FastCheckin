@@ -451,7 +451,13 @@ defmodule FastCheckWeb.ScannerLive do
         phx-hook="ScannerKeyboardShortcuts"
         class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark"
       >
-        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep glass-card-elevated">
+        <.card
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="glass-card glass-sheen glass-card-deep glass-card-elevated"
+        >
           <.card_content>
             <p
               style="font-size: var(--fc-text-xs)"
@@ -1038,7 +1044,13 @@ defmodule FastCheckWeb.ScannerLive do
           </.card>
         </section>
 
-        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
+        <.card
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="glass-card glass-sheen"
+        >
           <.card_content>
             <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
               Find attendee

@@ -8,7 +8,13 @@
       <p class="text-sm text-fc-text-secondary">Enter your dashboard credentials to continue.</p>
     </div>
 
-    <.card variant="outline" color="natural" padding="large" rounded="large" class="glass-card glass-sheen glass-card-deep">
+    <.card
+      variant="outline"
+      color="natural"
+      padding="large"
+      rounded="large"
+      class="glass-card glass-sheen glass-card-deep"
+    >
       <.card_content>
         <.form for={@form} action={~p"/login"} id="login-form" method="post" class="space-y-4">
           <.input field={@form[:username]} label="Username" required autocomplete="username" />
@@ -30,6 +36,8 @@
       </.card_content>
     </.card>
 
-    <p class="text-center text-xs text-fc-text-muted">FastCheck &mdash; Secure event management</p>
+    <p class="text-center text-xs text-fc-text-muted">
+      FastCheck &mdash; Secure event management
+    </p>
   </div>
 </div>
