@@ -1,0 +1,52 @@
+The agent must use these docs repeatedly during planning and implementation.
+
+Android Architecture Guide
+https://developer.android.com/topic/architecture
+
+Jetpack Compose UI Architecture
+https://developer.android.com/develop/ui/compose/architecture
+
+CameraX Overview
+https://developer.android.com/media/camera/camerax
+
+ML Kit Barcode Scanning for Android
+https://developers.google.com/ml-kit/vision/barcode-scanning/android
+
+Hilt for Android
+https://developer.android.com/training/dependency-injection/hilt-android
+
+Room Persistence Library
+https://developer.android.com/training/data-storage/room
+
+Jetpack DataStore
+https://developer.android.com/topic/libraries/architecture/datastore
+
+WorkManager / Persistent Background Work
+https://developer.android.com/develop/background-work/background-tasks/persistent
+
+Android Keystore
+https://developer.android.com/privacy-and-security/keystore
+
+Android Network Security / TLS
+https://developer.android.com/privacy-and-security/security-ssl
+
+Kotlin Coroutines Overview
+https://kotlinlang.org/docs/coroutines-overview.html
+
+Retrofit
+https://square.github.io/retrofit/
+
+OkHttp
+https://square.github.io/okhttp/
+
+Phoenix JSON and APIs
+https://hexdocs.pm/phoenix/json_and_apis.html
+
+Phoenix Contexts
+https://hexdocs.pm/phoenix/contexts.html
+
+Phoenix LiveView Welcome
+https://hexdocs.pm/phoenix_live_view/welcome.html
+
+Phoenix.Token
+https://hexdocs.pm/phoenix/Phoenix.Token.html

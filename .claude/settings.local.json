@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(mix compile:*)",
+      "Bash(mix assets.build:*)",
+      "Bash(mix test test/fastcheck/tickera_client_test.exs)"
+    ]
+  }
+}
