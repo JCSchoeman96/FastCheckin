@@ -2,7 +2,10 @@
   <div class="w-full max-w-md space-y-6">
     <div class="flex flex-col items-center space-y-3">
       <img src={~p"/images/logo.svg"} width="56" alt="" class="drop-shadow-lg" />
-      <p style="font-size: var(--fc-text-xs)" class="uppercase tracking-[0.35em] text-fc-text-muted">
+      <p
+        style="font-size: var(--fc-text-xs)"
+        class="uppercase tracking-[0.35em] text-fc-text-muted"
+      >
         Scanner access
       </p>
       <h1 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
@@ -13,7 +16,13 @@
       </p>
     </div>
 
-    <.card variant="outline" color="natural" padding="large" rounded="large" class="glass-card glass-sheen glass-card-deep">
+    <.card
+      variant="outline"
+      color="natural"
+      padding="large"
+      rounded="large"
+      class="glass-card glass-sheen glass-card-deep"
+    >
       <.card_content>
         <.form
           for={@form}
@@ -54,7 +63,13 @@
 
           <input :if={@redirect_to} type="hidden" name="redirect_to" value={@redirect_to} />
 
-          <.button id="scanner-login-submit" color="primary" type="submit" full_width class="fc-hover-lift">
+          <.button
+            id="scanner-login-submit"
+            color="primary"
+            type="submit"
+            full_width
+            class="fc-hover-lift"
+          >
             Open scanner
           </.button>
 
@@ -74,6 +89,8 @@
       </.card_content>
     </.card>
 
-    <p class="text-center text-xs text-fc-text-muted">FastCheck &mdash; Secure event management</p>
+    <p class="text-center text-xs text-fc-text-muted">
+      FastCheck &mdash; Secure event management
+    </p>
   </div>
 </div>

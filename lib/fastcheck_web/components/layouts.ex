@@ -52,7 +52,10 @@ defmodule FastCheckWeb.Layouts do
           <img src={~p"/images/logo.svg"} width="36" alt="FastCheck" />
           <span class="text-lg font-bold text-fc-text-primary">FastCheck</span>
         </a>
-        <span :if={@breadcrumb} class="hidden sm:inline-flex items-center gap-2 text-sm text-fc-text-muted">
+        <span
+          :if={@breadcrumb}
+          class="hidden sm:inline-flex items-center gap-2 text-sm text-fc-text-muted"
+        >
           <.icon name="hero-chevron-right-mini" class="size-3 opacity-50" />
           {@breadcrumb}
         </span>
