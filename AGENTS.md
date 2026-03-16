@@ -6,6 +6,8 @@ Use this file as the project-specific source of truth before making changes.
 
 ## Project Rules
 
+- Create and claim a worktree for each implementation or group of implementations
+- When finished closed down and create a PR with detailed descriptions
 - Run `mix precommit` after repo changes and fix anything it reports.
 - Use `Req` for HTTP work in Elixir. Do not introduce `HTTPoison`, `Tesla`, or `:httpc`.
 - Keep LiveView templates wrapped in `<Layouts.app ...>`.
