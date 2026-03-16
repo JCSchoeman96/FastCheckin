@@ -70,7 +70,7 @@ defmodule FastCheck.Attendees.Scan do
 
                   cond do
                     # Reject tickets with invalid payment status
-                    not is_payment_status_valid?(attendee.payment_status) ->
+                    not payment_status_valid?(attendee.payment_status) ->
                       rejection_message = payment_rejection_message(attendee.payment_status)
 
                       Logger.warning(
@@ -639,7 +639,7 @@ defmodule FastCheck.Attendees.Scan do
   defp invalid_error(:entrance_name, message),
     do: {:error, {:invalid_entrance_name, "Entrance name #{message}"}}
 
-  defp is_payment_status_valid?(status) do
+  defp payment_status_valid?(status) do
     normalized = normalize_payment_status(status)
     normalized == "completed" or (normalized == "unknown" and allow_unknown_payment_status?())
   end
@@ -977,7 +977,7 @@ defmodule FastCheck.Attendees.Scan do
 
   defp ensure_can_check_in(%Attendee{} = attendee) do
     cond do
-      not is_payment_status_valid?(attendee.payment_status) ->
+      not payment_status_valid?(attendee.payment_status) ->
         Logger.warning("Attendee #{attendee.id} has non-completed order status")
         {:error, "PAYMENT_INVALID", payment_rejection_message(attendee.payment_status)}
 

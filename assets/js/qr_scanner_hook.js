@@ -20,6 +20,11 @@ export const QrCameraScanner = {
     this.cooldownMs = 1500;
     this.scansDisabled = this.el.dataset.scansDisabled === "true";
 
+    this.backgroundPaused = false;
+    this.wasRunningBeforeBackground = false;
+    this.lastRestartAt = 0;
+    this.restartCooldownMs = 3000;
+
     this.cameraSupported =
       !!navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function";
     this.barcodeDetectorSupported = "BarcodeDetector" in window;
@@ -27,9 +32,25 @@ export const QrCameraScanner = {
     this.handleStartClick = this.handleStartClick.bind(this);
     this.handleStopClick = this.handleStopClick.bind(this);
     this.handlePermissionGranted = this.handlePermissionGranted.bind(this);
+    this.handleRestartClick = this.handleRestartClick?.bind
+      ? this.handleRestartClick.bind(this)
+      : (event) => this._handleRestartClick(event);
+    this.handleVisibilityChange = this.handleVisibilityChange?.bind
+      ? this.handleVisibilityChange.bind(this)
+      : () => this._handleVisibilityChange();
+    this.handleWindowFocus = this.handleWindowFocus?.bind
+      ? this.handleWindowFocus.bind(this)
+      : () => this._handleWindowFocus();
+    this.handleWindowBlur = this.handleWindowBlur?.bind
+      ? this.handleWindowBlur.bind(this)
+      : () => this._handleWindowBlur();
 
     this.refreshDomReferences();
     window.addEventListener("fastcheck:camera-permission-granted", this.handlePermissionGranted);
+
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    window.addEventListener("focus", this.handleWindowFocus);
+    window.addEventListener("blur", this.handleWindowBlur);
 
     if (!this.cameraSupported) {
       this.updateStatus(
@@ -63,6 +84,9 @@ export const QrCameraScanner = {
   destroyed() {
     this.unbindControlListeners();
     window.removeEventListener("fastcheck:camera-permission-granted", this.handlePermissionGranted);
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    window.removeEventListener("focus", this.handleWindowFocus);
+    window.removeEventListener("blur", this.handleWindowBlur);
     this.stopScanner();
   },
 
@@ -75,9 +99,12 @@ export const QrCameraScanner = {
     const nextLastElement = this.el.querySelector("[data-qr-last]");
     const nextStartButton = this.el.querySelector("[data-qr-start]");
     const nextStopButton = this.el.querySelector("[data-qr-stop]");
+    const nextRestartButton = this.el.querySelector("[data-qr-restart]");
 
     const controlsChanged =
-      nextStartButton !== this.startButton || nextStopButton !== this.stopButton;
+      nextStartButton !== this.startButton ||
+      nextStopButton !== this.stopButton ||
+      nextRestartButton !== this.restartButton;
 
     if (controlsChanged) {
       this.unbindControlListeners();
@@ -89,6 +116,7 @@ export const QrCameraScanner = {
     this.lastElement = nextLastElement;
     this.startButton = nextStartButton;
     this.stopButton = nextStopButton;
+    this.restartButton = nextRestartButton;
     this.canvasContext = this.canvasElement
       ? this.canvasElement.getContext("2d", { willReadFrequently: true })
       : null;
@@ -107,11 +135,13 @@ export const QrCameraScanner = {
   bindControlListeners() {
     this.startButton?.addEventListener("click", this.handleStartClick);
     this.stopButton?.addEventListener("click", this.handleStopClick);
+    this.restartButton?.addEventListener("click", this.handleRestartClick);
   },
 
   unbindControlListeners() {
     this.startButton?.removeEventListener("click", this.handleStartClick);
     this.stopButton?.removeEventListener("click", this.handleStopClick);
+    this.restartButton?.removeEventListener("click", this.handleRestartClick);
   },
 
   handleStartClick(event) {
@@ -124,12 +154,113 @@ export const QrCameraScanner = {
     this.stopScanner("Camera stopped.");
   },
 
+  handleRestartClick(event) {
+    event.preventDefault();
+    this.restartScanner("Restarting camera...");
+  },
+
+  _handleRestartClick(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    this.restartScanner("Restarting camera...");
+  },
+
   handlePermissionGranted() {
     if (this.running || this.scansDisabled || !this.cameraSupported) {
       return;
     }
 
     this.startScanner();
+  },
+
+  handleVisibilityChange() {
+    this._handleVisibilityChange();
+  },
+
+  _handleVisibilityChange() {
+    if (document.visibilityState === "hidden") {
+      if (this.running && !this.backgroundPaused) {
+        this.wasRunningBeforeBackground = true;
+        this.pauseScannerForBackground();
+      }
+    } else if (document.visibilityState === "visible") {
+      this.handleForegroundResume();
+    }
+  },
+
+  handleWindowFocus() {
+    this._handleWindowFocus();
+  },
+
+  _handleWindowFocus() {
+    this.handleForegroundResume();
+  },
+
+  handleWindowBlur() {
+    this._handleWindowBlur();
+  },
+
+  _handleWindowBlur() {
+    if (this.running && !this.backgroundPaused) {
+      this.wasRunningBeforeBackground = true;
+      this.pauseScannerForBackground();
+    }
+  },
+
+  pauseScannerForBackground() {
+    if (!this.running) {
+      return;
+    }
+
+    if (this.loopTimer) {
+      window.clearTimeout(this.loopTimer);
+      this.loopTimer = null;
+    }
+
+    if (this.videoElement) {
+      this.videoElement.pause();
+    }
+
+    this.backgroundPaused = true;
+    this.updateStatus(
+      "Camera paused while this tab is in the background. Return and restart if the preview stays black.",
+    );
+  },
+
+  handleForegroundResume() {
+    if (!this.running || !this.backgroundPaused) {
+      return;
+    }
+
+    this.backgroundPaused = false;
+
+    if (!this.stream || !this.isStreamHealthy()) {
+      this.restartScannerWithGuard(
+        "Camera connection was lost while in the background. Restarting camera...",
+      );
+      return;
+    }
+
+    if (this.videoElement) {
+      this.prepareVideoElement();
+      this.videoElement.srcObject = this.stream;
+      this.videoElement
+        .play()
+        .then(() => {
+          this.updateStatus("Camera resumed. Point the QR code at the preview.");
+          this.runDetectionLoop();
+        })
+        .catch(() => {
+          this.restartScannerWithGuard(
+            "Camera preview could not resume. Restarting camera...",
+          );
+        });
+    } else {
+      this.restartScannerWithGuard(
+        "Camera preview was missing. Restarting camera...",
+      );
+    }
   },
 
   syncButtonState() {
@@ -215,6 +346,22 @@ export const QrCameraScanner = {
     });
 
     this.runDetectionLoop();
+  },
+
+  restartScanner(statusMessage) {
+    this.stopScanner(statusMessage || "Restarting camera...");
+    this.startScanner();
+  },
+
+  restartScannerWithGuard(statusMessage) {
+    const now = Date.now();
+
+    if (this.lastRestartAt && now - this.lastRestartAt < this.restartCooldownMs) {
+      return;
+    }
+
+    this.lastRestartAt = now;
+    this.restartScanner(statusMessage);
   },
 
   async requestCameraStream() {
@@ -353,6 +500,14 @@ export const QrCameraScanner = {
         return;
       }
 
+      if (!this.isStreamHealthy()) {
+        this.restartScannerWithGuard(
+          "Camera connection was lost; attempting to restart...",
+        );
+        this.runDetectionLoop();
+        return;
+      }
+
       try {
         const rawValue = await this.decodeOnce();
 
@@ -365,6 +520,40 @@ export const QrCameraScanner = {
 
       this.runDetectionLoop();
     }, 120);
+  },
+
+  isStreamHealthy() {
+    if (!this.stream) {
+      return false;
+    }
+
+    const videoTracks = this.stream.getVideoTracks
+      ? this.stream.getVideoTracks()
+      : this.stream.getTracks().filter((t) => t.kind === "video");
+
+    if (!videoTracks || videoTracks.length === 0) {
+      return false;
+    }
+
+    const activeTrack = videoTracks.find((track) => track.readyState === "live") || videoTracks[0];
+
+    if (!activeTrack || activeTrack.readyState === "ended") {
+      return false;
+    }
+
+    if (!this.videoElement) {
+      return true;
+    }
+
+    const readyState = this.videoElement.readyState || 0;
+    const width = this.videoElement.videoWidth || 0;
+    const height = this.videoElement.videoHeight || 0;
+
+    if (readyState === 0 && (width === 0 || height === 0)) {
+      return false;
+    }
+
+    return true;
   },
 
   async decodeOnce() {

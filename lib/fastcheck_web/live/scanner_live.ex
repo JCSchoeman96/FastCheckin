@@ -260,6 +260,14 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   @impl true
+  def handle_event("reset_camera_permission", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:camera_permission, default_camera_permission())
+     |> push_event("camera_permission_reset", %{})}
+  end
+
+  @impl true
   def handle_info({:event_stats_updated, event_id, stats}, socket) do
     if socket.assigns.event_id == event_id do
       {:noreply, socket |> assign(:stats, stats) |> assign_event_state()}
@@ -451,7 +459,13 @@ defmodule FastCheckWeb.ScannerLive do
         phx-hook="ScannerKeyboardShortcuts"
         class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark"
       >
-        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep glass-card-elevated">
+        <.card
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="glass-card glass-sheen glass-card-deep glass-card-elevated"
+        >
           <.card_content>
             <p
               style="font-size: var(--fc-text-xs)"
@@ -775,6 +789,18 @@ defmodule FastCheckWeb.ScannerLive do
                     Enable camera
                   </.button>
 
+                  <.button
+                    id="camera-reset-permission-button"
+                    type="button"
+                    phx-click="reset_camera_permission"
+                    variant="ghost"
+                    color="secondary"
+                    size="extra_small"
+                    class="ml-1"
+                  >
+                    Reset camera permission
+                  </.button>
+
                   <p class="text-xs text-fc-text-muted">
                     {if @camera_permission.remembered do
                       "Preference synced from this device."
@@ -857,6 +883,21 @@ defmodule FastCheckWeb.ScannerLive do
                     disabled
                   >
                     Stop camera
+                  </.button>
+                </div>
+
+                <div class="mt-2">
+                  <.button
+                    id="restart-camera-scan"
+                    type="button"
+                    data-qr-restart
+                    variant="bordered"
+                    color="secondary"
+                    full_width
+                    disabled={@scans_disabled?}
+                    aria-label="Restart camera preview"
+                  >
+                    Restart camera
                   </.button>
                 </div>
               </.card_content>
@@ -1038,7 +1079,13 @@ defmodule FastCheckWeb.ScannerLive do
           </.card>
         </section>
 
-        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
+        <.card
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="glass-card glass-sheen"
+        >
           <.card_content>
             <h2 style="font-size: var(--fc-text-2xl)" class="font-semibold text-fc-text-primary">
               Find attendee

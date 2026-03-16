@@ -27,6 +27,7 @@ defmodule FastCheck.Events.Event do
           tickera_end_date: DateTime.t() | nil,
           mobile_access_secret_encrypted: String.t() | nil,
           scanner_login_code: String.t() | nil,
+          scanner_policy_mode: String.t() | nil,
           status: String.t() | nil,
           total_tickets: integer() | nil,
           checked_in_count: integer() | nil,
@@ -59,6 +60,7 @@ defmodule FastCheck.Events.Event do
     field :tickera_site_url, :string
     field :tickera_start_date, :utc_datetime
     field :tickera_end_date, :utc_datetime
+    field :scanner_policy_mode, :string
     # Event lifecycle status such as "active", "syncing", or "archived"
     field :status, :string
     # Total number of tickets made available for the event
@@ -107,6 +109,7 @@ defmodule FastCheck.Events.Event do
       :tickera_api_key_last4,
       :mobile_access_secret_encrypted,
       :scanner_login_code,
+      :scanner_policy_mode,
       :tickera_site_url,
       :tickera_start_date,
       :tickera_end_date,
@@ -123,12 +126,15 @@ defmodule FastCheck.Events.Event do
     |> sanitize_string_fields()
     |> synchronize_site_urls()
     |> maybe_put_scanner_login_code()
+    |> maybe_put_scanner_policy_mode()
     |> validate_length(:scanner_login_code, is: @scanner_code_length)
     |> validate_format(:scanner_login_code, @scanner_code_regex,
       message: "must be 6 uppercase characters using letters and numbers"
     )
     |> unique_constraint(:scanner_login_code, name: :idx_events_scanner_login_code)
     |> check_constraint(:scanner_login_code, name: "events_scanner_login_code_format")
+    |> validate_inclusion(:scanner_policy_mode, ["online_required", "offline_capable"])
+    |> check_constraint(:scanner_policy_mode, name: "events_scanner_policy_mode_valid")
     |> validate_inclusion(:status, ["active", "syncing", "archived"])
     |> validate_number(:total_tickets, greater_than_or_equal_to: 0)
     |> validate_number(:checked_in_count, greater_than_or_equal_to: 0)
@@ -173,6 +179,16 @@ defmodule FastCheck.Events.Event do
     case get_field(changeset, :scanner_login_code) do
       nil ->
         put_change(changeset, :scanner_login_code, generate_scanner_login_code())
+
+      _value ->
+        changeset
+    end
+  end
+
+  defp maybe_put_scanner_policy_mode(changeset) do
+    case get_field(changeset, :scanner_policy_mode) do
+      nil ->
+        put_change(changeset, :scanner_policy_mode, "online_required")
 
       _value ->
         changeset

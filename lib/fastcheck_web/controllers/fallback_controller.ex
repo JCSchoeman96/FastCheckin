@@ -72,6 +72,10 @@ defmodule FastCheckWeb.FallbackController do
     })
   end
 
+  def call(conn, {:error, {code, message}}) when is_binary(code) and is_binary(message) do
+    call(conn, {:error, code, message})
+  end
+
   def call(conn, {:error, message}) when is_binary(message) do
     conn
     |> put_status(:bad_request)

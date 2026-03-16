@@ -8,11 +8,13 @@ defmodule FastCheck.Attendees.Attendee do
   import Ecto.Changeset
 
   alias FastCheck.Events.Event
+  alias FastCheck.Ticketing.TicketNormalizer
 
   @type t :: %__MODULE__{
           id: integer() | nil,
           event_id: integer() | nil,
           ticket_code: String.t() | nil,
+          normalized_code: String.t() | nil,
           first_name: String.t() | nil,
           last_name: String.t() | nil,
           email: String.t() | nil,
@@ -41,6 +43,8 @@ defmodule FastCheck.Attendees.Attendee do
     belongs_to :event, Event
     # Unique ticket identifier issued by Tickera
     field :ticket_code, :string
+    # Uppercased normalized code used by the native scanner hot path
+    field :normalized_code, :string
     # Attendee's given name for personalized messaging and search
     field :first_name, :string
     # Attendee's surname for identification and reporting
@@ -89,6 +93,7 @@ defmodule FastCheck.Attendees.Attendee do
     attendee
     |> cast(attrs, [
       :ticket_code,
+      :normalized_code,
       :first_name,
       :last_name,
       :email,
@@ -109,7 +114,18 @@ defmodule FastCheck.Attendees.Attendee do
       :last_entrance,
       :event_id
     ])
+    |> normalize_ticket_code()
     |> validate_required([:ticket_code, :event_id])
     |> unique_constraint(:ticket_code, name: :unique_ticket_per_event)
+  end
+
+  defp normalize_ticket_code(changeset) do
+    case get_change(changeset, :ticket_code) do
+      value when is_binary(value) ->
+        put_change(changeset, :normalized_code, TicketNormalizer.normalize_code(value))
+
+      _ ->
+        changeset
+    end
   end
 end

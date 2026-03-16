@@ -4,6 +4,7 @@ defmodule FastCheck.Fixtures do
   """
 
   alias FastCheck.{Repo, Events.Event, Attendees.Attendee, Crypto}
+  alias FastCheck.Ticketing.Gate
 
   @doc """
   Creates a test event with encrypted API key.
@@ -53,6 +54,27 @@ defmodule FastCheck.Fixtures do
 
     %Attendee{}
     |> Attendee.changeset(params)
+    |> Repo.insert!()
+  end
+
+  @doc """
+  Creates a test gate for a given event.
+  """
+  def create_gate(event, attrs \\ %{}) do
+    default_attrs = %{
+      event_id: event.id,
+      name: "Main Gate",
+      slug: "main-gate",
+      status: "active"
+    }
+
+    params =
+      default_attrs
+      |> Map.merge(attrs)
+      |> Map.update!(:slug, &normalize_slug/1)
+
+    %Gate{}
+    |> Gate.changeset(params)
     |> Repo.insert!()
   end
 
@@ -117,5 +139,13 @@ defmodule FastCheck.Fixtures do
     else
       %{"pass" => false}
     end
+  end
+
+  defp normalize_slug(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/u, "-")
+    |> String.trim("-")
   end
 end

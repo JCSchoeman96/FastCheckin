@@ -42,6 +42,18 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  pipeline :device_api do
+    plug :accepts, ["json"]
+    plug FastCheckWeb.Plugs.LoggerMetadata
+    plug FastCheckWeb.Plugs.ApiAuth
+    plug FastCheckWeb.Plugs.DeviceScope
+    plug FastCheckWeb.Plugs.RateLimiter
+  end
+
+  pipeline :require_event_assignment do
+    plug FastCheckWeb.Plugs.RequireEventAssignment
+  end
+
   scope "/", FastCheckWeb do
     pipe_through [:browser, :dashboard_auth]
 
@@ -83,6 +95,14 @@ defmodule FastCheckWeb.Router do
     end
   end
 
+  scope "/api/v1", FastCheckWeb.Api.V1 do
+    pipe_through :api
+
+    # Future-facing native-scanner scaffold. Android runtime must not depend on
+    # this route until the current /api/v1/mobile contract is formally replaced.
+    post "/device_sessions", DeviceSessionController, :create
+  end
+
   scope "/api/v1", FastCheckWeb do
     pipe_through :api_authenticated
 
@@ -91,6 +111,7 @@ defmodule FastCheckWeb.Router do
   end
 
   # Protected mobile API routes (JWT authentication required)
+  # This is the active Android runtime contract today.
   scope "/api/v1/mobile", FastCheckWeb.Mobile do
     pipe_through :mobile_api
 
@@ -99,6 +120,18 @@ defmodule FastCheckWeb.Router do
 
     # Upload scanned check-ins
     post "/scans", SyncController, :upload_scans
+  end
+
+  scope "/api/v1", FastCheckWeb.Api.V1 do
+    pipe_through [:device_api, :require_event_assignment]
+
+    # Future-facing native-scanner scaffold only. These routes are not part of
+    # the active Android contract while the app still uses /api/v1/mobile/*.
+    get "/events/:event_id/config", EventConfigController, :show
+    get "/events/:event_id/package", PackageController, :show
+    get "/events/:event_id/health", EventHealthController, :show
+    post "/check_ins", CheckInController, :create
+    post "/check_ins/flush", SyncFlushController, :create
   end
 
   if Application.compile_env(:fastcheck, :dev_routes) do

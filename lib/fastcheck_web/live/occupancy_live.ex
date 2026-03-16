@@ -77,7 +77,13 @@ defmodule FastCheckWeb.OccupancyLive do
     <Layouts.app flash={@flash} breadcrumb={"Occupancy \u2014 #{@event.name}"}>
       <div class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark">
         <%!-- Header --%>
-        <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen glass-card-deep glass-card-elevated">
+        <.card
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="glass-card glass-sheen glass-card-deep glass-card-elevated"
+        >
           <.card_content>
             <p
               style="font-size: var(--fc-text-xs)"
@@ -195,7 +201,13 @@ defmodule FastCheckWeb.OccupancyLive do
             </.card_content>
           </.card>
 
-          <.card variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
+          <.card
+            variant="outline"
+            color="natural"
+            rounded="large"
+            padding="large"
+            class="glass-card glass-sheen"
+          >
             <.card_content>
               <p class="text-sm uppercase tracking-[0.3em] text-fc-text-muted">Flow summary</p>
 
@@ -280,7 +292,10 @@ defmodule FastCheckWeb.OccupancyLive do
                   <div class="glass-card-recessed px-3 py-2">
                     <div class="flex items-center justify-center gap-1">
                       <.icon name="hero-arrow-right-circle" class="size-3 text-fc-text-muted" />
-                      <p style="font-size: var(--fc-text-xs)" class="uppercase tracking-[0.3em] text-fc-text-muted">
+                      <p
+                        style="font-size: var(--fc-text-xs)"
+                        class="uppercase tracking-[0.3em] text-fc-text-muted"
+                      >
                         Entries
                       </p>
                     </div>
@@ -292,7 +307,10 @@ defmodule FastCheckWeb.OccupancyLive do
                   <div class="glass-card-recessed px-3 py-2">
                     <div class="flex items-center justify-center gap-1">
                       <.icon name="hero-arrow-left-circle" class="size-3 text-fc-text-muted" />
-                      <p style="font-size: var(--fc-text-xs)" class="uppercase tracking-[0.3em] text-fc-text-muted">
+                      <p
+                        style="font-size: var(--fc-text-xs)"
+                        class="uppercase tracking-[0.3em] text-fc-text-muted"
+                      >
                         Exits
                       </p>
                     </div>
@@ -302,7 +320,10 @@ defmodule FastCheckWeb.OccupancyLive do
                   </div>
 
                   <div class="glass-card-recessed px-3 py-2">
-                    <p style="font-size: var(--fc-text-xs)" class="uppercase tracking-[0.3em] text-fc-text-muted">
+                    <p
+                      style="font-size: var(--fc-text-xs)"
+                      class="uppercase tracking-[0.3em] text-fc-text-muted"
+                    >
                       Net
                     </p>
                     <p class="mt-1 text-lg font-semibold text-fc-text-primary">
@@ -476,15 +497,60 @@ defmodule FastCheckWeb.OccupancyLive do
 
   defp stats_cards(counts) do
     [
-      %{label: "Total tickets", value: format_count(counts.total), hint: "Capacity configured", icon: "hero-ticket"},
-      %{label: "Checked in", value: format_count(counts.checked_in), hint: "Lifetime", icon: "hero-check-circle"},
-      %{label: "Currently inside", value: format_count(counts.currently_inside), hint: "Live occupancy", icon: "hero-user-group"},
-      %{label: "Pending arrival", value: format_count(counts.pending), hint: "Guests yet to arrive", icon: "hero-clock"},
-      %{label: "Scans today", value: format_count(counts.scans_today), hint: "Since midnight", icon: "hero-qr-code"},
-      %{label: "Total entries", value: format_count(counts.total_entries), hint: "All recorded entries", icon: "hero-arrow-right-circle"},
-      %{label: "Total exits", value: format_count(counts.total_exits), hint: "Guests that left", icon: "hero-arrow-left-circle"},
-      %{label: "Available tomorrow", value: format_count(counts.available_tomorrow), hint: "Remaining allowance", icon: "hero-calendar"},
-      %{label: "Avg stay", value: format_minutes(counts.average_session_minutes), hint: "Average session", icon: "hero-clock"}
+      %{
+        label: "Total tickets",
+        value: format_count(counts.total),
+        hint: "Capacity configured",
+        icon: "hero-ticket"
+      },
+      %{
+        label: "Checked in",
+        value: format_count(counts.checked_in),
+        hint: "Lifetime",
+        icon: "hero-check-circle"
+      },
+      %{
+        label: "Currently inside",
+        value: format_count(counts.currently_inside),
+        hint: "Live occupancy",
+        icon: "hero-user-group"
+      },
+      %{
+        label: "Pending arrival",
+        value: format_count(counts.pending),
+        hint: "Guests yet to arrive",
+        icon: "hero-clock"
+      },
+      %{
+        label: "Scans today",
+        value: format_count(counts.scans_today),
+        hint: "Since midnight",
+        icon: "hero-qr-code"
+      },
+      %{
+        label: "Total entries",
+        value: format_count(counts.total_entries),
+        hint: "All recorded entries",
+        icon: "hero-arrow-right-circle"
+      },
+      %{
+        label: "Total exits",
+        value: format_count(counts.total_exits),
+        hint: "Guests that left",
+        icon: "hero-arrow-left-circle"
+      },
+      %{
+        label: "Available tomorrow",
+        value: format_count(counts.available_tomorrow),
+        hint: "Remaining allowance",
+        icon: "hero-calendar"
+      },
+      %{
+        label: "Avg stay",
+        value: format_minutes(counts.average_session_minutes),
+        hint: "Average session",
+        icon: "hero-clock"
+      }
     ]
   end
 

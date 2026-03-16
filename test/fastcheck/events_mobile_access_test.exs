@@ -33,6 +33,17 @@ defmodule FastCheck.EventsMobileAccessTest do
     assert :ok = Events.verify_mobile_access_secret(updated, "still-secret")
   end
 
+  test "update_event/2 persists scanner policy mode changes" do
+    event = insert_event!("policy-secret")
+
+    assert {:ok, updated} =
+             Events.update_event(event.id, %{
+               "scanner_policy_mode" => "offline_capable"
+             })
+
+    assert updated.scanner_policy_mode == "offline_capable"
+  end
+
   defp insert_event!(mobile_secret) do
     api_key = "api-#{System.unique_integer([:positive])}"
     {:ok, encrypted_api_key} = Crypto.encrypt(api_key)

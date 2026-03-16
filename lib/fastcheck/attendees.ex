@@ -15,6 +15,7 @@ defmodule FastCheck.Attendees do
   alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
   alias FastCheck.TickeraClient
+  alias FastCheck.Ticketing.TicketNormalizer
 
   # Orchestration Functions (true implementation)
 
@@ -50,6 +51,10 @@ defmodule FastCheck.Attendees do
 
         parsed
         |> Map.put(:event_id, event_id)
+        |> Map.put(
+          :normalized_code,
+          TicketNormalizer.normalize_code(Map.get(parsed, :ticket_code))
+        )
         |> Map.put_new(:checkins_remaining, allowed)
         |> Map.put(:allowed_checkins, allowed)
         |> Map.put_new(:daily_scan_count, 0)

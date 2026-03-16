@@ -33,6 +33,7 @@ defmodule FastCheck.Events do
     "mobile_access_code" => :mobile_access_code,
     "mobile_access_secret_encrypted" => :mobile_access_secret_encrypted,
     "scanner_login_code" => :scanner_login_code,
+    "scanner_policy_mode" => :scanner_policy_mode,
     "name" => :name,
     "status" => :status,
     "entrance_name" => :entrance_name,
@@ -504,6 +505,7 @@ defmodule FastCheck.Events do
     attrs
     |> Map.drop([:_validation_error])
     |> normalize_site_url_attrs(event)
+    |> normalize_scanner_policy_mode_attrs()
     |> maybe_encrypt_api_key(event)
     |> maybe_update_last4(event)
     |> maybe_encrypt_mobile_access_code(event)
@@ -524,6 +526,19 @@ defmodule FastCheck.Events do
       |> Map.put("site_url", trimmed)
     else
       attrs
+    end
+  end
+
+  defp normalize_scanner_policy_mode_attrs(attrs) do
+    cond do
+      Map.has_key?(attrs, "scanner_policy_mode") ->
+        Map.update!(attrs, "scanner_policy_mode", &normalize_scanner_policy_mode_attr/1)
+
+      Map.has_key?(attrs, :scanner_policy_mode) ->
+        Map.update!(attrs, :scanner_policy_mode, &normalize_scanner_policy_mode_attr/1)
+
+      true ->
+        attrs
     end
   end
 
@@ -799,6 +814,8 @@ defmodule FastCheck.Events do
       name: name_override || name_from_essentials,
       scanner_login_code:
         normalize_scanner_login_code_attr(fetch_attr(attrs, "scanner_login_code")),
+      scanner_policy_mode:
+        normalize_scanner_policy_mode_attr(fetch_attr(attrs, "scanner_policy_mode")),
       entrance_name: entrance_override || "Main Gate",
       location: location_override || event_location,
       total_tickets: total_tickets,
@@ -1078,6 +1095,15 @@ defmodule FastCheck.Events do
   end
 
   defp normalize_scanner_login_code_attr(value), do: value
+
+  defp normalize_scanner_policy_mode_attr(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_scanner_policy_mode_attr(value), do: value
 
   defp fetch_attr(attrs, key) when is_map(attrs) and is_binary(key) do
     cond do

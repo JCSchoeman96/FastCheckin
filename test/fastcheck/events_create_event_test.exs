@@ -95,6 +95,25 @@ defmodule FastCheck.EventsCreateEventTest do
     assert event.checked_in_count == 0
   end
 
+  test "create_event/1 persists scanner_policy_mode overrides" do
+    mock_tickera_create_requests(%{
+      "event_name" => "Offline Ready Event",
+      "event_date_time" => "2026-04-05T17:00:00Z",
+      "sold_tickets" => 90,
+      "pass" => true
+    })
+
+    assert {:ok, %Event{} = event} =
+             Events.create_event(%{
+               "tickera_site_url" => "https://voelgoed.co.za",
+               "tickera_api_key_encrypted" => "api-key-offline",
+               "mobile_access_code" => "scanner-secret",
+               "scanner_policy_mode" => "offline_capable"
+             })
+
+    assert event.scanner_policy_mode == "offline_capable"
+  end
+
   defp mock_tickera_create_requests(event_essentials) do
     Application.put_env(:fastcheck, :tickera_request_fun, fn req ->
       path = req.url.path || ""

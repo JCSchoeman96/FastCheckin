@@ -923,7 +923,6 @@ defmodule FastCheck.TickeraClient do
   defp merge_additional(acc, %{} = additional), do: Map.merge(acc, additional)
   defp merge_additional(acc, _), do: acc
 
-
   defp normalize_custom_fields(fields) when is_list(fields) do
     fields
     |> Enum.map(&normalize_custom_field/1)

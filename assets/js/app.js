@@ -142,8 +142,15 @@ const ScannerKeyboardShortcuts = {
 const CameraPermission = {
   mounted() {
     this.storageKey = this.el.dataset.storageKey || "fastcheck:camera-permission";
+    this.hasVerifiedOnce = false;
     this.handleCameraRequest = this.handleCameraRequest.bind(this);
     this.el.addEventListener("click", this.handleCameraRequest);
+    if (this.handleEvent) {
+      this.handleEvent("camera_permission_reset", () => {
+        const remembered = this.resetStoredStatus();
+        this.pushStatus("unknown", null, remembered);
+      });
+    }
     this.syncStoredPreference();
   },
 
@@ -185,6 +192,7 @@ const CameraPermission = {
       .getUserMedia({ video: { facingMode: "environment" } })
       .then((stream) => {
         stream.getTracks().forEach((track) => track.stop());
+        this.hasVerifiedOnce = true;
         this.reportStatus("granted", "Camera access granted. You can start scanning.");
         window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-granted"));
       })
@@ -225,6 +233,15 @@ const CameraPermission = {
     try {
       window.localStorage?.setItem(this.storageKey, status);
       return true;
+    } catch (_error) {
+      return false;
+    }
+  },
+
+  resetStoredStatus() {
+    try {
+      window.localStorage?.removeItem(this.storageKey);
+      return false;
     } catch (_error) {
       return false;
     }

@@ -635,7 +635,14 @@ defmodule FastCheckWeb.DashboardLive do
           </.button>
         </section>
 
-        <.card :if={@sync_status} variant="outline" color="natural" rounded="large" padding="large" class="glass-card glass-sheen">
+        <.card
+          :if={@sync_status}
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+          class="glass-card glass-sheen"
+        >
           <.card_content>
             <p class="text-sm text-fc-text-secondary">Sync status</p>
             <p class="mt-1 text-base font-semibold text-fc-text-primary">{@sync_status}</p>
@@ -826,8 +833,7 @@ defmodule FastCheckWeb.DashboardLive do
               class="flex-1 sm:flex-none"
             >
               <span class="inline-flex items-center gap-1.5">
-                <.icon name="hero-bolt-mini" class="size-3.5" />
-                Active ({@active_events_count})
+                <.icon name="hero-bolt-mini" class="size-3.5" /> Active ({@active_events_count})
               </span>
             </.button>
 
@@ -983,7 +989,7 @@ defmodule FastCheckWeb.DashboardLive do
                         class="fc-hover-lift"
                       >
                         <span class="inline-flex items-center gap-2">
-                          <.icon name="hero-qr-code" class="size-4" /> Scanner
+                          <.icon name="hero-qr-code" class="size-4" /> Open scanner
                         </span>
                       </.button_link>
 
@@ -1019,7 +1025,7 @@ defmodule FastCheckWeb.DashboardLive do
                         size="small"
                         full_width
                       >
-                        Edit
+                        Edit event
                       </.button>
 
                       <.button
@@ -1033,7 +1039,7 @@ defmodule FastCheckWeb.DashboardLive do
                         size="small"
                         full_width
                       >
-                        History
+                        Sync history
                       </.button>
 
                       <.button
@@ -1139,7 +1145,9 @@ defmodule FastCheckWeb.DashboardLive do
                     <.icon name="hero-magnifying-glass" class="size-12 text-fc-text-muted" />
                   </div>
                   <p class="text-lg font-semibold text-fc-text-primary">No events found</p>
-                  <p class="mt-2 max-w-sm text-sm text-fc-text-secondary">No events match &ldquo;{@search_query}&rdquo;. Try a different search term.</p>
+                  <p class="mt-2 max-w-sm text-sm text-fc-text-secondary">
+                    No events match &ldquo;{@search_query}&rdquo;. Try a different search term.
+                  </p>
                 </div>
               </.card_content>
             </.card>
