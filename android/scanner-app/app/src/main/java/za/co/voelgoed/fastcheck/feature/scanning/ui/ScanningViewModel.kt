@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
 @HiltViewModel
 class ScanningViewModel @Inject constructor() : ViewModel() {
@@ -38,6 +40,29 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
             else ->
                 "Scanner scaffold ready. Decoded values will feed the existing local queue only."
         }
+
+    fun onCaptureHandoffResult(result: CaptureHandoffResult) {
+        _uiState.update { current ->
+            val feedback =
+                when (result) {
+                    is CaptureHandoffResult.Accepted ->
+                        CaptureFeedbackState.Success("Scan queued.")
+                    is CaptureHandoffResult.Failed -> {
+                        val message =
+                            result.reason.takeIf { it.isNotBlank() } ?: "Could not queue scan"
+                        CaptureFeedbackState.Error(message)
+                    }
+                }
+
+            current.copy(lastCaptureFeedback = feedback)
+        }
+    }
+
+    fun clearCaptureFeedback() {
+        _uiState.update { current ->
+            current.copy(lastCaptureFeedback = null)
+        }
+    }
 
     fun onSourceStateChanged(state: ScannerSourceState) {
         _uiState.update { current ->
