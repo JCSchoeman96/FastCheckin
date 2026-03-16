@@ -44,7 +44,7 @@ class MlKitBarcodeFrameAnalyzer @Inject constructor(
         imageProxy: ImageProxy
     ) {
         val rawValue = decodedBarcodes.firstNotNullOfOrNull { barcode ->
-            barcode.rawValue?.trim()?.takeIf { value -> value.isNotEmpty() }
+            barcode.rawValue?.takeIf { value -> value.isNotBlank() }
         }
 
         imageProxy.close()

@@ -42,3 +42,6 @@ npm-debug.log
 # Code quality and security tools
 /.credo_cache/
 /.sobelow/
+
+# Android scanner app local configuration
+android/scanner-app/local.properties
