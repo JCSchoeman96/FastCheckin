@@ -18,9 +18,9 @@ class ScanCapturePipelineTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
         val pipeline = ScanCapturePipeline(fakeUseCase)
 
-        pipeline.onDecoded("VG-101")
+        pipeline.onDecoded("  VG-101  ")
 
-        assertThat(fakeUseCase.ticketCode).isEqualTo("VG-101")
+        assertThat(fakeUseCase.ticketCode).isEqualTo("  VG-101  ")
         assertThat(fakeUseCase.direction).isEqualTo(ScanDirection.IN)
         assertThat(fakeUseCase.operatorName).isEqualTo(ScannerCaptureDefaults.operatorName)
         assertThat(fakeUseCase.entranceName).isEqualTo(ScannerCaptureDefaults.entranceName)

@@ -21,13 +21,11 @@ class DefaultQueueCapturedScanUseCase @Inject constructor(
         operatorName: String,
         entranceName: String
     ): QueueCreationResult {
-        // Current runtime preserves the trimmed raw scan value as ticket_code.
-        // Whether QR payloads always equal backend ticket_code remains unresolved.
-        val rawTicketCode = ticketCode.trim()
-
-        if (rawTicketCode.isBlank()) {
+        if (ticketCode.isBlank()) {
             return QueueCreationResult.InvalidTicketCode
         }
+
+        val rawTicketCode = ticketCode
 
         val eventId = sessionAuthGateway.currentEventId() ?: return QueueCreationResult.MissingSessionContext
         val effectiveOperator = sessionAuthGateway.currentOperatorName() ?: operatorName.trim()

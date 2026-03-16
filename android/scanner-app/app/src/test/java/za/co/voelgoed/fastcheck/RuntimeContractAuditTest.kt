@@ -34,13 +34,36 @@ class RuntimeContractAuditTest {
 
         assertThat(sourceText).contains("feature.queue.QueueViewModel")
         assertThat(sourceText).contains("feature.scanning.ui.ScanningViewModel")
-        assertThat(sourceText).contains("feature.scanning.ui.ScanningUiState")
+        assertThat(sourceText).contains("ScanningUiState")
         assertThat(sourceText).doesNotContain("domain.model.FlushSummary")
         assertThat(sourceText).doesNotContain("class FlushSummary")
         assertThat(sourceText).doesNotContain("/api/v1/device_sessions")
         assertThat(sourceText).doesNotContain("/api/v1/check_ins")
     }
+    @Test
+    fun scannerFeatureDoesNotDependDirectlyOnInfrastructureTypes() {
+        val scannerRoot = File(runtimeRoot(), "feature/scanning")
+        val sourceText =
+            scannerRoot.walkTopDown()
+                .filter { file -> file.isFile && file.extension == "kt" }
+                .joinToString(separator = "\n") { file -> file.readText() }
 
+        assertThat(sourceText).doesNotContain("ScannerDao")
+        assertThat(sourceText).doesNotContain("FastCheckDatabase")
+        assertThat(sourceText).doesNotContain("CurrentPhoenixMobileScanRepository")
+        assertThat(sourceText).doesNotContain("FlushQueueWorker")
+        assertThat(sourceText).doesNotContain("PhoenixMobileApi")
+        assertThat(sourceText).doesNotContain("PhoenixMobileRemoteDataSource")
+    }
+
+    private fun phoenixMobileApiSource(): File =
+        sequenceOf(
+            File("src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),
+            File("app/src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),
+            File("../app/src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),
+            File("android/scanner-app/app/src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt")
+        ).firstOrNull { it.exists() }
+            ?: error("Could not locate PhoenixMobileApi.kt from ${File(".").absolutePath}.")
     private fun runtimeRoot(): File =
         sequenceOf(
             File("src/main/java/za/co/voelgoed/fastcheck"),

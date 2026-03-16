@@ -16,7 +16,7 @@ class QueuedScanMappersTest {
             PendingScan(
                 localId = 7,
                 eventId = 10,
-                ticketCode = "VG-777",
+                ticketCode = "  VG-777  ",
                 idempotencyKey = "idem-777",
                 createdAt = 1_773_400_000_000,
                 scannedAt = "2026-03-12T10:15:00Z",
@@ -30,8 +30,10 @@ class QueuedScanMappersTest {
 
         assertThat(entity.id).isEqualTo(7)
         assertThat(entity.createdAt).isEqualTo(1_773_400_000_000)
+        assertThat(entity.ticketCode).isEqualTo("  VG-777  ")
         assertThat(entity.direction).isEqualTo("out")
         assertThat(payload.idempotency_key).isEqualTo("idem-777")
+        assertThat(payload.ticket_code).isEqualTo("  VG-777  ")
         assertThat(payload.direction).isEqualTo("in")
     }
 
