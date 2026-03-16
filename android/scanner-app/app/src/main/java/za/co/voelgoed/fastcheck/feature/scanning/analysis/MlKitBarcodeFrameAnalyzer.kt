@@ -9,9 +9,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.feature.scanning.domain.DecodedBarcode
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerDetection
 
 class MlKitBarcodeFrameAnalyzer @Inject constructor(
     private val barcodeScannerEngine: BarcodeScannerEngine,
+    private val scannerFrameGate: ScannerFrameGate,
     private val decodedBarcodeHandler: DecodedBarcodeHandler,
     appDispatchers: AppDispatchers
 ) : ImageAnalysis.Analyzer {
@@ -30,8 +32,8 @@ class MlKitBarcodeFrameAnalyzer @Inject constructor(
 
         barcodeScannerEngine.process(
             image = inputImage,
-            onSuccess = { decodedBarcodes ->
-                deliverDecodedBarcodes(decodedBarcodes, imageProxy)
+            onSuccess = { detections ->
+                deliverDetections(detections, imageProxy)
             },
             onFailure = {
                 imageProxy.close()
@@ -39,20 +41,26 @@ class MlKitBarcodeFrameAnalyzer @Inject constructor(
         )
     }
 
-    internal fun deliverDecodedBarcodes(
-        decodedBarcodes: List<DecodedBarcode>,
+    internal fun deliverDetections(
+        detections: List<ScannerDetection>,
         imageProxy: ImageProxy
     ) {
-        val rawValue = decodedBarcodes.firstNotNullOfOrNull { barcode ->
-            barcode.rawValue?.trim()?.takeIf { value -> value.isNotEmpty() }
-        }
+        val decodedBarcode =
+            detections.firstOrNull { detection -> scannerFrameGate.tryAdmit(detection) }
+                ?.toDecodedBarcode()
 
         imageProxy.close()
 
-        if (rawValue != null) {
+        if (decodedBarcode != null) {
             scope.launch {
-                decodedBarcodeHandler.onDecoded(rawValue)
+                decodedBarcodeHandler.onDecoded(decodedBarcode)
             }
         }
     }
+
+    private fun ScannerDetection.toDecodedBarcode(): DecodedBarcode =
+        DecodedBarcode(
+            rawValue = rawValue,
+            capturedAtEpochMillis = capturedAtEpochMillis
+        )
 }

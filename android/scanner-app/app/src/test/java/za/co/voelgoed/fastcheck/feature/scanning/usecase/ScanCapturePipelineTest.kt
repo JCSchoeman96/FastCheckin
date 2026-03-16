@@ -1,4 +1,4 @@
-package za.co.voelgoed.fastcheck.feature.scanning
+package za.co.voelgoed.fastcheck.feature.scanning.usecase
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
@@ -9,21 +9,24 @@ import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
-import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
-import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCandidate
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureConfig
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerResult
 
 class ScanCapturePipelineTest {
-    @Test
-    fun handsDecodedValueToLocalQueueWithScannerDefaults() = runTest {
-        val fakeUseCase = RecordingQueueCapturedScanUseCase()
-        val pipeline = ScanCapturePipeline(fakeUseCase)
+    private val scannerCaptureConfig = ScannerCaptureConfig.default
 
-        pipeline.onDecoded("VG-101")
+    @Test
+    fun handsDecodedValueToLocalQueueWithScannerConfig() = runTest {
+        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val pipeline = ScanCapturePipeline(fakeUseCase, scannerCaptureConfig)
+
+        pipeline.processCandidate(ScannerCandidate(rawValue = "VG-101", capturedAtEpochMillis = 1L))
 
         assertThat(fakeUseCase.ticketCode).isEqualTo("VG-101")
         assertThat(fakeUseCase.direction).isEqualTo(ScanDirection.IN)
-        assertThat(fakeUseCase.operatorName).isEqualTo(ScannerCaptureDefaults.operatorName)
-        assertThat(fakeUseCase.entranceName).isEqualTo(ScannerCaptureDefaults.entranceName)
+        assertThat(fakeUseCase.operatorName).isEqualTo(scannerCaptureConfig.operatorName)
+        assertThat(fakeUseCase.entranceName).isEqualTo(scannerCaptureConfig.entranceName)
     }
 
     @Test
@@ -31,10 +34,27 @@ class ScanCapturePipelineTest {
         val constructorParameterTypes =
             ScanCapturePipeline::class.java.declaredConstructors.single().parameterTypes.toList()
 
-        assertThat(constructorParameterTypes).containsExactly(QueueCapturedScanUseCase::class.java)
+        assertThat(constructorParameterTypes)
+            .containsExactly(QueueCapturedScanUseCase::class.java, ScannerCaptureConfig::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileApi::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileRemoteDataSource::class.java)
         assertThat(constructorParameterTypes).doesNotContain(MobileScanRepository::class.java)
+    }
+
+    @Test
+    fun mapsQueueOutcomeIntoScannerLocalResult() = runTest {
+        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val pipeline = ScanCapturePipeline(fakeUseCase, scannerCaptureConfig)
+
+        val result =
+            pipeline.processCandidate(
+                ScannerCandidate(
+                    rawValue = "VG-101",
+                    capturedAtEpochMillis = 55L
+                )
+            )
+
+        assertThat(result).isEqualTo(ScannerResult.ReplaySuppressed(ScannerCandidate("VG-101", 55L)))
     }
 
     private class RecordingQueueCapturedScanUseCase : QueueCapturedScanUseCase {

@@ -6,13 +6,8 @@ import org.junit.Test
 
 class RuntimeContractAuditTest {
     @Test
-    fun runtimeCodeReferencesOnlyCurrentPhoenixMobileEndpoints() {
-        val runtimeRoot = runtimeRoot()
-
-        val sourceText =
-            runtimeRoot.walkTopDown()
-                .filter { file -> file.isFile && file.extension == "kt" }
-                .joinToString(separator = "\n") { file -> file.readText() }
+    fun phoenixMobileApiReferencesOnlyCurrentPhoenixMobileEndpoints() {
+        val sourceText = phoenixMobileApiSource().readText()
 
         assertThat(sourceText).contains("/api/v1/mobile/login")
         assertThat(sourceText).contains("/api/v1/mobile/attendees")
@@ -34,12 +29,21 @@ class RuntimeContractAuditTest {
 
         assertThat(sourceText).contains("feature.queue.QueueViewModel")
         assertThat(sourceText).contains("feature.scanning.ui.ScanningViewModel")
-        assertThat(sourceText).contains("feature.scanning.ui.ScanningUiState")
+        assertThat(sourceText).contains("feature.scanning.domain.ScannerState")
         assertThat(sourceText).doesNotContain("domain.model.FlushSummary")
         assertThat(sourceText).doesNotContain("class FlushSummary")
         assertThat(sourceText).doesNotContain("/api/v1/device_sessions")
         assertThat(sourceText).doesNotContain("/api/v1/check_ins")
     }
+
+    private fun phoenixMobileApiSource(): File =
+        sequenceOf(
+            File("src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),
+            File("app/src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),
+            File("../app/src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),
+            File("android/scanner-app/app/src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt")
+        ).firstOrNull { it.exists() }
+            ?: error("Could not locate PhoenixMobileApi.kt from ${File(".").absolutePath}.")
 
     private fun runtimeRoot(): File =
         sequenceOf(

@@ -27,10 +27,10 @@ offline packages until the backend formally promotes a new contract.
 - `domain.usecase`: local-first queue and flush orchestration
 - `feature.queue`: temporary manual/debug queue UI only
 - `feature.scanning.camera`: CameraX preview and binding setup only
-- `feature.scanning.analysis`: ML Kit decode boundary only
-- `feature.scanning.domain`: scanner-local models and defaults
-- `feature.scanning.usecase`: decoded-value handoff into queueing only
-- `feature.scanning.ui`: scanner permission/status UI state only
+- `feature.scanning.analysis`: ML Kit decode boundary, detection mapping, and frame admission control
+- `feature.scanning.domain`: scanner-local state machine, cooldown, result, overlay, and capture models
+- `feature.scanning.usecase`: scanner loop orchestration and decoded-value handoff into queueing
+- `feature.scanning.ui`: scanner permission/status UI state and runtime activation boundary
 - `feature.*`: UI/ViewModel state boundaries
 - `worker`: WorkManager queue flush
 
@@ -39,7 +39,8 @@ offline packages until the backend formally promotes a new contract.
 - CameraX/ML Kit decode into local queueing only.
 - The temporary manual/debug queue UI lives in `feature.queue` only.
 - `feature.scanning` owns real scanner preview, analyzer, permission, and
-  decode handoff work.
+  decode handoff work. It is the clean home for real scanner capture flow
+  before CameraX code grows further.
 - Scanner analysis must never call network code directly.
 - Room is the structured local source for attendee cache, queued scans, replay
   cache, and sync metadata.
@@ -57,8 +58,13 @@ Hilt is used for:
 - secure token vault and DataStore-backed stores
 - repository bindings
 - queue/flush use cases
-- scanner decode handler and ML Kit scanner engine
+- scanner capture/feedback/camera/format config
+- scanner decode handler, real analyzer binding, frame gate, and ML Kit scanner engine
 - WorkManager worker injection
+
+Scanner replay suppression remains queue/repository-owned. Scanner feedback
+cooldown is a separate scanner config concern. The shared app `Clock` remains
+the only time abstraction; scanner modules must not provide a second clock.
 
 Custom WorkManager initialization exists only because Hilt worker injection
 requires a non-default worker factory. No other custom WorkManager behavior is

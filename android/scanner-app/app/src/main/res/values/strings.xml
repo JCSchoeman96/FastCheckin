@@ -12,6 +12,8 @@
     <string name="scanner_section_title">Scanner</string>
     <string name="scanner_permission_label">Camera Permission</string>
     <string name="scanner_permission_unknown">Camera permission status unknown.</string>
+    <string name="scanner_permission_denied">Camera permission required before scanner preview can start.</string>
+    <string name="scanner_permission_granted">Camera permission granted.</string>
     <string name="request_camera_permission_button_label">Request Camera Permission</string>
     <string name="scanner_status_ready">Scanner scaffold ready. Decoded values will feed the existing local queue only.</string>
     <string name="manual_queue_section_title">Manual Debug Queue</string>
