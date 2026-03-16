@@ -8,64 +8,103 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 
 @HiltViewModel
 class ScanningViewModel @Inject constructor() : ViewModel() {
     private val _uiState = MutableStateFlow(ScanningUiState())
     val uiState: StateFlow<ScanningUiState> = _uiState.asStateFlow()
 
+    private fun shouldShowPreview(
+        permission: CameraPermissionState,
+        lifecycle: ScannerSourceState
+    ): Boolean =
+        permission == CameraPermissionState.GRANTED &&
+            lifecycle is ScannerSourceState.Ready
+
+    private fun computeScannerStatus(
+        lifecycle: ScannerSourceState,
+        permission: CameraPermissionState
+    ): String =
+        when {
+            permission == CameraPermissionState.DENIED ->
+                "Camera permission required before scanner preview can start."
+            lifecycle is ScannerSourceState.Starting ->
+                "Preparing scanner input source."
+            lifecycle is ScannerSourceState.Ready ->
+                "Scanner ready. Decoded values hand off to the existing local queue only."
+            lifecycle is ScannerSourceState.Error ->
+                "Scanner could not start: ${lifecycle.reason}"
+            else ->
+                "Scanner scaffold ready. Decoded values will feed the existing local queue only."
+        }
+
+    fun onSourceStateChanged(state: ScannerSourceState) {
+        _uiState.update { current ->
+            val isSourceReady = state is ScannerSourceState.Ready
+            current.copy(
+                sourceLifecycle = state,
+                isSourceReady = isSourceReady,
+                sourceErrorMessage =
+                    when (state) {
+                        is ScannerSourceState.Error -> state.reason
+                        else -> null
+                    },
+                isPreviewVisible = shouldShowPreview(current.cameraPermissionState, state),
+                scannerStatus = computeScannerStatus(state, current.cameraPermissionState)
+            )
+        }
+    }
+
     fun refreshPermissionState(isGranted: Boolean) {
-        _uiState.update {
-            if (isGranted) {
-                it.copy(
-                    cameraPermissionState = CameraPermissionState.GRANTED,
-                    permissionSummary = "Camera permission granted.",
-                    scannerStatus = "Preparing scanner preview and analyzer scaffold.",
-                    isPreviewVisible = true,
-                    isPermissionRequestEnabled = false
-                )
-            } else {
-                it.copy(
-                    cameraPermissionState = CameraPermissionState.DENIED,
-                    permissionSummary = "Camera permission required before scanner preview can start.",
-                    scannerStatus =
-                        "Scanner placeholder is visible. Real capture stays local-first and uses the existing queue path.",
-                    isPreviewVisible = false,
-                    isPermissionRequestEnabled = true
-                )
-            }
+        _uiState.update { current ->
+            val newPermission =
+                if (isGranted) {
+                    CameraPermissionState.GRANTED
+                } else {
+                    CameraPermissionState.DENIED
+                }
+
+            current.copy(
+                cameraPermissionState = newPermission,
+                permissionSummary =
+                    if (isGranted) {
+                        "Camera permission granted."
+                    } else {
+                        "Camera permission required before scanner preview can start."
+                    },
+                isPermissionRequestEnabled = !isGranted,
+                isPreviewVisible = shouldShowPreview(newPermission, current.sourceLifecycle),
+                scannerStatus = computeScannerStatus(current.sourceLifecycle, newPermission)
+            )
         }
     }
 
     fun onPermissionRequestStarted() {
         _uiState.update {
-            it.copy(scannerStatus = "Requesting camera permission for scanner preview.")
+            it.copy(scannerStatus = "Requesting camera permission for scanner input.")
         }
     }
 
     fun onScannerBindingStarted() {
-        _uiState.update {
-            it.copy(scannerStatus = "Binding CameraX preview and ML Kit analyzer.")
-        }
+        onSourceStateChanged(ScannerSourceState.Starting)
     }
 
     fun onScannerReady() {
-        _uiState.update {
-            it.copy(
-                scannerStatus =
-                    "Scanner preview active. Decoded values hand off to the existing local queue only."
-            )
-        }
+        onSourceStateChanged(ScannerSourceState.Ready)
     }
 
     fun onScannerBindingFailed(message: String?) {
-        _uiState.update {
-            it.copy(
+        onSourceStateChanged(
+            ScannerSourceState.Error(message ?: "Scanner could not start.")
+        )
+        _uiState.update { current ->
+            current.copy(
                 scannerStatus =
                     if (message.isNullOrBlank()) {
-                        "Scanner preview could not start."
+                        "Scanner could not start."
                     } else {
-                        "Scanner preview could not start: $message"
+                        "Scanner could not start: $message"
                     },
                 isPreviewVisible = false,
                 isPermissionRequestEnabled = true

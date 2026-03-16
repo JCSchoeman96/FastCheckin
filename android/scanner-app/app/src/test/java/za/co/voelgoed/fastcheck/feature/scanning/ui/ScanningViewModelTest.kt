@@ -3,6 +3,7 @@ package za.co.voelgoed.fastcheck.feature.scanning.ui
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 
 class ScanningViewModelTest {
     @Test
@@ -10,12 +11,39 @@ class ScanningViewModelTest {
         val viewModel = ScanningViewModel()
 
         viewModel.refreshPermissionState(false)
-        assertThat(viewModel.uiState.value.cameraPermissionState).isEqualTo(CameraPermissionState.DENIED)
+        assertThat(viewModel.uiState.value.cameraPermissionState)
+            .isEqualTo(CameraPermissionState.DENIED)
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
 
         viewModel.refreshPermissionState(true)
-        assertThat(viewModel.uiState.value.cameraPermissionState).isEqualTo(CameraPermissionState.GRANTED)
+        assertThat(viewModel.uiState.value.cameraPermissionState)
+            .isEqualTo(CameraPermissionState.GRANTED)
+        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+        assertThat(viewModel.uiState.value.scannerStatus).contains("Scanner scaffold ready")
+    }
+
+    @Test
+    fun scannerSourceLifecycleDrivesUiStateAndPreviewVisibility() {
+        val viewModel = ScanningViewModel()
+
+        // Permission granted but source idle -> no preview
+        viewModel.refreshPermissionState(true)
+        assertThat(viewModel.uiState.value.cameraPermissionState)
+            .isEqualTo(CameraPermissionState.GRANTED)
+        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+        assertThat(viewModel.uiState.value.isSourceReady).isFalse()
+
+        // Source transitions to Ready -> preview visible
+        viewModel.onSourceStateChanged(ScannerSourceState.Ready)
+        assertThat(viewModel.uiState.value.sourceLifecycle)
+            .isEqualTo(ScannerSourceState.Ready)
+        assertThat(viewModel.uiState.value.isSourceReady).isTrue()
         assertThat(viewModel.uiState.value.isPreviewVisible).isTrue()
-        assertThat(viewModel.uiState.value.scannerStatus).contains("Preparing scanner preview")
+
+        // Source error clears readiness and preview
+        viewModel.onSourceStateChanged(ScannerSourceState.Error("camera unavailable"))
+        assertThat(viewModel.uiState.value.isSourceReady).isFalse()
+        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+        assertThat(viewModel.uiState.value.sourceErrorMessage).isEqualTo("camera unavailable")
     }
 }
