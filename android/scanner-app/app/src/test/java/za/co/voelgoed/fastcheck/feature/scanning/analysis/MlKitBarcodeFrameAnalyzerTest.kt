@@ -4,6 +4,8 @@ import androidx.camera.core.ImageProxy
 import com.google.common.truth.Truth.assertThat
 import com.google.mlkit.vision.common.InputImage
 import java.lang.reflect.Proxy
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
@@ -40,7 +42,7 @@ class MlKitBarcodeFrameAnalyzerTest {
     }
 
     @Test
-    fun ignoresBlankAndNullRawValuesWhileClosingImageProxy() = runTest {
+    fun ignoresBlankRawValuesWhileClosingImageProxy() = runTest {
         val closeRecorder = CloseRecorder()
         val imageProxy = fakeImageProxy(closeRecorder)
         val handler = RecordingDecodedBarcodeHandler()
@@ -54,14 +56,76 @@ class MlKitBarcodeFrameAnalyzerTest {
 
         analyzer.deliverDetections(
             listOf(
+                ScannerDetection(rawValue = "   ", bounds = null, format = 1, capturedAtEpochMillis = 0L),
                 ScannerDetection(rawValue = "VG-101", bounds = null, format = 1, capturedAtEpochMillis = 1L),
-                ScannerDetection(rawValue = "VG-102", bounds = null, format = 1, capturedAtEpochMillis = 2L)
+                ScannerDetection(rawValue = "", bounds = null, format = 1, capturedAtEpochMillis = 2L)
             ),
             imageProxy
         )
 
+        handler.awaitDecoded()
+
         assertThat(closeRecorder.closed).isTrue()
         assertThat(handler.decodedValues).containsExactly(DecodedBarcode(rawValue = "VG-101", capturedAtEpochMillis = 1L))
+    }
+
+    @Test
+    fun preservesNonBlankWhitespaceSurroundedValuesExactly() = runTest {
+        val closeRecorder = CloseRecorder()
+        val imageProxy = fakeImageProxy(closeRecorder)
+        val handler = RecordingDecodedBarcodeHandler()
+        val analyzer =
+            MlKitBarcodeFrameAnalyzer(
+                barcodeScannerEngine = NoOpBarcodeScannerEngine(),
+                scannerFrameGate = ScannerFrameGate(),
+                decodedBarcodeHandler = handler,
+                appDispatchers = AppDispatchers()
+            )
+
+        analyzer.deliverDetections(
+            listOf(
+                ScannerDetection(rawValue = "   ", bounds = null, format = 1, capturedAtEpochMillis = 0L),
+                ScannerDetection(rawValue = "  VG-101  ", bounds = null, format = 1, capturedAtEpochMillis = 1L),
+                ScannerDetection(rawValue = "\tCODE\n", bounds = null, format = 1, capturedAtEpochMillis = 2L)
+            ),
+            imageProxy
+        )
+
+        handler.awaitDecoded()
+
+        assertThat(closeRecorder.closed).isTrue()
+        assertThat(handler.decodedValues).hasSize(1)
+        assertThat(handler.decodedValues[0])
+            .isEqualTo(DecodedBarcode(rawValue = "  VG-101  ", capturedAtEpochMillis = 1L))
+    }
+
+    @Test
+    fun preservesControlWhitespaceValuesExactlyWhenAdmitted() = runTest {
+        val closeRecorder = CloseRecorder()
+        val imageProxy = fakeImageProxy(closeRecorder)
+        val handler = RecordingDecodedBarcodeHandler()
+        val analyzer =
+            MlKitBarcodeFrameAnalyzer(
+                barcodeScannerEngine = NoOpBarcodeScannerEngine(),
+                scannerFrameGate = ScannerFrameGate(),
+                decodedBarcodeHandler = handler,
+                appDispatchers = AppDispatchers()
+            )
+
+        analyzer.deliverDetections(
+            listOf(
+                ScannerDetection(rawValue = "   ", bounds = null, format = 1, capturedAtEpochMillis = 0L),
+                ScannerDetection(rawValue = "\tCODE\n", bounds = null, format = 1, capturedAtEpochMillis = 2L)
+            ),
+            imageProxy
+        )
+
+        handler.awaitDecoded()
+
+        assertThat(closeRecorder.closed).isTrue()
+        assertThat(handler.decodedValues).containsExactly(
+            DecodedBarcode(rawValue = "\tCODE\n", capturedAtEpochMillis = 2L)
+        )
     }
 
     @Test
@@ -89,10 +153,17 @@ class MlKitBarcodeFrameAnalyzerTest {
     }
 
     private class RecordingDecodedBarcodeHandler : DecodedBarcodeHandler {
+        private val latch = CountDownLatch(1)
         val decodedValues = mutableListOf<DecodedBarcode>()
 
         override suspend fun onDecoded(decodedBarcode: DecodedBarcode) {
             decodedValues += decodedBarcode
+            latch.countDown()
+        }
+
+        fun awaitDecoded(timeoutMillis: Long = 1_000) {
+            val completed = latch.await(timeoutMillis, TimeUnit.MILLISECONDS)
+            check(completed) { "Timed out waiting for decoded barcode" }
         }
     }
 

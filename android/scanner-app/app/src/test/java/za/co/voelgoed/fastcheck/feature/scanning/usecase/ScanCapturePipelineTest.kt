@@ -17,13 +17,13 @@ class ScanCapturePipelineTest {
     private val scannerCaptureConfig = ScannerCaptureConfig.default
 
     @Test
-    fun handsDecodedValueToLocalQueueWithScannerConfig() = runTest {
+    fun handsDecodedValueToLocalQueueWithScannerConfigPreservingRawValue() = runTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
         val pipeline = ScanCapturePipeline(fakeUseCase, scannerCaptureConfig)
 
-        pipeline.processCandidate(ScannerCandidate(rawValue = "VG-101", capturedAtEpochMillis = 1L))
+        pipeline.processCandidate(ScannerCandidate(rawValue = "  VG-101  ", capturedAtEpochMillis = 1L))
 
-        assertThat(fakeUseCase.ticketCode).isEqualTo("VG-101")
+        assertThat(fakeUseCase.ticketCode).isEqualTo("  VG-101  ")
         assertThat(fakeUseCase.direction).isEqualTo(ScanDirection.IN)
         assertThat(fakeUseCase.operatorName).isEqualTo(scannerCaptureConfig.operatorName)
         assertThat(fakeUseCase.entranceName).isEqualTo(scannerCaptureConfig.entranceName)

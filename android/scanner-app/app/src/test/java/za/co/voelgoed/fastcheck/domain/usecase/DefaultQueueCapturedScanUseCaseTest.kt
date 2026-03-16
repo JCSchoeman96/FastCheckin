@@ -17,7 +17,7 @@ class DefaultQueueCapturedScanUseCaseTest {
     private val clock = Clock.fixed(Instant.parse("2026-03-13T08:30:00Z"), ZoneOffset.UTC)
 
     @Test
-    fun trimsInputAndPreservesRawTicketCodeAsTransportValue() = runTest {
+    fun preservesNonBlankTicketCodeExactlyWhenQueueing() = runTest {
         val repository = RecordingMobileScanRepository()
         val useCase =
             DefaultQueueCapturedScanUseCase(
@@ -35,7 +35,7 @@ class DefaultQueueCapturedScanUseCaseTest {
             )
 
         assertThat(result).isInstanceOf(QueueCreationResult.Enqueued::class.java)
-        assertThat(repository.lastQueuedScan?.ticketCode).isEqualTo("VG-101")
+        assertThat(repository.lastQueuedScan?.ticketCode).isEqualTo("  VG-101  ")
         assertThat(repository.lastQueuedScan?.createdAt).isEqualTo(clock.millis())
         assertThat(repository.lastQueuedScan?.scannedAt).isEqualTo("2026-03-13T08:30:00Z")
         assertThat(repository.lastQueuedScan?.operatorName).isEqualTo("Stored Operator")

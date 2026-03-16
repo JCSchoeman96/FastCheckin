@@ -36,6 +36,22 @@ class RuntimeContractAuditTest {
         assertThat(sourceText).doesNotContain("/api/v1/check_ins")
     }
 
+    @Test
+    fun scannerFeatureDoesNotDependDirectlyOnInfrastructureTypes() {
+        val scannerRoot = File(runtimeRoot(), "feature/scanning")
+        val sourceText =
+            scannerRoot.walkTopDown()
+                .filter { file -> file.isFile && file.extension == "kt" }
+                .joinToString(separator = "\n") { file -> file.readText() }
+
+        assertThat(sourceText).doesNotContain("ScannerDao")
+        assertThat(sourceText).doesNotContain("FastCheckDatabase")
+        assertThat(sourceText).doesNotContain("CurrentPhoenixMobileScanRepository")
+        assertThat(sourceText).doesNotContain("FlushQueueWorker")
+        assertThat(sourceText).doesNotContain("PhoenixMobileApi")
+        assertThat(sourceText).doesNotContain("PhoenixMobileRemoteDataSource")
+    }
+
     private fun phoenixMobileApiSource(): File =
         sequenceOf(
             File("src/main/java/za/co/voelgoed/fastcheck/core/network/PhoenixMobileApi.kt"),

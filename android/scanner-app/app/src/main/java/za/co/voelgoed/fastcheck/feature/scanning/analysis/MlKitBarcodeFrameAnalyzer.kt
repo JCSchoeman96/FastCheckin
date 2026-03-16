@@ -46,7 +46,10 @@ class MlKitBarcodeFrameAnalyzer @Inject constructor(
         imageProxy: ImageProxy
     ) {
         val decodedBarcode =
-            detections.firstOrNull { detection -> scannerFrameGate.tryAdmit(detection) }
+            detections
+                .firstOrNull { detection ->
+                    detection.rawValue.isNotBlank() && scannerFrameGate.tryAdmit(detection)
+                }
                 ?.toDecodedBarcode()
 
         imageProxy.close()
