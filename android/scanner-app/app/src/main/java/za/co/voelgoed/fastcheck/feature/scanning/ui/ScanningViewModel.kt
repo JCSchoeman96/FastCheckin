@@ -111,29 +111,6 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    fun onScannerBindingStarted() {
-        onSourceStateChanged(ScannerSourceState.Starting)
-    }
-
-    fun onScannerReady() {
-        onSourceStateChanged(ScannerSourceState.Ready)
-    }
-
-    fun onScannerBindingFailed(message: String?) {
-        onSourceStateChanged(
-            ScannerSourceState.Error(message ?: "Scanner could not start.")
-        )
-        _uiState.update { current ->
-            current.copy(
-                scannerStatus =
-                    if (message.isNullOrBlank()) {
-                        "Scanner could not start."
-                    } else {
-                        "Scanner could not start: $message"
-                    },
-                isPreviewVisible = false,
-                isPermissionRequestEnabled = true
-            )
-        }
-    }
+    // Scanner binding and lifecycle are now owned by ScannerSourceBinding and the
+    // Android shell. ViewModel observes source state via onSourceStateChanged.
 }

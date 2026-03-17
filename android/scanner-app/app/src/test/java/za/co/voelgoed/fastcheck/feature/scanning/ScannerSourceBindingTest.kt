@@ -110,6 +110,86 @@ class ScannerSourceBindingTest {
     }
 
     @Test
+    fun rapidStartStopSequencesDoNotCreateDuplicateForwardingPipelines() = runTest {
+        val fakeSource = FakeScannerInputSource()
+        val recordingHandler = RecordingDecodedBarcodeHandler()
+        val binding = ScannerSourceBinding(fakeSource, recordingHandler, this)
+
+        // Rapid lifecycle churn: start/stop/start/stop before and after captures.
+        binding.start()
+        binding.start()
+        advanceUntilIdle()
+
+        fakeSource.emitCapture("VG-201")
+        advanceUntilIdle()
+
+        binding.stop()
+        binding.stop()
+        advanceUntilIdle()
+
+        binding.start()
+        binding.start()
+        advanceUntilIdle()
+
+        fakeSource.emitCapture("VG-202")
+        advanceUntilIdle()
+
+        binding.stop()
+
+        assertThat(recordingHandler.values).containsExactly("VG-201", "VG-202").inOrder()
+        // Under churn we still expect one logical start/stop session per phase.
+        assertThat(fakeSource.startCallCount.get()).isEqualTo(2)
+        assertThat(fakeSource.stopCallCount.get()).isEqualTo(2)
+    }
+
+    @Test
+    fun permissionAndShellGatingStartBindingExactlyOnceAndForwardSingleCapture() = runTest {
+        val fakeSource = FakeScannerInputSource()
+        val recordingHandler = RecordingDecodedBarcodeHandler()
+        val binding = ScannerSourceBinding(fakeSource, recordingHandler, this)
+
+        var hasPermission = false
+        var isShellActive = true
+
+        fun evaluateShellStartIfNeeded() {
+            if (isShellActive && hasPermission) {
+                binding.start()
+            }
+        }
+
+        // Shell becomes active without permission; binding must not start.
+        evaluateShellStartIfNeeded()
+        evaluateShellStartIfNeeded()
+        advanceUntilIdle()
+
+        assertThat(fakeSource.startCallCount.get()).isEqualTo(0)
+        assertThat(recordingHandler.values).isEmpty()
+
+        // Permission granted while shell is still active; binding starts exactly once.
+        hasPermission = true
+        evaluateShellStartIfNeeded()
+        advanceUntilIdle()
+
+        assertThat(fakeSource.startCallCount.get()).isEqualTo(1)
+
+        // Re-evaluating active+permission logic must not trigger extra starts.
+        repeat(3) {
+            evaluateShellStartIfNeeded()
+        }
+        advanceUntilIdle()
+
+        assertThat(fakeSource.startCallCount.get()).isEqualTo(1)
+
+        // A single capture is forwarded exactly once.
+        fakeSource.emitCapture("VG-PERM-001")
+        advanceUntilIdle()
+
+        assertThat(recordingHandler.values).containsExactly("VG-PERM-001")
+
+        binding.stop()
+    }
+
+    @Test
     fun exposesUnderlyingSourceStateDirectly() = runTest {
         val fakeSource = FakeScannerInputSource()
         val recordingHandler = RecordingDecodedBarcodeHandler()
