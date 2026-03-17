@@ -2,34 +2,111 @@
 description: Use for new feature work, bugfix planning, and scoped implementation workflow.
 alwaysApply: false
 ---
-# Feature Branch & PR Workflow
 
-Before writing any code for a new task, you must strictly follow this sequence autonomously:
+# Feature Workflow, Branching, and PR Handoff
 
-## 1. Automated Branching (The Hands-Off Setup)
-Do not write code on the `main` branch. When starting a task, execute these terminal commands in the background to ensure a clean starting point:
-1. `git stash` (to save any accidental uncommitted changes)
-2. `git checkout main`
-3. `git pull origin main`
-4. `git checkout -b <type>/<short-description>` (e.g., `feat/seat-hold-timer` or `fix/redis-sync`)
-5. `git stash pop` (only if there were stashed changes relevant to the task)
+Use this rule when starting a new feature, bugfix, or clearly scoped implementation task.
 
-## 2. Intellectual Sparring (Mandatory Planning)
-Before writing the first line of code, present your plan to me including:
-1. **Ultimate Goal:** Define the long-term outcome.
-2. **Backward Plan:** Work from that outcome back to the MVP.
-3. **Challenge Assumptions:** Provide 2-3 counterpoints, highlighting edge cases like race conditions, Redis state sync issues, or thundering herds.
-4. **Domain Map:** Define the Ash resources, state machines, and invariants needed.
+## 1. Branch and repo safety
 
-## 3. Implementation Standards
-Once I approve the plan, implement the code adhering to these baseline constraints:
-- **Frameworks:** Ash 3.0 principles, LiveView (ensure `~> 0.20.0` or higher), and `ash_money ~> 0.2`.
-- **Performance:** Ensure logic supports <100ms API latency.
-- **State:** Use Phoenix PubSub/GenServers for hot state; No polling. Push updates only.
-- **Persistence:** Ensure Optimistic Locking and proper DB-level indexes for high-concurrency paths.
+Do not work directly on `main`.
 
-## 4. Atomic Commits & PR Handoff
-To maintain clean PR separation, you must commit work logically as you go:
-1. **Atomic Commits:** Do not do one massive commit at the end. Commit logical chunks (e.g., `git commit -m "feat: add seat hold domain logic"`, then later `git commit -m "feat: implement liveview check-in UI"`).
-2. **Pushing:** When the feature is complete, run `git push -u origin <branch-name>`.
-3. **PR Generation:** Output a formatted Markdown summary of the changes that I can directly copy and paste into the GitHub/GitLab Pull Request description.
+Before making code changes:
+
+1. Check the current git state first.
+   - Review `git status`
+   - Confirm the current branch
+   - Check whether the worktree is clean or contains unrelated changes
+
+2. If this is a new scoped task:
+   - Propose or create a focused branch name using a clear prefix such as:
+     - `feat/<short-description>`
+     - `fix/<short-description>`
+     - `chore/<short-description>`
+     - `docs/<short-description>`
+
+3. Do not blindly stash, pop, rebase, or switch branches if the worktree is dirty.
+   - Handle existing changes deliberately
+   - Avoid disturbing unrelated in-progress work
+
+## 2. Plan before implementation
+
+Before writing the first line of code, present a short implementation plan that includes:
+
+1. **Ultimate goal**
+   - Define the longer-term outcome, not just the immediate patch
+
+2. **Backward plan**
+   - Work backward from the desired outcome to the smallest safe implementation slice
+
+3. **Challenge assumptions**
+   - Provide 2–3 counterpoints or risks
+   - Call out hidden complexity such as:
+     - race conditions
+     - stale state handoff
+     - Redis sync issues
+     - lifecycle edge cases
+     - cache invalidation
+     - thundering herd risk
+
+4. **Domain and invariant map**
+   - Define the relevant entities, modules, resources, state machines, permissions, and invariants for the task
+   - Use Ash resources where Ash is actually part of the implementation
+   - Do not force Ash-specific modeling onto tasks that are not Ash-backed
+
+## 3. Implementation standards
+
+After the plan is approved, implement within repo constraints:
+
+1. **Verify actual versions from the repo**
+   - Do not assume framework or dependency versions from memory
+   - Check `mix.exs`, Gradle files, lockfiles, and existing code before making version-specific claims
+
+2. **Follow the active project architecture**
+   - Use Ash 3.x patterns where the codebase uses Ash
+   - Keep Phoenix as the web/runtime shell where applicable
+   - Preserve existing contracts unless the task explicitly changes them
+
+3. **Concurrency and performance**
+   - Keep hot paths concurrency-safe
+   - Prefer push-based real-time patterns where relevant
+   - Use Phoenix PubSub, GenServers, and LiveView push updates instead of polling where appropriate
+   - Design with indexes, optimistic locking, and safe write paths on high-concurrency flows
+
+4. **Scope discipline**
+   - Keep changes minimal and incremental
+   - Do not rewrite unrelated code
+   - Do not widen scope without a clear reason
+   - Preserve existing queue, sync, and persistence boundaries unless the task explicitly requires a change
+
+## 4. Git discipline during implementation
+
+If git actions are part of the task:
+
+1. **Commit logically**
+   - Use atomic commits for meaningful chunks of work
+   - Do not leave all changes for one massive commit at the end
+
+2. **Keep commit messages clear**
+   - Example patterns:
+     - `feat: add scanner source binding lifecycle handling`
+     - `fix: prevent duplicate enqueue on scanner restart`
+     - `docs: update mobile API contract notes`
+
+3. **Push only when appropriate**
+   - When the work is ready, push the branch with the correct upstream
+
+## 5. PR handoff
+
+When the feature or fix is complete:
+
+1. Prepare a concise Markdown PR summary that includes:
+   - purpose of the change
+   - key implementation decisions
+   - risks or edge cases addressed
+   - tests run
+   - follow-up work, if any
+
+2. Keep the PR summary factual and implementation-specific.
+   - Do not overclaim
+   - Do not describe unimplemented future work as complete
