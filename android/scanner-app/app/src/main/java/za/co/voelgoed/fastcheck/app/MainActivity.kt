@@ -1,25 +1,30 @@
 package za.co.voelgoed.fastcheck.app
 
 import android.os.Bundle
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import java.time.Clock
 import javax.inject.Inject
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.R
+import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
+import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
-import za.co.voelgoed.fastcheck.feature.scanning.analysis.MlKitBarcodeFrameAnalyzer
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
+import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerSourceBinding
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
 
 @AndroidEntryPoint
@@ -30,22 +35,34 @@ class MainActivity : ComponentActivity() {
     lateinit var scannerCameraBinder: ScannerCameraBinder
 
     @Inject
-    lateinit var mlKitBarcodeFrameAnalyzer: MlKitBarcodeFrameAnalyzer
+    lateinit var appDispatchers: AppDispatchers
+
+    @Inject
+    lateinit var clock: Clock
+
+    @Inject
+    lateinit var barcodeScannerEngine: BarcodeScannerEngine
+
+    @Inject
+    lateinit var scanCapturePipeline: ScanCapturePipeline
 
     private val authViewModel: AuthViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
     private val queueViewModel: QueueViewModel by viewModels()
     private val scanningViewModel: ScanningViewModel by viewModels()
-    private var scannerBound = false
-    private var scannerBindingInProgress = false
+
+    private lateinit var scannerInputSource: CameraScannerInputSource
+    private lateinit var scannerSourceBinding: ScannerSourceBinding
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             scanningViewModel.refreshPermissionState(granted)
 
             if (granted) {
-                bindScannerPreview()
+                if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                    scannerSourceBinding.start()
+                }
             }
         }
 
@@ -53,6 +70,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        scannerInputSource =
+            CameraScannerInputSource(
+                scannerCameraBinder = scannerCameraBinder,
+                lifecycleOwnerProvider = { this },
+                previewViewProvider = { binding.scannerPreview },
+                appDispatchers = appDispatchers,
+                clock = clock,
+                barcodeScannerEngine = barcodeScannerEngine
+            )
+        scannerSourceBinding =
+            ScannerSourceBinding(
+                source = scannerInputSource,
+                decodedBarcodeHandler = scanCapturePipeline,
+                parentScope = lifecycleScope
+            )
 
         binding.loginButton.setOnClickListener {
             authViewModel.updateEventId(binding.eventIdInput.text.toString())
@@ -144,10 +177,20 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 android.view.View.GONE
                             }
+                        // Preview visibility now reflects source state; binding to the
+                        // camera-backed source is owned by ScannerSourceBinding.
+                    }
+                }
 
-                        if (state.isPreviewVisible && !scannerBound) {
-                            bindScannerPreview()
-                        }
+                launch {
+                    scannerSourceBinding.sourceState.collectLatest { state ->
+                        scanningViewModel.onSourceStateChanged(state)
+                    }
+                }
+
+                launch {
+                    scanCapturePipeline.handoffResults.collectLatest { result ->
+                        scanningViewModel.onCaptureHandoffResult(result)
                     }
                 }
             }
@@ -157,28 +200,16 @@ class MainActivity : ComponentActivity() {
         diagnosticsViewModel.refresh()
     }
 
-    private fun bindScannerPreview() {
-        if (!hasCameraPermission() || scannerBound || scannerBindingInProgress) {
-            return
+    override fun onStart() {
+        super.onStart()
+        if (hasCameraPermission()) {
+            scannerSourceBinding.start()
         }
+    }
 
-        scannerBindingInProgress = true
-        scanningViewModel.onScannerBindingStarted()
-        scannerCameraBinder.bind(
-            lifecycleOwner = this,
-            previewView = binding.scannerPreview,
-            analyzer = mlKitBarcodeFrameAnalyzer,
-            onBound = {
-                scannerBindingInProgress = false
-                scannerBound = true
-                scanningViewModel.onScannerReady()
-            },
-            onError = { throwable ->
-                scannerBindingInProgress = false
-                scannerBound = false
-                scanningViewModel.onScannerBindingFailed(throwable.message)
-            }
-        )
+    override fun onStop() {
+        scannerSourceBinding.stop()
+        super.onStop()
     }
 
     private fun hasCameraPermission(): Boolean =
