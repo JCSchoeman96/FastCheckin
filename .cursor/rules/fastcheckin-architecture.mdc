@@ -1,8 +1,8 @@
 ---
-trigger: always_on
+description: Core architecture boundaries and source-of-truth rules for FastCheckin.
+alwaysApply: true
 ---
-
-Respect the current architecture: Phoenix backend with existing contexts (Events, Attendees, CheckIns, etc.) plus a separate Svelte mobile client.
+Respect the current architecture: Phoenix backend with existing contexts (Events, Attendees, CheckIns, etc.).
 
 Do not merge or blur domain boundaries (e.g. do not put attendee domain logic inside controllers).
 

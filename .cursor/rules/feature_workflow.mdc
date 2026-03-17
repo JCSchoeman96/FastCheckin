@@ -1,0 +1,35 @@
+---
+description: Use for new feature work, bugfix planning, and scoped implementation workflow.
+alwaysApply: false
+---
+# Feature Branch & PR Workflow
+
+Before writing any code for a new task, you must strictly follow this sequence autonomously:
+
+## 1. Automated Branching (The Hands-Off Setup)
+Do not write code on the `main` branch. When starting a task, execute these terminal commands in the background to ensure a clean starting point:
+1. `git stash` (to save any accidental uncommitted changes)
+2. `git checkout main`
+3. `git pull origin main`
+4. `git checkout -b <type>/<short-description>` (e.g., `feat/seat-hold-timer` or `fix/redis-sync`)
+5. `git stash pop` (only if there were stashed changes relevant to the task)
+
+## 2. Intellectual Sparring (Mandatory Planning)
+Before writing the first line of code, present your plan to me including:
+1. **Ultimate Goal:** Define the long-term outcome.
+2. **Backward Plan:** Work from that outcome back to the MVP.
+3. **Challenge Assumptions:** Provide 2-3 counterpoints, highlighting edge cases like race conditions, Redis state sync issues, or thundering herds.
+4. **Domain Map:** Define the Ash resources, state machines, and invariants needed.
+
+## 3. Implementation Standards
+Once I approve the plan, implement the code adhering to these baseline constraints:
+- **Frameworks:** Ash 3.0 principles, LiveView (ensure `~> 0.20.0` or higher), and `ash_money ~> 0.2`.
+- **Performance:** Ensure logic supports <100ms API latency.
+- **State:** Use Phoenix PubSub/GenServers for hot state; No polling. Push updates only.
+- **Persistence:** Ensure Optimistic Locking and proper DB-level indexes for high-concurrency paths.
+
+## 4. Atomic Commits & PR Handoff
+To maintain clean PR separation, you must commit work logically as you go:
+1. **Atomic Commits:** Do not do one massive commit at the end. Commit logical chunks (e.g., `git commit -m "feat: add seat hold domain logic"`, then later `git commit -m "feat: implement liveview check-in UI"`).
+2. **Pushing:** When the feature is complete, run `git push -u origin <branch-name>`.
+3. **PR Generation:** Output a formatted Markdown summary of the changes that I can directly copy and paste into the GitHub/GitLab Pull Request description.

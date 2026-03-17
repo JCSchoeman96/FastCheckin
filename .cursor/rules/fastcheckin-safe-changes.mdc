@@ -1,7 +1,7 @@
 ---
-trigger: always_on
+description: Core architecture boundaries and source-of-truth rules for FastCheckin.
+alwaysApply: true
 ---
-
 Treat check-in, check-out, and attendee state as high-risk areas: be conservative when changing them.
 
 Avoid changing database schema or existing endpoint contracts unless explicitly instructed and backed by a migration/compatibility plan.
