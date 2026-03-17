@@ -13,7 +13,8 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
  * Queueing remains local-first and upload/flush stays outside scanner code.
  */
 class ScanCapturePipeline @Inject constructor(
-    private val queueCapturedScan: QueueCapturedScanUseCase
+    private val queueCapturedScan: QueueCapturedScanUseCase,
+    private val timeProvider: () -> Long = { System.currentTimeMillis() }
 ) : DecodedBarcodeHandler {
 
     private val _handoffResults =
@@ -24,7 +25,17 @@ class ScanCapturePipeline @Inject constructor(
         )
     val handoffResults: SharedFlow<CaptureHandoffResult> = _handoffResults
 
+    private var lastAcceptedAtEpochMillis: Long? = null
+
     override suspend fun onDecoded(rawValue: String) {
+        val now = timeProvider.invoke()
+        val lastAccepted = lastAcceptedAtEpochMillis
+
+        if (lastAccepted != null && now - lastAccepted < COOLDOWN_WINDOW_MILLIS) {
+            _handoffResults.tryEmit(CaptureHandoffResult.SuppressedByCooldown)
+            return
+        }
+
         try {
             queueCapturedScan.enqueue(
                 ticketCode = rawValue,
@@ -32,10 +43,16 @@ class ScanCapturePipeline @Inject constructor(
                 operatorName = ScannerCaptureDefaults.operatorName,
                 entranceName = ScannerCaptureDefaults.entranceName
             )
+            lastAcceptedAtEpochMillis = now
             _handoffResults.tryEmit(CaptureHandoffResult.Accepted)
         } catch (t: Throwable) {
             val reason = t.message?.takeIf { it.isNotBlank() } ?: "Could not queue scan"
             _handoffResults.tryEmit(CaptureHandoffResult.Failed(reason))
         }
     }
+
+    private companion object {
+        const val COOLDOWN_WINDOW_MILLIS: Long = 1_000L
+    }
 }
+

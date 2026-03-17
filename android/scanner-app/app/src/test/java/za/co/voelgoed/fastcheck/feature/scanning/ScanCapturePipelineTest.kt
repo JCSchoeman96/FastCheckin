@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
@@ -10,6 +11,7 @@ import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 
 class ScanCapturePipelineTest {
@@ -37,7 +39,62 @@ class ScanCapturePipelineTest {
         assertThat(constructorParameterTypes).doesNotContain(MobileScanRepository::class.java)
     }
 
+    @Test
+    fun firstCaptureAccepted_secondSameCodeWithinWindowSuppressed() = runTest {
+        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        var now = 1_000L
+        val pipeline = ScanCapturePipeline(fakeUseCase) { now }
+
+        pipeline.onDecoded("CODE-A")
+        val firstResult = pipeline.handoffResults.first()
+
+        now += 500L
+        pipeline.onDecoded("CODE-A")
+        val secondResult = pipeline.handoffResults.first()
+
+        assertThat(fakeUseCase.enqueueCallCount).isEqualTo(1)
+        assertThat(firstResult).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(secondResult).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
+    }
+
+    @Test
+    fun differentCodeWithinWindowIsAlsoSuppressed() = runTest {
+        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        var now = 5_000L
+        val pipeline = ScanCapturePipeline(fakeUseCase) { now }
+
+        pipeline.onDecoded("CODE-A")
+        val firstResult = pipeline.handoffResults.first()
+
+        now += 500L
+        pipeline.onDecoded("CODE-B")
+        val secondResult = pipeline.handoffResults.first()
+
+        assertThat(fakeUseCase.enqueueCallCount).isEqualTo(1)
+        assertThat(firstResult).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(secondResult).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
+    }
+
+    @Test
+    fun captureAfterCooldownExpiryIsAcceptedAgain() = runTest {
+        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        var now = 10_000L
+        val pipeline = ScanCapturePipeline(fakeUseCase) { now }
+
+        pipeline.onDecoded("CODE-A")
+        val firstResult = pipeline.handoffResults.first()
+
+        now += 2_000L
+        pipeline.onDecoded("CODE-B")
+        val secondResult = pipeline.handoffResults.first()
+
+        assertThat(fakeUseCase.enqueueCallCount).isEqualTo(2)
+        assertThat(firstResult).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(secondResult).isEqualTo(CaptureHandoffResult.Accepted)
+    }
+
     private class RecordingQueueCapturedScanUseCase : QueueCapturedScanUseCase {
+        var enqueueCallCount: Int = 0
         var ticketCode: String? = null
         var direction: ScanDirection? = null
         var operatorName: String? = null
@@ -49,6 +106,7 @@ class ScanCapturePipelineTest {
             operatorName: String,
             entranceName: String
         ): QueueCreationResult {
+            enqueueCallCount += 1
             this.ticketCode = ticketCode
             this.direction = direction
             this.operatorName = operatorName

@@ -12,6 +12,12 @@ sealed class CaptureHandoffResult {
     data object Accepted : CaptureHandoffResult()
 
     /**
+     * The capture was intentionally ignored because a short global cooldown
+     * window is still active.
+     */
+    data object SuppressedByCooldown : CaptureHandoffResult()
+
+    /**
      * The capture could not be handed off due to an operational failure.
      */
     data class Failed(val reason: String) : CaptureHandoffResult()

@@ -47,6 +47,8 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 when (result) {
                     is CaptureHandoffResult.Accepted ->
                         CaptureFeedbackState.Success("Scan queued.")
+                    is CaptureHandoffResult.SuppressedByCooldown ->
+                        CaptureFeedbackState.Success("Capture ignored during active cooldown.")
                     is CaptureHandoffResult.Failed -> {
                         val message =
                             result.reason.takeIf { it.isNotBlank() } ?: "Could not queue scan"
