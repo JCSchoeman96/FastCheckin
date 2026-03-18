@@ -5,6 +5,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -13,6 +15,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 
@@ -71,6 +74,15 @@ class DefaultAutoFlushCoordinatorTest {
         override suspend fun latestFlushReport(): FlushReport? = null
     }
 
+    private class FakeConnectivityMonitor(initialOnline: Boolean) : ConnectivityMonitor {
+        private val _isOnline = MutableStateFlow(initialOnline)
+        override val isOnline: StateFlow<Boolean> = _isOnline
+
+        fun setOnline(value: Boolean) {
+            _isOnline.value = value
+        }
+    }
+
     @Test
     fun singleManualRequestRunsOnce() =
         runTest(StandardTestDispatcher()) {
@@ -82,11 +94,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository()
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -111,11 +125,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository().apply { depth = 0 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -153,11 +169,13 @@ class DefaultAutoFlushCoordinatorTest {
                 RecordingScanRepository().apply {
                     depth = 1
                 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -187,11 +205,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository().apply { depth = 10 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -213,11 +233,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository().apply { depth = 1 }
+            val monitor = FakeConnectivityMonitor(initialOnline = false)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { false },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -239,11 +261,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository().apply { depth = 0 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -271,11 +295,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository().apply { depth = 0 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -302,11 +328,13 @@ class DefaultAutoFlushCoordinatorTest {
                     )
                 }
             val repo = RecordingScanRepository().apply { depth = 0 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val coordinator =
                 DefaultAutoFlushCoordinator(
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -332,6 +360,7 @@ class DefaultAutoFlushCoordinatorTest {
         runTest(StandardTestDispatcher()) {
             var invocation = 0
             val repo = RecordingScanRepository().apply { depth = 60 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val useCase =
                 RecordingFlushUseCase {
                     invocation += 1
@@ -355,6 +384,7 @@ class DefaultAutoFlushCoordinatorTest {
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     maxBatchSize = 25,
                     afterEnqueueDebounceMs = 250,
@@ -377,6 +407,7 @@ class DefaultAutoFlushCoordinatorTest {
                 RecordingScanRepository().apply {
                     depth = 2
                 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
             val useCase =
                 RecordingFlushUseCase {
                     invocation += 1
@@ -401,6 +432,7 @@ class DefaultAutoFlushCoordinatorTest {
                     flushQueuedScansUseCase = useCase,
                     mobileScanRepository = repo,
                     connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
                 )
@@ -412,6 +444,112 @@ class DefaultAutoFlushCoordinatorTest {
             assertThat(invocation).isEqualTo(2)
             assertThat(useCase.reports).hasSize(2)
             assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
+        }
+
+    @Test
+    fun offlineToOnline_withBacklog_triggersImmediateFlush_notDebounced() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = false)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            val useCase =
+                RecordingFlushUseCase {
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 0
+                    )
+                }
+            DefaultAutoFlushCoordinator(
+                flushQueuedScansUseCase = useCase,
+                mobileScanRepository = repo,
+                connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                connectivityMonitor = monitor,
+                clock = java.time.Clock.systemUTC(),
+                coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+            )
+
+            runCurrent()
+            assertThat(useCase.reports).isEmpty()
+
+            // Connection-restored should be immediate and not depend on AfterEnqueue debounce.
+            monitor.setOnline(true)
+            runCurrent()
+            advanceUntilIdle()
+
+            assertThat(useCase.reports).hasSize(1)
+        }
+
+    @Test
+    fun offlineToOnline_emptyQueue_doesNotFlush() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = false)
+            val repo = RecordingScanRepository().apply { depth = 0 }
+            val useCase =
+                RecordingFlushUseCase {
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 0
+                    )
+                }
+            DefaultAutoFlushCoordinator(
+                flushQueuedScansUseCase = useCase,
+                mobileScanRepository = repo,
+                connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                connectivityMonitor = monitor,
+                clock = java.time.Clock.systemUTC(),
+                coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+            )
+
+            // Ensure the coordinator's connectivity subscription is active
+            // before we flip online (otherwise the false->true transition is missed).
+            runCurrent()
+
+            monitor.setOnline(true)
+            runCurrent()
+            advanceUntilIdle()
+
+            assertThat(useCase.reports).isEmpty()
+        }
+
+    @Test
+    fun repeatedOnlineEvents_doNotOverlapFlushes() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = false)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    check(calls <= 3) { "Unexpected flush loop: calls=$calls" }
+                    delay(50)
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 0
+                    )
+                }
+            DefaultAutoFlushCoordinator(
+                flushQueuedScansUseCase = useCase,
+                mobileScanRepository = repo,
+                connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                connectivityMonitor = monitor,
+                clock = java.time.Clock.systemUTC(),
+                coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+            )
+
+            // Ensure the coordinator's connectivity subscription is active
+            // before we flip online (otherwise the false->true transition is missed).
+            runCurrent()
+
+            monitor.setOnline(true)
+            runCurrent()
+
+            monitor.setOnline(false)
+            monitor.setOnline(true)
+            runCurrent()
+
+            advanceUntilIdle()
+
+            assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
+            assertThat(useCase.reports).isNotEmpty()
         }
 }
 

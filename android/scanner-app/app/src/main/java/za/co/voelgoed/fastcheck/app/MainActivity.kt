@@ -123,16 +123,28 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
+                    var lastHadSession = false
                     authViewModel.uiState.collectLatest { state ->
                         binding.sessionSummaryValue.text =
                             state.sessionSummary ?: getString(R.string.no_active_session)
                         binding.authErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
                         binding.loginButton.isEnabled = !state.isSubmitting
                         diagnosticsViewModel.refresh()
+
+                        val hasSession =
+                            state.sessionSummary != null &&
+                                state.errorMessage == null &&
+                                !state.isSubmitting
+                        if (!lastHadSession && hasSession) {
+                            autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
+                        }
+                        lastHadSession = hasSession
                     }
                 }
 
                 launch {
+                    var lastWasSyncing = false
+                    var lastError: String? = null
                     syncViewModel.uiState.collectLatest { state ->
                         binding.syncSummaryValue.text = state.summaryMessage
                         binding.syncErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
@@ -141,6 +153,15 @@ class MainActivity : ComponentActivity() {
                         if (!state.isSyncing) {
                             diagnosticsViewModel.refresh()
                         }
+
+                        val completedNow = lastWasSyncing && !state.isSyncing
+                        val succeededNow = completedNow && lastError == null && state.errorMessage == null
+                        if (succeededNow) {
+                            autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostSync)
+                        }
+
+                        lastWasSyncing = state.isSyncing
+                        lastError = state.errorMessage
                     }
                 }
 
@@ -210,6 +231,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        autoFlushCoordinator.requestFlush(AutoFlushTrigger.ForegroundResume)
         if (hasCameraPermission()) {
             scannerSourceBinding.start()
         }

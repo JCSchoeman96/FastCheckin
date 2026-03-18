@@ -24,5 +24,9 @@ data class AutoFlushCoordinatorState(
 sealed interface AutoFlushTrigger {
     data object Manual : AutoFlushTrigger
     data object AfterEnqueue : AutoFlushTrigger
+    data object ConnectivityRestored : AutoFlushTrigger
+    data object ForegroundResume : AutoFlushTrigger
+    data object PostLogin : AutoFlushTrigger
+    data object PostSync : AutoFlushTrigger
 }
 

@@ -9,6 +9,7 @@ import java.time.Clock
 import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.ConnectivityProvider
+import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.core.network.VaultBackedSessionProvider
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanRepository
@@ -82,8 +83,10 @@ abstract class RepositoryModule {
 
         @Provides
         @Singleton
-        fun provideConnectivityProvider(): ConnectivityProvider =
-            ConnectivityProvider { true }
+        fun provideConnectivityProvider(
+            connectivityMonitor: ConnectivityMonitor
+        ): ConnectivityProvider =
+            ConnectivityProvider { connectivityMonitor.isOnline.value }
 
         @Provides
         @Singleton
@@ -91,12 +94,14 @@ abstract class RepositoryModule {
             flushQueuedScansUseCase: FlushQueuedScansUseCase,
             mobileScanRepository: MobileScanRepository,
             connectivityProvider: ConnectivityProvider,
+            connectivityMonitor: ConnectivityMonitor,
             clock: Clock
         ): AutoFlushCoordinator =
             za.co.voelgoed.fastcheck.core.autoflush.DefaultAutoFlushCoordinator(
                 flushQueuedScansUseCase = flushQueuedScansUseCase,
                 mobileScanRepository = mobileScanRepository,
                 connectivityProvider = connectivityProvider,
+                connectivityMonitor = connectivityMonitor,
                 clock = clock
             )
     }
