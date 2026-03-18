@@ -1,219 +1,122 @@
 # FastCheck - PETAL Event Check-in System
 
-**Replace Checkinera with a faster, self-hosted alternative**
+**Replace Checkinera with a faster, self-hosted alternative.**
 
-FastCheck is a Phoenix-powered PETAL stack application that enables lightning-fast ticket validation, on-site attendee insights, and total control over the event check-in experience.
+FastCheck is a Phoenix + LiveView event check-in system with a separate Kotlin Android scanner app. The backend syncs Tickera data into PostgreSQL and remains the authority for scan acceptance; the Android client is a local-first attendee cache with queued scan uploads.
 
-## 🚀 Motivation: Why Build FastCheck?
-- **Problem:** Checkinera runs on hosted WordPress and often takes 500–1500 ms per scan while charging a recurring subscription fee.
-- **Solution:** FastCheck delivers a self-hosted system that processes QR scans in just 10–50 ms, eliminating vendor lock-in and recurring costs.
-- **Benefits:** Exceptional speed, customizable workflows, offline-capable after syncing, and complete ownership of the source code and infrastructure.
+## Motivation
 
-## ✨ Key Features
-- ✓ 10–50 ms QR code scanning (≈40× faster than Checkinera)
-- ✓ Offline-capable once attendee data is synced locally
-- ✓ Support for multiple simultaneous events and venues
-- ✓ Lifecycle-aware syncing using cached Tickera UTC start/end windows
-- ✓ Real-time statistics, throughput charts, and live progress bars
-- ✓ 100% source-code ownership with no vendor dependencies
-- ✓ PostgreSQL database with tuned indexes for high-volume reads/writes
-- ✓ Immutable audit trail for every check-in attempt
-- ✓ Integration bridge for WordPress Tickera plugin data
-- ✓ Multi-entrance support (Main, VIP, Staff, Vendors, etc.)
-- ✓ Zero subscription fees—host it on your own VPS
+- Checkinera is hosted WordPress with subscription cost and high per-scan latency.
+- FastCheck is self-hosted, designed for high-throughput check-in flows, and keeps your data and workflows under your control.
 
-## 🧱 Tech Stack
-- **Backend:** Phoenix 1.7, Elixir/OTP, PubSub
-- **Frontend:** LiveView, TailwindCSS, optional Svelte 5 widgets
-- **Database:** PostgreSQL 12+ with replication-ready schema
-- **Deployment:** systemd service on your VPS (Ubuntu/Debian), OpenLiteSpeed proxy, Let’s Encrypt SSL
+## What’s in this repo
 
-## ⚡ Quick Start
+- **Phoenix app**: LiveView dashboard, browser scanner, scanner portal, CSV exports, and JSON/mobile endpoints.
+- **Android scanner app**: `android/scanner-app` (CameraX/ML Kit capture → local queue → WorkManager flush).
+
+## Tech stack (current)
+
+- **Backend**: Phoenix `~> 1.8.1`, Phoenix LiveView `~> 1.1.17`, Elixir `~> 1.17` (see `mix.exs`).
+- **Frontend**: LiveView + Tailwind (assets in `assets/`).
+- **Data**: PostgreSQL (Docker compose uses Postgres 15). Optional pgBouncer + Redis are provided in `docker-compose.yml`.
+- **Android**: Kotlin, Room, Retrofit/OkHttp, WorkManager (see `android/scanner-app/docs/architecture.md`).
+
+## Active API contract (Android runtime)
+
+These are the only promoted Android runtime endpoints today:
+
+- `POST /api/v1/mobile/login`
+- `GET /api/v1/mobile/attendees`
+- `POST /api/v1/mobile/scans`
+
+Canonical contract doc:
+
+- `android/scanner-app/CURRENT_PHOENIX_MOBILE_API.md`
+
+Notes:
+
+- The backend is the business-rule authority; the Android app caches + queues and uploads for server decisions.
+- `direction = "out"` is currently not implemented for successful mobile flows (see the contract doc).
+
+## Architecture boundaries (high-level)
+
+- **Browser/LiveView surfaces** (examples): dashboard, browser scanner, scanner portal, occupancy view (see `AGENTS.md` for the current map).
+- **Mobile API**: JWT-protected routes under `/api/v1/mobile/*` (see `lib/fastcheck_web/router.ex`).
+- **Legacy/other JSON endpoints**: `/api/v1/check-in` and `/api/v1/check-in/batch` exist behind JWT auth, but are not the promoted Android contract (Android uses `/api/v1/mobile/*`).
+
+## Local development (Phoenix)
+
+### Prerequisites
+
+- Elixir `1.17+`
+- Docker (recommended for Postgres/pgBouncer/Redis)
+
+### Start infra (recommended)
+
 ```bash
-# Prerequisites
-elixir --version  # 1.17+
-mix archive.install hex phx_new
-psql --version    # 12+
-
-# Create project skeleton
-mix phx.new fastcheck --database postgres
-cd fastcheck
-mix ecto.create
-```
-
-## 🏗️ Architecture Overview
-- **Data Flow:** Tickera API → FastCheck Tickera client → PostgreSQL → LiveView scanner interface.
-- **Core Tables:** `events`, `attendees`, and `check_ins` with supporting indexes on ticket code, status, and entrance.
-- **Real-time Updates:** LiveView WebSockets broadcast stats to every connected scanner in <50 ms.
-- **Optimized Queries:** Query plans target single-digit millisecond response times even with 10k+ attendees.
-
-## 📁 Project Structure
-```
-fastcheck/
-├── lib/fastcheck/          # Application logic & contexts
-├── lib/fastcheck_web/      # LiveView, controllers, components
-├── priv/repo/              # Database migrations & seeds
-├── config/                 # Runtime + environment config
-├── test/                   # ExUnit + LiveView tests
-└── assets/                 # Tailwind, JS, optional Svelte widgets
-```
-
-## 🛣️ Development Roadmap (13 Tasks)
-1. **Days 1–2:** Phoenix foundation, Repo config, base schemas.
-2. **Day 3:** Build Tickera API client (Req-based) + credential validation.
-3. **Days 4–5:** Implement Events & Attendees contexts with syncing logic.
-4. **Day 6:** Introduce check-in workflows, duplicate prevention, audit trail.
-5. **Day 7:** Real-time PubSub instrumentation & stats aggregation.
-6. **Day 8:** LiveView scanner + dashboard surfaces.
-7. **Day 9:** Router wiring, auth gates, role-based entrances.
-8. **Day 10:** Offline cache + sync reconciliation.
-9. **Day 11:** Production config (systemd, env vars, SSL).
-10. **Day 12:** Performance tuning, query optimization, indexes.
-11. **Day 13:** QA, smoke tests, deployment automation.
-12. **Bonus:** Multi-tenant event management & branding.
-13. **Post-launch:** Observability, alerting, backup rotation.
-
-## 🔍 Comparison
-| Feature          | Checkinera        | FastCheck             |
-|------------------|------------------|-----------------------|
-| Scan Speed       | 500–1500 ms       | 10–50 ms              |
-| Offline          | Limited cache     | Full after sync       |
-| Cost             | Premium subscription | VPS hosting only   |
-| Customization    | Restricted        | Complete control      |
-| Data Ownership   | Tickera-hosted    | Your VPS / servers    |
-
-## ☁️ Deployment Checklist
-1. Provision Ubuntu/Debian VPS with PostgreSQL 12+.
-2. Configure environment variables via `.env` and `systemd` unit (at minimum: `SECRET_KEY_BASE`, `ENCRYPTION_KEY`, `DATABASE_URL`, `MOBILE_JWT_SECRET`).
-3. Build release (`MIX_ENV=prod mix release`) and run under systemd for auto-restart.
-4. Terminate TLS using OpenLiteSpeed or Nginx with Let’s Encrypt certificates.
-5. Enable database backups and monitoring dashboards (Prometheus/Grafana optional).
-
-When you need Phoenix to terminate TLS directly (no reverse proxy), set `ENABLE_HTTPS=true` and optionally `HTTPS_PORT`, `SSL_CERT_PATH`, and `SSL_KEY_PATH` (defaults assume Let’s Encrypt). Leave `ENABLE_HTTPS=false` behind a proxy to skip binding the HTTPS listener entirely.
-
-### Metrics exporter hardening
-- The TelemetryMetricsPrometheus.Core reporter only starts in development or when `ENABLE_METRICS=true` is set.
-- Metrics listen on `127.0.0.1` by default; expose them in production only behind authentication or a reverse proxy with IP whitelisting.
-
-## 🧊 pgBouncer Connection Pooling
-FastCheck now relies on pgBouncer to collapse hundreds of scanner connections into a
-small number of PostgreSQL sessions. The new `docker-compose.yml` ships
-three infrastructure services:
-
-- `postgres` – canonical datastore for attendees and check-ins
-- `pgbouncer` – transaction-level pooler listening on `6432`
-- `redis` – caching layer introduced during extended tasks 6–11
-
-Bring the infrastructure online with:
-
-```
+# From repo root
 docker compose up -d postgres pgbouncer redis
 ```
 
-Set `DB_PASSWORD` in your `.env` so `docker compose` seeds both PostgreSQL and
-pgBouncer with the same credentials, then point the Phoenix release at a
-matching `DATABASE_URL` (required for releases), for example:
+Set `DB_PASSWORD` in your environment (or a local `.env`) so compose can seed both Postgres and pgBouncer. For local development you can point `DATABASE_URL` at either:
 
-```
-DATABASE_URL=ecto://postgres:${DB_PASSWORD}@pgbouncer:6432/fastcheck_prod
-```
+- Postgres direct: `ecto://postgres:${DB_PASSWORD}@localhost:5432/fastcheck_prod`
+- pgBouncer: `ecto://postgres:${DB_PASSWORD}@localhost:6432/fastcheck_prod`
 
-This ensures every Ecto connection flows through pgBouncer. The `/health`
-endpoint calls `Ecto.Adapters.SQL.query/3` via pgBouncer to give load balancers
-a simple readiness probe.
+### Run the app
 
-### Monitoring pgBouncer
-Run the following commands from the host or via `docker exec fastcheck-pgbouncer`:
-
-```
-# Inspect pooled databases
-psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW DATABASES"
-
-# Active client sockets (FastCheck instances)
-psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW CLIENTS"
-
-# Pool utilization and wait times
-psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW POOLS"
-
-# Server connections to PostgreSQL
-psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW SERVERS"
-
-# Per-database throughput stats
-psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW STATS"
-
-# Effective configuration values
-psql -h localhost -p 6432 -U postgres -d pgbouncer -c "SHOW CONFIG"
+```bash
+mix setup
+mix phx.server
 ```
 
-### Tuning cheatsheet
-- `PGBOUNCER_DEFAULT_POOL_SIZE` – raise above 10 if scanners routinely wait for
-  server slots (`avg_wait_time > 100ms` in `SHOW STATS`).
-- `PGBOUNCER_RESERVE_POOL_SIZE` – bump when priority scans should always skip
-  the queue.
-- `PGBOUNCER_SERVER_LIFETIME` – lower for extremely busy systems to recycle
-  long-lived transactions; raise when bulk imports hold transactions open.
-- `PGBOUNCER_SERVER_IDLE_TIMEOUT` – trim to close idle upstream sessions
-  aggressively if PostgreSQL resources are constrained.
+Health endpoint:
 
-Watch `SHOW POOLS` and `SHOW STATS` to validate the tweaks before deploying to
-production.
+- `GET /api/v1/health`
 
-### Troubleshooting connection issues
-1. Run `curl -f http://localhost:4000/health` (or hit the load balancer health
-   URL) to verify pgBouncer + PostgreSQL are reachable.
-2. Check container health: `docker ps` should report both `postgres` and
-   `fastcheck-pgbouncer` as `healthy`; inspect logs with
-   `docker logs fastcheck-pgbouncer` if unhealthy.
-3. Validate credentials with
-   `psql -h localhost -p 6432 -U postgres -d fastcheck_prod -c "SELECT 1"`.
-4. If pgBouncer is down, restart it via `docker compose up -d pgbouncer` or
-   temporarily point `DATABASE_URL` back to `postgres:5432` until it recovers.
-5. Persistent pooling errors usually stem from exhausting
-   `PGBOUNCER_MAX_CLIENT_CONN`; scale the FastCheck app instances or raise the
-   limit while keeping PostgreSQL’s `max_connections` under control.
+### Environment variables
 
-## 📚 Implementation Guides
-- [codex-project-plan.md](codex-project-plan.md) – All 13 task prompts.
-- [codex-start-here.md](codex-start-here.md) – First three tasks to execute immediately.
-- [AGENTS.md](AGENTS.md) – Project context & guardrails for AI contributors.
-- [fastcheck-petal-guide.md](fastcheck-petal-guide.md) – Architecture & design patterns.
+See `.env.example` for the full set of production-style env vars. At minimum you’ll need values for `SECRET_KEY_BASE`, `ENCRYPTION_KEY`, `MOBILE_JWT_SECRET`, and `DATABASE_URL` in the environment you run the server under.
 
-## 📈 Performance Targets
-- **Scan latency:** <50 ms end-to-end, <20 ms DB writes.
-- **Scalability:** 10,000+ attendees per event, 50+ concurrent scanners.
-- **Events:** Unlimited simultaneous events with isolated stats.
-- **Sync Cadence:** <2 minutes for 10k attendee pulls from Tickera.
+## Local development (Android scanner)
 
-## 🔐 Security Features
-- API key validation and per-event credentials.
-- SSL/TLS enforced for all endpoints.
-- Immutable audit trail via the `check_ins` table and row-level locking.
-- Database constraints prevent duplicate scans and orphaned attendees.
-- Role-based LiveView guards to restrict entrances and admin actions.
+Start here:
 
-### API authentication for check-ins
-- `/api/v1/check-in` and `/api/v1/check-in/batch` now require a `Bearer` token issued by `/api/v1/mobile/login`.
-- The authenticated token sets `current_event_id`; handlers ignore `event_id` parameters and reject missing/invalid tokens with `401`.
-- Tokens include an `iss` claim that must match the configured `MOBILE_JWT_ISSUER`; mobile clients should use tokens as issued without altering the issuer.
-- Client example:
-  ```bash
-  TOKEN=$(curl -s -X POST https://fastcheck.example.com/api/v1/mobile/login -d '{"event_id":123,"credential":"secret"}' | jq -r '.data.token')
-  curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-    -d '{"ticket_code":"ABC-123"}' https://fastcheck.example.com/api/v1/check-in
-  ```
+- `android/scanner-app/docs/architecture.md`
+- `android/scanner-app/CURRENT_PHOENIX_MOBILE_API.md`
 
-### Mobile API rate limiting
-- `/api/v1/mobile/attendees` and `/api/v1/mobile/scans` run through the shared rate limiter in `FastCheckWeb.Plugs.RateLimiter`.
-- Attendee syncs use the strict sync tier (default `RATE_LIMIT_SYNC=3` requests per event per five minutes); scan uploads use the
-  scan tier (default `RATE_LIMIT_SCAN=50` requests per IP per minute).
+Build/run via Android Studio or Gradle in `android/scanner-app/`.
 
-## 📋 Status & Next Steps
-- **Status:** Pre-development (scaffold + planning only).
-- **Next Step:** Run **TASK 0B – Project Scaffold** to create the folder hierarchy and placeholder modules.
-- **Then:** Follow **TASK 1** in `codex-start-here.md` to configure `mix.exs` and base dependencies.
+## Deployment notes (infra + pooling)
 
-## 🤝 Contributing & License
-- Contributions welcome from the South African events community and beyond.
-- Released under the MIT License — fork, extend, and deploy your own FastCheck instance!
+- `docker-compose.yml` provides **Postgres 15**, **pgBouncer** (transaction pool mode), and **Redis**.
+- pgBouncer is intended to collapse many client connections into a smaller number of upstream Postgres sessions; monitor it with `SHOW POOLS` / `SHOW STATS` via psql.
+- `.env.example` includes knobs such as `POOL_SIZE`, `ENABLE_HTTPS`, and TLS cert paths.
 
-Built with ❤️ for high-velocity event teams who need speed, reliability, and full control.
+## Roadmap (high level)
+
+For the detailed tracker, see:
+
+- `IMPROVEMENTS_LOG.md` (what’s done / what’s pending)
+- `IMPROVEMENTS_PLAN.md` (implementation details for planned improvements)
+
+Now:
+
+- Stabilize and document contributor workflows (dev setup, testing, release steps).
+- Keep the Android runtime contract scoped to `/api/v1/mobile/*` and maintain parity with backend serialization.
+
+Next:
+
+- Scanner UX improvements (shortcuts, history, sound feedback).
+- Dashboard enhancements (event editing, exports, search/filter).
+
+Later:
+
+- Sync progress improvements (ETA, history/audit log, incremental sync).
+- Observability and operational hardening.
+
+## More docs
+
+- `AGENTS.md` (project map + guardrails)
+- `docs/INDEX.md` (documentation index)
+- `CONTRIBUTING.md` (formatting workflow)
