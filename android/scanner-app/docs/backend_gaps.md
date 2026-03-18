@@ -6,6 +6,10 @@
   hybrid device/session model.
 - `/api/v1/mobile/scans` returns `status` plus free-form `message` instead of a
   richer machine-readable decision taxonomy.
+- **Mobile scan upload result taxonomy is status-only today:**
+  - `status` is one of: `success`, `duplicate`, `error`
+  - reasons are currently only in free-form `message` text and are **not stable** for client-side classification
+  - Android must not infer “Invalid / not found”, “Payment invalid”, “Wrong event”, etc. from `message` until the backend provides a stable `reason_code` field
 - Partial success is not described by explicit per-item retry flags, so the
   client must interpret missing result items as retryable.
 - The exact QR payload normalization contract is unresolved: it is not yet

@@ -177,7 +177,7 @@ class DiagnosticsUiStateFactoryTest {
             )
 
         assertThat(state.serverResultSummary).contains("Confirmed: 1")
-        assertThat(state.serverResultSummary).contains("Duplicate: 1")
+        assertThat(state.serverResultSummary).contains("Already processed by server: 1")
         assertThat(state.serverResultSummary).contains("Rejected: 1")
         // No message parsing: we never surface "Invalid / not found" as a structured classification.
         assertThat(state.serverResultSummary).doesNotContain("Invalid")

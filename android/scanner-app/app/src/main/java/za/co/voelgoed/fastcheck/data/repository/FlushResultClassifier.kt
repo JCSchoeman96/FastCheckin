@@ -38,6 +38,7 @@ class FlushResultClassifier @Inject constructor() {
                         when (uploadedResult.status.lowercase()) {
                             "success" -> FlushItemOutcome.SUCCESS
                             "duplicate" -> FlushItemOutcome.DUPLICATE
+                            "error" -> FlushItemOutcome.TERMINAL_ERROR
                             else -> FlushItemOutcome.TERMINAL_ERROR
                         },
                     message = uploadedResult.message

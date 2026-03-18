@@ -86,7 +86,7 @@ class DiagnosticsUiStateFactory @Inject constructor(
 
         val parts = buildList {
             if (confirmed > 0) add("Confirmed: $confirmed")
-            if (duplicate > 0) add("Duplicate: $duplicate")
+            if (duplicate > 0) add("Already processed by server: $duplicate")
             if (rejected > 0) add("Rejected: $rejected")
         }
 
