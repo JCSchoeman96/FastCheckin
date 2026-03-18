@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "FastCheckin",
+  "project_id": "1ac68728-7f7b-4afd-9843-df1f5b690921"
+}
