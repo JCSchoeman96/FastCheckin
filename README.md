@@ -94,12 +94,6 @@ Build/run via Android Studio or Gradle in `android/scanner-app/`.
 - `.env.example` includes knobs such as `POOL_SIZE`, `ENABLE_HTTPS`, and TLS cert paths.
 
 ## Roadmap (high level)
-
-For the detailed tracker, see:
-
-- `IMPROVEMENTS_LOG.md` (what’s done / what’s pending)
-- `IMPROVEMENTS_PLAN.md` (implementation details for planned improvements)
-
 Now:
 
 - Stabilize and document contributor workflows (dev setup, testing, release steps).

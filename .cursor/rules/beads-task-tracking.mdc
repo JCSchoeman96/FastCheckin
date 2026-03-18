@@ -1,29 +1,88 @@
+
+## `.cursor/rules/beads-task-tracking.mdc` — replace with this
+
+```md
 ---
+description: Use Beads + Dolt as the primary workflow for tracked work in this repo
+globs:
+  - "**/*"
 alwaysApply: true
 ---
-# Beads task tracking
+
+# Beads task tracking rule
+
+This repository uses **Beads (`bd`) with a Dolt backend** as the primary tracker for real work.
+
+## Required workflow
+Before substantial work:
+1. Run `bd dolt status`
+2. Run `bd dolt start` if needed
+3. Run `bd ready`
 
 Use `bd` for:
-- new features
+- features
 - blockers
 - dependencies
-- technical debt across multiple files/modules
+- technical debt
 - deferred work
-- docs / infra / ops follow-ups
-- bugs discovered during implementation
+- docs / ops / infra follow-ups
+- bugs found during implementation
+- cross-file or cross-phase work
 
-Do not use broad TODO comments for those items.
+## Do not use broad TODO comments
+Do not leave vague comments like:
+- TODO: handle later
+- TODO: refactor
+- TODO: fix properly
+- TODO: add support later
 
-A code TODO/FIXME is only allowed when it is:
-1. file-local,
-2. concrete,
-3. small,
-4. and likely to be resolved in the same PR or immediate next PR.
+Those must become `bd` items instead.
 
-Preferred workflow:
-1. Run `bd ready` before substantial work.
-2. Create a `bd` item when a new blocker / feature / follow-up is discovered.
-3. Link dependencies with `bd dep add`.
-4. Reference the `bd-...` ID in commits, PR notes, or comments when useful.
+## Allowed TODO/FIXME usage
+A code `TODO` / `FIXME` is only acceptable when it is:
+1. file-local
+2. concrete
+3. small
+4. likely to be resolved in the same PR or immediate next PR
 
-Never treat "TODO later" as sufficient tracking for cross-cutting work.
+## Dependency handling
+When work is blocked or depends on another task:
+- create a Beads issue
+- link it with `bd dep add`
+
+## Closeout workflow
+When work is complete:
+- close with `bd close <id> --reason "Done"`
+- then push Beads changes with `bd dolt push`
+
+## Repository-specific notes
+- Current working Dolt server setup for this repo:
+  - host: `127.0.0.1`
+  - port: `3317`
+- If `bd` cannot connect, start the Dolt server first.
+- Do not assume `bd` auto-start will always recover the server correctly.
+
+## `.beads` safety
+Do not intentionally commit or reintroduce:
+- `.beads/.beads-credential-key`
+- `.beads/dolt-config.log`
+
+Do not casually edit or commit:
+- `.beads/config.yaml`
+- `.beads/metadata.json`
+
+unless the task is specifically about shared Beads repo configuration.
+
+## Commit discipline
+Keep these separate where possible:
+- Beads / tracking-policy changes
+- app implementation changes
+- infra/runtime fixes
+
+## Preferred examples
+- `bd ready`
+- `bd show <id>`
+- `bd create "Describe the real task" -p 2 -t task --description "Add a real description"`
+- `bd dep add <child-id> <parent-id>`
+- `bd close <id> --reason "Completed"`
+- `bd dolt push`
