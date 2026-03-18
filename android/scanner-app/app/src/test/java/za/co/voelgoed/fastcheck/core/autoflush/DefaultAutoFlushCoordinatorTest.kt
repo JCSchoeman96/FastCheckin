@@ -8,6 +8,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -24,6 +26,9 @@ class DefaultAutoFlushCoordinatorTest {
         private val _reports = mutableListOf<FlushReport>()
         val reports: List<FlushReport>
             get() = _reports.toList()
+        private val _batchSizes = mutableListOf<Int>()
+        val batchSizes: List<Int>
+            get() = _batchSizes.toList()
 
         var maxConcurrentCalls: Int = 0
             private set
@@ -33,6 +38,7 @@ class DefaultAutoFlushCoordinatorTest {
             mutex.withLock {
                 inFlightCalls += 1
                 maxConcurrentCalls = maxOf(maxConcurrentCalls, inFlightCalls)
+                _batchSizes.add(maxBatchSize)
             }
 
             try {
@@ -122,6 +128,8 @@ class DefaultAutoFlushCoordinatorTest {
                 }
             jobs.awaitAll()
 
+            // AfterEnqueue starts are debounced while idle.
+            advanceTimeBy(250)
             advanceUntilIdle()
 
             assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
@@ -218,6 +226,147 @@ class DefaultAutoFlushCoordinatorTest {
             advanceUntilIdle()
 
             assertThat(useCase.reports).isEmpty()
+        }
+
+    @Test
+    fun afterEnqueueDebouncesInitialStart_only() =
+        runTest(StandardTestDispatcher()) {
+            val useCase =
+                RecordingFlushUseCase {
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 1
+                    )
+                }
+            val repo = RecordingScanRepository().apply { depth = 0 }
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { true },
+                    clock = java.time.Clock.systemUTC(),
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                )
+
+            coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
+
+            runCurrent()
+            advanceTimeBy(249)
+            runCurrent()
+            assertThat(useCase.reports).isEmpty()
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertThat(useCase.reports).hasSize(1)
+        }
+
+    @Test
+    fun afterEnqueueBurstCoalesces_singleScheduledJob() =
+        runTest(StandardTestDispatcher()) {
+            val useCase =
+                RecordingFlushUseCase {
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 1
+                    )
+                }
+            val repo = RecordingScanRepository().apply { depth = 0 }
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { true },
+                    clock = java.time.Clock.systemUTC(),
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                )
+
+            repeat(10) {
+                coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
+            }
+
+            runCurrent()
+            advanceTimeBy(250)
+            runCurrent()
+
+            assertThat(useCase.reports).hasSize(1)
+        }
+
+    @Test
+    fun manualDuringPendingDebounce_startsImmediately_andCancelsDelayedStart() =
+        runTest(StandardTestDispatcher()) {
+            val useCase =
+                RecordingFlushUseCase {
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 1
+                    )
+                }
+            val repo = RecordingScanRepository().apply { depth = 0 }
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { true },
+                    clock = java.time.Clock.systemUTC(),
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                )
+
+            coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
+            runCurrent()
+            advanceTimeBy(100)
+            runCurrent()
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            advanceUntilIdle()
+
+            assertThat(useCase.reports).hasSize(1)
+
+            // Ensure the delayed debounce start does not trigger a redundant second flush.
+            advanceTimeBy(1_000)
+            runCurrent()
+            assertThat(useCase.reports).hasSize(1)
+        }
+
+    @Test
+    fun boundedBatching_drainsInMultipleImmediateRuns_noDebounceBetweenRuns() =
+        runTest(StandardTestDispatcher()) {
+            var invocation = 0
+            val repo = RecordingScanRepository().apply { depth = 60 }
+            val useCase =
+                RecordingFlushUseCase {
+                    invocation += 1
+                    check(invocation <= 10) { "Flush loop ran too many times: invocation=$invocation" }
+
+                    repo.depth =
+                        when (invocation) {
+                            1 -> 35
+                            2 -> 10
+                            3 -> 0
+                            else -> 0
+                        }
+
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 1
+                    )
+                }
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { true },
+                    clock = java.time.Clock.systemUTC(),
+                    maxBatchSize = 25,
+                    afterEnqueueDebounceMs = 250,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                )
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            advanceUntilIdle()
+
+            assertThat(invocation).isEqualTo(3)
+            assertThat(useCase.batchSizes).containsExactly(25, 25, 25).inOrder()
+            assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
         }
 
     @Test

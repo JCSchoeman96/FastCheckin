@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -20,6 +21,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private val mobileScanRepository: MobileScanRepository,
     private val connectivityProvider: ConnectivityProvider,
     private val clock: Clock,
+    private val maxBatchSize: Int = 25,
+    private val afterEnqueueDebounceMs: Long = 250,
     coordinatorDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : AutoFlushCoordinator {
 
@@ -34,28 +37,67 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private var flushRequestedWhileBusy: Boolean = false
 
     private var flushJob: Job? = null
+    private var scheduledStartJob: Job? = null
 
     override fun requestFlush(trigger: AutoFlushTrigger) {
         coordinatorScope.launch {
-            val shouldStartFlush: Boolean =
+            val startedOrScheduled: Boolean =
                 mutex.withLock {
                     if (flushJob?.isActive == true) {
                         flushRequestedWhileBusy = true
                         return@withLock false
                     }
 
-                    if (trigger is AutoFlushTrigger.AfterEnqueue && !connectivityProvider.isOnline()) {
-                        return@withLock false
-                    }
+                    when (trigger) {
+                        AutoFlushTrigger.Manual -> {
+                            scheduledStartJob?.cancel()
+                            scheduledStartJob = null
 
-                    flushJob =
-                        coordinatorScope.launch {
-                            startFlushLoop()
+                            flushJob =
+                                coordinatorScope.launch {
+                                    startFlushLoop()
+                                }
+                            true
                         }
-                    true
+
+                        AutoFlushTrigger.AfterEnqueue -> {
+                            if (!connectivityProvider.isOnline()) {
+                                return@withLock false
+                            }
+
+                            if (scheduledStartJob?.isActive == true) {
+                                return@withLock false
+                            }
+
+                            scheduledStartJob =
+                                coordinatorScope.launch {
+                                    delay(afterEnqueueDebounceMs)
+                                    mutex.withLock {
+                                        // Recheck under mutex to avoid racing a manual flush start.
+                                        if (flushJob?.isActive == true) return@withLock
+                                        flushJob =
+                                            coordinatorScope.launch {
+                                                startFlushLoop()
+                                            }
+                                    }
+                                }.also { job ->
+                                    job.invokeOnCompletion {
+                                        coordinatorScope.launch {
+                                            mutex.withLock {
+                                                if (scheduledStartJob === job) {
+                                                    scheduledStartJob = null
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                            true
+                        }
+                    }
                 }
 
-            if (!shouldStartFlush) return@launch
+            if (!startedOrScheduled) return@launch
         }
     }
 
@@ -63,7 +105,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
         try {
             while (true) {
                 _state.value = _state.value.copy(isFlushing = true)
-                val report = flushQueuedScansUseCase.run(maxBatchSize = 50)
+                val report = flushQueuedScansUseCase.run(maxBatchSize = maxBatchSize)
 
                 _state.value =
                     _state.value.copy(
@@ -96,6 +138,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
             mutex.withLock {
                 flushJob = null
                 flushRequestedWhileBusy = false
+                scheduledStartJob?.cancel()
+                scheduledStartJob = null
                 _state.value = _state.value.copy(isFlushing = false)
             }
         }
