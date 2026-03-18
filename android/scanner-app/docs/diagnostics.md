@@ -17,6 +17,11 @@ Ownership:
 - **AutoFlushCoordinator** = transient runtime truth (in-flight upload, retry scheduled metadata).
 - **ViewModel/factory** = projection only (no manual “refresh UI after X” for durable data).
 
+## B3 assumptions (recorded technical debt)
+
+- **Latest sync ordering assumption**: Diagnostics derives “latest sync” from `sync_metadata.lastSuccessfulSyncAt` (currently backend/server time) as a proxy for the most recent successful *local* sync. If that proves unstable (out-of-order server_time), introduce a local completion timestamp and order by that instead.
+- **Atomicity assumption**: attendee upsert and sync metadata upsert are sequential, not a single Room transaction. If partial-sync edge cases appear, collapse them into one DAO `@Transaction` write.
+
 ## Core Signals
 
 - current event/session metadata

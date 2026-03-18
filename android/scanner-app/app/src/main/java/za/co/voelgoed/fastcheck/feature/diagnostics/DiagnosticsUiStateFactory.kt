@@ -68,7 +68,15 @@ class DiagnosticsUiStateFactory @Inject constructor(
                 },
             tokenExpiryState = tokenState,
             lastAttendeeSyncTime = syncStatus?.lastSuccessfulSyncAt ?: "Never",
-            attendeeCount = syncStatus?.attendeeCount?.toString() ?: "0",
+            attendeeCount =
+                when {
+                    syncStatus == null ->
+                        "No attendees synced"
+                    session != null && session.eventId == syncStatus.eventId ->
+                        syncStatus.attendeeCount.toString()
+                    else ->
+                        "Last synced attendees: ${syncStatus.attendeeCount} (stored locally)"
+                },
             localQueueDepthLabel = "Queued locally: $queueDepth",
             uploadStateLabel = uploadStateLabel,
             serverResultSummary = serverResultSummary,

@@ -33,6 +33,7 @@ class DiagnosticsUiStateFactoryTest {
         assertThat(state.authSessionState).isEqualTo("Logged out")
         assertThat(state.tokenExpiryState).isEqualTo("Missing")
         assertThat(state.lastAttendeeSyncTime).isEqualTo("Never")
+        assertThat(state.attendeeCount).isEqualTo("No attendees synced")
         assertThat(state.uploadStateLabel).isEqualTo("Idle")
     }
 
@@ -85,6 +86,30 @@ class DiagnosticsUiStateFactoryTest {
         assertThat(state.attendeeCount).isEqualTo("42")
         assertThat(state.localQueueDepthLabel).isEqualTo("Queued locally: 3")
         assertThat(state.uploadStateLabel).isEqualTo("Auth expired")
+    }
+
+    @Test
+    fun sessionMissingButLocalSyncMetadataExists_showsLastSyncedAttendees_notZero() {
+        val state =
+            factory.create(
+                session = null,
+                tokenPresent = false,
+                syncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:20:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:20:00Z",
+                        syncType = "full",
+                        attendeeCount = 1234
+                    ),
+                queueDepth = 0,
+                latestFlushReport = null,
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.currentEvent).isEqualTo("No active event")
+        assertThat(state.attendeeCount).contains("Last synced attendees: 1234")
+        assertThat(state.attendeeCount).contains("stored locally")
     }
 
     @Test

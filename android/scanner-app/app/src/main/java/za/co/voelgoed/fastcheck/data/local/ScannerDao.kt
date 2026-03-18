@@ -78,6 +78,21 @@ interface ScannerDao {
     @Query("SELECT * FROM sync_metadata WHERE eventId = :eventId LIMIT 1")
     suspend fun loadSyncMetadata(eventId: Long): SyncMetadataEntity?
 
+    @Query(
+        """
+        SELECT * FROM sync_metadata
+        WHERE lastSuccessfulSyncAt IS NOT NULL
+        ORDER BY lastSuccessfulSyncAt DESC
+        LIMIT 1
+        """
+    )
+    // TODO(B3-techdebt): Latest sync ordering assumption.
+    // This query orders by `lastSuccessfulSyncAt`, which is currently derived from the backend
+    // payload time. We treat it as a proxy for “latest successful local sync”.
+    // If server_time can be out-of-order or otherwise unstable, introduce a local completion
+    // timestamp (e.g. syncedAtEpochMs) and order by that instead.
+    fun observeLatestSyncMetadata(): Flow<SyncMetadataEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSyncMetadata(metadata: SyncMetadataEntity)
 

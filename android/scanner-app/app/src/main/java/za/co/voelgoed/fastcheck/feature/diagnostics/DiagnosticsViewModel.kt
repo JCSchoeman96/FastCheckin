@@ -34,18 +34,19 @@ class DiagnosticsViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 sessionInput,
+                syncRepository.observeLastSyncedStatus(),
                 mobileScanRepository.observePendingQueueDepth(),
                 mobileScanRepository.observeLatestFlushReport(),
                 autoFlushCoordinator.state
-            ) { inputs, queueDepth, latestFlushReport, coordinatorState ->
-                Quad(inputs, queueDepth, latestFlushReport, coordinatorState)
-            }.collect { quad ->
-                val (inputs, queueDepth, latestFlushReport, coordinatorState) = quad
+            ) { inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState ->
+                Quin(inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState)
+            }.collect { quin ->
+                val (inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState) = quin
                 _uiState.update {
                     diagnosticsUiStateFactory.create(
                         session = inputs.session,
                         tokenPresent = inputs.tokenPresent,
-                        syncStatus = inputs.syncStatus,
+                        syncStatus = lastSyncedStatus,
                         queueDepth = queueDepth,
                         latestFlushReport = latestFlushReport,
                         coordinatorState = coordinatorState
@@ -62,26 +63,25 @@ class DiagnosticsViewModel @Inject constructor(
             // repository/Room-observed to avoid reintroducing UI drift.
             val session = sessionRepository.currentSession()
             val tokenPresent = !sessionProvider.bearerToken().isNullOrBlank()
-            val syncStatus = syncRepository.currentSyncStatus()
             sessionInput.value =
                 SessionInputs(
                     session = session,
-                    tokenPresent = tokenPresent,
-                    syncStatus = syncStatus
+                    tokenPresent = tokenPresent
                 )
         }
     }
 
     private data class SessionInputs(
         val session: za.co.voelgoed.fastcheck.domain.model.ScannerSession? = null,
-        val tokenPresent: Boolean = false,
-        val syncStatus: za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus? = null
+        val tokenPresent: Boolean = false
     )
 
-    private data class Quad<A, B, C, D>(
+    private data class Quin<A, B, C, D, E>(
         val first: A,
         val second: B,
         val third: C,
         val fourth: D
+        ,
+        val fifth: E
     )
 }
