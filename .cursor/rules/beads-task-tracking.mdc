@@ -1,0 +1,29 @@
+---
+alwaysApply: true
+---
+# Beads task tracking
+
+Use `bd` for:
+- new features
+- blockers
+- dependencies
+- technical debt across multiple files/modules
+- deferred work
+- docs / infra / ops follow-ups
+- bugs discovered during implementation
+
+Do not use broad TODO comments for those items.
+
+A code TODO/FIXME is only allowed when it is:
+1. file-local,
+2. concrete,
+3. small,
+4. and likely to be resolved in the same PR or immediate next PR.
+
+Preferred workflow:
+1. Run `bd ready` before substantial work.
+2. Create a `bd` item when a new blocker / feature / follow-up is discovered.
+3. Link dependencies with `bd dep add`.
+4. Reference the `bd-...` ID in commits, PR notes, or comments when useful.
+
+Never treat "TODO later" as sufficient tracking for cross-cutting work.
