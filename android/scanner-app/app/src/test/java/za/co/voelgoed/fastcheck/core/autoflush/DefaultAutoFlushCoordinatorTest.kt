@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Test
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
@@ -21,6 +22,13 @@ import za.co.voelgoed.fastcheck.domain.model.FlushReport
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultAutoFlushCoordinatorTest {
+    private val closeables = mutableListOf<AutoCloseable>()
+
+    @After
+    fun tearDown() {
+        closeables.forEach { it.close() }
+        closeables.clear()
+    }
 
     private class RecordingFlushUseCase(
         private val reportProvider: suspend () -> FlushReport
@@ -103,7 +111,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.Manual)
 
@@ -134,7 +142,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             val jobs =
                 (1..10).map {
@@ -178,7 +186,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.Manual)
             coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
@@ -214,10 +222,11 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.Manual)
-            advanceUntilIdle()
+            // Do not advance time here; we only assert there's no immediate loop.
+            runCurrent()
 
             assertThat(useCase.reports).hasSize(1)
         }
@@ -242,7 +251,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
             advanceUntilIdle()
@@ -270,7 +279,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
 
@@ -304,7 +313,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             repeat(10) {
                 coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
@@ -337,7 +346,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
             runCurrent()
@@ -389,7 +398,7 @@ class DefaultAutoFlushCoordinatorTest {
                     maxBatchSize = 25,
                     afterEnqueueDebounceMs = 250,
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.Manual)
             advanceUntilIdle()
@@ -435,7 +444,7 @@ class DefaultAutoFlushCoordinatorTest {
                     connectivityMonitor = monitor,
                     clock = java.time.Clock.systemUTC(),
                     coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-                )
+                ).also { closeables += it }
 
             coordinator.requestFlush(AutoFlushTrigger.Manual)
 
@@ -465,7 +474,7 @@ class DefaultAutoFlushCoordinatorTest {
                 connectivityMonitor = monitor,
                 clock = java.time.Clock.systemUTC(),
                 coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-            )
+            ).also { closeables += it }
 
             runCurrent()
             assertThat(useCase.reports).isEmpty()
@@ -497,7 +506,7 @@ class DefaultAutoFlushCoordinatorTest {
                 connectivityMonitor = monitor,
                 clock = java.time.Clock.systemUTC(),
                 coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-            )
+            ).also { closeables += it }
 
             // Ensure the coordinator's connectivity subscription is active
             // before we flip online (otherwise the false->true transition is missed).
@@ -533,7 +542,7 @@ class DefaultAutoFlushCoordinatorTest {
                 connectivityMonitor = monitor,
                 clock = java.time.Clock.systemUTC(),
                 coordinatorDispatcher = StandardTestDispatcher(testScheduler)
-            )
+            ).also { closeables += it }
 
             // Ensure the coordinator's connectivity subscription is active
             // before we flip online (otherwise the false->true transition is missed).
@@ -550,6 +559,316 @@ class DefaultAutoFlushCoordinatorTest {
 
             assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
             assertThat(useCase.reports).isNotEmpty()
+        }
+
+    @Test
+    fun noOverlappingRetries() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    delay(50)
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                        uploadedCount = 0
+                    )
+                }
+
+            // Always retry immediately (0ms) to stress overlap safety.
+            val backoff = RetryBackoff { _ -> 0L }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = backoff,
+                    maxRetryAttempts = 2,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+
+            advanceUntilIdle()
+
+            assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
+            assertThat(calls).isAtLeast(1)
+        }
+
+    @Test
+    fun boundedBackoffGrowth_capped_andStopsAfter5() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                        uploadedCount = 0
+                    )
+                }
+
+            // Deterministic increasing delays (simulate exponential with cap).
+            val delays = listOf(1_000L, 2_000L, 4_000L, 8_000L, 60_000L)
+            val backoff = RetryBackoff { attempt -> delays[attempt - 1] }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = backoff,
+                    maxRetryAttempts = 5,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+
+            advanceTimeBy(1_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
+
+            advanceTimeBy(2_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(3)
+
+            advanceTimeBy(4_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(4)
+
+            advanceTimeBy(8_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(5)
+
+            // 5th retry scheduled at capped 60s, but max attempts reached after it executes.
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(6)
+
+            // No more retries after max attempts.
+            advanceTimeBy(120_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(6)
+        }
+
+    @Test
+    fun offlinePausesRetry_doesNotConsumeAttempt() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                        uploadedCount = 0
+                    )
+                }
+
+            val backoff = RetryBackoff { _ -> 1_000L }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = backoff,
+                    maxRetryAttempts = 5,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                )
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+
+            // Go offline before the retry would fire.
+            monitor.setOnline(false)
+            advanceTimeBy(1_000)
+            runCurrent()
+            // Retry should not execute while offline.
+            assertThat(calls).isEqualTo(1)
+
+            // Restore connectivity: A4 trigger should cause an immediate flush.
+            monitor.setOnline(true)
+            runCurrent()
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
+        }
+
+    @Test
+    fun progressResetsRetryState() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    check(calls <= 5) { "Unexpected flush loop: calls=$calls" }
+                    when (calls) {
+                        1, 2 ->
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                                uploadedCount = 0
+                            )
+                        else -> {
+                            repo.depth = 0
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.COMPLETED,
+                                uploadedCount = 1
+                            )
+                        }
+                    }
+                }
+            val backoff = RetryBackoff { _ -> 1_000L }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = backoff,
+                    maxRetryAttempts = 5,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+
+            advanceTimeBy(1_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
+
+            advanceTimeBy(1_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(3)
+
+            // Progress occurred; no more retries should be scheduled.
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(3)
+        }
+
+    @Test
+    fun manualCancelsPendingRetry_andStartsImmediate() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    if (calls == 1) {
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                            uploadedCount = 0
+                        )
+                    } else {
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.COMPLETED,
+                            uploadedCount = 0
+                        )
+                    }
+                }
+            val backoff = RetryBackoff { _ -> 60_000L }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = backoff,
+                    maxRetryAttempts = 5,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+
+            // Manual flush should cancel the pending retry and run immediately.
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            runCurrent()
+            advanceTimeBy(1)
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
+
+            // Pending retry should not fire later.
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
+        }
+
+    @Test
+    fun foregroundResumeCancelsPendingRetry_andStartsImmediate() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    if (calls == 1) {
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                            uploadedCount = 0
+                        )
+                    } else {
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.COMPLETED,
+                            uploadedCount = 0
+                        )
+                    }
+                }
+            val backoff = RetryBackoff { _ -> 60_000L }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = backoff,
+                    maxRetryAttempts = 5,
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+
+            coordinator.requestFlush(AutoFlushTrigger.ForegroundResume)
+            runCurrent()
+            advanceTimeBy(1)
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
+
+            // Pending retry should not fire later.
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertThat(calls).isEqualTo(2)
         }
 }
 

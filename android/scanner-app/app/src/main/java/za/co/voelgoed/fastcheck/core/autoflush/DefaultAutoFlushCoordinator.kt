@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,8 +15,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.random.Random
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
+import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
 
 class DefaultAutoFlushCoordinator @Inject constructor(
@@ -26,8 +29,15 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private val clock: Clock,
     private val maxBatchSize: Int = 25,
     private val afterEnqueueDebounceMs: Long = 250,
+    private val retryBackoff: RetryBackoff =
+        FullJitterExponentialBackoff(
+            baseDelayMs = 1_000,
+            capDelayMs = 60_000,
+            nextRandomLong = { boundExclusive -> Random.nextLong(boundExclusive) }
+        ),
+    private val maxRetryAttempts: Int = 5,
     coordinatorDispatcher: CoroutineDispatcher = Dispatchers.IO
-) : AutoFlushCoordinator {
+) : AutoFlushCoordinator, AutoCloseable {
 
     private val coordinatorScope =
         CoroutineScope(SupervisorJob() + coordinatorDispatcher)
@@ -41,6 +51,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
 
     private var flushJob: Job? = null
     private var scheduledStartJob: Job? = null
+    private var pendingRetryJob: Job? = null
+    private var retryAttempt: Int = 0
 
     init {
         coordinatorScope.launch {
@@ -58,11 +70,26 @@ class DefaultAutoFlushCoordinator @Inject constructor(
         }
     }
 
+    override fun close() {
+        coordinatorScope.cancel()
+    }
+
     override fun requestFlush(trigger: AutoFlushTrigger) {
         coordinatorScope.launch {
             val startedOrScheduled: Boolean =
                 mutex.withLock {
                     if (flushJob?.isActive == true) {
+                        // If we're already flushing, never start a concurrent run.
+                        // However, immediate triggers should still cancel any pending
+                        // debounce/retry so we don't fire redundant work later.
+                        if (trigger != AutoFlushTrigger.AfterEnqueue) {
+                            scheduledStartJob?.cancel()
+                            scheduledStartJob = null
+                            pendingRetryJob?.cancel()
+                            pendingRetryJob = null
+                            retryAttempt = 0
+                        }
+
                         flushRequestedWhileBusy = true
                         return@withLock false
                     }
@@ -71,6 +98,9 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                         AutoFlushTrigger.Manual -> {
                             scheduledStartJob?.cancel()
                             scheduledStartJob = null
+                            pendingRetryJob?.cancel()
+                            pendingRetryJob = null
+                            retryAttempt = 0
 
                             flushJob =
                                 coordinatorScope.launch {
@@ -85,6 +115,9 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                         AutoFlushTrigger.PostSync -> {
                             scheduledStartJob?.cancel()
                             scheduledStartJob = null
+                            pendingRetryJob?.cancel()
+                            pendingRetryJob = null
+                            retryAttempt = 0
 
                             flushJob =
                                 coordinatorScope.launch {
@@ -146,7 +179,77 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                         lastFlushReport = report
                     )
 
+                if (report.uploadedCount > 0) {
+                    mutex.withLock {
+                        pendingRetryJob?.cancel()
+                        pendingRetryJob = null
+                        retryAttempt = 0
+                    }
+                }
+
                 val madeProgress = report.uploadedCount > 0
+                if (report.executionStatus == FlushExecutionStatus.RETRYABLE_FAILURE && !madeProgress) {
+                    val shouldRerunBecauseBusy =
+                        mutex.withLock {
+                            val rerun = flushRequestedWhileBusy
+                            if (rerun) flushRequestedWhileBusy = false
+                            rerun
+                        }
+                    if (shouldRerunBecauseBusy) {
+                        // An immediate trigger arrived while we were flushing.
+                        // Prefer an immediate follow-up run over scheduling a delayed retry.
+                        continue
+                    }
+
+                    val shouldScheduleRetry =
+                        mutex.withLock {
+                            if (pendingRetryJob?.isActive == true) return@withLock false
+                            if (retryAttempt >= maxRetryAttempts) return@withLock false
+
+                            val attempt = retryAttempt + 1
+                            val delayMs = retryBackoff.delayMs(attempt)
+                            pendingRetryJob =
+                                coordinatorScope.launch {
+                                    delay(delayMs)
+                                    // Avoid dropping retries due to a race where the previous flushJob
+                                    // is still "active" while unwinding (finally block, mutex, etc.).
+                                    // If a flush is active, wait for it to finish, then re-check.
+                                    val activeFlush: Job? =
+                                        mutex.withLock {
+                                            flushJob?.takeIf { it.isActive }
+                                        }
+                                    activeFlush?.join()
+
+                                    mutex.withLock {
+                                        if (flushJob?.isActive == true) return@withLock
+                                        if (!connectivityProvider.isOnline()) return@withLock
+
+                                        // Consume attempt only when we actually start the retry execution.
+                                        retryAttempt = attempt
+                                        flushJob =
+                                            coordinatorScope.launch {
+                                                startFlushLoop()
+                                            }
+                                    }
+                                }.also { job ->
+                                    job.invokeOnCompletion {
+                                        coordinatorScope.launch {
+                                            mutex.withLock {
+                                                if (pendingRetryJob === job) {
+                                                    pendingRetryJob = null
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            true
+                        }
+
+                    if (shouldScheduleRetry) {
+                        break
+                    }
+                }
+
                 val shouldRunAgain =
                     mutex.withLock {
                         val shouldRunBecauseBusy = flushRequestedWhileBusy
