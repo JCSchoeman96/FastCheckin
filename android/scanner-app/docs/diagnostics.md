@@ -17,6 +17,11 @@ Ownership:
 - **AutoFlushCoordinator** = transient runtime truth (in-flight upload, retry scheduled metadata).
 - **ViewModel/factory** = projection only (no manual “refresh UI after X” for durable data).
 
+## B4 — Sync rate-limit and diagnostics
+
+- **Success clears rate-limit state**: A successful sync resets `isRateLimited = false` and `nextAllowedSyncAtMillis = null` in SyncViewModel so the operator can sync again without stale cooldown UI.
+- **429 does not touch durable diagnostics**: On HTTP 429 the repository throws before any Room writes. Last synced attendee count, last successful sync time, and other diagnostics sourced from `sync_metadata` / `observeLastSyncedStatus()` remain unchanged.
+
 ## B3 assumptions (recorded technical debt)
 
 - **Latest sync ordering assumption**: Diagnostics derives “latest sync” from `sync_metadata.lastSuccessfulSyncAt` (currently backend/server time) as a proxy for the most recent successful *local* sync. If that proves unstable (out-of-order server_time), introduce a local completion timestamp and order by that instead.

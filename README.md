@@ -94,6 +94,10 @@ Build/run via Android Studio or Gradle in `android/scanner-app/`.
 - `.env.example` includes knobs such as `POOL_SIZE`, `ENABLE_HTTPS`, and TLS cert paths.
 
 ## Roadmap (high level)
+Tracked work now lives in Beads (`bd`).
+See `AGENTS.md` for project map and workflow.
+See `CONTRIBUTING.md` for contributor workflow.
+
 Now:
 
 - Stabilize and document contributor workflows (dev setup, testing, release steps).
