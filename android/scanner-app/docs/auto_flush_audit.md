@@ -1,7 +1,7 @@
 # Auto-flush architecture audit
 
 **Purpose:** Define the narrowest safe auto-flush architecture without changing code yet.  
-**Status:** Audit only; no implementation.
+**Status (post-B1):** Implemented and partially superseded. This audit remains useful as background, but the “current” sections below reflect the implemented behavior.
 
 ---
 
@@ -30,9 +30,14 @@
 | 3 | **DefaultFlushQueuedScansUseCase** | Delegates to `MobileScanRepository.flushQueuedScans(maxBatchSize)`. |
 | 4 | **CurrentPhoenixMobileScanRepository** | Loads batch via `scannerDao.loadQueuedScans(maxBatchSize)`; if no token → persists and returns AUTH_EXPIRED report; if empty → returns COMPLETED report; else calls `remoteDataSource.uploadScans(queued.map { it.toPayload() })`; classifies results; writes terminal outcomes to replay cache; deletes successfully processed rows from `queued_scans`; persists latest flush snapshot + recent outcomes via `replaceLatestFlushState()`; returns `FlushReport`. |
 
-**Flush is fully manual today:** The only trigger is the "Flush queue" button. There is no automatic flush on a timer, on connectivity change, or after N enqueues.
+**Post-B1:** Flush can be triggered manually and automatically via `AutoFlushCoordinator`:
 
-**FlushQueueWorker** exists and uses `FlushQueuedScansUseCase`, but it is **never enqueued** anywhere (no `WorkManager.enqueue(OneTimeWorkRequest)` or similar). So background flush is scaffold only.
+- after enqueue (debounced)
+- on connectivity restored (when backlog exists)
+- on foreground resume
+- post-login / post-sync
+
+**FlushQueueWorker** still exists and uses `FlushQueuedScansUseCase`. Whether it runs depends on WorkManager enqueue policy (foreground/in-process coordinator remains the primary orchestrator in B1).
 
 **Truth for “last flush”:** `CurrentPhoenixMobileScanRepository.persistLatestFlushReport()` → `ScannerDao.replaceLatestFlushState(snapshot, outcomes)`. Read via `latestFlushReport()` → `loadLatestFlushSnapshot()` + `loadRecentFlushOutcomes()`.
 
@@ -49,14 +54,11 @@
 | **Sync status (last sync time, sync type)** | Same `currentSyncStatus()`; `lastSuccessfulSyncAt`, `syncType` from sync metadata. |
 | **Auth/session** | `SessionRepository.currentSession()`, `SessionProvider.bearerToken()`; token expiry derived from session in factory. |
 
-**Refresh trigger:** Pull-only. `DiagnosticsViewModel.refresh()` is called from:
-- "Refresh diagnostics" button.
-- After auth UI state update (session summary).
-- After sync UI state update when not syncing.
-- After queue UI state update (so after manual flush or manual queue action).
-- Once on launch after permission refresh.
+**Post-B1 refresh and observation:**
 
-There is no reactive stream from repositories to diagnostics; every value is fetched inside `refresh()`.
+- Durable truth (queue depth, persisted latest flush snapshot/outcomes) is observed via repository/Room `Flow`s.
+- Transient orchestration truth (uploading / retry pending / auth expired) is observed from `AutoFlushCoordinator.state`.
+- `DiagnosticsViewModel.refresh()` remains for session/token/sync inputs (non-durable) and is invoked on user “Refresh”, and at key lifecycle transitions (e.g. login/sync success).
 
 ---
 
@@ -115,18 +117,18 @@ No need for a formal state machine in code initially; the invariant is: "at most
 
 ## File ownership summary
 
-| Concern | Primary files |
+| Concern | Primary files (post-B1) |
 |--------|----------------|
 | Queue admission (camera path) | `ScanCapturePipeline`, `DefaultQueueCapturedScanUseCase`, `CurrentPhoenixMobileScanRepository`, `ScannerDao` |
 | Queue admission (manual) | `QueueViewModel`, `MainActivity` (button) |
-| Flush execution | `QueueViewModel` (manual trigger), `FlushQueuedScansUseCase`, `CurrentPhoenixMobileScanRepository`, `FlushQueueWorker` (unused) |
-| Queue depth | `ScannerDao.countPendingScans()`, `MobileScanRepository.pendingQueueDepth()`, `DiagnosticsViewModel` (via refresh) |
+| Flush execution | `AutoFlushCoordinator` (all triggers), `FlushQueuedScansUseCase`, `CurrentPhoenixMobileScanRepository`, `FlushQueueWorker` (background) |
+| Queue depth | `ScannerDao.observePendingScanCount()`, `MobileScanRepository.observePendingQueueDepth()` |
 | Recent outcomes / latest flush | `ScannerDao` (latest_flush_snapshot, recent_flush_outcomes), `CurrentPhoenixMobileScanRepository.latestFlushReport()`, `DiagnosticsUiStateFactory` |
 | Attendee count / sync status | `SyncRepository.currentSyncStatus()`, `CurrentPhoenixSyncRepository`, `ScannerDao.loadSyncMetadata()`, `DiagnosticsUiStateFactory` |
-| Diagnostics refresh | `DiagnosticsViewModel.refresh()`, `MainActivity` (multiple collectors + button) |
+| Diagnostics projection | `DiagnosticsViewModel` (combines flows), `DiagnosticsUiStateFactory` |
 | Sync trigger | `SyncViewModel`, `MainActivity` (sync button) |
 | Network/API | `PhoenixMobileRemoteDataSource`, `PhoenixMobileApi`; no connectivity observer |
 
 ---
 
-*Audit completed without code changes. Use this document to implement auto-flush in a narrow, safe way.*
+This audit document predates B1. Treat the “post-B1” notes as current behavior; future changes should keep the same boundary: Room/repository as durable truth, coordinator as orchestration-only transient truth, UI as projection only.

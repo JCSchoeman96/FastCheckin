@@ -74,6 +74,24 @@ class DefaultAutoFlushCoordinator @Inject constructor(
         coordinatorScope.cancel()
     }
 
+    private fun clearRetryState() {
+        _state.value =
+            _state.value.copy(
+                isRetryScheduled = false,
+                retryAttempt = 0,
+                nextRetryAtEpochMs = null
+            )
+    }
+
+    private fun setRetryState(attempt: Int, delayMs: Long) {
+        _state.value =
+            _state.value.copy(
+                isRetryScheduled = true,
+                retryAttempt = attempt,
+                nextRetryAtEpochMs = clock.millis() + delayMs
+            )
+    }
+
     override fun requestFlush(trigger: AutoFlushTrigger) {
         coordinatorScope.launch {
             val startedOrScheduled: Boolean =
@@ -88,6 +106,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                             pendingRetryJob?.cancel()
                             pendingRetryJob = null
                             retryAttempt = 0
+                            clearRetryState()
                         }
 
                         flushRequestedWhileBusy = true
@@ -101,6 +120,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                             pendingRetryJob?.cancel()
                             pendingRetryJob = null
                             retryAttempt = 0
+                            clearRetryState()
 
                             flushJob =
                                 coordinatorScope.launch {
@@ -118,6 +138,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                             pendingRetryJob?.cancel()
                             pendingRetryJob = null
                             retryAttempt = 0
+                            clearRetryState()
 
                             flushJob =
                                 coordinatorScope.launch {
@@ -170,7 +191,12 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private suspend fun startFlushLoop() {
         try {
             while (true) {
-                _state.value = _state.value.copy(isFlushing = true)
+                _state.value =
+                    _state.value.copy(
+                        isFlushing = true,
+                        isRetryScheduled = false,
+                        nextRetryAtEpochMs = null
+                    )
                 val report = flushQueuedScansUseCase.run(maxBatchSize = maxBatchSize)
 
                 _state.value =
@@ -185,6 +211,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                         pendingRetryJob = null
                         retryAttempt = 0
                     }
+                    clearRetryState()
                 }
 
                 val madeProgress = report.uploadedCount > 0
@@ -208,6 +235,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
 
                             val attempt = retryAttempt + 1
                             val delayMs = retryBackoff.delayMs(attempt)
+                            setRetryState(attempt = attempt, delayMs = delayMs)
                             pendingRetryJob =
                                 coordinatorScope.launch {
                                     delay(delayMs)
@@ -226,6 +254,12 @@ class DefaultAutoFlushCoordinator @Inject constructor(
 
                                         // Consume attempt only when we actually start the retry execution.
                                         retryAttempt = attempt
+                                        // Retry is no longer "scheduled" once execution begins.
+                                        _state.value =
+                                            _state.value.copy(
+                                                isRetryScheduled = false,
+                                                nextRetryAtEpochMs = null
+                                            )
                                         flushJob =
                                             coordinatorScope.launch {
                                                 startFlushLoop()
@@ -237,6 +271,10 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                                             mutex.withLock {
                                                 if (pendingRetryJob === job) {
                                                     pendingRetryJob = null
+                                                    // If we didn't start a retry run, clear scheduled retry state.
+                                                    if (_state.value.isRetryScheduled) {
+                                                        clearRetryState()
+                                                    }
                                                 }
                                             }
                                         }

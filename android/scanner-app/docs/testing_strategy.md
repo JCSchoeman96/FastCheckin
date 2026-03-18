@@ -12,6 +12,16 @@ Required unit coverage:
 - analyzer boundary proving no direct network path
 - runtime `IN` direction exposure
 
+### B1 — truthful queue/flush UI projection (post-B1)
+
+Required focused coverage for the truth-modeling slice:
+
+- **Queued locally without flush result**: queue depth shown; server result hidden/neutral.
+- **Uploading while queue still exists**: upload state shows Uploading; queue depth remains repository-derived.
+- **Retry pending**: retry metadata present; upload state shows Retry pending with attempt.
+- **Auth expired**: reflected in upload state.
+- **Server result shown only from persisted/classified outcomes** (no message parsing for terminal error precision).
+
 ## Hilt Tests
 
 Hilt runtime wiring requires Hilt test setup in the same scaffold pass.

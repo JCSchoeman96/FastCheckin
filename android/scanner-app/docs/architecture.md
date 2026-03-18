@@ -44,9 +44,16 @@ offline packages until the backend formally promotes a new contract.
 - Room is the structured local source for attendee cache, queued scans, replay
   cache, and sync metadata.
 - The Phoenix backend remains the business-rule authority.
-- WorkManager owns retryable background flush.
+- Foreground/manual flush orchestration is owned by `core.autoflush` (in-process coordinator).
+- WorkManager remains the mechanism for retryable *background* flush when/if enqueued.
 - JWT auth is isolated behind `SessionRepository`, `SessionAuthGateway`,
   `SessionProvider`, `SessionVault`, and session metadata storage.
+
+## Truth model (post-B1)
+
+- **Durable truth** lives in repositories/Room and is exposed as observable `Flow`s (e.g. queue depth, persisted flush snapshot/outcomes).
+- **Transient orchestration truth** lives in `AutoFlushCoordinator.state` (uploading, retry scheduled metadata, auth expired signal).
+- **UI/ViewModels** are projection-only: do not manually “refresh” durable truth after enqueue/flush; collect the observable sources of truth.
 
 ## Hilt Scope
 

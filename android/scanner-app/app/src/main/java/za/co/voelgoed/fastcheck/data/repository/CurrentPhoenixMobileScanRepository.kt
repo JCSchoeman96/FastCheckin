@@ -5,6 +5,10 @@ import java.time.Clock
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
 import retrofit2.HttpException
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
@@ -225,6 +229,26 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
         val snapshot = scannerDao.loadLatestFlushSnapshot() ?: return null
         return toFlushReport(snapshot, scannerDao.loadRecentFlushOutcomes())
     }
+
+    override fun observePendingQueueDepth(): Flow<Int> = scannerDao.observePendingScanCount()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeLatestFlushReport(): Flow<FlushReport?> =
+        // Avoid combining two independently-updating flows (snapshot + outcomes), which can
+        // transiently produce mismatched pairs (new snapshot + old outcomes, or vice versa).
+        //
+        // `replaceLatestFlushState()` writes snapshot and outcomes in a single Room transaction.
+        // By driving from the snapshot emission and reading outcomes at that point, we reduce
+        // the chance of UI “flicker” to essentially the Room commit boundary.
+        scannerDao.observeLatestFlushSnapshot().flatMapLatest { snapshot ->
+            flow {
+                if (snapshot == null) {
+                    emit(null)
+                } else {
+                    emit(toFlushReport(snapshot, scannerDao.loadRecentFlushOutcomes()))
+                }
+            }
+        }
 
     private suspend fun persistLatestFlushReport(report: FlushReport): FlushReport {
         val completedAt = Instant.ofEpochMilli(clock.millis()).toString()

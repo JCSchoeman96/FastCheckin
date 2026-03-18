@@ -6,5 +6,8 @@ data class QueueUiState(
     val validationMessage: String? = null,
     val isQueueing: Boolean = false,
     val isFlushing: Boolean = false,
+    val localQueueDepth: Int = 0,
+    val uploadStateLabel: String = "Idle",
+    val serverResultHint: String = "",
     val directionLabel: String = "IN"
 )

@@ -2,8 +2,10 @@ package za.co.voelgoed.fastcheck.feature.diagnostics
 
 import java.time.Clock
 import javax.inject.Inject
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
+import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.domain.model.SessionState
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
@@ -16,7 +18,8 @@ class DiagnosticsUiStateFactory @Inject constructor(
         tokenPresent: Boolean,
         syncStatus: AttendeeSyncStatus?,
         queueDepth: Int,
-        latestFlushReport: FlushReport?
+        latestFlushReport: FlushReport?,
+        coordinatorState: AutoFlushCoordinatorState
     ): DiagnosticsUiState {
         val nowEpochMillis = clock.millis()
         val sessionState =
@@ -36,6 +39,24 @@ class DiagnosticsUiStateFactory @Inject constructor(
                 else -> "Valid"
             }
 
+        val uploadStateLabel =
+            when {
+                coordinatorState.isFlushing ->
+                    "Uploading"
+                coordinatorState.isRetryScheduled ->
+                    "Retry pending (attempt ${coordinatorState.retryAttempt})"
+                latestFlushReport?.executionStatus == FlushExecutionStatus.AUTH_EXPIRED ||
+                    latestFlushReport?.authExpired == true ->
+                    "Auth expired"
+                latestFlushReport?.executionStatus == FlushExecutionStatus.RETRYABLE_FAILURE ->
+                    "Retry pending"
+                else ->
+                    "Idle"
+            }
+
+        val serverResultSummary =
+            buildServerResultSummary(latestFlushReport)
+
         return DiagnosticsUiState(
             currentEvent = session?.let { "${it.eventName} (#${it.eventId})" } ?: "No active event",
             authSessionState =
@@ -48,25 +69,32 @@ class DiagnosticsUiStateFactory @Inject constructor(
             tokenExpiryState = tokenState,
             lastAttendeeSyncTime = syncStatus?.lastSuccessfulSyncAt ?: "Never",
             attendeeCount = syncStatus?.attendeeCount?.toString() ?: "0",
-            queueDepth = queueDepth.toString(),
-            latestFlushState =
-                when (latestFlushReport?.executionStatus) {
-                    null -> "Never"
-                    FlushExecutionStatus.COMPLETED -> "Completed"
-                    FlushExecutionStatus.RETRYABLE_FAILURE -> "Retry pending"
-                    FlushExecutionStatus.AUTH_EXPIRED -> "Re-login required"
-                    FlushExecutionStatus.WORKER_FAILURE -> "Worker failure"
-                },
-            latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet.",
-            recentOutcomeSummary =
-                latestFlushReport
-                    ?.itemOutcomes
-                    ?.take(3)
-                    ?.joinToString(separator = " | ") { outcome ->
-                        "${outcome.ticketCode}: ${outcome.outcome.name.lowercase()}"
-                    }
-                    ?.ifBlank { "No recent flush outcomes." }
-                    ?: "No recent flush outcomes."
+            localQueueDepthLabel = "Queued locally: $queueDepth",
+            uploadStateLabel = uploadStateLabel,
+            serverResultSummary = serverResultSummary,
+            latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet."
         )
+    }
+
+    private fun buildServerResultSummary(report: FlushReport?): String {
+        val outcomes = report?.itemOutcomes.orEmpty()
+        if (outcomes.isEmpty()) return "No server outcomes yet."
+
+        val confirmed = outcomes.count { it.outcome == FlushItemOutcome.SUCCESS }
+        val duplicate = outcomes.count { it.outcome == FlushItemOutcome.DUPLICATE }
+        val rejected = outcomes.count { it.outcome == FlushItemOutcome.TERMINAL_ERROR }
+
+        val parts = buildList {
+            if (confirmed > 0) add("Confirmed: $confirmed")
+            if (duplicate > 0) add("Duplicate: $duplicate")
+            if (rejected > 0) add("Rejected: $rejected")
+        }
+
+        return if (parts.isEmpty()) {
+            // Outcomes exist but none are terminal classifications we can safely summarize.
+            "Server outcomes recorded."
+        } else {
+            parts.joinToString(" | ")
+        }
     }
 }

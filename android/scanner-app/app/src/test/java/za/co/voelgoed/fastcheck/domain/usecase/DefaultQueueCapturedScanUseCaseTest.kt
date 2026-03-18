@@ -4,6 +4,8 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
@@ -107,6 +109,8 @@ class DefaultQueueCapturedScanUseCaseTest {
 
     private class RecordingMobileScanRepository : MobileScanRepository {
         var lastQueuedScan: PendingScan? = null
+        private val depthFlow = MutableStateFlow(0)
+        private val latestFlushFlow = MutableStateFlow<FlushReport?>(null)
 
         override suspend fun queueScan(scan: PendingScan): QueueCreationResult {
             lastQueuedScan = scan
@@ -120,6 +124,10 @@ class DefaultQueueCapturedScanUseCaseTest {
         override suspend fun pendingQueueDepth(): Int = 0
 
         override suspend fun latestFlushReport(): FlushReport? = null
+
+        override fun observePendingQueueDepth(): Flow<Int> = depthFlow
+
+        override fun observeLatestFlushReport(): Flow<FlushReport?> = latestFlushFlow
     }
 
     private data class FakeSessionAuthGateway(

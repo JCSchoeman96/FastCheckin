@@ -5,6 +5,8 @@
 Feedback must reflect local queue capture and later server authority without
 pretending that local capture equals server-confirmed admission.
 
+**Post-B1 wording:** On accepted capture handoff, scanner copy is **“Queued locally (pending upload)”**.
+
 ## Current Runtime States
 
 - captured and queued
@@ -30,3 +32,7 @@ distinguish:
 
 It must not imply richer local approval logic than the backend currently
 supports.
+
+## Terminal errors (post-B1)
+
+Do not parse message text to infer “invalid / not found”. If a flush outcome is a terminal error without a stable structured code, treat it as the generic **Rejected by server**.

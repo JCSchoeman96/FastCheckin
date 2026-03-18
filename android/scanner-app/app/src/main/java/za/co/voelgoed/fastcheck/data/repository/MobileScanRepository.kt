@@ -1,5 +1,6 @@
 package za.co.voelgoed.fastcheck.data.repository
 
+import kotlinx.coroutines.flow.Flow
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
@@ -13,4 +14,7 @@ interface MobileScanRepository {
     suspend fun flushQueuedScans(maxBatchSize: Int = 50): FlushReport
     suspend fun pendingQueueDepth(): Int
     suspend fun latestFlushReport(): FlushReport?
+
+    fun observePendingQueueDepth(): Flow<Int>
+    fun observeLatestFlushReport(): Flow<FlushReport?>
 }

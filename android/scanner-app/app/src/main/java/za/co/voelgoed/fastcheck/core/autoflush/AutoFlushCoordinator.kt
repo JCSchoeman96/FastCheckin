@@ -18,7 +18,10 @@ interface AutoFlushCoordinator {
 
 data class AutoFlushCoordinatorState(
     val isFlushing: Boolean = false,
-    val lastFlushReport: FlushReport? = null
+    val lastFlushReport: FlushReport? = null,
+    val isRetryScheduled: Boolean = false,
+    val retryAttempt: Int = 0,
+    val nextRetryAtEpochMs: Long? = null
 )
 
 sealed interface AutoFlushTrigger {

@@ -5,6 +5,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import org.junit.Test
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
@@ -24,14 +25,15 @@ class DiagnosticsUiStateFactoryTest {
                 tokenPresent = false,
                 syncStatus = null,
                 queueDepth = 0,
-                latestFlushReport = null
+                latestFlushReport = null,
+                coordinatorState = AutoFlushCoordinatorState()
             )
 
         assertThat(state.currentEvent).isEqualTo("No active event")
         assertThat(state.authSessionState).isEqualTo("Logged out")
         assertThat(state.tokenExpiryState).isEqualTo("Missing")
         assertThat(state.lastAttendeeSyncTime).isEqualTo("Never")
-        assertThat(state.latestFlushState).isEqualTo("Never")
+        assertThat(state.uploadStateLabel).isEqualTo("Idle")
     }
 
     @Test
@@ -73,15 +75,112 @@ class DiagnosticsUiStateFactoryTest {
                         authExpired = true,
                         backlogRemaining = true,
                         summaryMessage = "Flush stopped. Session expired and manual login is required."
-                    )
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
             )
 
         assertThat(state.currentEvent).isEqualTo("Voelgoed Live (#5)")
         assertThat(state.authSessionState).isEqualTo("Authenticated")
         assertThat(state.tokenExpiryState).isEqualTo("Valid")
         assertThat(state.attendeeCount).isEqualTo("42")
-        assertThat(state.queueDepth).isEqualTo("3")
-        assertThat(state.latestFlushState).isEqualTo("Re-login required")
-        assertThat(state.recentOutcomeSummary).contains("VG-100")
+        assertThat(state.localQueueDepthLabel).isEqualTo("Queued locally: 3")
+        assertThat(state.uploadStateLabel).isEqualTo("Auth expired")
+    }
+
+    @Test
+    fun queuedLocallyWithoutFlushResult_hidesServerOutcomes() {
+        val state =
+            factory.create(
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 12,
+                latestFlushReport = null,
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.localQueueDepthLabel).isEqualTo("Queued locally: 12")
+        assertThat(state.serverResultSummary).isEqualTo("No server outcomes yet.")
+    }
+
+    @Test
+    fun uploadingWhileQueueExists_setsUploadingState() {
+        val state =
+            factory.create(
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 4,
+                latestFlushReport = null,
+                coordinatorState = AutoFlushCoordinatorState(isFlushing = true)
+            )
+
+        assertThat(state.uploadStateLabel).isEqualTo("Uploading")
+        assertThat(state.localQueueDepthLabel).isEqualTo("Queued locally: 4")
+    }
+
+    @Test
+    fun retryPendingWithMetadata_includesAttempt() {
+        val state =
+            factory.create(
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 1,
+                latestFlushReport = null,
+                coordinatorState =
+                    AutoFlushCoordinatorState(
+                        isRetryScheduled = true,
+                        retryAttempt = 2,
+                        nextRetryAtEpochMs = 1_777_777_777_777
+                    )
+            )
+
+        assertThat(state.uploadStateLabel).contains("attempt 2")
+    }
+
+    @Test
+    fun serverResultShownOnlyFromPersistedOutcomes_andTerminalErrorIsGeneric() {
+        val state =
+            factory.create(
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 0,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        itemOutcomes =
+                            listOf(
+                                FlushItemResult(
+                                    idempotencyKey = "idem-1",
+                                    ticketCode = "VG-1",
+                                    outcome = FlushItemOutcome.SUCCESS,
+                                    message = "OK"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-2",
+                                    ticketCode = "VG-2",
+                                    outcome = FlushItemOutcome.DUPLICATE,
+                                    message = "Already scanned"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-3",
+                                    ticketCode = "VG-3",
+                                    outcome = FlushItemOutcome.TERMINAL_ERROR,
+                                    message = "Invalid / not found"
+                                )
+                            ),
+                        uploadedCount = 3
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.serverResultSummary).contains("Confirmed: 1")
+        assertThat(state.serverResultSummary).contains("Duplicate: 1")
+        assertThat(state.serverResultSummary).contains("Rejected: 1")
+        // No message parsing: we never surface "Invalid / not found" as a structured classification.
+        assertThat(state.serverResultSummary).doesNotContain("Invalid")
+        assertThat(state.serverResultSummary).doesNotContain("not found")
     }
 }

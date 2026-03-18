@@ -2,6 +2,8 @@
 
 **Purpose:** Define the narrowest Android layer that owns automatic flush orchestration and a single coordinator boundary. No backend contract changes. Local queue remains the durable offline-first source of truth. Real-time validation and flush execution stay in-process (no move to WorkManager in this slice). One device never runs more than one in-flight flush at a time.
 
+**Status (post-B1):** Implemented. Coordinator remains orchestration-only; durable truth remains in repositories/Room. UI projects durable vs transient truth explicitly (Queued locally / Upload state / Server result).
+
 ---
 
 ## 1) Owner for auto-flush state and orchestration
@@ -16,28 +18,19 @@
 
 ## 2) Files to add or change
 
-### Add (new)
+### Added / changed (post-B1)
 
 | File | Purpose |
 |------|--------|
-| `core/autoflush/AutoFlushCoordinator.kt` | Coordinator class: holds flush mutex, applies trigger rules, calls `FlushQueuedScansUseCase`, exposes `StateFlow<AutoFlushCoordinatorState>`. |
-| `core/autoflush/AutoFlushCoordinatorState.kt` | State data class: `isFlushing: Boolean`, `lastFlushReport: FlushReport?`, optional `lastTrigger: Trigger?`. |
-| `core/autoflush/AutoFlushTrigger.kt` | Sealed type: `Manual`, `AfterEnqueue` (and later e.g. `ConnectivityRestored`, `BackoffElapsed`). |
-| `core/autoflush/ConnectivityProvider.kt` | Interface: `suspend fun isOnline(): Boolean` (or `Flow<Boolean>`). Implementation can be stub (“always true”) or use `ConnectivityManager`; keeps coordinator testable and online-detection in one place. |
-
-### Change (existing)
-
-| File | Change |
-|------|--------|
-| `app/di/RepositoryModule.kt` (or new `app/di/AutoFlushModule.kt`) | Provide/bind `AutoFlushCoordinator` (singleton) and `ConnectivityProvider`. Ensure the coordinator can call `FlushQueuedScansUseCase` and query `pendingQueueDepth()` via `MobileScanRepository` or a narrow abstraction. |
-| `app/MainActivity.kt` | Inject `AutoFlushCoordinator`. In the existing `handoffResults.collectLatest { ... }` collector, when `result is CaptureHandoffResult.Accepted`, call `autoFlushCoordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)` (non-blocking). |
-| `feature/queue/QueueViewModel.kt` | Inject `AutoFlushCoordinator`. For the manual flush button, replace direct `flushQueuedScansUseCase.run()` with `autoFlushCoordinator.requestFlush(AutoFlushTrigger.Manual)` and observe `coordinator.state` to drive `isFlushing` and the last flush message. After manual enqueue, when `result is QueueCreationResult.Enqueued`, call `autoFlushCoordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)`. |
+| `core/autoflush/AutoFlushCoordinator.kt` | Coordinator boundary: exposes `StateFlow<AutoFlushCoordinatorState>` and accepts `requestFlush(trigger)`. |
+| `core/autoflush/DefaultAutoFlushCoordinator.kt` | Orchestration implementation: single in-flight flush, bounded drain loop, debounce, connectivity-restored trigger, and retry/backoff scheduling. |
+| `core/autoflush/AutoFlushCoordinatorState` | Orchestration-only state: `isFlushing`, `lastFlushReport` (transient), and minimal retry metadata (`isRetryScheduled`, `retryAttempt`, `nextRetryAtEpochMs`). |
+| `data/local/ScannerDao.kt` and `data/repository/*` | Durable truth is observable via Room/repository `Flow`s for queue depth and persisted flush snapshot/outcomes. |
 
 ### Do not change (in this slice)
 
 - **ScanCapturePipeline:** No coordinator dependency; it stays focused on decode gating, queue admission, and local capture outcomes only.
-- **SyncViewModel / DiagnosticsViewModel:** No change. Diagnostics keep reading queue depth and latest flush from repositories (`MobileScanRepository.pendingQueueDepth()`, `latestFlushReport()`); coordinator does not replace those sources of truth.
-- **Repositories / use cases:** No API or contract changes. `FlushQueuedScansUseCase`, `MobileScanRepository`, backend contracts unchanged. Local queue remains written only via `queueScan()` and read via existing DAO.
+- **Backend contracts:** No change. Android runtime remains on `/api/v1/mobile/*`.
 
 ---
 
@@ -109,7 +102,10 @@ sealed interface AutoFlushTrigger {
 
 - **Queue admission:** Unchanged. ScanCapturePipeline / QueueViewModel → `QueueCapturedScanUseCase` → `MobileScanRepository.queueScan()` → DAO. Local queue is still the only durable source of truth for pending scans.
 - **Flush execution:** QueueViewModel (button) and MainActivity / QueueViewModel (after successful enqueue) call `AutoFlushCoordinator.requestFlush(…)`. The coordinator runs `FlushQueuedScansUseCase.run()` (single in-flight, with the pending-work flag logic) and repositories/DAO update as today; coordinator updates `lastFlushReport` in state.
-- **UI:** QueueViewModel collects `coordinator.state` → derives `isFlushing` and the latest flush message for the flush button and status text. DiagnosticsViewModel is unchanged; it still uses `refresh()` and repositories for queue depth and latest flush.
+- **UI (post-B1):** ViewModels project:
+  - **Queued locally** from repository/Room observation (Flow)
+  - **Upload state** from coordinator transient state (including retry metadata)
+  - **Server result** from persisted/classified flush outcomes (not message parsing)
 
 ---
 
@@ -122,4 +118,4 @@ sealed interface AutoFlushTrigger {
 
 ---
 
-*Design note only; implementation to follow in a separate slice.*
+This document remains a boundary reference. Implementation is now present; future changes must keep the coordinator orchestration-only and keep durable truth in repositories/Room.

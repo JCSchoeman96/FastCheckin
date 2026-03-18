@@ -129,13 +129,13 @@ class MainActivity : ComponentActivity() {
                             state.sessionSummary ?: getString(R.string.no_active_session)
                         binding.authErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
                         binding.loginButton.isEnabled = !state.isSubmitting
-                        diagnosticsViewModel.refresh()
 
                         val hasSession =
                             state.sessionSummary != null &&
                                 state.errorMessage == null &&
                                 !state.isSubmitting
                         if (!lastHadSession && hasSession) {
+                            diagnosticsViewModel.refresh()
                             autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
                         }
                         lastHadSession = hasSession
@@ -150,13 +150,10 @@ class MainActivity : ComponentActivity() {
                         binding.syncErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
                         binding.syncButton.isEnabled = !state.isSyncing
 
-                        if (!state.isSyncing) {
-                            diagnosticsViewModel.refresh()
-                        }
-
                         val completedNow = lastWasSyncing && !state.isSyncing
                         val succeededNow = completedNow && lastError == null && state.errorMessage == null
                         if (succeededNow) {
+                            diagnosticsViewModel.refresh()
                             autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostSync)
                         }
 
@@ -172,10 +169,10 @@ class MainActivity : ComponentActivity() {
                         binding.tokenExpiryValue.text = state.tokenExpiryState
                         binding.lastSyncValue.text = state.lastAttendeeSyncTime
                         binding.attendeeCountValue.text = state.attendeeCount
-                        binding.queueDepthValue.text = state.queueDepth
-                        binding.latestFlushStateValue.text = state.latestFlushState
+                        binding.queueDepthValue.text = state.localQueueDepthLabel
+                        binding.latestFlushStateValue.text = state.uploadStateLabel
                         binding.latestFlushSummaryValue.text = state.latestFlushSummary
-                        binding.recentOutcomeSummaryValue.text = state.recentOutcomeSummary
+                        binding.recentOutcomeSummaryValue.text = state.serverResultSummary
                     }
                 }
 
@@ -188,7 +185,8 @@ class MainActivity : ComponentActivity() {
                             state.validationMessage ?: getString(R.string.no_errors)
                         binding.queueScanButton.isEnabled = !state.isQueueing
                         binding.flushQueueButton.isEnabled = !state.isFlushing
-                        diagnosticsViewModel.refresh()
+                        binding.manualQueueDepthValue.text = "Queued locally: ${state.localQueueDepth}"
+                        binding.manualUploadStateValue.text = state.uploadStateLabel
                     }
                 }
 

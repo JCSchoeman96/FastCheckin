@@ -6,8 +6,8 @@ data class DiagnosticsUiState(
     val tokenExpiryState: String = "Unknown",
     val lastAttendeeSyncTime: String = "Never",
     val attendeeCount: String = "0",
-    val queueDepth: String = "0",
-    val latestFlushState: String = "Never",
-    val latestFlushSummary: String = "No flush has run yet.",
-    val recentOutcomeSummary: String = "No recent flush outcomes."
+    val localQueueDepthLabel: String = "Queued locally: 0",
+    val uploadStateLabel: String = "Idle",
+    val serverResultSummary: String = "No server outcomes yet.",
+    val latestFlushSummary: String = "No flush has run yet."
 )

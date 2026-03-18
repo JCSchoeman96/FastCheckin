@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ScannerDao {
@@ -32,6 +33,9 @@ interface ScannerDao {
     @Query("SELECT COUNT(*) FROM queued_scans WHERE replayed = 0")
     suspend fun countPendingScans(): Int
 
+    @Query("SELECT COUNT(*) FROM queued_scans WHERE replayed = 0")
+    fun observePendingScanCount(): Flow<Int>
+
     @Query("SELECT * FROM scan_replay_cache WHERE idempotencyKey = :idempotencyKey LIMIT 1")
     suspend fun findReplayCache(idempotencyKey: String): ReplayCacheEntity?
 
@@ -53,6 +57,9 @@ interface ScannerDao {
     @Query("SELECT * FROM latest_flush_snapshot WHERE snapshotId = 1 LIMIT 1")
     suspend fun loadLatestFlushSnapshot(): LatestFlushSnapshotEntity?
 
+    @Query("SELECT * FROM latest_flush_snapshot WHERE snapshotId = 1 LIMIT 1")
+    fun observeLatestFlushSnapshot(): Flow<LatestFlushSnapshotEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLatestFlushSnapshot(snapshot: LatestFlushSnapshotEntity)
 
@@ -64,6 +71,9 @@ interface ScannerDao {
 
     @Query("SELECT * FROM recent_flush_outcomes ORDER BY outcomeOrder ASC LIMIT :limit")
     suspend fun loadRecentFlushOutcomes(limit: Int = 5): List<RecentFlushOutcomeEntity>
+
+    @Query("SELECT * FROM recent_flush_outcomes ORDER BY outcomeOrder ASC LIMIT 5")
+    fun observeRecentFlushOutcomes(): Flow<List<RecentFlushOutcomeEntity>>
 
     @Query("SELECT * FROM sync_metadata WHERE eventId = :eventId LIMIT 1")
     suspend fun loadSyncMetadata(eventId: Long): SyncMetadataEntity?

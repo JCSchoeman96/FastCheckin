@@ -8,20 +8,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
+import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
-import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 
 @HiltViewModel
 class QueueViewModel @Inject constructor(
     private val queueCapturedScanUseCase: QueueCapturedScanUseCase,
-    private val flushQueuedScansUseCase: FlushQueuedScansUseCase,
     private val autoFlushCoordinator: AutoFlushCoordinator,
+    private val mobileScanRepository: MobileScanRepository,
     private val queueUiStateFactory: QueueUiStateFactory
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(QueueUiState())
@@ -29,9 +30,32 @@ class QueueViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            autoFlushCoordinator.state.collectLatest { coordinatorState ->
+            combine(
+                autoFlushCoordinator.state,
+                mobileScanRepository.observePendingQueueDepth()
+            ) { coordinatorState, queueDepth ->
+                coordinatorState to queueDepth
+            }.collectLatest { (coordinatorState, queueDepth) ->
+                val uploadStateLabel =
+                    when {
+                        coordinatorState.isFlushing -> "Uploading"
+                        coordinatorState.isRetryScheduled ->
+                            "Retry pending (attempt ${coordinatorState.retryAttempt})"
+                        coordinatorState.lastFlushReport?.authExpired == true ||
+                            coordinatorState.lastFlushReport?.executionStatus ==
+                            za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus.AUTH_EXPIRED ->
+                            "Auth expired"
+                        else -> "Idle"
+                    }
+
                 _uiState.update { current ->
-                    current.copy(isFlushing = coordinatorState.isFlushing)
+                    current.copy(
+                        isFlushing = coordinatorState.isFlushing,
+                        localQueueDepth = queueDepth,
+                        uploadStateLabel = uploadStateLabel,
+                        // Keep the queue panel low-noise: this is intentionally empty by default.
+                        serverResultHint = ""
+                    )
                 }
             }
         }

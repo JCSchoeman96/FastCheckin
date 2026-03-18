@@ -5,6 +5,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -63,7 +64,13 @@ class DefaultAutoFlushCoordinatorTest {
     }
 
     private class RecordingScanRepository : za.co.voelgoed.fastcheck.data.repository.MobileScanRepository {
-        var depth: Int = 0
+        private val depthFlow = MutableStateFlow(0)
+        var depth: Int
+            get() = depthFlow.value
+            set(value) {
+                depthFlow.value = value
+            }
+        private val latestFlushFlow = MutableStateFlow<FlushReport?>(null)
 
         override suspend fun queueScan(
             scan: za.co.voelgoed.fastcheck.domain.model.PendingScan
@@ -80,6 +87,10 @@ class DefaultAutoFlushCoordinatorTest {
         override suspend fun pendingQueueDepth(): Int = depth
 
         override suspend fun latestFlushReport(): FlushReport? = null
+
+        override fun observePendingQueueDepth(): Flow<Int> = depthFlow
+
+        override fun observeLatestFlushReport(): Flow<FlushReport?> = latestFlushFlow
     }
 
     private class FakeConnectivityMonitor(initialOnline: Boolean) : ConnectivityMonitor {
