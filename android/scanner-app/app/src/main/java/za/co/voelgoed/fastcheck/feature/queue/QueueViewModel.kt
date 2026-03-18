@@ -7,8 +7,11 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
@@ -18,10 +21,21 @@ import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 class QueueViewModel @Inject constructor(
     private val queueCapturedScanUseCase: QueueCapturedScanUseCase,
     private val flushQueuedScansUseCase: FlushQueuedScansUseCase,
+    private val autoFlushCoordinator: AutoFlushCoordinator,
     private val queueUiStateFactory: QueueUiStateFactory
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(QueueUiState())
     val uiState: StateFlow<QueueUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            autoFlushCoordinator.state.collectLatest { coordinatorState ->
+                _uiState.update { current ->
+                    current.copy(isFlushing = coordinatorState.isFlushing)
+                }
+            }
+        }
+    }
 
     fun updateTicketCode(value: String) {
         _uiState.update { state ->
@@ -63,26 +77,16 @@ class QueueViewModel @Inject constructor(
                     isQueueing = false
                 )
             }
+
+            if (result is QueueCreationResult.Enqueued) {
+                autoFlushCoordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
+            }
         }
     }
 
     fun flushQueuedScans() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isFlushing = true, validationMessage = null) }
-            val report = flushQueuedScansUseCase.run(maxBatchSize = 50)
-
-            _uiState.update { state ->
-                state.copy(
-                    isFlushing = false,
-                    lastActionMessage = queueUiStateFactory.actionMessageForFlushReport(report),
-                    validationMessage =
-                        if (report.authExpired) {
-                            "Manual login required before queued scans can flush."
-                        } else {
-                            null
-                        }
-                )
-            }
+            autoFlushCoordinator.requestFlush(AutoFlushTrigger.Manual)
         }
     }
 

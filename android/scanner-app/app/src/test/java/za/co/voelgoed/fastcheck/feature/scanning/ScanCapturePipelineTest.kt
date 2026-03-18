@@ -1,6 +1,8 @@
 package za.co.voelgoed.fastcheck.feature.scanning
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -18,7 +20,7 @@ class ScanCapturePipelineTest {
     @Test
     fun handsDecodedValueToLocalQueueWithScannerDefaults() = runTest {
         val fakeUseCase = RecordingQueueCapturedScanUseCase()
-        val pipeline = ScanCapturePipeline(fakeUseCase)
+        val pipeline = ScanCapturePipeline(fakeUseCase) { 0L }
 
         pipeline.onDecoded("  VG-101  ")
 
@@ -33,7 +35,7 @@ class ScanCapturePipelineTest {
         val constructorParameterTypes =
             ScanCapturePipeline::class.java.declaredConstructors.single().parameterTypes.toList()
 
-        assertThat(constructorParameterTypes).containsExactly(QueueCapturedScanUseCase::class.java)
+        assertThat(constructorParameterTypes).contains(QueueCapturedScanUseCase::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileApi::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileRemoteDataSource::class.java)
         assertThat(constructorParameterTypes).doesNotContain(MobileScanRepository::class.java)
@@ -45,16 +47,18 @@ class ScanCapturePipelineTest {
         var now = 1_000L
         val pipeline = ScanCapturePipeline(fakeUseCase) { now }
 
+        val firstResult = async(start = CoroutineStart.UNDISPATCHED) { pipeline.handoffResults.first() }
         pipeline.onDecoded("CODE-A")
-        val firstResult = pipeline.handoffResults.first()
+        val first = firstResult.await()
 
         now += 500L
+        val secondResult = async(start = CoroutineStart.UNDISPATCHED) { pipeline.handoffResults.first() }
         pipeline.onDecoded("CODE-A")
-        val secondResult = pipeline.handoffResults.first()
+        val second = secondResult.await()
 
         assertThat(fakeUseCase.enqueueCallCount).isEqualTo(1)
-        assertThat(firstResult).isEqualTo(CaptureHandoffResult.Accepted)
-        assertThat(secondResult).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
+        assertThat(first).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(second).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
     }
 
     @Test
@@ -63,16 +67,18 @@ class ScanCapturePipelineTest {
         var now = 5_000L
         val pipeline = ScanCapturePipeline(fakeUseCase) { now }
 
+        val firstResult = async(start = CoroutineStart.UNDISPATCHED) { pipeline.handoffResults.first() }
         pipeline.onDecoded("CODE-A")
-        val firstResult = pipeline.handoffResults.first()
+        val first = firstResult.await()
 
         now += 500L
+        val secondResult = async(start = CoroutineStart.UNDISPATCHED) { pipeline.handoffResults.first() }
         pipeline.onDecoded("CODE-B")
-        val secondResult = pipeline.handoffResults.first()
+        val second = secondResult.await()
 
         assertThat(fakeUseCase.enqueueCallCount).isEqualTo(1)
-        assertThat(firstResult).isEqualTo(CaptureHandoffResult.Accepted)
-        assertThat(secondResult).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
+        assertThat(first).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(second).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
     }
 
     @Test
@@ -81,16 +87,18 @@ class ScanCapturePipelineTest {
         var now = 10_000L
         val pipeline = ScanCapturePipeline(fakeUseCase) { now }
 
+        val firstResult = async(start = CoroutineStart.UNDISPATCHED) { pipeline.handoffResults.first() }
         pipeline.onDecoded("CODE-A")
-        val firstResult = pipeline.handoffResults.first()
+        val first = firstResult.await()
 
         now += 2_000L
+        val secondResult = async(start = CoroutineStart.UNDISPATCHED) { pipeline.handoffResults.first() }
         pipeline.onDecoded("CODE-B")
-        val secondResult = pipeline.handoffResults.first()
+        val second = secondResult.await()
 
         assertThat(fakeUseCase.enqueueCallCount).isEqualTo(2)
-        assertThat(firstResult).isEqualTo(CaptureHandoffResult.Accepted)
-        assertThat(secondResult).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(first).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(second).isEqualTo(CaptureHandoffResult.Accepted)
     }
 
     private class RecordingQueueCapturedScanUseCase : QueueCapturedScanUseCase {

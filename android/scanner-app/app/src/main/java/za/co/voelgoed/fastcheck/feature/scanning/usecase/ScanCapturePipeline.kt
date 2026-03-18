@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.feature.scanning.usecase
 
 import javax.inject.Inject
 import kotlinx.coroutines.channels.BufferOverflow
+import za.co.voelgoed.fastcheck.app.di.CurrentTimeProvider
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
@@ -14,7 +15,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
  */
 class ScanCapturePipeline @Inject constructor(
     private val queueCapturedScan: QueueCapturedScanUseCase,
-    private val timeProvider: () -> Long = { System.currentTimeMillis() }
+    @CurrentTimeProvider private val timeProvider: () -> Long
 ) : DecodedBarcodeHandler {
 
     private val _handoffResults =

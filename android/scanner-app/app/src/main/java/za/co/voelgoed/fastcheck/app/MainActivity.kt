@@ -14,6 +14,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.R
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
@@ -45,6 +47,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var scanCapturePipeline: ScanCapturePipeline
+
+    @Inject
+    lateinit var autoFlushCoordinator: AutoFlushCoordinator
 
     private val authViewModel: AuthViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
@@ -191,6 +196,9 @@ class MainActivity : ComponentActivity() {
                 launch {
                     scanCapturePipeline.handoffResults.collectLatest { result ->
                         scanningViewModel.onCaptureHandoffResult(result)
+                        if (result is za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult.Accepted) {
+                            autoFlushCoordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
+                        }
                     }
                 }
             }

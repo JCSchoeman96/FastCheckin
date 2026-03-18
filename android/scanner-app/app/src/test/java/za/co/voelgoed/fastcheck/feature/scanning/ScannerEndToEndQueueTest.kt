@@ -25,7 +25,8 @@ class ScannerEndToEndQueueTest {
     fun singleCaptureResultsInSingleEnqueueEvenUnderStartChurn() = runTest {
         val fakeSource = FakeScannerInputSource()
         val recordingUseCase = RecordingQueueCapturedScanUseCase()
-        val pipeline = ScanCapturePipeline(recordingUseCase)
+        var now = 1_000L
+        val pipeline = ScanCapturePipeline(recordingUseCase) { now }
         val binding = ScannerSourceBinding(fakeSource, pipeline, this)
 
         // Redundant start calls from the shell should not create duplicate pipelines.
@@ -48,6 +49,7 @@ class ScannerEndToEndQueueTest {
         assertThat(recordingUseCase.entranceName).isEqualTo(ScannerCaptureDefaults.entranceName)
 
         // A second capture should increment enqueue count by exactly one.
+        now += 2_000L
         fakeSource.emitCapture("VG-QUEUE-002")
         advanceUntilIdle()
 

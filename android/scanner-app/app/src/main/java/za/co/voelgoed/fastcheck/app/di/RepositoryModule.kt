@@ -7,6 +7,8 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import java.time.Clock
 import javax.inject.Singleton
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.autoflush.ConnectivityProvider
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.core.network.VaultBackedSessionProvider
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanRepository
@@ -77,5 +79,25 @@ abstract class RepositoryModule {
         @Provides
         @Singleton
         fun provideClock(): Clock = Clock.systemUTC()
+
+        @Provides
+        @Singleton
+        fun provideConnectivityProvider(): ConnectivityProvider =
+            ConnectivityProvider { true }
+
+        @Provides
+        @Singleton
+        fun provideAutoFlushCoordinator(
+            flushQueuedScansUseCase: FlushQueuedScansUseCase,
+            mobileScanRepository: MobileScanRepository,
+            connectivityProvider: ConnectivityProvider,
+            clock: Clock
+        ): AutoFlushCoordinator =
+            za.co.voelgoed.fastcheck.core.autoflush.DefaultAutoFlushCoordinator(
+                flushQueuedScansUseCase = flushQueuedScansUseCase,
+                mobileScanRepository = mobileScanRepository,
+                connectivityProvider = connectivityProvider,
+                clock = clock
+            )
     }
 }
