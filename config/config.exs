@@ -11,6 +11,18 @@ config :fastcheck,
   ecto_repos: [FastCheck.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :fastcheck, Oban,
+  repo: FastCheck.Repo,
+  queues: [scan_persistence: 10],
+  plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
+
+config :fastcheck, :mobile_scan_ingestion,
+  mode: :legacy,
+  chunk_size: 100,
+  live_namespace: "live",
+  shadow_namespace: "shadow",
+  store: FastCheck.Scans.HotState.RedisStore
+
 config :fastcheck, :event_post_grace_days, 14
 
 # Configures the endpoint

@@ -97,6 +97,21 @@ config :fastcheck,
   cache_ttl: cache_ttl,
   redis_url: redis_url
 
+mobile_scan_ingestion_mode =
+  case System.get_env("MOBILE_SCAN_INGESTION_MODE", "legacy")
+       |> String.trim()
+       |> String.downcase() do
+    "redis_authoritative" -> :redis_authoritative
+    "shadow" -> :shadow
+    _ -> :legacy
+  end
+
+config :fastcheck, :mobile_scan_ingestion,
+  mode: mobile_scan_ingestion_mode,
+  chunk_size: String.to_integer(System.get_env("MOBILE_SCAN_CHUNK_SIZE") || "100"),
+  live_namespace: System.get_env("MOBILE_SCAN_LIVE_NAMESPACE", "live"),
+  shadow_namespace: System.get_env("MOBILE_SCAN_SHADOW_NAMESPACE", "shadow")
+
 # Scanner runtime tuning for launch performance.
 config :fastcheck, :scanner_performance,
   stats_reconcile_ms: String.to_integer(System.get_env("SCANNER_STATS_RECONCILE_MS") || "30000"),

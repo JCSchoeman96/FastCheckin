@@ -43,3 +43,16 @@ config :phoenix_live_view,
 
 # Disable rate limiting in test environment to prevent random test failures
 config :fastcheck, :rate_limiting_enabled, false
+
+config :fastcheck, Oban,
+  repo: FastCheck.Repo,
+  queues: false,
+  plugins: false,
+  testing: :manual
+
+config :fastcheck, :mobile_scan_ingestion,
+  mode: :legacy,
+  chunk_size: 100,
+  live_namespace: "live",
+  shadow_namespace: "shadow",
+  store: FastCheck.TestSupport.Scans.InMemoryStore
