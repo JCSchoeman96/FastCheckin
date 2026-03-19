@@ -9,6 +9,7 @@ defmodule FastCheck.Mobile.Token do
 
   Mobile tokens include the following claims:
   - `event_id` - The ID of the event this token grants access to
+  - `jti` - A unique token/session identifier for per-device request identity
   - `role` - Always "scanner" for mobile scanner tokens
   - `exp` - Token expiration timestamp (Unix timestamp)
   - `iat` - Token issued at timestamp (Unix timestamp)
@@ -126,6 +127,7 @@ defmodule FastCheck.Mobile.Token do
 
   The token includes the following claims:
   - `event_id` - The ID of the event (integer)
+  - `jti` - Unique token/session identifier
   - `role` - Always "scanner"
   - `iss` - Issuer (from config)
   - `iat` - Issued at (current Unix timestamp)
@@ -153,6 +155,7 @@ defmodule FastCheck.Mobile.Token do
 
     claims = %{
       "event_id" => event_id,
+      "jti" => Ecto.UUID.generate(),
       "role" => @role_scanner,
       "iss" => issuer(),
       "iat" => now,
@@ -188,8 +191,8 @@ defmodule FastCheck.Mobile.Token do
 
   # Fetches the event's end time from the database.
   defp fetch_event_end_time(event_id) do
-    alias FastCheck.Repo
     alias FastCheck.Events.Event
+    alias FastCheck.Repo
 
     case Repo.get(Event, event_id) do
       %Event{tickera_end_date: %DateTime{} = end_date} ->

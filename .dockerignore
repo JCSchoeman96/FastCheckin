@@ -1,0 +1,13 @@
+.git
+.github
+.elixir_ls
+_build
+deps
+cover
+tmp
+android
+performance/results
+test
+node_modules
+assets/node_modules
+*.log

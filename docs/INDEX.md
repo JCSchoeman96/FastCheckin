@@ -18,6 +18,8 @@
 
 | Document                                       | Purpose                                   |
 | ---------------------------------------------- | ----------------------------------------- |
+| mobile_scan_performance.md                     | k6 mobile scan performance and soak runs  |
+| mobile_scan_performance_baseline_2026-03-19.md | recorded local capped-app scan baseline   |
 | coding_style/elixir_general.md                 | Elixir structure, naming, and conventions |
 | coding_style/ash.md                            | Ash resource & action DSL                 |
 | coding_style/ash_policies.md                   | Ash 3.x policy DSL & authorization rules  |

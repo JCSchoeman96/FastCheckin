@@ -19,7 +19,21 @@ defmodule FastCheck.Mobile.TokenTest do
       assert {:ok, token} = Token.issue_scanner_token(event_id)
       assert {:ok, claims} = Token.verify_token(token)
       assert claims["event_id"] == event_id
+      assert is_binary(claims["jti"])
+      assert String.length(claims["jti"]) > 0
       assert claims["role"] == "scanner"
+    end
+
+    test "generated tokens include distinct jti values for the same event" do
+      event_id = 457
+
+      assert {:ok, token_one} = Token.issue_scanner_token(event_id)
+      assert {:ok, token_two} = Token.issue_scanner_token(event_id)
+      refute token_one == token_two
+      assert {:ok, claims_one} = Token.verify_token(token_one)
+      assert {:ok, claims_two} = Token.verify_token(token_two)
+
+      assert claims_one["jti"] != claims_two["jti"]
     end
 
     test "generated token includes expiration time" do

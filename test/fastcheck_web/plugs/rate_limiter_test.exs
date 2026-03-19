@@ -136,6 +136,42 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
     assert Enum.join(get_resp_header(conn_two, "content-type"), ",") =~ "application/json"
   end
 
+  test "scan throttle is scoped by per-token identity for the same event", %{conn: conn} do
+    previous = Application.get_env(:fastcheck, FastCheck.RateLimiter, [])
+
+    on_exit(fn ->
+      Application.put_env(:fastcheck, FastCheck.RateLimiter, previous)
+    end)
+
+    Application.put_env(
+      :fastcheck,
+      FastCheck.RateLimiter,
+      Keyword.merge(previous, scan_limit: 1)
+    )
+
+    event = insert_event("Rate Limit Same Event")
+    {:ok, token_one} = Token.issue_scanner_token(event.id)
+    {:ok, token_two} = Token.issue_scanner_token(event.id)
+
+    conn_one =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> put_req_header("x-forwarded-for", "203.0.113.24")
+      |> put_req_header("authorization", "Bearer #{token_one}")
+      |> post("/api/v1/mobile/scans", %{"scans" => []})
+
+    assert conn_one.status == 200
+
+    conn_two =
+      build_conn()
+      |> put_req_header("accept", "application/json")
+      |> put_req_header("x-forwarded-for", "203.0.113.25")
+      |> put_req_header("authorization", "Bearer #{token_two}")
+      |> post("/api/v1/mobile/scans", %{"scans" => []})
+
+    assert conn_two.status == 200
+  end
+
   defp insert_event(name) do
     api_key = "api-key-#{System.unique_integer([:positive])}"
     {:ok, encrypted_key} = Crypto.encrypt(api_key)

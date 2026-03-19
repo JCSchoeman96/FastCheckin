@@ -106,11 +106,20 @@ mobile_scan_ingestion_mode =
     _ -> :legacy
   end
 
+mobile_scan_force_enqueue_failure =
+  case System.get_env("MOBILE_SCAN_FORCE_ENQUEUE_FAILURE", "false")
+       |> String.trim()
+       |> String.downcase() do
+    value when value in ["1", "true", "yes", "on"] -> true
+    _ -> false
+  end
+
 config :fastcheck, :mobile_scan_ingestion,
   mode: mobile_scan_ingestion_mode,
   chunk_size: String.to_integer(System.get_env("MOBILE_SCAN_CHUNK_SIZE") || "100"),
   live_namespace: System.get_env("MOBILE_SCAN_LIVE_NAMESPACE", "live"),
-  shadow_namespace: System.get_env("MOBILE_SCAN_SHADOW_NAMESPACE", "shadow")
+  shadow_namespace: System.get_env("MOBILE_SCAN_SHADOW_NAMESPACE", "shadow"),
+  force_enqueue_failure: mobile_scan_force_enqueue_failure
 
 # Scanner runtime tuning for launch performance.
 config :fastcheck, :scanner_performance,

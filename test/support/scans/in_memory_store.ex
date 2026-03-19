@@ -50,6 +50,16 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
     :ok
   end
 
+  def idempotency_entry(namespace, event_id, idempotency_key) do
+    ensure_table()
+    idem_key = {namespace, event_id, :idempotency, idempotency_key}
+
+    case :ets.lookup(@table, idem_key) do
+      [{^idem_key, stage, result}] -> %{stage: stage, result: result}
+      [] -> nil
+    end
+  end
+
   defp fresh_result(%ScanCommand{} = command, state_key) do
     processed_at = DateTime.utc_now() |> DateTime.truncate(:second)
     state = load_state(state_key, command.event_id)

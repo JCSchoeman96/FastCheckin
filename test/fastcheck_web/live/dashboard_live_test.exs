@@ -182,9 +182,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       {:ok, view, _html} = mount_dashboard(conn)
 
-      assert has_element?(view, "#open-scanner-#{event.id}", "Open scanner")
-      assert has_element?(view, "#show-sync-history-#{event.id}", "Sync history")
-      assert has_element?(view, "#show-edit-event-#{event.id}", "Edit event")
+      assert has_element?(view, "#open-scanner-#{event.id}", "Scanner")
+      assert has_element?(view, "#show-sync-history-#{event.id}", "History")
+      assert has_element?(view, "#show-edit-event-#{event.id}", "Edit")
       assert has_element?(view, "#export-attendees-#{event.id}", "Export attendees")
       assert has_element?(view, "#export-checkins-#{event.id}", "Export check-ins")
       refute has_element?(view, "#open-scanner-#{event.id}", "Opening...")

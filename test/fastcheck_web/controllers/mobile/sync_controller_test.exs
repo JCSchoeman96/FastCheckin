@@ -1,16 +1,26 @@
 defmodule FastCheckWeb.Mobile.SyncControllerTest do
-  use FastCheckWeb.ConnCase, async: true
+  use FastCheckWeb.ConnCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   alias FastCheck.{
     Repo,
     Events.Event,
     Attendees.Attendee,
+    Attendees.CheckIn,
+    Attendees.CheckInSession,
     Mobile.Token,
     Mobile.MobileIdempotencyLog,
-    Crypto
+    Crypto,
+    Scans.ScanAttempt
   }
 
+  alias FastCheck.Scans.Jobs.PersistScanBatchJob
+  alias FastCheck.TestSupport.Scans.InMemoryStore
+
   setup do
+    original = Application.get_env(:fastcheck, :mobile_scan_ingestion, [])
+    InMemoryStore.reset()
+
     {:ok, encrypted_secret} = Crypto.encrypt("scanner-secret")
 
     # Create test event
@@ -94,6 +104,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
     # Generate JWT token for the main event
     {:ok, token} = Token.issue_scanner_token(event.id)
+
+    on_exit(fn ->
+      Application.put_env(:fastcheck, :mobile_scan_ingestion, original)
+      InMemoryStore.reset()
+    end)
 
     %{
       event: event,
@@ -489,6 +504,113 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     end
   end
 
+  describe "POST /api/v1/mobile/scans - authoritative mode" do
+    test "persists successful uploads after queueing durability work", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
+      configure_mode(:redis_authoritative)
+      event_id = event.id
+
+      scan = %{
+        "idempotency_key" => "controller-auth-1",
+        "ticket_code" => "TEST001",
+        "direction" => "in",
+        "scanned_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "entrance_name" => "Main Gate"
+      }
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
+
+      assert %{"data" => %{"results" => [result], "processed" => 1}, "error" => nil} =
+               json_response(conn, 200)
+
+      assert result["idempotency_key"] == "controller-auth-1"
+      assert result["status"] == "success"
+
+      assert [
+               %{
+                 queue: "scan_persistence",
+                 args: %{
+                   "results" => [
+                     %{
+                       "event_id" => ^event_id,
+                       "idempotency_key" => "controller-auth-1",
+                       "ticket_code" => "TEST001",
+                       "direction" => "in",
+                       "status" => "success"
+                     }
+                   ]
+                 }
+               }
+             ] = all_enqueued(worker: PersistScanBatchJob)
+
+      assert [%{args: args}] = all_enqueued(worker: PersistScanBatchJob)
+      assert :ok = perform_job(PersistScanBatchJob, args)
+
+      assert Repo.get_by!(ScanAttempt, event_id: event_id, idempotency_key: "controller-auth-1")
+      assert Repo.get_by!(CheckIn, event_id: event_id, ticket_code: "TEST001", status: "success")
+
+      assert Repo.get_by!(CheckInSession,
+               event_id: event_id,
+               attendee_id: Repo.get_by!(Attendee, event_id: event_id, ticket_code: "TEST001").id
+             )
+    end
+
+    test "returns enqueue failure and allows retry-safe success in authoritative mode", %{
+      conn: conn,
+      token: token
+    } do
+      configure_mode(:redis_authoritative, force_enqueue_failure: true)
+
+      scan = %{
+        "idempotency_key" => "controller-retry-1",
+        "ticket_code" => "TEST002",
+        "direction" => "in",
+        "scanned_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+
+      failed_conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "durability_enqueue_failed", "message" => message}
+             } = json_response(failed_conn, 503)
+
+      assert message =~ "Unable to queue scan durability handoff"
+
+      configure_mode(:redis_authoritative)
+
+      success_conn =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
+
+      assert %{"data" => %{"results" => [success_result], "processed" => 1}, "error" => nil} =
+               json_response(success_conn, 200)
+
+      assert success_result["status"] == "success"
+
+      duplicate_conn =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => [scan]})
+
+      assert %{"data" => %{"results" => [duplicate_result], "processed" => 1}, "error" => nil} =
+               json_response(duplicate_conn, 200)
+
+      assert duplicate_result["status"] == "duplicate"
+      assert duplicate_result["message"] =~ "Already processed"
+    end
+  end
+
   describe "event isolation in batch upload" do
     test "scans are scoped to authenticated event only", %{
       conn: conn,
@@ -530,5 +652,23 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     |> rem(1_000_000)
     |> Integer.to_string()
     |> String.pad_leading(6, "0")
+  end
+
+  defp configure_mode(mode, extra \\ []) do
+    Application.put_env(
+      :fastcheck,
+      :mobile_scan_ingestion,
+      Keyword.merge(
+        [
+          mode: mode,
+          chunk_size: 100,
+          live_namespace: "live",
+          shadow_namespace: "shadow",
+          store: InMemoryStore,
+          force_enqueue_failure: false
+        ],
+        extra
+      )
+    )
   end
 end
