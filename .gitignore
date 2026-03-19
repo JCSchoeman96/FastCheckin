@@ -60,6 +60,9 @@ Thumbs.db
 *.swo
 ~$*
 
+# Local performance seed outputs
+/performance/manifests/*.json
+
 # Dolt database files (added by bd init)
 .dolt/
 *.db
@@ -67,3 +70,5 @@ Thumbs.db
 .beads/.beads-credential-key
 
 .beads/dolt-config.log
+# bd worktree
+mobile-scan-ingestion-phase1/

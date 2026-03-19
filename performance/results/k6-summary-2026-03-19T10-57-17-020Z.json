@@ -1,0 +1,272 @@
+{
+  "root_group": {
+    "checks": [
+      {
+        "name": "abuse_scans_single_device returned a non-auth response",
+        "path": "::abuse_scans_single_device returned a non-auth response",
+        "id": "42824efd5c589766a7908323bface792",
+        "passes": 120,
+        "fails": 0
+      },
+      {
+        "name": "abuse scan returned a handled response",
+        "path": "::abuse scan returned a handled response",
+        "id": "d44600bb8828c9b114b70c0fcca5ceae",
+        "passes": 120,
+        "fails": 0
+      }
+    ],
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": []
+  },
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "min",
+      "med",
+      "max",
+      "p(90)",
+      "p(95)"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 15015.6838
+  },
+  "metrics": {
+    "http_reqs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 121,
+        "rate": 8.05824107723952
+      }
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "min": 0,
+        "med": 0,
+        "max": 0,
+        "p(90)": 0,
+        "p(95)": 0,
+        "avg": 0
+      }
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 79307,
+        "rate": 5281.610951344087
+      }
+    },
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "passes": 240,
+        "fails": 0,
+        "rate": 1
+      }
+    },
+    "http_req_duration": {
+      "values": {
+        "p(95)": 9.8199,
+        "avg": 4.282507438016529,
+        "min": 1.7558,
+        "med": 3.5892,
+        "max": 12.8226,
+        "p(90)": 8.2193
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_duration{expected_response:true}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 11.286599999999998,
+        "avg": 9.416135294117646,
+        "min": 7.0519,
+        "med": 9.5324,
+        "max": 12.8226,
+        "p(90)": 10.81128
+      }
+    },
+    "auth_bootstrap_logins": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 0.06659703369619438
+      }
+    },
+    "abuse_scan_response_blocked": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 104,
+        "rate": 6.926091504404215
+      }
+    },
+    "scan_result_business_duplicate": {
+      "values": {
+        "count": 16,
+        "rate": 1.06555253913911
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0.06192727272727272,
+        "min": 0,
+        "med": 0,
+        "max": 0.9297,
+        "p(90)": 0.5036,
+        "p(95)": 0.5279
+      }
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "fails": 17,
+        "rate": 0.859504132231405,
+        "passes": 104
+      }
+    },
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0.04944958677685951,
+        "min": 0,
+        "med": 0,
+        "max": 4.3017,
+        "p(90)": 0,
+        "p(95)": 0
+      }
+    },
+    "http_req_waiting": {
+      "contains": "time",
+      "values": {
+        "avg": 4.208985950413224,
+        "min": 1.7558,
+        "med": 3.476,
+        "max": 12.4647,
+        "p(90)": 8.2193,
+        "p(95)": 9.5999
+      },
+      "type": "trend"
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 120,
+        "rate": 7.991644043543325
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "max": 1,
+        "value": 1,
+        "min": 1
+      }
+    },
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "min": 0,
+        "max": 0,
+        "value": 0
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 126472,
+        "rate": 8422.660045625094
+      }
+    },
+    "iteration_duration": {
+      "contains": "time",
+      "values": {
+        "med": 3.73535,
+        "max": 13.3266,
+        "p(90)": 8.10248,
+        "p(95)": 10.04311,
+        "avg": 4.462238333333333,
+        "min": 1.9583
+      },
+      "type": "trend"
+    },
+    "http_req_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 0,
+        "avg": 0.04944958677685951,
+        "min": 0,
+        "med": 0,
+        "max": 4.3017,
+        "p(90)": 0
+      }
+    },
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0.011594214876033059,
+        "min": 0,
+        "med": 0,
+        "max": 0.537,
+        "p(90)": 0,
+        "p(95)": 0
+      }
+    },
+    "abuse_scan_requests": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 120,
+        "rate": 7.991644043543325
+      }
+    },
+    "scan_response_blocked": {
+      "contains": "default",
+      "values": {
+        "rate": 6.926091504404215,
+        "count": 104
+      },
+      "type": "counter"
+    }
+  },
+  "setup_data": {
+    "devices": [
+      {
+        "jti": "e6634d22-d190-446a-a436-3afe860ea969",
+        "refresh_at": 1774004042771,
+        "synthetic_ip": "1",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJldmVudF9pZCI6OCwiZXhwIjoxNzc0MDA0MjIxLCJpYXQiOjE3NzM5MTc4MjEsImlzcyI6ImZhc3RjaGVjayIsImp0aSI6ImU2NjM0ZDIyLWQxOTAtNDQ2YS1hNDM2LTNhZmU4NjBlYTk2OSIsInJvbGUiOiJzY2FubmVyIn0.G4-oIoSQ5xZUhO3L1J03M1WeHHVRJLFCNVcf5MxTgyw",
+        "device_id": "device-0001",
+        "device_index": 0,
+        "expires_at": 1774004222017
+      }
+    ]
+  }
+}

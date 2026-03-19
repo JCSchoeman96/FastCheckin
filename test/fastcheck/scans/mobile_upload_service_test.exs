@@ -67,23 +67,40 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   test "authoritative mode acknowledges only after queueing durability work", %{event: event} do
     configure_mode(:redis_authoritative)
 
+    event_id = event.id
     scan = valid_scan("idem-1", "TEST001")
 
-    assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event.id, [scan])
+    assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event_id, [scan])
 
-    assert [%{worker: worker, args: args}] = all_enqueued(worker: PersistScanBatchJob)
-    assert worker == to_string(PersistScanBatchJob)
+    assert [
+             %{
+               queue: "scan_persistence",
+               args: %{
+                 "results" => [
+                   %{
+                     "event_id" => ^event_id,
+                     "idempotency_key" => "idem-1",
+                     "ticket_code" => "TEST001",
+                     "direction" => "in",
+                     "status" => "success"
+                   }
+                 ]
+               }
+             }
+           ] = all_enqueued(worker: PersistScanBatchJob)
+
+    assert [%{args: args}] = all_enqueued(worker: PersistScanBatchJob)
     assert :ok = perform_job(PersistScanBatchJob, args)
 
-    assert Repo.get_by!(ScanAttempt, event_id: event.id, idempotency_key: "idem-1")
-    assert Repo.get_by!(CheckIn, event_id: event.id, ticket_code: "TEST001", status: "success")
+    assert Repo.get_by!(ScanAttempt, event_id: event_id, idempotency_key: "idem-1")
+    assert Repo.get_by!(CheckIn, event_id: event_id, ticket_code: "TEST001", status: "success")
 
     assert Repo.get_by!(CheckInSession,
-             event_id: event.id,
-             attendee_id: Repo.get_by!(Attendee, event_id: event.id, ticket_code: "TEST001").id
+             event_id: event_id,
+             attendee_id: Repo.get_by!(Attendee, event_id: event_id, ticket_code: "TEST001").id
            )
 
-    attendee = Repo.get_by!(Attendee, event_id: event.id, ticket_code: "TEST001")
+    attendee = Repo.get_by!(Attendee, event_id: event_id, ticket_code: "TEST001")
     assert attendee.checkins_remaining == 0
   end
 
@@ -104,14 +121,38 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   test "shadow mode does not contaminate the live namespace", %{event: event} do
     configure_mode(:shadow)
 
-    scan = valid_scan("idem-shadow", "TEST001")
+    shadow_scan = valid_scan("idem-shadow", "TEST001")
 
-    assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event.id, [scan])
+    assert {:ok, [%{status: "success"}]} =
+             MobileUploadService.upload_batch(event.id, [shadow_scan])
+
+    assert %{
+             stage: :pending_durability,
+             result: %{idempotency_key: "idem-shadow", ticket_code: "TEST001"}
+           } = InMemoryStore.idempotency_entry("shadow", event.id, "idem-shadow")
+
+    assert nil == InMemoryStore.idempotency_entry("live", event.id, "idem-shadow")
+
+    %Attendee{
+      event_id: event.id,
+      ticket_code: "TEST002",
+      first_name: "Jane",
+      last_name: "Doe",
+      payment_status: "completed",
+      allowed_checkins: 1,
+      checkins_remaining: 1
+    }
+    |> Repo.insert!()
 
     configure_mode(:redis_authoritative)
 
-    assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event.id, [scan])
-    assert {:ok, [%{status: "duplicate"}]} = MobileUploadService.upload_batch(event.id, [scan])
+    authoritative_scan = valid_scan("idem-live-1", "TEST002")
+
+    assert {:ok, [%{status: "success"}]} =
+             MobileUploadService.upload_batch(event.id, [authoritative_scan])
+
+    assert {:ok, [%{status: "duplicate"}]} =
+             MobileUploadService.upload_batch(event.id, [authoritative_scan])
   end
 
   test "authoritative mode preserves payment rejection results", %{event: event} do

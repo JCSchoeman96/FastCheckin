@@ -1,7 +1,10 @@
 defmodule FastCheckWeb.Mobile.AuthControllerTest do
   use FastCheckWeb.ConnCase, async: true
 
-  alias FastCheck.{Crypto, Repo, Events.Event}
+  alias FastCheck.Crypto
+  alias FastCheck.Events.Event
+  alias FastCheck.Mobile.Token
+  alias FastCheck.Repo
 
   @credential "super-secret"
 
@@ -157,11 +160,38 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
       assert %{"data" => %{"token" => token}} = json_response(conn, 200)
 
       # Verify the token using the Token module
-      assert {:ok, claims} = FastCheck.Mobile.Token.verify_token(token)
+      assert {:ok, claims} = Token.verify_token(token)
       assert claims["event_id"] == event.id
       assert claims["role"] == "scanner"
       assert is_integer(claims["exp"])
       assert is_integer(claims["iat"])
+    end
+
+    test "same event logins return distinct jwt strings and jti claims", %{
+      conn: conn,
+      event: event
+    } do
+      first_conn =
+        post(conn, ~p"/api/v1/mobile/login", %{
+          "event_id" => event.id,
+          "credential" => @credential
+        })
+
+      second_conn =
+        build_conn()
+        |> put_req_header("accept", "application/json")
+        |> post(~p"/api/v1/mobile/login", %{
+          "event_id" => event.id,
+          "credential" => @credential
+        })
+
+      assert %{"data" => %{"token" => first_token}} = json_response(first_conn, 200)
+      assert %{"data" => %{"token" => second_token}} = json_response(second_conn, 200)
+      refute first_token == second_token
+
+      assert {:ok, first_claims} = Token.verify_token(first_token)
+      assert {:ok, second_claims} = Token.verify_token(second_token)
+      refute first_claims["jti"] == second_claims["jti"]
     end
   end
 

@@ -1,0 +1,299 @@
+{
+  "root_group": {
+    "groups": [],
+    "checks": [
+        {
+          "id": "aa6ff1f353f588ebd4844407d0ffe157",
+          "passes": 1,
+          "fails": 0,
+          "name": "attendee sync smoke returned 200",
+          "path": "::attendee sync smoke returned 200"
+        },
+        {
+          "name": "smoke_valid returned a non-auth response",
+          "path": "::smoke_valid returned a non-auth response",
+          "id": "3d5b5c68c7cca15f8c47009476c98055",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "valid smoke scan succeeded",
+          "path": "::valid smoke scan succeeded",
+          "id": "5a5cef07f0e74176bcaba0115bf9ea40",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "smoke_replay_prime returned a non-auth response",
+          "path": "::smoke_replay_prime returned a non-auth response",
+          "id": "ccc51a8672969b0e2e540ddf1530be81",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "fails": 0,
+          "name": "smoke_replay_duplicate returned a non-auth response",
+          "path": "::smoke_replay_duplicate returned a non-auth response",
+          "id": "da5abf04338ea6542924a643543690f5",
+          "passes": 1
+        },
+        {
+          "name": "replay duplicate returned duplicate",
+          "path": "::replay duplicate returned duplicate",
+          "id": "71f3a6a9f2afd823b5120f44807e8a91",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "smoke_business_prime returned a non-auth response",
+          "path": "::smoke_business_prime returned a non-auth response",
+          "id": "872d60cda868e7c5778047ee2874a9db",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "smoke_business_duplicate returned a non-auth response",
+          "path": "::smoke_business_duplicate returned a non-auth response",
+          "id": "81ca2b5c25788c30564d01c8a11f8203",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "business duplicate returned already checked in",
+          "path": "::business duplicate returned already checked in",
+          "id": "7c623b0f8fa74b597a2f545124ee97fc",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "fails": 0,
+          "name": "smoke_invalid returned a non-auth response",
+          "path": "::smoke_invalid returned a non-auth response",
+          "id": "63a5a07ab50ced3fb61ecedfbaeb6c78",
+          "passes": 1
+        },
+        {
+          "name": "invalid ticket returned ticket not found",
+          "path": "::invalid ticket returned ticket not found",
+          "id": "cc1347d701383dca78685f1cf5993b7f",
+          "passes": 1,
+          "fails": 0
+        }
+      ],
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "min",
+      "med",
+      "max",
+      "p(90)",
+      "p(95)"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 130.1235
+  },
+  "metrics": {
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 3872,
+        "rate": 29756.346855103035
+      }
+    },
+    "http_req_waiting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "min": 2.4176,
+        "med": 6.71,
+        "max": 57.0436,
+        "p(90)": 28.894639999999995,
+        "p(95)": 42.969119999999975,
+        "avg": 14.276137499999999
+      }
+    },
+    "scan_result_idempotency_replay_duplicate": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 7.685006935718759
+      }
+    },
+    "scan_result_success": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3,
+        "rate": 23.05502080715628
+      }
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(90)": 0,
+        "p(95)": 0,
+        "avg": 0,
+        "min": 0,
+        "med": 0,
+        "max": 0
+      }
+    },
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0.5254625,
+        "min": 0,
+        "med": 0,
+        "max": 4.2037,
+        "p(90)": 1.2611099999999993,
+        "p(95)": 2.732404999999998
+      }
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0.39085,
+        "min": 0,
+        "med": 0,
+        "max": 2.101,
+        "p(90)": 0.9951399999999997,
+        "p(95)": 1.5480699999999992
+      }
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 0,
+        "passes": 0,
+        "fails": 8
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 14.6669875,
+        "min": 2.9388,
+        "med": 6.71,
+        "max": 57.0436,
+        "p(90)": 30.365339999999993,
+        "p(95)": 43.70446999999998
+      }
+    },
+    "http_req_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 14.6669875,
+        "min": 2.9388,
+        "med": 6.71,
+        "max": 57.0436,
+        "p(90)": 30.365339999999993,
+        "p(95)": 43.70446999999998
+      }
+    },
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0,
+        "min": 0,
+        "med": 0,
+        "max": 0,
+        "p(90)": 0,
+        "p(95)": 0
+      }
+    },
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 1,
+        "passes": 11,
+        "fails": 0
+      }
+    },
+    "scan_result_invalid": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 7.685006935718759
+      }
+    },
+    "http_reqs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 8,
+        "rate": 61.48005548575007
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 129.6057,
+        "min": 129.6057,
+        "med": 129.6057,
+        "max": 129.6057,
+        "p(90)": 129.6057,
+        "p(95)": 129.6057
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 7.685006935718759
+      }
+    },
+    "data_received": {
+      "values": {
+        "count": 332779,
+        "rate": 2557408.923061553
+      },
+      "type": "counter",
+      "contains": "data"
+    },
+    "http_req_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 3.0749,
+        "p(90)": 0.9224699999999995,
+        "p(95)": 1.9986849999999983,
+        "avg": 0.3843625,
+        "min": 0,
+        "med": 0
+      }
+    },
+    "scan_result_business_duplicate": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 7.685006935718759
+      }
+    }
+  },
+  "setup_data": {
+    "primed": false
+  }
+}

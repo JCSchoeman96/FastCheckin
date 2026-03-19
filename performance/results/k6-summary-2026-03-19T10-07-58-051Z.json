@@ -1,0 +1,287 @@
+{
+  "options": {
+    "noColor": false,
+    "summaryTrendStats": [
+      "avg",
+      "min",
+      "med",
+      "max",
+      "p(90)",
+      "p(95)"
+    ],
+    "summaryTimeUnit": ""
+  },
+  "state": {
+    "testRunDurationMs": 67.6472,
+    "isStdOutTTY": false,
+    "isStdErrTTY": false
+  },
+  "metrics": {
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 0.9090909090909091,
+        "passes": 10,
+        "fails": 1
+      }
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(90)": 0,
+        "p(95)": 0,
+        "avg": 0,
+        "min": 0,
+        "med": 0,
+        "max": 0
+      }
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 0,
+        "passes": 0,
+        "fails": 8
+      }
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "rate": 57238.14141605269,
+        "count": 3872
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "values": {
+        "avg": 6.737887499999999,
+        "min": 2.1921,
+        "med": 3.09145,
+        "max": 26.8525,
+        "p(90)": 15.136879999999998,
+        "p(95)": 20.99468999999999
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_connecting": {
+      "contains": "time",
+      "values": {
+        "p(90)": 2.2629199999999994,
+        "p(95)": 3.0642099999999983,
+        "avg": 0.6802,
+        "min": 0,
+        "med": 0,
+        "max": 3.8655
+      },
+      "type": "trend"
+    },
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 0.5482,
+        "p(90)": 0.52146,
+        "p(95)": 0.53483,
+        "avg": 0.132275,
+        "min": 0,
+        "med": 0
+      }
+    },
+    "http_req_waiting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 6.107799999999999,
+        "min": 2.1921,
+        "med": 2.8478000000000003,
+        "max": 22.9243,
+        "p(90)": 13.958419999999997,
+        "p(95)": 18.441359999999992
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 14.78257784505493
+      }
+    },
+    "http_reqs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 8,
+        "rate": 118.26062276043945
+      }
+    },
+    "auth_bootstrap_logins": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 14.78257784505493
+      }
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "min": 0,
+        "med": 0,
+        "max": 3.4182,
+        "p(90)": 1.4204699999999995,
+        "p(95)": 2.4193349999999985,
+        "avg": 0.4978125
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 339296,
+        "rate": 5015669.532515758
+      }
+    },
+    "scan_result_idempotency_replay_duplicate": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "rate": 88.69546707032958,
+        "count": 6
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 50.4004,
+        "min": 50.4004,
+        "med": 50.4004,
+        "max": 50.4004,
+        "p(90)": 50.4004,
+        "p(95)": 50.4004
+      }
+    },
+    "http_req_duration": {
+      "values": {
+        "avg": 6.737887499999999,
+        "min": 2.1921,
+        "med": 3.09145,
+        "max": 26.8525,
+        "p(90)": 15.136879999999998,
+        "p(95)": 20.99468999999999
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 3.8655,
+        "p(90)": 2.2629199999999994,
+        "p(95)": 3.0642099999999983,
+        "avg": 0.6802,
+        "min": 0,
+        "med": 0
+      }
+    }
+  },
+  "setup_data": {
+    "auth": {
+      "expires_at": 1774001277999,
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJldmVudF9pZCI6MywiZXhwIjoxNzc0MDAxMjc3LCJpYXQiOjE3NzM5MTQ4NzcsImlzcyI6ImZhc3RjaGVjayIsInJvbGUiOiJzY2FubmVyIn0.7ZFMiqqieuRp8a0OmROXhZMvjfyQ-RaX-JN07m5F5Cs"
+    },
+    "primed": false
+  },
+  "root_group": {
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [],
+    "checks": [
+        {
+          "path": "::attendee sync smoke returned 200",
+          "id": "aa6ff1f353f588ebd4844407d0ffe157",
+          "passes": 1,
+          "fails": 0,
+          "name": "attendee sync smoke returned 200"
+        },
+        {
+          "name": "smoke_valid returned a non-auth response",
+          "path": "::smoke_valid returned a non-auth response",
+          "id": "3d5b5c68c7cca15f8c47009476c98055",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "valid smoke scan succeeded",
+          "path": "::valid smoke scan succeeded",
+          "id": "5a5cef07f0e74176bcaba0115bf9ea40",
+          "passes": 0,
+          "fails": 1
+        },
+        {
+          "name": "smoke_replay_prime returned a non-auth response",
+          "path": "::smoke_replay_prime returned a non-auth response",
+          "id": "ccc51a8672969b0e2e540ddf1530be81",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "id": "da5abf04338ea6542924a643543690f5",
+          "passes": 1,
+          "fails": 0,
+          "name": "smoke_replay_duplicate returned a non-auth response",
+          "path": "::smoke_replay_duplicate returned a non-auth response"
+        },
+        {
+          "fails": 0,
+          "name": "replay duplicate returned duplicate",
+          "path": "::replay duplicate returned duplicate",
+          "id": "71f3a6a9f2afd823b5120f44807e8a91",
+          "passes": 1
+        },
+        {
+          "path": "::smoke_business_prime returned a non-auth response",
+          "id": "872d60cda868e7c5778047ee2874a9db",
+          "passes": 1,
+          "fails": 0,
+          "name": "smoke_business_prime returned a non-auth response"
+        },
+        {
+          "passes": 1,
+          "fails": 0,
+          "name": "smoke_business_duplicate returned a non-auth response",
+          "path": "::smoke_business_duplicate returned a non-auth response",
+          "id": "81ca2b5c25788c30564d01c8a11f8203"
+        },
+        {
+          "name": "business duplicate returned already checked in",
+          "path": "::business duplicate returned already checked in",
+          "id": "7c623b0f8fa74b597a2f545124ee97fc",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "smoke_invalid returned a non-auth response",
+          "path": "::smoke_invalid returned a non-auth response",
+          "id": "63a5a07ab50ced3fb61ecedfbaeb6c78",
+          "passes": 1,
+          "fails": 0
+        },
+        {
+          "name": "invalid ticket returned ticket not found",
+          "path": "::invalid ticket returned ticket not found",
+          "id": "cc1347d701383dca78685f1cf5993b7f",
+          "passes": 1,
+          "fails": 0
+        }
+      ],
+    "name": ""
+  }
+}

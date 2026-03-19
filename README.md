@@ -93,6 +93,24 @@ Build/run via Android Studio or Gradle in `android/scanner-app/`.
 - pgBouncer is intended to collapse many client connections into a smaller number of upstream Postgres sessions; monitor it with `SHOW POOLS` / `SHOW STATS` via psql.
 - `.env.example` includes knobs such as `POOL_SIZE`, `ENABLE_HTTPS`, and TLS cert paths.
 
+## Performance testing
+
+The repo includes a k6-based mobile scan performance harness aimed at the `redis_authoritative` ingestion path behind `POST /api/v1/mobile/scans`.
+
+- Seed deterministic load data with `mix fastcheck.load.seed_mobile_event`
+- Run k6 scenarios from `performance/k6/mobile_scans.js`
+- Use `MOBILE_SCAN_INGESTION_MODE=redis_authoritative` for the primary path
+- Use `MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true` only for the dedicated non-production enqueue-failure scenario
+- Use `docker compose --profile perf-small up --build app-perf perf-proxy` for the opt-in capped app-tier path
+- Use `mix fastcheck.load.cleanup_mobile_event` to remove seeded perf events and related DB/Redis data after a run
+- Hit the trusted perf proxy on `http://127.0.0.1:4100` for `capacity_*` and `abuse_*` runs; `app-perf` stays internal for capacity measurements
+- Capacity runs now model `device_i -> token_i -> synthetic_ip_i`, while abuse-control runs intentionally concentrate on one hot device identity
+
+Runbook:
+
+- `docs/mobile_scan_performance.md`
+- `docs/mobile_scan_performance_baseline_2026-03-19.md`
+
 ## Roadmap (high level)
 Tracked work now lives in Beads (`bd`).
 See `AGENTS.md` for project map and workflow.
@@ -117,4 +135,5 @@ Later:
 
 - `AGENTS.md` (project map + guardrails)
 - `docs/INDEX.md` (documentation index)
+- `docs/mobile_scan_performance.md` (k6 load, stress, spike, and soak testing)
 - `CONTRIBUTING.md` (formatting workflow)

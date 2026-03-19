@@ -3,7 +3,11 @@ defmodule FastCheck.Fixtures do
   Test fixtures and seed data generators for integration tests.
   """
 
-  alias FastCheck.{Repo, Events.Event, Attendees.Attendee, Crypto}
+  alias FastCheck.Attendees.Attendee
+  alias FastCheck.Crypto
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
+  alias FastCheck.Ticketing.Gate
 
   @doc """
   Creates a test event with encrypted API key.
@@ -53,6 +57,24 @@ defmodule FastCheck.Fixtures do
 
     %Attendee{}
     |> Attendee.changeset(params)
+    |> Repo.insert!()
+  end
+
+  @doc """
+  Creates a test gate for an event.
+  """
+  def create_gate(event, attrs \\ %{}) do
+    default_attrs = %{
+      event_id: event.id,
+      name: "Gate #{System.unique_integer([:positive])}",
+      slug: "gate-#{System.unique_integer([:positive])}",
+      status: "active"
+    }
+
+    params = Map.merge(default_attrs, attrs)
+
+    %Gate{}
+    |> Gate.changeset(params)
     |> Repo.insert!()
   end
 
