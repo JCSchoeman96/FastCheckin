@@ -62,6 +62,8 @@ Thumbs.db
 
 # Local performance seed outputs
 /performance/manifests/*.json
+/performance/results/*.log
+/performance/results/*.pid
 
 # Dolt database files (added by bd init)
 .dolt/

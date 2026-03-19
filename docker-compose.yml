@@ -4,7 +4,7 @@ services:
       - perf-small
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.perf
     container_name: fastcheck-app-perf
     restart: unless-stopped
     depends_on:
