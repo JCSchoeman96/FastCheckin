@@ -1,45 +1,44 @@
 defmodule FastCheck.Redis do
   @moduledoc """
-  Small Redis command wrapper for the native scanner scaffold.
+  Small Redis command wrapper for scaffolded Redis-backed helpers.
 
-  It prefers a live Redis connection through Redix and falls back to ETS when
-  Redis is unavailable so local development and tests can still exercise the
-  contract.
+  The active mobile ingestion path calls Redis without fallback. Legacy
+  scaffolded helpers can still opt into the ETS fallback for local development.
   """
 
   @ets_table :fastcheck_redis_fallback
   @redix_name FastCheck.Redix
 
-  @spec command([String.t()]) :: {:ok, term()} | {:error, term()}
-  def command(command) when is_list(command) do
-    case ensure_connection() do
-      {:ok, _pid} ->
-        Redix.command(@redix_name, command)
+  @spec command([String.t()], Keyword.t()) :: {:ok, term()} | {:error, term()}
+  def command(command, opts \\ [])
 
-      {:error, _reason} ->
-        fallback_command(command)
-    end
-  end
+  def command(command, opts) when is_list(command) do
+    fallback? = Keyword.get(opts, :fallback, true)
 
-  def command(_command), do: {:error, :invalid_command}
-
-  defp ensure_connection do
     case Process.whereis(@redix_name) do
-      nil ->
-        redis_url = Application.get_env(:fastcheck, :redis_url, "redis://localhost:6379")
+      pid when is_pid(pid) ->
+        case Redix.command(@redix_name, command) do
+          {:ok, _result} = ok ->
+            ok
 
-        case Redix.start_link(redis_url, name: @redix_name) do
-          {:ok, pid} -> {:ok, pid}
-          {:error, {:already_started, pid}} -> {:ok, pid}
-          {:error, reason} -> {:error, reason}
+          {:error, reason} when fallback? ->
+            fallback_command(command, reason)
+
+          {:error, _reason} = error ->
+            error
         end
 
-      pid ->
-        {:ok, pid}
+      _ when fallback? ->
+        fallback_command(command, :redis_unavailable)
+
+      _ ->
+        {:error, :redis_unavailable}
     end
   end
 
-  defp fallback_command(["SADD", key, member]) do
+  def command(_command, _opts), do: {:error, :invalid_command}
+
+  defp fallback_command(["SADD", key, member], _reason) do
     with {:ok, set} <- fetch_set(key) do
       already_present? = MapSet.member?(set, member)
       updated = MapSet.put(set, member)
@@ -48,13 +47,13 @@ defmodule FastCheck.Redis do
     end
   end
 
-  defp fallback_command(["SISMEMBER", key, member]) do
+  defp fallback_command(["SISMEMBER", key, member], _reason) do
     with {:ok, set} <- fetch_set(key) do
       {:ok, if(MapSet.member?(set, member), do: 1, else: 0)}
     end
   end
 
-  defp fallback_command(["GET", key]) do
+  defp fallback_command(["GET", key], _reason) do
     ensure_fallback_table()
 
     case lookup(key) do
@@ -64,19 +63,19 @@ defmodule FastCheck.Redis do
     end
   end
 
-  defp fallback_command(["SETEX", key, ttl, value]) do
+  defp fallback_command(["SETEX", key, ttl, value], _reason) do
     ensure_fallback_table()
     expires_at = expiry_from_ttl(ttl)
     true = :ets.insert(@ets_table, {key, value, expires_at})
     {:ok, "OK"}
   end
 
-  defp fallback_command(["DEL", key]) do
+  defp fallback_command(["DEL", key], _reason) do
     ensure_fallback_table()
     {:ok, :ets.delete(@ets_table, key)}
   end
 
-  defp fallback_command(_command), do: {:error, :unsupported_fallback_command}
+  defp fallback_command(_command, reason), do: {:error, reason}
 
   defp fetch_set(key) do
     ensure_fallback_table()
