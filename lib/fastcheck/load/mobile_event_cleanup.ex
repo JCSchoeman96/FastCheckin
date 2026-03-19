@@ -117,7 +117,7 @@ defmodule FastCheck.Load.MobileEventCleanup do
         attendees: delete_all(from(attendee in Attendee, where: attendee.event_id in ^event_ids)),
         events: delete_all(from(event in Event, where: event.id in ^event_ids))
       }
-    end)
+    end, timeout: :infinity)
     |> case do
       {:ok, deleted} -> {:ok, deleted}
       {:error, reason} -> {:error, inspect(reason)}
@@ -156,12 +156,20 @@ defmodule FastCheck.Load.MobileEventCleanup do
           :flushdb ->
             case Redix.command(FastCheck.Redix, ["FLUSHDB"]) do
               {:ok, "OK"} -> {:ok, %{deleted_keys: 0, status: :ok, strategy: :flushdb}}
+              {:error, %Redix.ConnectionError{reason: :closed}} ->
+                {:ok, %{deleted_keys: 0, status: :skipped, strategy: :flushdb}}
               {:error, reason} -> {:error, "unable to flush redis: #{inspect(reason)}"}
             end
 
           :targeted ->
             with {:ok, deleted_keys} <- delete_targeted_redis_keys(event_ids) do
               {:ok, %{deleted_keys: deleted_keys, status: :ok, strategy: :targeted}}
+            else
+              {:error, %Redix.ConnectionError{reason: :closed}} ->
+                {:ok, %{deleted_keys: 0, status: :skipped, strategy: :targeted}}
+
+              {:error, reason} ->
+                {:error, reason}
             end
         end
 
@@ -178,6 +186,8 @@ defmodule FastCheck.Load.MobileEventCleanup do
       with {:ok, keys} <- scan_redis_keys(pattern),
            {:ok, deleted} <- delete_redis_keys(keys) do
         {:cont, {:ok, total + deleted}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
@@ -203,7 +213,7 @@ defmodule FastCheck.Load.MobileEventCleanup do
         end
 
       {:error, reason} ->
-        {:error, "unable to scan redis keys: #{inspect(reason)}"}
+        {:error, reason}
     end
   end
 
@@ -212,13 +222,13 @@ defmodule FastCheck.Load.MobileEventCleanup do
   defp delete_redis_keys(keys) do
     case Redix.command(FastCheck.Redix, ["DEL" | keys]) do
       {:ok, deleted} when is_integer(deleted) -> {:ok, deleted}
-      {:error, reason} -> {:error, "unable to delete redis keys: #{inspect(reason)}"}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp delete_all(query) do
     query
-    |> Repo.delete_all()
+    |> Repo.delete_all(timeout: :infinity)
     |> elem(0)
   end
 
