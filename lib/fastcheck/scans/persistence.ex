@@ -24,23 +24,27 @@ defmodule FastCheck.Scans.Persistence do
 
   defp persist_result(result) when is_map(result) do
     attrs = scan_attempt_attrs(result)
+    changeset = ScanAttempt.changeset(%ScanAttempt{}, attrs)
 
-    Repo.transaction(fn ->
-      case %ScanAttempt{} |> ScanAttempt.changeset(attrs) |> Repo.insert() do
-        {:ok, _scan_attempt} ->
-          project_legacy_state(attrs)
+    if changeset.valid? do
+      Repo.transaction(fn ->
+        case insert_scan_attempt(attrs) do
+          :inserted ->
+            project_legacy_state(attrs)
 
-        {:error, changeset} ->
-          if unique_conflict?(changeset) do
+          :duplicate ->
             :ok
-          else
-            Repo.rollback(changeset)
-          end
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
       end
-    end)
-    |> case do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
+    else
+      {:error, changeset}
     end
   end
 
@@ -140,6 +144,27 @@ defmodule FastCheck.Scans.Persistence do
     }
   end
 
+  defp insert_scan_attempt(attrs) do
+    timestamp = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    attrs =
+      attrs
+      |> Map.put(:inserted_at, timestamp)
+      |> Map.put(:updated_at, timestamp)
+
+    case Repo.insert_all(
+           ScanAttempt,
+           [attrs],
+           on_conflict: :nothing,
+           conflict_target: [:event_id, :idempotency_key]
+         ) do
+      {1, _rows} -> :inserted
+      {0, _rows} -> :duplicate
+    end
+  rescue
+    error -> {:error, error}
+  end
+
   defp parse_datetime(nil), do: nil
   defp parse_datetime(%DateTime{} = datetime), do: datetime
 
@@ -151,14 +176,6 @@ defmodule FastCheck.Scans.Persistence do
   end
 
   defp parse_datetime(_value), do: nil
-
-  defp unique_conflict?(changeset) do
-    Enum.any?(changeset.errors, fn {field, {_message, opts}} ->
-      field == :idempotency_key and
-        opts[:constraint] == :unique and
-        opts[:constraint_name] == "scan_attempts_event_idempotency_key_idx"
-    end)
-  end
 
   defp audit_status("PAYMENT_INVALID"), do: "payment_invalid"
   defp audit_status("DUPLICATE"), do: "duplicate"
