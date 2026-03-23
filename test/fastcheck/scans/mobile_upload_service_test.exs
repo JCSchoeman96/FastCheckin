@@ -63,11 +63,20 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
 
   test "authoritative mode acknowledges only after queueing durability work", %{event: event} do
     configure_mode(:redis_authoritative)
+    assert_authoritative_mode!()
 
     event_id = event.id
     scan = valid_scan("idem-1", "TEST001")
 
     assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event_id, [scan])
+
+    assert Repo.get_by(ScanAttempt, event_id: event_id, idempotency_key: "idem-1") == nil
+
+    assert Repo.get_by(CheckIn, event_id: event_id, ticket_code: "TEST001", status: "success") ==
+             nil
+
+    assert Repo.get_by!(Attendee, event_id: event_id, ticket_code: "TEST001").checkins_remaining ==
+             1
 
     assert [
              %{
@@ -103,6 +112,7 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
 
   test "retry after enqueue failure reuses pending durability and succeeds", %{event: event} do
     configure_mode(:redis_authoritative, force_enqueue_failure: true)
+    assert_authoritative_mode!()
 
     scan = valid_scan("idem-retry", "TEST001")
 
@@ -154,6 +164,7 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
 
   test "authoritative mode preserves payment rejection results", %{event: event} do
     configure_mode(:redis_authoritative)
+    assert_authoritative_mode!()
 
     scan = valid_scan("idem-refund", "REFUND001")
 
@@ -161,6 +172,55 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
              MobileUploadService.upload_batch(event.id, [scan])
 
     assert message =~ "Payment invalid"
+  end
+
+  test "authoritative mode surfaces build-timeout hot-state failures", %{event: event} do
+    namespace = unique_namespace("build-timeout")
+
+    configure_mode(:redis_authoritative,
+      live_namespace: namespace,
+      shadow_namespace: "#{namespace}-shadow"
+    )
+
+    assert_authoritative_mode!()
+    InMemoryStore.inject_process_error(namespace, :build_timeout)
+
+    scan = valid_scan("idem-build-timeout", "TEST001")
+
+    assert {:error, %{code: "scan_hot_state_unavailable", message: message}} =
+             MobileUploadService.upload_batch(event.id, [scan])
+
+    assert message =~ "Unable to prepare event scan state"
+    assert all_enqueued(worker: PersistScanBatchJob) == []
+  end
+
+  test "authoritative mode surfaces promotion failures without false success", %{event: event} do
+    namespace = unique_namespace("promotion")
+
+    configure_mode(:redis_authoritative,
+      live_namespace: namespace,
+      shadow_namespace: "#{namespace}-shadow"
+    )
+
+    assert_authoritative_mode!()
+    InMemoryStore.inject_promote_error(namespace, :promotion_failed)
+
+    scan = valid_scan("idem-promotion-fail", "TEST001")
+
+    assert {:error, %{code: "scan_result_promotion_failed", message: message}} =
+             MobileUploadService.upload_batch(event.id, [scan])
+
+    assert message =~ "Unable to finalize acknowledged scan results"
+
+    assert [%{args: _args}] = all_enqueued(worker: PersistScanBatchJob)
+
+    assert %{
+             stage: :pending_durability,
+             result: %{idempotency_key: "idem-promotion-fail", ticket_code: "TEST001"}
+           } = InMemoryStore.idempotency_entry(namespace, event.id, "idem-promotion-fail")
+
+    assert Repo.get_by(ScanAttempt, event_id: event.id, idempotency_key: "idem-promotion-fail") ==
+             nil
   end
 
   defp configure_mode(mode, extra \\ []) do
@@ -181,6 +241,11 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
     )
   end
 
+  defp assert_authoritative_mode! do
+    assert MobileUploadService.ingestion_mode() == :redis_authoritative
+    assert MobileUploadService.authoritative_mode?()
+  end
+
   defp valid_scan(idempotency_key, ticket_code) do
     %{
       "idempotency_key" => idempotency_key,
@@ -197,5 +262,9 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
     |> rem(1_000_000)
     |> Integer.to_string()
     |> String.pad_leading(6, "0")
+  end
+
+  defp unique_namespace(prefix) do
+    "#{prefix}-#{System.unique_integer([:positive])}"
   end
 end

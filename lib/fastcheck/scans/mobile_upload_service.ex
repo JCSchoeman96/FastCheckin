@@ -17,7 +17,7 @@ defmodule FastCheck.Scans.MobileUploadService do
 
   @spec upload_batch(integer(), list()) :: {:ok, [api_result()]} | {:error, service_error()}
   def upload_batch(event_id, scans) when is_integer(event_id) and is_list(scans) do
-    case ingestion_config().mode do
+    case ingestion_mode() do
       :legacy ->
         LegacyUploadService.upload_batch(event_id, scans)
 
@@ -32,6 +32,16 @@ defmodule FastCheck.Scans.MobileUploadService do
     end
   end
 
+  @spec ingestion_mode() :: :legacy | :shadow | :redis_authoritative
+  def ingestion_mode do
+    ingestion_config().mode
+  end
+
+  @spec authoritative_mode?() :: boolean()
+  def authoritative_mode? do
+    ingestion_mode() == :redis_authoritative
+  end
+
   defp upload_authoritative(event_id, scans) do
     config = ingestion_config()
     store = config.store
@@ -40,7 +50,7 @@ defmodule FastCheck.Scans.MobileUploadService do
          {:ok, to_enqueue} <- enqueue_candidates(processed),
          :ok <-
            enqueue_all_required_jobs(to_enqueue, config.chunk_size, config.force_enqueue_failure),
-         :ok <- store.promote_results(to_enqueue, config.live_namespace) do
+         :ok <- promote_results(store, to_enqueue, config.live_namespace) do
       {:ok,
        Enum.map(processed, fn
          {:api_result, result} ->
@@ -79,23 +89,11 @@ defmodule FastCheck.Scans.MobileUploadService do
               {:cont, {:ok, acc ++ [{:result, result}]}}
 
             {:error, reason} ->
-              {:halt,
-               {:error,
-                %{
-                  status: :service_unavailable,
-                  code: "scan_ingestion_failed",
-                  message: "Unable to evaluate scan hot state: #{inspect(reason)}"
-                }}}
+              {:halt, {:error, hot_state_error(reason)}}
           end
 
         {:error, reason} ->
-          api_result = %{
-            idempotency_key: Map.get(scan, "idempotency_key", "unknown"),
-            status: "error",
-            message: reason
-          }
-
-          {:cont, {:ok, acc ++ [{:api_result, api_result}]}}
+          {:cont, {:ok, acc ++ [{:api_result, invalid_scan_api_result(scan, reason)}]}}
       end
     end)
   end
@@ -219,6 +217,49 @@ defmodule FastCheck.Scans.MobileUploadService do
 
   defp maybe_iso8601(nil), do: nil
   defp maybe_iso8601(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+
+  defp promote_results(store, results, namespace) do
+    case store.promote_results(results, namespace) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Authoritative result promotion failed: #{inspect(reason)}")
+
+        {:error,
+         %{
+           status: :service_unavailable,
+           code: "scan_result_promotion_failed",
+           message: "Unable to finalize acknowledged scan results"
+         }}
+    end
+  end
+
+  defp invalid_scan_api_result(scan, reason) do
+    %{
+      idempotency_key: Map.get(scan, "idempotency_key", "unknown"),
+      status: "error",
+      message: reason
+    }
+  end
+
+  defp hot_state_error(:build_timeout) do
+    %{
+      status: :service_unavailable,
+      code: "scan_hot_state_unavailable",
+      message: "Unable to prepare event scan state. Please retry."
+    }
+  end
+
+  defp hot_state_error(reason) do
+    Logger.error("Authoritative hot-state evaluation failed: #{inspect(reason)}")
+
+    %{
+      status: :service_unavailable,
+      code: "scan_ingestion_failed",
+      message: "Unable to evaluate scan hot state"
+    }
+  end
 
   defp ingestion_config do
     config = Application.get_env(:fastcheck, :mobile_scan_ingestion, [])

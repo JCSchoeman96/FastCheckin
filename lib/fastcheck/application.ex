@@ -5,6 +5,8 @@ defmodule FastCheck.Application do
 
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
     cache_children =
@@ -41,6 +43,10 @@ defmodule FastCheck.Application do
 
     # NOW safe to attach telemetry handlers (tables guaranteed to exist)
     FastCheck.Telemetry.setup()
+
+    Logger.info(
+      "Mobile scan ingestion mode resolved: #{FastCheck.Scans.MobileUploadService.ingestion_mode()}"
+    )
 
     {:ok, pid}
   end

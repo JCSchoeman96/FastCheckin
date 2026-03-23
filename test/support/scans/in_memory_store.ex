@@ -18,36 +18,49 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
 
   def process_scan(%ScanCommand{} = command, namespace) do
     ensure_table()
-    state_key = {namespace, command.event_id, :state}
-    idem_key = {namespace, command.event_id, :idempotency, command.idempotency_key}
 
-    case :ets.lookup(@table, idem_key) do
-      [{^idem_key, :final_acknowledged, result}] ->
-        {:ok, %{result | delivery_state: :final_acknowledged}}
+    case take_control(namespace, :process_error) do
+      {:error, reason} ->
+        {:error, reason}
 
-      [{^idem_key, :pending_durability, result}] ->
-        {:ok, %{result | delivery_state: :pending_durability}}
+      :ok ->
+        state_key = {namespace, command.event_id, :state}
+        idem_key = {namespace, command.event_id, :idempotency, command.idempotency_key}
 
-      [] ->
-        result = fresh_result(command, state_key)
-        :ets.insert(@table, {idem_key, :pending_durability, result})
-        {:ok, result}
+        case :ets.lookup(@table, idem_key) do
+          [{^idem_key, :final_acknowledged, result}] ->
+            {:ok, %{result | delivery_state: :final_acknowledged}}
+
+          [{^idem_key, :pending_durability, result}] ->
+            {:ok, %{result | delivery_state: :pending_durability}}
+
+          [] ->
+            result = fresh_result(command, state_key)
+            :ets.insert(@table, {idem_key, :pending_durability, result})
+            {:ok, result}
+        end
     end
   end
 
   def promote_results(results, namespace) do
     ensure_table()
 
-    Enum.each(results, fn %Result{} = result ->
-      idem_key = {namespace, result.event_id, :idempotency, result.idempotency_key}
+    case take_control(namespace, :promote_error) do
+      {:error, reason} ->
+        {:error, reason}
 
-      :ets.insert(
-        @table,
-        {idem_key, :final_acknowledged, %{result | delivery_state: :final_acknowledged}}
-      )
-    end)
+      :ok ->
+        Enum.each(results, fn %Result{} = result ->
+          idem_key = {namespace, result.event_id, :idempotency, result.idempotency_key}
 
-    :ok
+          :ets.insert(
+            @table,
+            {idem_key, :final_acknowledged, %{result | delivery_state: :final_acknowledged}}
+          )
+        end)
+
+        :ok
+    end
   end
 
   def idempotency_entry(namespace, event_id, idempotency_key) do
@@ -58,6 +71,18 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
       [{^idem_key, stage, result}] -> %{stage: stage, result: result}
       [] -> nil
     end
+  end
+
+  def inject_process_error(namespace, reason) do
+    ensure_table()
+    :ets.insert(@table, {{namespace, :control, :process_error}, reason})
+    :ok
+  end
+
+  def inject_promote_error(namespace, reason) do
+    ensure_table()
+    :ets.insert(@table, {{namespace, :control, :promote_error}, reason})
+    :ok
   end
 
   defp fresh_result(%ScanCommand{} = command, state_key) do
@@ -210,6 +235,15 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
   end
 
   defp normalize_payment_status(_), do: "unknown"
+
+  defp take_control(namespace, control) do
+    control_key = {namespace, :control, control}
+
+    case :ets.take(@table, control_key) do
+      [{^control_key, reason}] -> {:error, reason}
+      [] -> :ok
+    end
+  end
 
   defp ensure_table do
     case :ets.whereis(@table) do
