@@ -2,12 +2,12 @@ defmodule FastCheck.AttendeesTest do
   use FastCheck.DataCase, async: true
 
   alias Cachex
+  alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias Phoenix.PubSub
-  alias Ecto.Adapters.SQL.Sandbox
 
   setup :disable_occupancy_tasks
 

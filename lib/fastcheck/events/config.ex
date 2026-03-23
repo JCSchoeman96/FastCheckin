@@ -7,14 +7,14 @@ defmodule FastCheck.Events.Config do
   require Logger
 
   alias Ecto.Changeset
-  alias FastCheck.Repo
-  alias FastCheck.Events.Event
-  alias FastCheck.Events.CheckInConfiguration
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Cache.CacheManager
-  alias FastCheck.TickeraClient
-  alias FastCheck.Events.Sync
   alias FastCheck.Events.Cache
+  alias FastCheck.Events.CheckInConfiguration
+  alias FastCheck.Events.Event
+  alias FastCheck.Events.Sync
+  alias FastCheck.Repo
+  alias FastCheck.TickeraClient
 
   @config_fields [
     :ticket_type,
@@ -50,87 +50,92 @@ defmodule FastCheck.Events.Config do
   @spec fetch_and_store_ticket_configs(integer()) ::
           {:ok, non_neg_integer()} | {:error, String.t()}
   def fetch_and_store_ticket_configs(event_id) when is_integer(event_id) do
-    Repo.transaction(fn ->
-      case Repo.get(Event, event_id) do
-        nil ->
-          Repo.rollback("EVENT_NOT_FOUND")
-
-        %Event{} = event ->
-          case ensure_event_credentials(event) do
-            {:ok, api_key} ->
-              ticket_type_ids = load_ticket_type_ids(event.id)
-
-              case persist_ticket_configs(event, ticket_type_ids, api_key) do
-                {:ok, count} ->
-                  case touch_last_config_sync(event.id) do
-                    :ok ->
-                      case Sync.touch_last_soft_sync(event.id) do
-                        :ok -> count
-                        {:error, reason} -> Repo.rollback(reason)
-                      end
-
-                    {:error, reason} ->
-                      Repo.rollback(reason)
-                  end
-
-                {:error, reason} ->
-                  Repo.rollback(reason)
-              end
-
-            {:error, :decryption_failed} ->
-              Repo.rollback("CREDENTIAL_DECRYPTION_FAILED")
-
-            {:error, reason} ->
-              Repo.rollback(reason)
-          end
-      end
-    end)
-    |> case do
-      {:ok, count} ->
-        {:ok, count}
-
-      {:error, reason}
-      when reason in [
-             "EVENT_NOT_FOUND",
-             "MISSING_CREDENTIALS",
-             "CONFIG_FETCH_FAILED",
-             "CREDENTIAL_DECRYPTION_FAILED"
-           ] ->
-        {:error, reason}
-
-      {:error, reason} when is_binary(reason) ->
-        {:error, reason}
-
-      {:error, _} ->
-        {:error, "CONFIG_FETCH_FAILED"}
-    end
+    event_id
+    |> run_ticket_config_sync_transaction()
+    |> normalize_ticket_config_sync_result()
   end
 
   def fetch_and_store_ticket_configs(_), do: {:error, "INVALID_EVENT"}
 
   # Private Helpers
 
-  defp ensure_event_credentials(%Event{tickera_site_url: site_url} = event) do
-    cond do
-      not present?(site_url) ->
-        {:error, "MISSING_CREDENTIALS"}
+  defp run_ticket_config_sync_transaction(event_id) do
+    Repo.transaction(fn ->
+      case Repo.get(Event, event_id) do
+        nil -> Repo.rollback("EVENT_NOT_FOUND")
+        %Event{} = event -> sync_ticket_configs_for_event(event)
+      end
+    end)
+  end
 
-      true ->
-        case Sync.get_tickera_api_key(event) do
-          {:ok, api_key} -> {:ok, api_key}
-          {:error, :decryption_failed} -> {:error, :decryption_failed}
+  defp sync_ticket_configs_for_event(%Event{} = event) do
+    case ensure_event_credentials(event) do
+      {:ok, api_key} ->
+        event
+        |> load_ticket_type_ids_for_event()
+        |> persist_ticket_configs(event, api_key)
+        |> finalize_ticket_config_sync(event.id)
+
+      {:error, :decryption_failed} ->
+        Repo.rollback("CREDENTIAL_DECRYPTION_FAILED")
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
+
+  defp load_ticket_type_ids_for_event(%Event{id: event_id}), do: load_ticket_type_ids(event_id)
+
+  defp finalize_ticket_config_sync({:error, reason}, _event_id), do: Repo.rollback(reason)
+
+  defp finalize_ticket_config_sync({:ok, count}, event_id) do
+    case touch_last_config_sync(event_id) do
+      :ok ->
+        case Sync.touch_last_soft_sync(event_id) do
+          :ok -> count
+          {:error, reason} -> Repo.rollback(reason)
         end
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
+
+  defp normalize_ticket_config_sync_result({:ok, count}), do: {:ok, count}
+
+  defp normalize_ticket_config_sync_result({:error, reason})
+       when reason in [
+              "EVENT_NOT_FOUND",
+              "MISSING_CREDENTIALS",
+              "CONFIG_FETCH_FAILED",
+              "CREDENTIAL_DECRYPTION_FAILED"
+            ],
+       do: {:error, reason}
+
+  defp normalize_ticket_config_sync_result({:error, reason}) when is_binary(reason),
+    do: {:error, reason}
+
+  defp normalize_ticket_config_sync_result({:error, _}), do: {:error, "CONFIG_FETCH_FAILED"}
+
+  defp ensure_event_credentials(%Event{tickera_site_url: site_url} = event) do
+    if present?(site_url) do
+      case Sync.get_tickera_api_key(event) do
+        {:ok, api_key} -> {:ok, api_key}
+        {:error, :decryption_failed} -> {:error, :decryption_failed}
+      end
+    else
+      {:error, "MISSING_CREDENTIALS"}
     end
   end
 
   defp ensure_event_credentials(_), do: {:error, "MISSING_CREDENTIALS"}
 
-  defp persist_ticket_configs(%Event{id: event_id} = _event, [], _api_key) do
+  defp persist_ticket_configs([], %Event{id: event_id}, _api_key) do
     Logger.info("No ticket types discovered for event #{event_id}; skipping config sync")
     {:ok, 0}
   end
 
-  defp persist_ticket_configs(%Event{id: event_id} = event, ticket_type_ids, api_key)
+  defp persist_ticket_configs(ticket_type_ids, %Event{id: event_id} = event, api_key)
        when is_list(ticket_type_ids) do
     ticket_type_ids
     |> Enum.reduce_while({:ok, 0}, fn ticket_type_id, {:ok, count} ->

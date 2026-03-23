@@ -13,8 +13,8 @@ defmodule FastCheck.Attendees.Query do
   import Ecto.Query, warn: false
   require Logger
 
-  alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Repo
 
   @doc """
   Lists all attendees for the given event ordered by most recent check-in.

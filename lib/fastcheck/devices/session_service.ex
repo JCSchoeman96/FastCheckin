@@ -6,10 +6,10 @@ defmodule FastCheck.Devices.SessionService do
   import Ecto.Query, warn: false
 
   alias Ecto.Multi
-  alias FastCheck.Repo
-  alias FastCheck.Events
-  alias FastCheck.Ticketing
   alias FastCheck.Devices.{Device, DeviceSession}
+  alias FastCheck.Events
+  alias FastCheck.Repo
+  alias FastCheck.Ticketing
 
   @token_salt "device_session_token"
 

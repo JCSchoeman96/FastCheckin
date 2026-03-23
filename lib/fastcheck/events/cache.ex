@@ -6,11 +6,11 @@ defmodule FastCheck.Events.Cache do
   import Ecto.Query, warn: false
   require Logger
 
-  alias FastCheck.Repo
-  alias FastCheck.Events.Event
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
 
   @event_config_ttl :timer.hours(1)
   @events_list_ttl :timer.minutes(15)

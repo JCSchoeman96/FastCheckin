@@ -5,9 +5,9 @@ defmodule FastCheck.CheckIns.DuplicateGuard do
 
   import Ecto.Query, warn: false
 
+  alias FastCheck.CheckIns.CheckInAttempt
   alias FastCheck.Redis
   alias FastCheck.Repo
-  alias FastCheck.CheckIns.CheckInAttempt
 
   @spec admitted?(integer(), String.t()) :: boolean()
   def admitted?(event_id, normalized_code)

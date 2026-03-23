@@ -2,25 +2,16 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   use FastCheckWeb.ConnCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
-  import Ecto.Query
-
-  alias Ecto.Adapters.SQL.Sandbox
-
-  alias FastCheck.{
-    Attendees.Attendee,
-    Attendees.CheckIn,
-    Attendees.CheckInSession,
-    Crypto,
-    Events.Event,
-    Mobile.MobileIdempotencyLog,
-    Mobile.Token,
-    Repo,
-    Scans.ScanAttempt
-  }
-
-  alias FastCheck.Scans.HotState.RedisStore
+  alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.CheckIn
+  alias FastCheck.Attendees.CheckInSession
+  alias FastCheck.Crypto
+  alias FastCheck.Events.Event
+  alias FastCheck.Mobile.MobileIdempotencyLog
+  alias FastCheck.Mobile.Token
+  alias FastCheck.Repo
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
-  alias FastCheck.Scans.MobileUploadService
+  alias FastCheck.Scans.ScanAttempt
   alias FastCheck.TestSupport.Scans.InMemoryStore
 
   setup do

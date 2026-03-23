@@ -3,11 +3,11 @@ defmodule FastCheck.CheckIns.CheckInService do
   Minimal scan submission service for the native scanner scaffold.
   """
 
-  alias FastCheck.Repo
-  alias FastCheck.Ticketing
   alias FastCheck.CheckIns.{CheckInAttempt, DuplicateGuard, OfflineReconciliation}
   alias FastCheck.Devices.DevicePolicy
   alias FastCheck.Operations.ActivityFeed
+  alias FastCheck.Repo
+  alias FastCheck.Ticketing
   alias FastCheck.Ticketing.TicketNormalizer
 
   @accepted_decisions ["accepted_confirmed", "accepted_offline_pending"]

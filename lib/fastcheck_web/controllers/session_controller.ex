@@ -19,24 +19,25 @@ defmodule FastCheckWeb.SessionController do
   end
 
   def create(conn, %{"session" => session_params} = params) do
-    with %{"username" => username, "password" => password} <- session_params do
-      if valid_credentials?(username, password) do
-        redirect_to = normalize_redirect_to(params["redirect_to"])
+    case session_params do
+      %{"username" => username, "password" => password} ->
+        if valid_credentials?(username, password) do
+          redirect_to = normalize_redirect_to(params["redirect_to"])
 
-        conn
-        |> put_session(@session_key, true)
-        |> put_session(@session_username_key, username)
-        |> redirect(to: redirect_to)
-      else
-        conn
-        |> put_status(:unauthorized)
-        |> render(:new,
-          form: login_form(session_params),
-          redirect_to: normalize_redirect_to(params["redirect_to"]),
-          error_message: "Invalid credentials"
-        )
-      end
-    else
+          conn
+          |> put_session(@session_key, true)
+          |> put_session(@session_username_key, username)
+          |> redirect(to: redirect_to)
+        else
+          conn
+          |> put_status(:unauthorized)
+          |> render(:new,
+            form: login_form(session_params),
+            redirect_to: normalize_redirect_to(params["redirect_to"]),
+            error_message: "Invalid credentials"
+          )
+        end
+
       _ ->
         render_invalid_payload(conn)
     end

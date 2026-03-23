@@ -5,8 +5,8 @@ defmodule FastCheckWeb.Api.V1.CheckInControllerTest do
 
   import FastCheck.Fixtures
 
-  alias FastCheck.Repo
   alias FastCheck.CheckIns.CheckInAttempt
+  alias FastCheck.Repo
 
   @moduletag skip: "Future native-scanner scaffold routes are not mounted in FastCheckWeb.Router"
 

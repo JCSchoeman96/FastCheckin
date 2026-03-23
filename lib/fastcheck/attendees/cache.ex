@@ -6,11 +6,11 @@ defmodule FastCheck.Attendees.Cache do
   import Ecto.Query, warn: false
   require Logger
 
-  alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Attendees.Query
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
+  alias FastCheck.Repo
 
   @attendee_cache_namespace "attendee"
   @attendee_cache_hit_ttl :infinity

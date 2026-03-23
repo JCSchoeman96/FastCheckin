@@ -2,14 +2,11 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   use FastCheck.DataCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
-  alias FastCheck.{
-    Attendees.Attendee,
-    Crypto,
-    Events.Event,
-    Repo
-  }
-
+  alias FastCheck.Attendees.Attendee
   alias FastCheck.Attendees.{CheckIn, CheckInSession}
+  alias FastCheck.Crypto
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
   alias FastCheck.Scans.{MobileUploadService, ScanAttempt}
   alias FastCheck.TestSupport.Scans.InMemoryStore

@@ -1,4 +1,6 @@
+# credo:disable-for-this-file Credo.Check.Refactor.LongQuoteBlocks
 defmodule FastCheckWeb.Components.MishkaComponents do
+  @moduledoc false
   defmacro __using__(_) do
     quote do
       import FastCheckWeb.Components.Accordion, only: [accordion: 1]

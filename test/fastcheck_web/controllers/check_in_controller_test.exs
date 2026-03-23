@@ -1,11 +1,11 @@
 defmodule FastCheckWeb.CheckInControllerTest do
   use FastCheckWeb.ConnCase
 
-  alias FastCheck.Repo
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
+  alias FastCheck.Repo
 
   setup %{conn: conn} do
     event = create_event()

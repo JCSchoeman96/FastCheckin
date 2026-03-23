@@ -444,53 +444,12 @@ defmodule FastCheck.Events do
   def update_event(event_id, attrs) when is_integer(event_id) and event_id > 0 do
     case Cache.get_event!(event_id) do
       %Event{} = event ->
-        # Only validate API key if it's being changed
-        attrs =
-          if Map.has_key?(attrs, "tickera_api_key_encrypted") || Map.has_key?(attrs, "api_key") do
-            # API key is being updated, validate credentials
-            site_url =
-              (Map.get(attrs, "tickera_site_url") || event.tickera_site_url || event.site_url)
-              |> normalize_non_empty_binary()
+        case validate_update_credentials(attrs, event) do
+          {:ok, validated_attrs} ->
+            persist_event_update(event, validated_attrs, event_id)
 
-            api_key =
-              (Map.get(attrs, "tickera_api_key_encrypted") || Map.get(attrs, "api_key"))
-              |> normalize_non_empty_binary()
-
-            if site_url && api_key do
-              case ensure_credentials(site_url, api_key) do
-                :ok ->
-                  attrs
-
-                {:error, reason} ->
-                  Map.put(attrs, :_validation_error, credential_error_message(reason))
-              end
-            else
-              attrs
-            end
-          else
-            attrs
-          end
-
-        if Map.has_key?(attrs, :_validation_error) do
-          {:error, Map.get(attrs, :_validation_error)}
-        else
-          # Prepare update attributes
-          update_attrs = prepare_update_attrs(attrs, event)
-
-          event
-          |> Event.changeset(update_attrs)
-          |> Repo.update()
-          |> case do
-            {:ok, updated} ->
-              Cache.invalidate_event_cache(updated.id)
-              Cache.invalidate_events_list_cache()
-              Logger.info("Updated event #{event_id}")
-              {:ok, updated}
-
-            {:error, reason} ->
-              Logger.error("Failed to update event #{event_id}: #{inspect(reason)}")
-              {:error, reason}
-          end
+          {:error, reason} ->
+            {:error, reason}
         end
 
       nil ->
@@ -499,6 +458,59 @@ defmodule FastCheck.Events do
   end
 
   def update_event(_, _), do: {:error, :invalid_event_id}
+
+  defp validate_update_credentials(attrs, event) do
+    if credentials_update?(attrs) do
+      validate_changed_credentials(attrs, event)
+    else
+      {:ok, attrs}
+    end
+  end
+
+  defp credentials_update?(attrs) do
+    Map.has_key?(attrs, "tickera_api_key_encrypted") || Map.has_key?(attrs, "api_key")
+  end
+
+  defp validate_changed_credentials(attrs, event) do
+    site_url =
+      (Map.get(attrs, "tickera_site_url") || event.tickera_site_url || event.site_url)
+      |> normalize_non_empty_binary()
+
+    api_key =
+      (Map.get(attrs, "tickera_api_key_encrypted") || Map.get(attrs, "api_key"))
+      |> normalize_non_empty_binary()
+
+    validate_credentials_presence(attrs, site_url, api_key)
+  end
+
+  defp validate_credentials_presence(attrs, nil, _api_key), do: {:ok, attrs}
+  defp validate_credentials_presence(attrs, _site_url, nil), do: {:ok, attrs}
+
+  defp validate_credentials_presence(attrs, site_url, api_key) do
+    case ensure_credentials(site_url, api_key) do
+      :ok -> {:ok, attrs}
+      {:error, reason} -> {:error, credential_error_message(reason)}
+    end
+  end
+
+  defp persist_event_update(event, attrs, event_id) do
+    update_attrs = prepare_update_attrs(attrs, event)
+
+    event
+    |> Event.changeset(update_attrs)
+    |> Repo.update()
+    |> case do
+      {:ok, updated} ->
+        Cache.invalidate_event_cache(updated.id)
+        Cache.invalidate_events_list_cache()
+        Logger.info("Updated event #{event_id}")
+        {:ok, updated}
+
+      {:error, reason} ->
+        Logger.error("Failed to update event #{event_id}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
 
   defp prepare_update_attrs(attrs, event) do
     attrs
@@ -765,42 +777,19 @@ defmodule FastCheck.Events do
 
     {derived_event_date, derived_event_time} = split_datetime(event_datetime)
     {tickera_start_date, tickera_end_date} = resolve_tickera_window(attrs, essentials)
-
-    name_override = fetch_attr(attrs, "name") |> normalize_non_empty_binary()
-
-    name_from_essentials =
-      (Map.get(essentials, "event_name") || Map.get(essentials, :event_name))
-      |> normalize_non_empty_binary()
-
-    location_override = fetch_attr(attrs, "location") |> normalize_non_empty_binary()
-    entrance_override = fetch_attr(attrs, "entrance_name") |> normalize_non_empty_binary()
-
-    event_location =
-      (Map.get(essentials, "event_location") ||
-         Map.get(essentials, :event_location))
-      |> normalize_non_empty_binary()
-
     event_date_override = fetch_attr(attrs, "event_date")
     event_time_override = fetch_attr(attrs, "event_time")
-
-    total_tickets =
-      (Map.get(essentials, "total_tickets") ||
-         Map.get(essentials, :total_tickets) ||
-         Map.get(essentials, "sold_tickets") ||
-         Map.get(essentials, :sold_tickets))
-      |> normalize_non_negative_integer()
-
-    checked_in_count =
-      (Map.get(essentials, "checked_tickets") ||
-         Map.get(essentials, :checked_tickets))
-      |> normalize_non_negative_integer()
+    event_name = resolve_event_name(attrs, essentials)
+    event_location = resolve_event_location(attrs, essentials)
+    entrance_name = resolve_entrance_name(attrs)
+    {total_tickets, checked_in_count} = resolve_event_counts(essentials)
 
     %{
-      name: name_override || name_from_essentials,
+      name: event_name,
       scanner_login_code:
         normalize_scanner_login_code_attr(fetch_attr(attrs, "scanner_login_code")),
-      entrance_name: entrance_override || "Main Gate",
-      location: location_override || event_location,
+      entrance_name: entrance_name,
+      location: event_location,
       total_tickets: total_tickets,
       checked_in_count: checked_in_count,
       event_date:
@@ -812,6 +801,47 @@ defmodule FastCheck.Events do
       last_sync_at: fetch_attr(attrs, "last_sync_at"),
       last_soft_sync_at: fetch_attr(attrs, "last_soft_sync_at")
     }
+  end
+
+  defp resolve_event_name(attrs, essentials) do
+    name_override = fetch_attr(attrs, "name") |> normalize_non_empty_binary()
+
+    name_from_essentials =
+      (Map.get(essentials, "event_name") || Map.get(essentials, :event_name))
+      |> normalize_non_empty_binary()
+
+    name_override || name_from_essentials
+  end
+
+  defp resolve_event_location(attrs, essentials) do
+    location_override = fetch_attr(attrs, "location") |> normalize_non_empty_binary()
+
+    event_location =
+      (Map.get(essentials, "event_location") || Map.get(essentials, :event_location))
+      |> normalize_non_empty_binary()
+
+    location_override || event_location
+  end
+
+  defp resolve_entrance_name(attrs) do
+    fetch_attr(attrs, "entrance_name")
+    |> normalize_non_empty_binary()
+    |> Kernel.||("Main Gate")
+  end
+
+  defp resolve_event_counts(essentials) do
+    total_tickets =
+      (Map.get(essentials, "total_tickets") ||
+         Map.get(essentials, :total_tickets) ||
+         Map.get(essentials, "sold_tickets") ||
+         Map.get(essentials, :sold_tickets))
+      |> normalize_non_negative_integer()
+
+    checked_in_count =
+      (Map.get(essentials, "checked_tickets") || Map.get(essentials, :checked_tickets))
+      |> normalize_non_negative_integer()
+
+    {total_tickets, checked_in_count}
   end
 
   defp split_datetime(%DateTime{} = datetime) do
@@ -900,9 +930,10 @@ defmodule FastCheck.Events do
         nil
 
       trimmed ->
-        with {:ok, datetime, _offset} <- DateTime.from_iso8601(trimmed) do
-          shift_to_utc(datetime)
-        else
+        case DateTime.from_iso8601(trimmed) do
+          {:ok, datetime, _offset} ->
+            shift_to_utc(datetime)
+
           {:error, _} ->
             case NaiveDateTime.from_iso8601(trimmed) do
               {:ok, naive} -> coerce_event_datetime(naive)
@@ -1080,15 +1111,13 @@ defmodule FastCheck.Events do
   defp normalize_scanner_login_code_attr(value), do: value
 
   defp fetch_attr(attrs, key) when is_map(attrs) and is_binary(key) do
-    cond do
-      Map.has_key?(attrs, key) ->
-        Map.get(attrs, key)
-
-      true ->
-        case safe_existing_atom(key) do
-          nil -> nil
-          atom_key -> Map.get(attrs, atom_key)
-        end
+    if Map.has_key?(attrs, key) do
+      Map.get(attrs, key)
+    else
+      case safe_existing_atom(key) do
+        nil -> nil
+        atom_key -> Map.get(attrs, atom_key)
+      end
     end
   end
 

@@ -5,8 +5,8 @@ defmodule FastCheck.CheckIns.PackageService do
 
   import Ecto.Query, warn: false
 
-  alias FastCheck.Repo
   alias FastCheck.CheckIns.OfflineEventPackage
+  alias FastCheck.Repo
 
   @spec latest_package_metadata(integer()) :: map() | nil
   def latest_package_metadata(event_id) when is_integer(event_id) do

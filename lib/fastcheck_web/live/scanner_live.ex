@@ -142,17 +142,15 @@ defmodule FastCheckWeb.ScannerLive do
       |> assign(:search_query, query)
       |> assign(:search_error, nil)
 
-    cond do
-      trimmed == "" ->
-        {:noreply,
-         socket
-         |> assign(:search_results, [])
-         |> assign(:search_loading, false)}
+    if trimmed == "" do
+      {:noreply,
+       socket
+       |> assign(:search_results, [])
+       |> assign(:search_loading, false)}
+    else
+      send(self(), {:perform_attendee_search, trimmed})
 
-      true ->
-        send(self(), {:perform_attendee_search, trimmed})
-
-        {:noreply, assign(socket, :search_loading, true)}
+      {:noreply, assign(socket, :search_loading, true)}
     end
   end
 
@@ -1803,13 +1801,11 @@ defmodule FastCheckWeb.ScannerLive do
   defp calculate_occupancy_percentage(count, capacity) do
     capacity_value = normalize_capacity(capacity)
 
-    cond do
-      capacity_value <= 0 ->
-        0.0
-
-      true ->
-        count_clamped = min(count, capacity_value)
-        Float.round(count_clamped / capacity_value * 100, 1)
+    if capacity_value <= 0 do
+      0.0
+    else
+      count_clamped = min(count, capacity_value)
+      Float.round(count_clamped / capacity_value * 100, 1)
     end
   end
 

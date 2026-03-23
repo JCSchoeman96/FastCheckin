@@ -9,9 +9,10 @@ defmodule FastCheckWeb.DashboardLive do
   alias Ecto.Changeset
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  alias FastCheck.Events.SyncState
   alias FastCheck.Repo
-  require Logger
   alias Phoenix.LiveView.JS
+  require Logger
 
   @max_sync_attempts 3
   @sync_attempt_timeout_ms 120_000
@@ -326,15 +327,16 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("pause_sync", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param) do
-      FastCheck.Events.SyncState.pause_sync(event_id)
+    case parse_event_id(event_id_param) do
+      {:ok, event_id} ->
+        SyncState.pause_sync(event_id)
 
-      {:noreply,
-       socket
-       |> assign(:sync_paused, true)
-       |> assign(:sync_status, "Sync paused")}
-    else
-      _ ->
+        {:noreply,
+         socket
+         |> assign(:sync_paused, true)
+         |> assign(:sync_status, "Sync paused")}
+
+      {:error, _reason} ->
         {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
     end
   end
@@ -345,15 +347,16 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("resume_sync", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param) do
-      FastCheck.Events.SyncState.resume_sync(event_id)
+    case parse_event_id(event_id_param) do
+      {:ok, event_id} ->
+        SyncState.resume_sync(event_id)
 
-      {:noreply,
-       socket
-       |> assign(:sync_paused, false)
-       |> assign(:sync_status, "Sync resumed")}
-    else
-      _ ->
+        {:noreply,
+         socket
+         |> assign(:sync_paused, false)
+         |> assign(:sync_status, "Sync resumed")}
+
+      {:error, _reason} ->
         {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
     end
   end
@@ -364,26 +367,27 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("cancel_sync", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param) do
-      FastCheck.Events.SyncState.cancel_sync(event_id)
-      Events.force_reset_sync(event_id, :cancelled)
+    case parse_event_id(event_id_param) do
+      {:ok, event_id} ->
+        SyncState.cancel_sync(event_id)
+        Events.force_reset_sync(event_id, :cancelled)
 
-      if is_pid(socket.assigns.sync_task_pid) and Process.alive?(socket.assigns.sync_task_pid) do
-        Process.exit(socket.assigns.sync_task_pid, :kill)
-      end
+        if is_pid(socket.assigns.sync_task_pid) and Process.alive?(socket.assigns.sync_task_pid) do
+          Process.exit(socket.assigns.sync_task_pid, :kill)
+        end
 
-      refreshed_events = Events.list_events()
+        refreshed_events = Events.list_events()
 
-      {:noreply,
-       socket
-       |> maybe_demonitor_sync_task()
-       |> assign(:events, refreshed_events)
-       |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-       |> reset_sync_runtime()
-       |> assign(:sync_status, "Sync cancelled")
-       |> assign(:selected_event_id, nil)}
-    else
-      _ ->
+        {:noreply,
+         socket
+         |> maybe_demonitor_sync_task()
+         |> assign(:events, refreshed_events)
+         |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+         |> reset_sync_runtime()
+         |> assign(:sync_status, "Sync cancelled")
+         |> assign(:selected_event_id, nil)}
+
+      {:error, _reason} ->
         {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
     end
   end
@@ -394,23 +398,24 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("show_sync_history", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param) do
-      case list_sync_history_safe(event_id) do
-        {:ok, sync_history} ->
-          {:noreply,
-           socket
-           |> assign(:viewing_sync_history_for, event_id)
-           |> assign(:sync_history, sync_history)}
+    case parse_event_id(event_id_param) do
+      {:ok, event_id} ->
+        case list_sync_history_safe(event_id) do
+          {:ok, sync_history} ->
+            {:noreply,
+             socket
+             |> assign(:viewing_sync_history_for, event_id)
+             |> assign(:sync_history, sync_history)}
 
-        {:error, _reason} ->
-          {:noreply,
-           socket
-           |> assign(:viewing_sync_history_for, nil)
-           |> assign(:sync_history, [])
-           |> assign(:sync_status, "Unable to load sync history for this event")}
-      end
-    else
-      _ ->
+          {:error, _reason} ->
+            {:noreply,
+             socket
+             |> assign(:viewing_sync_history_for, nil)
+             |> assign(:sync_history, [])
+             |> assign(:sync_status, "Unable to load sync history for this event")}
+        end
+
+      {:error, _reason} ->
         {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
     end
   end
@@ -1809,9 +1814,10 @@ defmodule FastCheckWeb.DashboardLive do
 
   defp progress_status(page, total, count, estimated_remaining) do
     base_status =
-      cond do
-        total in [nil, 0] -> "Syncing attendees..."
-        true -> "Syncing attendees (page #{page}/#{total}) - Imported #{count} records"
+      if total in [nil, 0] do
+        "Syncing attendees..."
+      else
+        "Syncing attendees (page #{page}/#{total}) - Imported #{count} records"
       end
 
     if estimated_remaining && estimated_remaining > 0 do
@@ -1910,10 +1916,9 @@ defmodule FastCheckWeb.DashboardLive do
         String.replace(acc, "%{#{key}}", to_string(value))
       end)
     end)
-    |> Enum.map(fn {field, messages} ->
+    |> Enum.map_join(". ", fn {field, messages} ->
       "#{Phoenix.Naming.humanize(field)} #{Enum.join(messages, ", ")}"
     end)
-    |> Enum.join(". ")
   end
 
   defp format_error(reason) when is_binary(reason), do: reason
