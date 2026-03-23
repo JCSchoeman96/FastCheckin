@@ -36,7 +36,17 @@ Canonical contract doc:
 Notes:
 
 - The backend is the business-rule authority; the Android app caches + queues and uploads for server decisions.
+- For the promoted hot path, scans are queued locally first, admitted
+  authoritatively in backend hot state, queued for durability before
+  acknowledgement, and projected into Postgres asynchronously afterward.
+- Repo config still falls back to `:legacy` unless runtime overrides it.
+  `:redis_authoritative` is the target runtime mode and the mode used by the
+  documented authoritative test/perf paths.
 - `direction = "out"` is currently not implemented for successful mobile flows (see the contract doc).
+
+Backend runtime note:
+
+- `docs/mobile_runtime_truth.md`
 
 ## Architecture boundaries (high-level)
 
@@ -114,6 +124,7 @@ Runbook:
 
 - `docs/mobile_scan_performance.md`
 - `docs/mobile_scan_performance_baseline_2026-03-19.md`
+- `docs/mobile_runtime_truth.md`
 - `docs/pgbouncer_rollout.md`
 
 ## Roadmap (high level)
