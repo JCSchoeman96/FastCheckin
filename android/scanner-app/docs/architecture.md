@@ -13,6 +13,25 @@ app must not depend on `/api/v1/device_sessions`, `/api/v1/check_ins`,
 `/api/v1/check_ins/flush`, config/package/health routes, gates, devices, or
 offline packages until the backend formally promotes a new contract.
 
+## Authoritative Runtime Truth
+
+Android is local-first, but the backend is authoritative for scan admission.
+
+- Android queues scans locally before upload.
+- Auto-flush is the normal upload path; manual flush remains fallback/debug.
+- Backend admission happens synchronously in hot state during
+  `POST /api/v1/mobile/scans`.
+- Durability is queued before acknowledgement.
+- Durable Postgres projection happens asynchronously afterward.
+
+Repo/runtime mode truth must stay explicit:
+
+- repo config still falls back to `:legacy` unless runtime overrides it
+- authoritative tests and local perf paths are pinned to
+  `:redis_authoritative`
+- Android does not target `:legacy` or `:shadow`; those remain backend
+  migration/fallback modes
+
 ## Layer Map
 
 - `core.network`: Retrofit/OkHttp and current Phoenix mobile API boundary
@@ -44,16 +63,24 @@ offline packages until the backend formally promotes a new contract.
 - Room is the structured local source for attendee cache, queued scans, replay
   cache, and sync metadata.
 - The Phoenix backend remains the business-rule authority.
-- Foreground/manual flush orchestration is owned by `core.autoflush` (in-process coordinator).
-- WorkManager remains the mechanism for retryable *background* flush when/if enqueued.
+- Foreground/manual flush orchestration is owned by `core.autoflush`.
+- WorkManager remains the mechanism for retryable background flush when/if
+  enqueued.
 - JWT auth is isolated behind `SessionRepository`, `SessionAuthGateway`,
   `SessionProvider`, `SessionVault`, and session metadata storage.
+- The backend request path remains:
+  `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
+- No per-scan durable Postgres mutation belongs in the request path before
+  acknowledgement.
 
-## Truth model (post-B1)
+## Truth Model
 
-- **Durable truth** lives in repositories/Room and is exposed as observable `Flow`s (e.g. queue depth, persisted flush snapshot/outcomes).
-- **Transient orchestration truth** lives in `AutoFlushCoordinator.state` (uploading, retry scheduled metadata, auth expired signal).
-- **UI/ViewModels** are projection-only: do not manually “refresh” durable truth after enqueue/flush; collect the observable sources of truth.
+- **Durable truth** lives in repositories/Room and is exposed as observable
+  `Flow`s such as queue depth and persisted flush outcomes.
+- **Transient orchestration truth** lives in `AutoFlushCoordinator.state`
+  (uploading, retry scheduled metadata, auth expired signal).
+- **UI/ViewModels** are projection-only and must not pretend that local queue
+  capture equals server-confirmed admission.
 
 ## Hilt Scope
 

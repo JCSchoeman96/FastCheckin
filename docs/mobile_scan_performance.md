@@ -8,6 +8,13 @@ This runbook is for protocol-level load testing of the active mobile API contrac
 
 The primary performance target is `POST /api/v1/mobile/scans` running with `MOBILE_SCAN_INGESTION_MODE=redis_authoritative`.
 
+This performance target assumes the current authoritative runtime path:
+
+`validate -> hot-state decision -> enqueue durability -> promote results -> respond`
+
+Admission remains synchronous through acknowledgement. Durable Postgres
+projection happens asynchronously afterward through `scan_persistence`.
+
 Current recorded local baseline:
 
 - `docs/mobile_scan_performance_baseline_2026-03-19.md`
@@ -236,6 +243,9 @@ Online scenarios classify results into:
 - invalid
 - retryable failure
 - auth failure
+
+These categories describe authoritative request-path outcomes. They do not mean
+durable projection has already completed at acknowledgement time.
 
 Capacity runs use a deterministic device pool:
 

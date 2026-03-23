@@ -4,18 +4,24 @@
 
 CameraX and ML Kit feed decoded payloads into local processing only.
 
-`feature/scanning` now owns real scanner preview, analyzer, permission, and
-decode handoff work. The temporary manual/debug queue UI still lives in
-`feature/queue`, not in `feature/scanning`.
+`feature/scanning` owns real scanner preview, analyzer, permission, and decode
+handoff work. The temporary manual/debug queue UI lives in `feature/queue`, not
+in `feature/scanning`.
 
 Pipeline:
 
 1. camera frame enters image analysis
 2. ML Kit decodes candidate barcode payload
 3. decoded value is handed to `DecodedBarcodeHandler`
-4. `ScanCapturePipeline` applies a short global cooldown window and, when eligible, forwards the raw value into the existing queue use case
-5. Room queueing and per-ticket replay suppression run through the current repository path
-6. WorkManager flushes later
+4. `ScanCapturePipeline` applies a short global cooldown window and, when
+   eligible, forwards the raw value into the existing queue use case
+5. Room queueing and per-ticket replay suppression run through the repository
+   path
+6. auto-flush may upload later in-process; WorkManager remains the retryable
+   background fallback when it is enqueued
+
+The pipeline ends at local queue admission only. It does not perform network
+admission, server decision-making, or direct upload work.
 
 No direct network call is allowed from analyzer code, CameraX integration, or
 the immediate decode handoff path.
@@ -27,12 +33,12 @@ the immediate decode handoff path.
 - centralize barcode scanner configuration in one place and restrict formats
   only once the emitted FastCheck/Tickera set is confirmed
 
-These rules exist to minimize latency and avoid frame backlog.
-
 ## Direction
 
 The domain type remains future-capable, but runtime decode flows expose only
 `IN`.
+
+`OUT` remains non-operational for successful mobile business flow.
 
 ## Unresolved Normalization Question
 
@@ -43,18 +49,17 @@ must not introduce hidden normalization policy.
 ## Cooldown vs Replay Suppression
 
 - **ScanCapturePipeline cooldown**:
-  - Enforces a short, global one-code-at-a-time window at the capture handoff boundary.
-  - After any accepted capture, further captures are locally suppressed for a small
-    time window, regardless of whether the next code is the same or different.
-  - Suppressed captures surface as a distinct, non-error outcome and never reach
-    the queue use case.
+  - enforces a short, global one-code-at-a-time window at the capture handoff
+    boundary
+  - suppressed captures surface as a distinct, non-error outcome and never
+    reach the queue use case
 
 - **Repository replay suppression**:
-  - Lives in the data layer and operates per ticket code over a longer window.
-  - Prevents the same ticket from being persisted to the local queue multiple
-    times in quick succession.
-  - Remains a second line of defense and is not responsible for camera-burst
-    behavior or operator-facing one-code-at-a-time guarantees.
+  - lives in the data layer and operates per ticket code over a longer window
+  - prevents the same ticket from being persisted to the local queue multiple
+    times in quick succession
+  - remains a second line of defense and is not responsible for camera-burst
+    behavior or operator-facing one-code-at-a-time guarantees
 
 ## References
 
