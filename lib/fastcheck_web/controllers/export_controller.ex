@@ -126,8 +126,7 @@ defmodule FastCheckWeb.ExportController do
       end)
 
     [headers | rows]
-    |> Enum.map(&encode_csv_row/1)
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", &encode_csv_row/1)
   end
 
   defp generate_check_ins_csv(check_ins) do
@@ -157,14 +156,12 @@ defmodule FastCheckWeb.ExportController do
       end)
 
     [headers | rows]
-    |> Enum.map(&encode_csv_row/1)
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", &encode_csv_row/1)
   end
 
   defp encode_csv_row(fields) do
     fields
-    |> Enum.map(&escape_csv_field/1)
-    |> Enum.join(",")
+    |> Enum.map_join(",", &escape_csv_field/1)
   end
 
   defp escape_csv_field(field) when is_nil(field), do: ""

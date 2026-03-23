@@ -14,6 +14,20 @@ defmodule FastCheckWeb.ScannerPortalLive do
   @valid_tabs ~w(overview camera attendees)
   @default_stats_reconcile_ms 30_000
   @default_force_refresh_every_n_scans 20
+  @error_status_map %{
+    "duplicate_today" => :duplicate_today,
+    "duplicate" => :duplicate_today,
+    "already_inside" => :already_inside,
+    "limit_exceeded" => :limit_exceeded,
+    "not_checked_in" => :not_checked_in,
+    "not_yet_valid" => :not_yet_valid,
+    "expired" => :expired,
+    "invalid" => :invalid,
+    "invalid_ticket" => :invalid,
+    "not_found" => :invalid,
+    "archived_event" => :archived,
+    "scans_disabled" => :archived
+  }
 
   @impl true
   def mount(%{"event_id" => event_id_param} = params, session, socket) do
@@ -220,39 +234,12 @@ defmodule FastCheckWeb.ScannerPortalLive do
     if socket.assigns.syncing do
       {:noreply, socket}
     else
-      parent = self()
-      event_id = socket.assigns.event_id
-
-      case Task.start_link(fn ->
-             result =
-               Events.sync_event(
-                 event_id,
-                 fn page, total, count ->
-                   send(parent, {:scanner_sync_progress, page, total, count})
-                 end,
-                 incremental: true
-               )
-
-             send(parent, {:scanner_sync_complete, result})
-           end) do
+      case start_incremental_sync_task(socket.assigns.event_id, self()) do
         {:ok, pid} ->
-          {:noreply,
-           socket
-           |> assign(:syncing, true)
-           |> assign(:sync_task_pid, pid)
-           |> assign(:sync_progress, {0, 0, 0})
-           |> assign(:sync_status, "Starting incremental sync...")
-           |> assign(:sync_status_kind, :info)
-           |> assign(:menu_open, false)
-           |> assign(:operator_form_open, false)}
+          {:noreply, assign_sync_started(socket, pid)}
 
         {:error, reason} ->
-          {:noreply,
-           socket
-           |> assign(:sync_status, "Unable to start incremental sync: #{inspect(reason)}")
-           |> assign(:sync_status_kind, :danger)
-           |> assign(:menu_open, false)
-           |> assign(:operator_form_open, false)}
+          {:noreply, assign_sync_start_failed(socket, reason)}
       end
     end
   end
@@ -1235,21 +1222,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
     |> String.trim()
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9]+/, "_")
-    |> case do
-      "duplicate_today" -> :duplicate_today
-      "duplicate" -> :duplicate_today
-      "already_inside" -> :already_inside
-      "limit_exceeded" -> :limit_exceeded
-      "not_checked_in" -> :not_checked_in
-      "not_yet_valid" -> :not_yet_valid
-      "expired" -> :expired
-      "invalid" -> :invalid
-      "invalid_ticket" -> :invalid
-      "not_found" -> :invalid
-      "archived_event" -> :archived
-      "scans_disabled" -> :archived
-      _ -> :error
-    end
+    |> then(&Map.get(@error_status_map, &1, :error))
   end
 
   defp success_message(attendee, "exit"),
@@ -1417,14 +1390,46 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp calculate_occupancy_percentage(count, capacity) do
     capacity_value = normalize_capacity(capacity)
 
-    cond do
-      capacity_value <= 0 ->
-        0.0
-
-      true ->
-        count_clamped = min(count, capacity_value)
-        Float.round(count_clamped / capacity_value * 100, 1)
+    if capacity_value <= 0 do
+      0.0
+    else
+      count_clamped = min(count, capacity_value)
+      Float.round(count_clamped / capacity_value * 100, 1)
     end
+  end
+
+  defp start_incremental_sync_task(event_id, parent) do
+    Task.start_link(fn ->
+      result =
+        Events.sync_event(
+          event_id,
+          fn page, total, count ->
+            send(parent, {:scanner_sync_progress, page, total, count})
+          end,
+          incremental: true
+        )
+
+      send(parent, {:scanner_sync_complete, result})
+    end)
+  end
+
+  defp assign_sync_started(socket, pid) do
+    socket
+    |> assign(:syncing, true)
+    |> assign(:sync_task_pid, pid)
+    |> assign(:sync_progress, {0, 0, 0})
+    |> assign(:sync_status, "Starting incremental sync...")
+    |> assign(:sync_status_kind, :info)
+    |> assign(:menu_open, false)
+    |> assign(:operator_form_open, false)
+  end
+
+  defp assign_sync_start_failed(socket, reason) do
+    socket
+    |> assign(:sync_status, "Unable to start incremental sync: #{inspect(reason)}")
+    |> assign(:sync_status_kind, :danger)
+    |> assign(:menu_open, false)
+    |> assign(:operator_form_open, false)
   end
 
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value

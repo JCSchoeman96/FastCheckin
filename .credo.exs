@@ -48,8 +48,12 @@
           # Phoenix apps benefit from slightly longer lines for DSL readability
           {Credo.Check.Readability.MaxLineLength, [priority: :low, max_length: 120]},
           {Credo.Check.Readability.ModuleAttributeNames, []},
-          # Phoenix.Endpoint is generated, doesn't need @moduledoc
-          {Credo.Check.Readability.ModuleDoc, [ignore_names: [~r/FastCheckWeb\.Endpoint/]]},
+          {Credo.Check.Readability.ModuleDoc,
+           [
+             ignore_names: [
+               ~r/(\.\w+Controller|\.Endpoint|\.\w+Live(\.\w+)?|\.Repo|\.Router|\.\w+Socket|\.\w+View|\.\w+HTML|\.\w+JSON|\.Telemetry|\.Layouts|\.Mailer)$/
+             ]
+           ]},
           {Credo.Check.Readability.ModuleNames, []},
           {Credo.Check.Readability.ParenthesesInCondition, []},
           {Credo.Check.Readability.ParenthesesOnZeroArityDefs, []},

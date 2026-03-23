@@ -8,6 +8,8 @@ defmodule FastCheck.Events.SyncLog do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias FastCheck.Repo
+
   @type t :: %__MODULE__{
           id: integer() | nil,
           event_id: integer(),
@@ -72,7 +74,7 @@ defmodule FastCheck.Events.SyncLog do
       pages_processed: 0,
       attendees_synced: 0
     })
-    |> FastCheck.Repo.insert()
+    |> Repo.insert()
   end
 
   @doc """
@@ -82,7 +84,7 @@ defmodule FastCheck.Events.SyncLog do
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def log_sync_completion(sync_log_id, status, attendees_synced, pages_processed)
       when is_integer(sync_log_id) do
-    sync_log = FastCheck.Repo.get!(__MODULE__, sync_log_id)
+    sync_log = Repo.get!(__MODULE__, sync_log_id)
     completed_at = DateTime.utc_now() |> DateTime.truncate(:second)
 
     duration_ms =
@@ -100,7 +102,7 @@ defmodule FastCheck.Events.SyncLog do
       pages_processed: pages_processed,
       duration_ms: duration_ms
     })
-    |> FastCheck.Repo.update()
+    |> Repo.update()
   end
 
   @doc """
@@ -110,7 +112,7 @@ defmodule FastCheck.Events.SyncLog do
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def log_sync_error(sync_log_id, error_message, pages_processed)
       when is_integer(sync_log_id) do
-    sync_log = FastCheck.Repo.get!(__MODULE__, sync_log_id)
+    sync_log = Repo.get!(__MODULE__, sync_log_id)
     completed_at = DateTime.utc_now() |> DateTime.truncate(:second)
 
     duration_ms =
@@ -128,7 +130,7 @@ defmodule FastCheck.Events.SyncLog do
       pages_processed: pages_processed,
       duration_ms: duration_ms
     })
-    |> FastCheck.Repo.update()
+    |> Repo.update()
   end
 
   @doc """
@@ -138,14 +140,14 @@ defmodule FastCheck.Events.SyncLog do
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def update_progress(sync_log_id, pages_processed, attendees_synced)
       when is_integer(sync_log_id) do
-    sync_log = FastCheck.Repo.get!(__MODULE__, sync_log_id)
+    sync_log = Repo.get!(__MODULE__, sync_log_id)
 
     sync_log
     |> changeset(%{
       pages_processed: pages_processed,
       attendees_synced: attendees_synced
     })
-    |> FastCheck.Repo.update()
+    |> Repo.update()
   end
 
   @doc """
@@ -159,6 +161,6 @@ defmodule FastCheck.Events.SyncLog do
     |> where([s], s.event_id == ^event_id)
     |> order_by([s], desc: s.started_at)
     |> limit(^limit)
-    |> FastCheck.Repo.all()
+    |> Repo.all()
   end
 end

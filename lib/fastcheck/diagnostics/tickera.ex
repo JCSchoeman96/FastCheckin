@@ -25,13 +25,11 @@ defmodule FastCheck.Diagnostics.Tickera do
         Map.put(acc, label, probe_endpoint(normalized_site_url, api_key, endpoint))
       end)
 
-    IO.inspect(report, label: "Tickera probe report")
     report
   end
 
   def probe(_site_url, _api_key) do
     report = %{error: "site_url and api_key must be binaries"}
-    IO.inspect(report, label: "Tickera probe report")
     report
   end
 

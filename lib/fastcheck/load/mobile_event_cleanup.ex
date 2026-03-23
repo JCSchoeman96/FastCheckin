@@ -104,20 +104,25 @@ defmodule FastCheck.Load.MobileEventCleanup do
   defp delete_event_data([]), do: {:ok, empty_delete_counts()}
 
   defp delete_event_data(event_ids) do
-    Repo.transaction(fn ->
-      %{
-        oban_jobs: delete_oban_jobs(event_ids),
-        mobile_idempotency_logs:
-          delete_all(from(log in MobileIdempotencyLog, where: log.event_id in ^event_ids)),
-        scan_attempts:
-          delete_all(
-            from(scan_attempt in ScanAttempt, where: scan_attempt.event_id in ^event_ids)
-          ),
-        check_ins: delete_all(from(check_in in CheckIn, where: check_in.event_id in ^event_ids)),
-        attendees: delete_all(from(attendee in Attendee, where: attendee.event_id in ^event_ids)),
-        events: delete_all(from(event in Event, where: event.id in ^event_ids))
-      }
-    end, timeout: :infinity)
+    Repo.transaction(
+      fn ->
+        %{
+          oban_jobs: delete_oban_jobs(event_ids),
+          mobile_idempotency_logs:
+            delete_all(from(log in MobileIdempotencyLog, where: log.event_id in ^event_ids)),
+          scan_attempts:
+            delete_all(
+              from(scan_attempt in ScanAttempt, where: scan_attempt.event_id in ^event_ids)
+            ),
+          check_ins:
+            delete_all(from(check_in in CheckIn, where: check_in.event_id in ^event_ids)),
+          attendees:
+            delete_all(from(attendee in Attendee, where: attendee.event_id in ^event_ids)),
+          events: delete_all(from(event in Event, where: event.id in ^event_ids))
+        }
+      end,
+      timeout: :infinity
+    )
     |> case do
       {:ok, deleted} -> {:ok, deleted}
       {:error, reason} -> {:error, inspect(reason)}
@@ -155,16 +160,21 @@ defmodule FastCheck.Load.MobileEventCleanup do
         case strategy do
           :flushdb ->
             case Redix.command(FastCheck.Redix, ["FLUSHDB"]) do
-              {:ok, "OK"} -> {:ok, %{deleted_keys: 0, status: :ok, strategy: :flushdb}}
+              {:ok, "OK"} ->
+                {:ok, %{deleted_keys: 0, status: :ok, strategy: :flushdb}}
+
               {:error, %Redix.ConnectionError{reason: :closed}} ->
                 {:ok, %{deleted_keys: 0, status: :skipped, strategy: :flushdb}}
-              {:error, reason} -> {:error, "unable to flush redis: #{inspect(reason)}"}
+
+              {:error, reason} ->
+                {:error, "unable to flush redis: #{inspect(reason)}"}
             end
 
           :targeted ->
-            with {:ok, deleted_keys} <- delete_targeted_redis_keys(event_ids) do
-              {:ok, %{deleted_keys: deleted_keys, status: :ok, strategy: :targeted}}
-            else
+            case delete_targeted_redis_keys(event_ids) do
+              {:ok, deleted_keys} ->
+                {:ok, %{deleted_keys: deleted_keys, status: :ok, strategy: :targeted}}
+
               {:error, %Redix.ConnectionError{reason: :closed}} ->
                 {:ok, %{deleted_keys: 0, status: :skipped, strategy: :targeted}}
 

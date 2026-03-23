@@ -1,10 +1,12 @@
 defmodule FastCheckWeb.Api.V1.EventHealthController do
+  @moduledoc false
+
   use FastCheckWeb, :controller
 
   action_fallback FastCheckWeb.FallbackController
 
-  alias FastCheck.Ticketing
   alias FastCheck.CheckIns
+  alias FastCheck.Ticketing
 
   def show(conn, %{"event_id" => event_id_param}) do
     with {:ok, event_id} <- parse_event_id(event_id_param),

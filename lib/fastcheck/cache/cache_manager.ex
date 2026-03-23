@@ -145,10 +145,10 @@ defmodule FastCheck.Cache.CacheManager do
 
   require Logger
   require Cachex.Spec
-  alias Phoenix.PubSub
-  alias FastCheck.Repo
-  alias FastCheck.Events.CheckInConfiguration
   alias FastCheck.Cache.EtsLayer
+  alias FastCheck.Events.CheckInConfiguration
+  alias FastCheck.Repo
+  alias Phoenix.PubSub
 
   @typedoc """
   Describes the cache key used within Cachex. Keys are typically binaries but
@@ -327,20 +327,18 @@ defmodule FastCheck.Cache.CacheManager do
   """
   @spec get_or_put(key(), (-> value()), Keyword.t()) :: cache_result(value())
   def get_or_put(key, callback, opts \\ []) when is_function(callback, 0) do
-    with {:ok, value} <- get(key) do
-      case value do
-        nil ->
-          with {:ok, computed} <- safe_execute(callback),
-               {:ok, true} <- put(key, computed, opts) do
-            {:ok, computed}
-          else
-            {:error, reason} -> {:error, reason}
-          end
+    case get(key) do
+      {:ok, nil} ->
+        with {:ok, computed} <- safe_execute(callback),
+             {:ok, true} <- put(key, computed, opts) do
+          {:ok, computed}
+        else
+          {:error, reason} -> {:error, reason}
+        end
 
-        cached ->
-          {:ok, cached}
-      end
-    else
+      {:ok, cached} ->
+        {:ok, cached}
+
       {:error, :cache_unavailable} ->
         safe_execute(callback)
 
@@ -591,20 +589,7 @@ defmodule FastCheck.Cache.CacheManager do
       key = occupancy_event_key(event_id)
       delta = if(change_type == "entry", do: 1, else: -1)
 
-      case Cachex.transaction(cache_name(), [key], fn cache ->
-             snapshot =
-               case Cachex.get(cache, key) do
-                 {:ok, value} -> normalize_occupancy(value)
-                 _ -> @empty_occupancy
-               end
-
-             updated = apply_occupancy_delta(snapshot, delta)
-
-             case Cachex.put(cache, key, updated, ttl: :timer.seconds(10)) do
-               {:ok, true} -> {:ok, updated}
-               {:error, reason} -> {:error, reason}
-             end
-           end) do
+      case Cachex.transaction(cache_name(), [key], &update_occupancy_snapshot(&1, key, delta)) do
         {:ok, {:ok, updated}} ->
           broadcast_occupancy(event_id, updated.inside, change_type)
           {:ok, updated.inside}
@@ -711,14 +696,7 @@ defmodule FastCheck.Cache.CacheManager do
     if cache_ready?() do
       case Cachex.keys(cache_name(), match: pattern) do
         {:ok, keys} ->
-          count =
-            keys
-            |> Enum.reduce(0, fn key, acc ->
-              case Cachex.del(cache_name(), key) do
-                {:ok, true} -> acc + 1
-                _ -> acc
-              end
-            end)
+          count = delete_matching_keys(keys)
 
           if origin == :local do
             PubSub.broadcast(@pubsub, config()[:pubsub_topic], {@invalidation_event, pattern})
@@ -738,6 +716,35 @@ defmodule FastCheck.Cache.CacheManager do
   defp log_cache_event(type, key) do
     Logger.debug(fn ->
       {"Cache #{type}", cache_key: key}
+    end)
+  end
+
+  defp update_occupancy_snapshot(cache, key, delta) do
+    snapshot = read_occupancy_snapshot(cache, key)
+    updated = apply_occupancy_delta(snapshot, delta)
+    write_occupancy_snapshot(cache, key, updated)
+  end
+
+  defp read_occupancy_snapshot(cache, key) do
+    case Cachex.get(cache, key) do
+      {:ok, value} -> normalize_occupancy(value)
+      _ -> @empty_occupancy
+    end
+  end
+
+  defp write_occupancy_snapshot(cache, key, updated) do
+    case Cachex.put(cache, key, updated, ttl: :timer.seconds(10)) do
+      {:ok, true} -> {:ok, updated}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp delete_matching_keys(keys) do
+    Enum.reduce(keys, 0, fn key, acc ->
+      case Cachex.del(cache_name(), key) do
+        {:ok, true} -> acc + 1
+        _ -> acc
+      end
     end)
   end
 

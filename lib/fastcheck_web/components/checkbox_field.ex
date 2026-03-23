@@ -17,8 +17,8 @@ defmodule FastCheckWeb.Components.CheckboxField do
   """
 
   use Phoenix.Component
-  alias Phoenix.LiveView.Utils
   alias Phoenix.HTML.Form
+  alias Phoenix.LiveView.Utils
   import FastCheckWeb.Components.Icon, only: [icon: 1]
 
   @doc """

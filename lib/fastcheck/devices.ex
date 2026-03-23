@@ -5,8 +5,8 @@ defmodule FastCheck.Devices do
 
   import Ecto.Query, warn: false
 
-  alias FastCheck.Repo
   alias FastCheck.Devices.{Device, DeviceSession, SessionService}
+  alias FastCheck.Repo
 
   @spec get_device(integer()) :: Device.t() | nil
   def get_device(device_id) when is_integer(device_id), do: Repo.get(Device, device_id)

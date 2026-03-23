@@ -7,8 +7,8 @@ defmodule FastCheck.TickeraClient.Fallback do
 
   require Logger
 
-  alias FastCheck.Repo
   alias FastCheck.{Attendees.Attendee, Events, Events.Event}
+  alias FastCheck.Repo
 
   @no_cached "NO_CACHED_DATA"
   @timeout_reasons [:timeout, :connect_timeout, :closed, :nxdomain, :enetunreach, :econnrefused]

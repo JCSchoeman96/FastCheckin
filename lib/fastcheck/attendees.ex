@@ -12,8 +12,8 @@ defmodule FastCheck.Attendees do
 
   require Logger
 
+  alias FastCheck.Attendees.{Attendee, Cache, Query, Scan}
   alias FastCheck.Repo
-  alias FastCheck.Attendees.Attendee
   alias FastCheck.TickeraClient
 
   # Orchestration Functions (true implementation)
@@ -115,7 +115,7 @@ defmodule FastCheck.Attendees do
   @spec check_in(integer(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def check_in(event_id, ticket_code, entrance_name \\ "Main", operator_name \\ nil) do
-    FastCheck.Attendees.Scan.check_in(event_id, ticket_code, entrance_name, operator_name)
+    Scan.check_in(event_id, ticket_code, entrance_name, operator_name)
   end
 
   @doc """
@@ -125,7 +125,7 @@ defmodule FastCheck.Attendees do
   """
   @spec bulk_check_in(integer(), list(map())) :: {:ok, list(map())} | {:error, any()}
   def bulk_check_in(event_id, scans) do
-    FastCheck.Attendees.Scan.bulk_check_in(event_id, scans)
+    Scan.bulk_check_in(event_id, scans)
   end
 
   @doc """
@@ -136,7 +136,7 @@ defmodule FastCheck.Attendees do
   @spec check_in_advanced(integer(), String.t(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def check_in_advanced(event_id, ticket_code, check_in_type, entrance_name, operator_name \\ nil) do
-    FastCheck.Attendees.Scan.check_in_advanced(
+    Scan.check_in_advanced(
       event_id,
       ticket_code,
       check_in_type,
@@ -153,7 +153,7 @@ defmodule FastCheck.Attendees do
   @spec check_out(integer(), String.t(), String.t(), String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def check_out(event_id, ticket_code, entrance_name, operator_name \\ nil) do
-    FastCheck.Attendees.Scan.check_out(event_id, ticket_code, entrance_name, operator_name)
+    Scan.check_out(event_id, ticket_code, entrance_name, operator_name)
   end
 
   @doc """
@@ -164,7 +164,7 @@ defmodule FastCheck.Attendees do
   @spec reset_scan_counters(integer(), String.t()) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def reset_scan_counters(event_id, ticket_code) do
-    FastCheck.Attendees.Scan.reset_scan_counters(event_id, ticket_code)
+    Scan.reset_scan_counters(event_id, ticket_code)
   end
 
   @doc """
@@ -175,7 +175,7 @@ defmodule FastCheck.Attendees do
   @spec mark_manual_entry(integer(), String.t(), String.t(), String.t() | nil, String.t() | nil) ::
           {:ok, Attendee.t(), String.t()} | {:error, String.t(), String.t()}
   def mark_manual_entry(event_id, ticket_code, entrance_name, operator_name \\ nil, notes \\ nil) do
-    FastCheck.Attendees.Scan.mark_manual_entry(
+    Scan.mark_manual_entry(
       event_id,
       ticket_code,
       entrance_name,
@@ -191,7 +191,7 @@ defmodule FastCheck.Attendees do
   """
   @spec get_attendee(integer(), String.t()) :: Attendee.t() | nil
   def get_attendee(event_id, ticket_code) do
-    FastCheck.Attendees.Cache.get_attendee_by_ticket_code(event_id, ticket_code)
+    Cache.get_attendee_by_ticket_code(event_id, ticket_code)
   end
 
   @doc """
@@ -201,7 +201,7 @@ defmodule FastCheck.Attendees do
   """
   @spec get_attendee!(integer()) :: Attendee.t()
   def get_attendee!(attendee_id) do
-    FastCheck.Attendees.Cache.get_attendee!(attendee_id)
+    Cache.get_attendee!(attendee_id)
   end
 
   @doc """
@@ -211,7 +211,7 @@ defmodule FastCheck.Attendees do
   """
   @spec delete_attendee_id_cache(integer()) :: :ok | :error
   def delete_attendee_id_cache(attendee_id) do
-    FastCheck.Attendees.Cache.delete_attendee_id_cache(attendee_id)
+    Cache.delete_attendee_id_cache(attendee_id)
   end
 
   @doc """
@@ -221,7 +221,7 @@ defmodule FastCheck.Attendees do
   """
   @spec list_event_attendees(integer()) :: [Attendee.t()]
   def list_event_attendees(event_id) do
-    FastCheck.Attendees.Cache.list_event_attendees(event_id)
+    Cache.list_event_attendees(event_id)
   end
 
   @doc """
@@ -231,7 +231,7 @@ defmodule FastCheck.Attendees do
   """
   @spec list_event_check_ins(integer()) :: [map()]
   def list_event_check_ins(event_id) do
-    FastCheck.Attendees.Query.list_event_check_ins(event_id)
+    Query.list_event_check_ins(event_id)
   end
 
   @doc """
@@ -241,7 +241,7 @@ defmodule FastCheck.Attendees do
   """
   @spec get_attendees_by_event(integer(), keyword()) :: [Attendee.t()]
   def get_attendees_by_event(event_id, opts \\ []) do
-    FastCheck.Attendees.Cache.get_attendees_by_event(event_id, opts)
+    Cache.get_attendees_by_event(event_id, opts)
   end
 
   @doc """
@@ -251,7 +251,7 @@ defmodule FastCheck.Attendees do
   """
   @spec invalidate_attendees_by_event_cache(integer()) :: :ok | :error
   def invalidate_attendees_by_event_cache(event_id) do
-    FastCheck.Attendees.Cache.invalidate_attendees_by_event_cache(event_id)
+    Cache.invalidate_attendees_by_event_cache(event_id)
   end
 
   @doc """
@@ -264,7 +264,7 @@ defmodule FastCheck.Attendees do
   """
   @spec search_event_attendees(integer(), String.t() | nil, pos_integer()) :: [Attendee.t()]
   def search_event_attendees(event_id, query, limit \\ 20) do
-    FastCheck.Attendees.Query.search_event_attendees(event_id, query, limit)
+    Query.search_event_attendees(event_id, query, limit)
   end
 
   @doc """
@@ -279,9 +279,10 @@ defmodule FastCheck.Attendees do
     # between cache and query operations
     cache_key = "occupancy:event:#{event_id}:breakdown"
 
-    with {:ok, cached} <- fetch_from_cachex(cache_key) do
-      cached
-    else
+    case fetch_from_cachex(cache_key) do
+      {:ok, cached} ->
+        cached
+
       _ ->
         breakdown = FastCheck.Attendees.Query.compute_occupancy_breakdown(event_id)
         persist_to_cachex(cache_key, breakdown)
@@ -310,7 +311,7 @@ defmodule FastCheck.Attendees do
           percentage: float()
         }
   def get_event_stats(event_id) do
-    FastCheck.Attendees.Query.get_event_stats(event_id)
+    Query.get_event_stats(event_id)
   end
 
   # Private Helpers

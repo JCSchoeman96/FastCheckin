@@ -10,16 +10,14 @@ defmodule FastCheck.Crypto do
   """
   @spec encrypt(binary()) :: {:ok, binary()} | {:error, term()}
   def encrypt(plaintext) when is_binary(plaintext) do
-    try do
-      ciphertext =
-        plaintext
-        |> MessageEncryptor.encrypt(encryption_secret(), signing_secret())
-        |> Base.encode64()
+    ciphertext =
+      plaintext
+      |> MessageEncryptor.encrypt(encryption_secret(), signing_secret())
+      |> Base.encode64()
 
-      {:ok, ciphertext}
-    rescue
-      error -> {:error, error}
-    end
+    {:ok, ciphertext}
+  rescue
+    error -> {:error, error}
   end
 
   def encrypt(_), do: {:error, :invalid_plaintext}
@@ -41,20 +39,18 @@ defmodule FastCheck.Crypto do
   def decrypt(_), do: {:error, :invalid_ciphertext}
 
   defp do_decrypt(encoded) do
-    try do
-      case MessageEncryptor.decrypt(encoded, encryption_secret(), signing_secret()) do
-        {:ok, plaintext} when is_binary(plaintext) ->
-          {:ok, plaintext}
+    case MessageEncryptor.decrypt(encoded, encryption_secret(), signing_secret()) do
+      {:ok, plaintext} when is_binary(plaintext) ->
+        {:ok, plaintext}
 
-        :error ->
-          {:error, :invalid_ciphertext}
+      :error ->
+        {:error, :invalid_ciphertext}
 
-        _other ->
-          {:error, :invalid_ciphertext}
-      end
-    rescue
-      _ -> {:error, :invalid_ciphertext}
+      _other ->
+        {:error, :invalid_ciphertext}
     end
+  rescue
+    _ -> {:error, :invalid_ciphertext}
   end
 
   defp encryption_secret do

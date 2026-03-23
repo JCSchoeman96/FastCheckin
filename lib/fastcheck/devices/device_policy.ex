@@ -5,8 +5,8 @@ defmodule FastCheck.Devices.DevicePolicy do
 
   import Ecto.Query, warn: false
 
-  alias FastCheck.Repo
   alias FastCheck.Events.CheckInConfiguration
+  alias FastCheck.Repo
   alias FastCheck.Ticketing.Event
 
   @spec offline_capable?(Event.t()) :: boolean()

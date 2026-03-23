@@ -11,10 +11,16 @@ defmodule FastCheck.Integration.EndToEndTest do
   """
 
   use FastCheckWeb.ConnCase, async: false
-  import Phoenix.LiveViewTest
   import FastCheck.Fixtures
+  import Phoenix.LiveViewTest
 
-  alias FastCheck.{Repo, Events, Attendees, Attendees.Attendee, Events.Event}
+  alias FastCheck.Attendees
+  alias FastCheck.Attendees.Attendee
+  alias FastCheck.Events
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
+  alias FastCheckWeb.ConnCase
+  alias Plug.Conn
 
   @moduletag :integration
 
@@ -126,11 +132,11 @@ defmodule FastCheck.Integration.EndToEndTest do
 
       # Step 7: Test export functionality
       conn = get(conn, ~p"/export/attendees/#{event.id}")
-      assert FastCheckWeb.ConnCase.response_content_type(conn, :csv)
+      assert ConnCase.response_content_type(conn, :csv)
       assert conn.status == 200
 
       conn = get(conn, ~p"/export/check-ins/#{event.id}")
-      assert FastCheckWeb.ConnCase.response_content_type(conn, :csv)
+      assert ConnCase.response_content_type(conn, :csv)
       assert conn.status == 200
     end
 
@@ -165,7 +171,7 @@ defmodule FastCheck.Integration.EndToEndTest do
       |> render_click()
 
       # Enter bulk codes
-      codes = Enum.map(attendees, & &1.ticket_code) |> Enum.join("\n")
+      codes = Enum.map_join(attendees, "\n", & &1.ticket_code)
 
       view
       |> form("#bulk-scan-form", %{codes: codes})
@@ -187,20 +193,20 @@ defmodule FastCheck.Integration.EndToEndTest do
     # Mock check_credentials endpoint
     Bypass.stub(bypass, "GET", "/tc-api/#{api_key}/check_credentials", fn conn ->
       response = mock_check_credentials_response(true)
-      Plug.Conn.resp(conn, 200, Jason.encode!(response))
+      Conn.resp(conn, 200, Jason.encode!(response))
     end)
 
     # Mock event_essentials endpoint
     Bypass.stub(bypass, "GET", "/tc-api/#{api_key}/event_essentials", fn conn ->
       response = mock_event_essentials_response()
-      Plug.Conn.resp(conn, 200, Jason.encode!(response))
+      Conn.resp(conn, 200, Jason.encode!(response))
     end)
 
     # Mock tickets_info endpoint (first page) - 100 per page to keep it simple
     Bypass.stub(bypass, "GET", "/tc-api/#{api_key}/tickets_info/50/1/", fn conn ->
       # 50 total tickets
       response = mock_tickets_info_response(1, 50, 50)
-      Plug.Conn.resp(conn, 200, Jason.encode!(response))
+      Conn.resp(conn, 200, Jason.encode!(response))
     end)
 
     Bypass.stub(bypass, "GET", "/tc-api/#{api_key}/tickets_info/50/2/", fn conn ->
@@ -209,7 +215,7 @@ defmodule FastCheck.Integration.EndToEndTest do
         "additional" => %{"results_count" => 50}
       }
 
-      Plug.Conn.resp(conn, 200, Jason.encode!(response))
+      Conn.resp(conn, 200, Jason.encode!(response))
     end)
   end
 

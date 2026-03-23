@@ -4,6 +4,7 @@ defmodule FastCheck.Scans.HotState.RedisStore do
   """
 
   import Ecto.Query, only: [from: 2]
+  require Logger
 
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Repo
@@ -235,48 +236,61 @@ defmodule FastCheck.Scans.HotState.RedisStore do
   end
 
   defp do_build_event_snapshot(namespace, event_id, lock_key) do
-    try do
-      version = Integer.to_string(System.system_time(:millisecond))
-
-      attendees =
-        Repo.all(
-          from attendee in Attendee,
-            where: attendee.event_id == ^event_id,
-            select: %{
-              attendee_id: attendee.id,
-              ticket_code: attendee.ticket_code,
-              payment_status: attendee.payment_status,
-              allowed_checkins: attendee.allowed_checkins,
-              checkins_remaining: attendee.checkins_remaining,
-              checked_in_at: attendee.checked_in_at
-            }
-        )
-
-      ticket_commands =
-        Enum.map(attendees, fn attendee ->
-          [
-            "HSET",
-            Keyspace.ticket(namespace, event_id, version, attendee.ticket_code),
-            "attendee_id",
-            to_string(attendee.attendee_id),
-            "payment_status",
-            normalize_binary(attendee.payment_status, "unknown"),
-            "allowed_checkins",
-            to_string(attendee.allowed_checkins || 1),
-            "checkins_remaining",
-            to_string(attendee.checkins_remaining || attendee.allowed_checkins || 1),
-            "checked_in_at",
-            datetime_to_string(attendee.checked_in_at)
-          ]
-        end)
-
-      with {:ok, _} <- maybe_pipeline(ticket_commands),
-           {:ok, "OK"} <-
-             redis_command(["SET", Keyspace.active_version(namespace, event_id), version]) do
-        {:ok, version}
-      end
-    after
+    result = materialize_event_snapshot(namespace, event_id)
+    _ = redis_command(["DEL", lock_key])
+    result
+  rescue
+    exception ->
       _ = redis_command(["DEL", lock_key])
+
+      Logger.error(
+        "failed to build event snapshot",
+        event_id: event_id,
+        reason: inspect(exception)
+      )
+
+      {:error, exception}
+  end
+
+  defp materialize_event_snapshot(namespace, event_id) do
+    version = Integer.to_string(System.system_time(:millisecond))
+
+    attendees =
+      Repo.all(
+        from attendee in Attendee,
+          where: attendee.event_id == ^event_id,
+          select: %{
+            attendee_id: attendee.id,
+            ticket_code: attendee.ticket_code,
+            payment_status: attendee.payment_status,
+            allowed_checkins: attendee.allowed_checkins,
+            checkins_remaining: attendee.checkins_remaining,
+            checked_in_at: attendee.checked_in_at
+          }
+      )
+
+    ticket_commands =
+      Enum.map(attendees, fn attendee ->
+        [
+          "HSET",
+          Keyspace.ticket(namespace, event_id, version, attendee.ticket_code),
+          "attendee_id",
+          to_string(attendee.attendee_id),
+          "payment_status",
+          normalize_binary(attendee.payment_status, "unknown"),
+          "allowed_checkins",
+          to_string(attendee.allowed_checkins || 1),
+          "checkins_remaining",
+          to_string(attendee.checkins_remaining || attendee.allowed_checkins || 1),
+          "checked_in_at",
+          datetime_to_string(attendee.checked_in_at)
+        ]
+      end)
+
+    with {:ok, _} <- maybe_pipeline(ticket_commands),
+         {:ok, "OK"} <-
+           redis_command(["SET", Keyspace.active_version(namespace, event_id), version]) do
+      {:ok, version}
     end
   end
 

@@ -8,8 +8,8 @@ defmodule FastCheck.Ticketing do
 
   import Ecto.Query, warn: false
 
-  alias FastCheck.Repo
   alias FastCheck.Events
+  alias FastCheck.Repo
   alias FastCheck.Ticketing.{Event, Gate, Ticket, TicketNormalizer}
 
   @spec get_event(integer()) :: Event.t() | nil

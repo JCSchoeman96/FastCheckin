@@ -7,16 +7,16 @@ defmodule FastCheck.Events.Sync do
   require Logger
 
   alias Ecto.Changeset
-  alias FastCheck.Repo
-  alias FastCheck.Events.Event
   alias FastCheck.Attendees
-  alias FastCheck.TickeraClient
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Cache
+  alias FastCheck.Events.Event
   alias FastCheck.Events.Stats
   alias FastCheck.Events.SyncLog
   alias FastCheck.Events.SyncState
+  alias FastCheck.Repo
+  alias FastCheck.TickeraClient
 
   @doc """
   Synchronizes attendees for the specified event and updates status timestamps.
@@ -36,127 +36,134 @@ defmodule FastCheck.Events.Sync do
     Logger.info("Starting #{sync_type} attendee sync for event #{event_id}")
 
     case Repo.get(Event, event_id) do
-      nil ->
-        {:error, "Event not found"}
+      nil -> {:error, "Event not found"}
+      %Event{} = event -> sync_loaded_event(event, progress_callback, incremental)
+    end
+  end
 
-      %Event{} = event ->
-        case Events.can_sync_event?(event) do
-          {:ok, _state} ->
-            mark_syncing(event)
+  defp sync_loaded_event(event, progress_callback, incremental) do
+    case Events.can_sync_event?(event) do
+      {:ok, _state} ->
+        run_event_sync(event, progress_callback, incremental)
 
-            # Log sync start
-            sync_log_id =
-              case SyncLog.log_sync_start(event_id) do
-                {:ok, log} -> log.id
-                {:error, _reason} -> nil
-              end
+      {:error, {:event_archived, message}} ->
+        Logger.warning("Sync attempt blocked for archived event #{event.id}")
+        {:error, message}
 
-            # Initialize sync state for pause/resume
-            SyncState.init_sync(event_id, sync_log_id)
+      {:error, {_reason, message}} ->
+        {:error, message}
+    end
+  end
 
-            # Wrap progress callback to include logging and pause checks
-            callback =
-              wrap_progress_callback_with_pause_check(progress_callback, sync_log_id, event_id)
+  defp run_event_sync(event, progress_callback, incremental) do
+    mark_syncing(event)
+    sync_log_id = log_sync_start_id(event.id)
+    SyncState.init_sync(event.id, sync_log_id)
 
-            case get_tickera_api_key(event) do
-              {:ok, api_key} ->
-                _ = refresh_event_window_from_tickera(event, api_key)
+    callback =
+      wrap_progress_callback_with_pause_check(progress_callback, sync_log_id, event.id)
 
-                case TickeraClient.fetch_all_attendees(
-                       event.tickera_site_url,
-                       api_key,
-                       50,
-                       callback
-                     ) do
-                  {:ok, attendees, total_count} ->
-                    Logger.info("Fetched #{total_count} attendees for event #{event.id}")
+    case get_tickera_api_key(event) do
+      {:ok, api_key} ->
+        sync_event_with_api_key(event, api_key, callback, incremental, sync_log_id)
 
-                    # Filter attendees for incremental sync
-                    attendees_to_process =
-                      if incremental do
-                        filter_incremental_attendees(event.id, attendees, event.last_sync_at)
-                      else
-                        attendees
-                      end
+      {:error, :decryption_failed} ->
+        fail_sync(event, sync_log_id, :decryption_failed, "Unable to decrypt Tickera credentials")
+    end
+  end
 
-                    case Attendees.create_bulk(event.id, attendees_to_process,
-                           incremental: incremental
-                         ) do
-                      {:ok, processed_count} ->
-                        finalize_sync(event)
+  defp sync_event_with_api_key(event, api_key, callback, incremental, sync_log_id) do
+    _ = refresh_event_window_from_tickera(event, api_key)
 
-                        count_message =
-                          if incremental do
-                            "#{processed_count} new/updated out of #{total_count} total"
-                          else
-                            resolve_synced_count(processed_count, attendees, total_count)
-                          end
+    case TickeraClient.fetch_all_attendees(event.tickera_site_url, api_key, 50, callback) do
+      {:ok, attendees, total_count} ->
+        process_fetched_attendees(event, attendees, total_count, incremental, sync_log_id)
 
-                        # Get actual pages processed from sync state BEFORE clearing
-                        actual_pages_processed =
-                          case SyncState.get_state(event_id) do
-                            %{current_page: page} when is_integer(page) and page > 0 -> page
-                            # At least 1 page if we got results
-                            _ -> 1
-                          end
+      {:error, reason, _partial} ->
+        fail_sync(event, sync_log_id, reason, format_reason(reason))
+    end
+  end
 
-                        # Clear sync state after extracting page count
-                        SyncState.clear_state(event_id)
+  defp process_fetched_attendees(event, attendees, total_count, incremental, sync_log_id) do
+    Logger.info("Fetched #{total_count} attendees for event #{event.id}")
 
-                        # Log successful completion with actual pages processed
-                        if sync_log_id do
-                          SyncLog.log_sync_completion(
-                            sync_log_id,
-                            "completed",
-                            processed_count,
-                            actual_pages_processed
-                          )
-                        end
+    attendees_to_process = attendees_for_sync(event, attendees, incremental)
 
-                        Cache.invalidate_event_cache(event.id)
-                        Cache.invalidate_events_list_cache()
-                        Stats.invalidate_event_stats_cache(event.id)
-                        Stats.invalidate_occupancy_cache(event.id)
-                        stats = Stats.get_event_stats(event.id)
-                        Stats.broadcast_event_stats(event.id, stats)
+    case Attendees.create_bulk(event.id, attendees_to_process, incremental: incremental) do
+      {:ok, processed_count} ->
+        complete_sync(event, attendees, total_count, processed_count, incremental, sync_log_id)
 
-                        sync_message =
-                          if incremental,
-                            do: "Incremental sync: #{count_message}",
-                            else: "Synced #{count_message} attendees"
+      {:error, reason} ->
+        fail_sync(event, sync_log_id, reason, format_reason(reason))
+    end
+  end
 
-                        {:ok, sync_message}
+  defp attendees_for_sync(event, attendees, true) do
+    filter_incremental_attendees(event.id, attendees, event.last_sync_at)
+  end
 
-                      {:error, reason} ->
-                        log_sync_failure(sync_log_id, event_id, reason)
-                        mark_error(event, reason)
-                        SyncState.clear_state(event_id)
-                        {:error, format_reason(reason)}
-                    end
+  defp attendees_for_sync(_event, attendees, false), do: attendees
 
-                  {:error, reason, _partial} ->
-                    log_sync_failure(sync_log_id, event_id, reason)
-                    mark_error(event, reason)
-                    SyncState.clear_state(event_id)
-                    {:error, format_reason(reason)}
-                end
+  defp complete_sync(event, attendees, total_count, processed_count, incremental, sync_log_id) do
+    finalize_sync(event)
 
-              {:error, :decryption_failed} ->
-                log_sync_failure(sync_log_id, event_id, :decryption_failed)
-                mark_error(event, :decryption_failed)
-                SyncState.clear_state(event_id)
-                {:error, "Unable to decrypt Tickera credentials"}
-            end
+    count_message =
+      build_sync_count_message(incremental, processed_count, attendees, total_count)
 
-          {:error, {:event_archived, message}} ->
-            Logger.warning("Sync attempt blocked for archived event #{event.id}")
-            # No sync state was initialized for blocked syncs
-            {:error, message}
+    actual_pages_processed = current_sync_pages(event.id)
+    SyncState.clear_state(event.id)
+    maybe_log_sync_completion(sync_log_id, processed_count, actual_pages_processed)
+    invalidate_sync_caches(event.id)
 
-          {:error, {_reason, message}} ->
-            # No sync state was initialized for blocked syncs
-            {:error, message}
-        end
+    sync_message =
+      if incremental,
+        do: "Incremental sync: #{count_message}",
+        else: "Synced #{count_message} attendees"
+
+    {:ok, sync_message}
+  end
+
+  defp build_sync_count_message(true, processed_count, _attendees, total_count) do
+    "#{processed_count} new/updated out of #{total_count} total"
+  end
+
+  defp build_sync_count_message(false, processed_count, attendees, total_count) do
+    resolve_synced_count(processed_count, attendees, total_count)
+  end
+
+  defp current_sync_pages(event_id) do
+    case SyncState.get_state(event_id) do
+      %{current_page: page} when is_integer(page) and page > 0 -> page
+      _ -> 1
+    end
+  end
+
+  defp maybe_log_sync_completion(nil, _processed_count, _actual_pages_processed), do: :ok
+
+  defp maybe_log_sync_completion(sync_log_id, processed_count, actual_pages_processed) do
+    SyncLog.log_sync_completion(sync_log_id, "completed", processed_count, actual_pages_processed)
+  end
+
+  defp invalidate_sync_caches(event_id) do
+    Cache.invalidate_event_cache(event_id)
+    Cache.invalidate_events_list_cache()
+    Stats.invalidate_event_stats_cache(event_id)
+    Stats.invalidate_occupancy_cache(event_id)
+    stats = Stats.get_event_stats(event_id)
+    Stats.broadcast_event_stats(event_id, stats)
+  end
+
+  defp fail_sync(event, sync_log_id, reason, message) do
+    log_sync_failure(sync_log_id, event.id, reason)
+    mark_error(event, reason)
+    SyncState.clear_state(event.id)
+    {:error, message}
+  end
+
+  defp log_sync_start_id(event_id) do
+    case SyncLog.log_sync_start(event_id) do
+      {:ok, log} -> log.id
+      {:error, _reason} -> nil
     end
   end
 
@@ -730,34 +737,28 @@ defmodule FastCheck.Events.Sync do
   defp parse_int(_value), do: :error
 
   defp adjust_hour(hour, meridian) when is_integer(hour) and hour >= 0 and hour <= 23 do
-    normalized_meridian =
-      meridian
-      |> to_string()
-      |> String.trim()
-      |> String.downcase()
-
-    case normalized_meridian do
-      "" ->
-        {:ok, hour}
-
-      "am" ->
-        {:ok, if(hour == 12, do: 0, else: hour)}
-
-      "vm" ->
-        {:ok, if(hour == 12, do: 0, else: hour)}
-
-      "pm" ->
-        {:ok, if(hour < 12, do: hour + 12, else: hour)}
-
-      "nm" ->
-        {:ok, if(hour < 12, do: hour + 12, else: hour)}
-
-      _ ->
-        {:ok, hour}
+    case normalize_meridian(meridian) do
+      :am -> {:ok, normalize_am_hour(hour)}
+      :pm -> {:ok, normalize_pm_hour(hour)}
+      _ -> {:ok, hour}
     end
   end
 
   defp adjust_hour(_hour, _meridian), do: :error
+
+  defp normalize_meridian(meridian) do
+    case meridian |> to_string() |> String.trim() |> String.downcase() do
+      meridian when meridian in ["am", "vm"] -> :am
+      meridian when meridian in ["pm", "nm"] -> :pm
+      _ -> :none
+    end
+  end
+
+  defp normalize_am_hour(12), do: 0
+  defp normalize_am_hour(hour), do: hour
+
+  defp normalize_pm_hour(hour) when hour < 12, do: hour + 12
+  defp normalize_pm_hour(hour), do: hour
 
   defp update_sync_timestamp(event_id, updates, _timestamp) do
     from(e in Event, where: e.id == ^event_id)

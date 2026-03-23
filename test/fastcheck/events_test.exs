@@ -2,11 +2,11 @@ defmodule FastCheck.EventsTest do
   use FastCheck.DataCase, async: false
 
   alias Ecto.Changeset
-  alias FastCheck.Events
-  alias FastCheck.Events.{CheckInConfiguration, Event}
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
+  alias FastCheck.Events
+  alias FastCheck.Events.{CheckInConfiguration, Event}
   alias FastCheck.Repo
 
   setup do

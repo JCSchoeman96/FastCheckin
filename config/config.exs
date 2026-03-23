@@ -66,15 +66,79 @@ config :tailwind,
     cd: Path.expand("..", __DIR__)
   ]
 
+logger_metadata = [
+  :request_id,
+  :event_id,
+  :user_id,
+  :ip,
+  :device_id,
+  :action_required,
+  :active_bans,
+  :attendee_id,
+  :attempt,
+  :ban_count,
+  :ban_reason,
+  :ban_until,
+  :blocks,
+  :blocks_per_minute,
+  :cf_ray,
+  :code,
+  :content_length,
+  :content_type,
+  :count,
+  :duplicate,
+  :duration_ms,
+  :entries,
+  :entrance_name,
+  :error,
+  :event_name,
+  :expired_bans,
+  :kind,
+  :limit,
+  :memory_kb,
+  :method,
+  :old_counters,
+  :operator,
+  :path,
+  :payload,
+  :payment_status,
+  :period,
+  :plug,
+  :previous_ban_until,
+  :query,
+  :query_time_ms,
+  :raw_size,
+  :raw_type,
+  :reason,
+  :response_time_ms,
+  :result,
+  :route,
+  :scan_count,
+  :server,
+  :since,
+  :source,
+  :status,
+  :success,
+  :sync_type,
+  :table,
+  :threshold,
+  :ticket_code,
+  :top_violators_count,
+  :total,
+  :trigger_path,
+  :url,
+  :user_agent
+]
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :event_id, :user_id, :ip, :device_id]
+  metadata: logger_metadata
 
 # Console logger configuration with metadata
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :event_id, :user_id, :ip, :device_id]
+  metadata: logger_metadata
 
 # Cache manager configuration
 config :fastcheck, FastCheck.Cache.CacheManager,

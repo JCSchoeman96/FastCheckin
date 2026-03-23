@@ -2,19 +2,16 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   use FastCheckWeb.ConnCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
-  alias FastCheck.{
-    Repo,
-    Events.Event,
-    Attendees.Attendee,
-    Attendees.CheckIn,
-    Attendees.CheckInSession,
-    Mobile.Token,
-    Mobile.MobileIdempotencyLog,
-    Crypto,
-    Scans.ScanAttempt
-  }
-
+  alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.CheckIn
+  alias FastCheck.Attendees.CheckInSession
+  alias FastCheck.Crypto
+  alias FastCheck.Events.Event
+  alias FastCheck.Mobile.MobileIdempotencyLog
+  alias FastCheck.Mobile.Token
+  alias FastCheck.Repo
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
+  alias FastCheck.Scans.ScanAttempt
   alias FastCheck.TestSupport.Scans.InMemoryStore
 
   setup do

@@ -7,14 +7,14 @@ defmodule FastCheck.Events.Stats do
   require Logger
 
   alias Ecto.Changeset
-  alias FastCheck.Repo
-  alias FastCheck.Events.Event
   alias FastCheck.Attendees
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Cache.CacheManager
-  alias FastCheck.TickeraClient
-  alias FastCheck.Events.CheckInConfiguration
   alias FastCheck.Events.Cache
+  alias FastCheck.Events.CheckInConfiguration
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
+  alias FastCheck.TickeraClient
 
   @default_event_stats %{
     total_tickets: 0,
@@ -150,111 +150,109 @@ defmodule FastCheck.Events.Stats do
   """
   @spec get_event_advanced_stats(integer()) :: map()
   def get_event_advanced_stats(event_id) when is_integer(event_id) do
-    try do
-      attendee_scope = from(a in Attendee, where: a.event_id == ^event_id)
-      start_of_day = beginning_of_day_utc()
+    attendee_scope = from(a in Attendee, where: a.event_id == ^event_id)
+    start_of_day = beginning_of_day_utc()
 
-      total_attendees =
-        attendee_scope |> select([a], count(a.id)) |> Repo.one() |> normalize_count()
+    total_attendees =
+      attendee_scope |> select([a], count(a.id)) |> Repo.one() |> normalize_count()
 
-      checked_in =
-        attendee_scope
-        |> where([a], not is_nil(a.checked_in_at))
-        |> select([a], count(a.id))
-        |> Repo.one()
-        |> normalize_count()
+    checked_in =
+      attendee_scope
+      |> where([a], not is_nil(a.checked_in_at))
+      |> select([a], count(a.id))
+      |> Repo.one()
+      |> normalize_count()
 
-      pending = max(total_attendees - checked_in, 0)
+    pending = max(total_attendees - checked_in, 0)
 
-      {currently_inside, occupancy_percentage, cached_entry_total, cached_exit_total} =
-        case CacheManager.get_cached_occupancy(event_id) do
-          {:ok, %{inside: inside, percentage: pct, total_entries: ent, total_exits: ext}} ->
-            {inside, pct, ent, ext}
+    {currently_inside, occupancy_percentage, cached_entry_total, cached_exit_total} =
+      case CacheManager.get_cached_occupancy(event_id) do
+        {:ok, %{inside: inside, percentage: pct, total_entries: ent, total_exits: ext}} ->
+          {inside, pct, ent, ext}
 
-          _ ->
-            fallback_inside =
-              attendee_scope
-              |> where([a], not is_nil(a.checked_in_at))
-              |> where([a], is_nil(a.checked_out_at) or a.checked_out_at < a.checked_in_at)
-              |> select([a], count(a.id))
-              |> Repo.one()
-              |> normalize_count()
+        _ ->
+          fallback_inside =
+            attendee_scope
+            |> where([a], not is_nil(a.checked_in_at))
+            |> where([a], is_nil(a.checked_out_at) or a.checked_out_at < a.checked_in_at)
+            |> select([a], count(a.id))
+            |> Repo.one()
+            |> normalize_count()
 
-            {fallback_inside, compute_percentage(fallback_inside, total_attendees), nil, nil}
-        end
+          {fallback_inside, compute_percentage(fallback_inside, total_attendees), nil, nil}
+      end
 
-      scans_today =
-        attendee_scope
-        |> where([a], not is_nil(a.checked_in_at) and a.checked_in_at >= ^start_of_day)
-        |> select([a], count(a.id))
-        |> Repo.one()
-        |> normalize_count()
+    scans_today =
+      attendee_scope
+      |> where([a], not is_nil(a.checked_in_at) and a.checked_in_at >= ^start_of_day)
+      |> select([a], count(a.id))
+      |> Repo.one()
+      |> normalize_count()
 
-      per_entrance = fetch_per_entrance_stats(event_id)
+    per_entrance = fetch_per_entrance_stats(event_id)
 
-      total_entries =
-        cached_entry_total ||
-          Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
+    total_entries =
+      cached_entry_total ||
+        Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.entries) end)
 
-      total_exits =
-        cached_exit_total ||
-          Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
+    total_exits =
+      cached_exit_total ||
+        Enum.reduce(per_entrance, 0, fn stat, acc -> acc + normalize_count(stat.exits) end)
 
-      avg_session_seconds =
-        attendee_scope
-        |> where([a], not is_nil(a.checked_in_at) and not is_nil(a.checked_out_at))
-        |> select(
-          [a],
-          fragment("avg(extract(epoch from (? - ?)))", a.checked_out_at, a.checked_in_at)
-        )
-        |> Repo.one()
-        |> normalize_float()
+    avg_session_seconds =
+      attendee_scope
+      |> where([a], not is_nil(a.checked_in_at) and not is_nil(a.checked_out_at))
+      |> select(
+        [a],
+        fragment("avg(extract(epoch from (? - ?)))", a.checked_out_at, a.checked_in_at)
+      )
+      |> Repo.one()
+      |> normalize_float()
 
-      average_session_minutes =
-        avg_session_seconds
-        |> Kernel./(60)
-        |> Float.round(2)
-        |> max(0.0)
+    average_session_minutes =
+      avg_session_seconds
+      |> Kernel./(60)
+      |> Float.round(2)
+      |> max(0.0)
 
-      configs = Repo.all(from(c in CheckInConfiguration, where: c.event_id == ^event_id))
+    configs = Repo.all(from(c in CheckInConfiguration, where: c.event_id == ^event_id))
 
-      total_config_limit =
-        configs
-        |> Enum.reduce(0, fn config, acc ->
-          limit = config.daily_check_in_limit || config.allowed_checkins || 0
-          acc + normalize_count(limit)
-        end)
+    total_config_limit =
+      configs
+      |> Enum.reduce(0, fn config, acc ->
+        limit = config.daily_check_in_limit || config.allowed_checkins || 0
+        acc + normalize_count(limit)
+      end)
 
-      available_tomorrow = max(total_config_limit - scans_today, 0)
+    available_tomorrow = max(total_config_limit - scans_today, 0)
 
-      time_basis_info =
-        configs
-        |> Enum.map(&compact_time_basis_info/1)
-        |> Enum.reject(&(&1 == %{}))
+    time_basis_info =
+      configs
+      |> Enum.map(&compact_time_basis_info/1)
+      |> Enum.reject(&(&1 == %{}))
 
-      %{
-        total_attendees: total_attendees,
-        checked_in: checked_in,
-        pending: pending,
-        checked_in_percentage: compute_percentage(checked_in, total_attendees),
-        currently_inside: currently_inside,
-        scans_today: scans_today,
-        per_entrance: per_entrance,
-        total_entries: total_entries,
-        total_exits: total_exits,
-        occupancy_percentage: occupancy_percentage,
-        available_tomorrow: available_tomorrow,
-        time_basis_info: time_basis_info,
-        average_session_duration_minutes: average_session_minutes
-      }
-    rescue
-      exception ->
-        Logger.error(
-          "Failed to compute advanced stats for event #{event_id}: #{Exception.message(exception)}"
-        )
+    %{
+      total_attendees: total_attendees,
+      checked_in: checked_in,
+      pending: pending,
+      checked_in_percentage: compute_percentage(checked_in, total_attendees),
+      currently_inside: currently_inside,
+      scans_today: scans_today,
+      per_entrance: per_entrance,
+      total_entries: total_entries,
+      total_exits: total_exits,
+      occupancy_percentage: occupancy_percentage,
+      available_tomorrow: available_tomorrow,
+      time_basis_info: time_basis_info,
+      average_session_duration_minutes: average_session_minutes
+    }
+  rescue
+    exception ->
+      Logger.error(
+        "Failed to compute advanced stats for event #{event_id}: #{Exception.message(exception)}"
+      )
 
-        default_advanced_stats()
-    end
+      default_advanced_stats()
   end
 
   def get_event_advanced_stats(_), do: default_advanced_stats()
@@ -531,16 +529,14 @@ defmodule FastCheck.Events.Stats do
   end
 
   defp ensure_event_credentials(%Event{tickera_site_url: site_url} = event) do
-    cond do
-      not present?(site_url) ->
-        {:error, "MISSING_CREDENTIALS"}
-
-      true ->
-        # Use Sync module to get api key
-        case FastCheck.Events.Sync.get_tickera_api_key(event) do
-          {:ok, api_key} -> {:ok, site_url, api_key}
-          {:error, :decryption_failed} -> {:error, :decryption_failed}
-        end
+    if present?(site_url) do
+      # Use Sync module to get api key
+      case FastCheck.Events.Sync.get_tickera_api_key(event) do
+        {:ok, api_key} -> {:ok, site_url, api_key}
+        {:error, :decryption_failed} -> {:error, :decryption_failed}
+      end
+    else
+      {:error, "MISSING_CREDENTIALS"}
     end
   end
 
