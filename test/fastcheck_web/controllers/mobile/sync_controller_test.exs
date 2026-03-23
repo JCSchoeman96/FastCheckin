@@ -2,19 +2,25 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   use FastCheckWeb.ConnCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  import Ecto.Query
+
+  alias Ecto.Adapters.SQL.Sandbox
+
   alias FastCheck.{
-    Repo,
-    Events.Event,
     Attendees.Attendee,
     Attendees.CheckIn,
     Attendees.CheckInSession,
-    Mobile.Token,
-    Mobile.MobileIdempotencyLog,
     Crypto,
+    Events.Event,
+    Mobile.MobileIdempotencyLog,
+    Mobile.Token,
+    Repo,
     Scans.ScanAttempt
   }
 
+  alias FastCheck.Scans.HotState.RedisStore
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
+  alias FastCheck.Scans.MobileUploadService
   alias FastCheck.TestSupport.Scans.InMemoryStore
 
   setup do
@@ -511,6 +517,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       event: event
     } do
       configure_mode(:redis_authoritative)
+      assert_authoritative_mode!()
       event_id = event.id
 
       scan = %{
@@ -531,6 +538,16 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert result["idempotency_key"] == "controller-auth-1"
       assert result["status"] == "success"
+      assert contract_keys(result) == ["idempotency_key", "message", "status"]
+
+      assert Repo.get_by(ScanAttempt, event_id: event_id, idempotency_key: "controller-auth-1") ==
+               nil
+
+      assert Repo.get_by(CheckIn, event_id: event_id, ticket_code: "TEST001", status: "success") ==
+               nil
+
+      assert Repo.get_by!(Attendee, event_id: event_id, ticket_code: "TEST001").checkins_remaining ==
+               1
 
       assert [
                %{
@@ -566,6 +583,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       token: token
     } do
       configure_mode(:redis_authoritative, force_enqueue_failure: true)
+      assert_authoritative_mode!()
 
       scan = %{
         "idempotency_key" => "controller-retry-1",
@@ -608,6 +626,209 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert duplicate_result["status"] == "duplicate"
       assert duplicate_result["message"] =~ "Already processed"
+    end
+
+    test "returns promotion failure without false final success", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
+      namespace = unique_namespace("controller-promotion")
+
+      configure_mode(
+        :redis_authoritative,
+        store: InMemoryStore,
+        live_namespace: namespace,
+        shadow_namespace: "#{namespace}-shadow"
+      )
+
+      assert_authoritative_mode!()
+      InMemoryStore.inject_promote_error(namespace, :promotion_failed)
+
+      failed_conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{
+          "scans" => [valid_scan("controller-promotion-1", "TEST001")]
+        })
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "scan_result_promotion_failed", "message" => message}
+             } = json_response(failed_conn, 503)
+
+      assert message =~ "Unable to finalize acknowledged scan results"
+      assert [%{args: _args}] = all_enqueued(worker: PersistScanBatchJob)
+
+      assert %{
+               stage: :pending_durability,
+               result: %{idempotency_key: "controller-promotion-1", ticket_code: "TEST001"}
+             } = InMemoryStore.idempotency_entry(namespace, event.id, "controller-promotion-1")
+    end
+
+    test "returns stable build-timeout error when hot state cannot be prepared", %{
+      conn: conn,
+      token: token
+    } do
+      namespace = unique_namespace("controller-build-timeout")
+
+      configure_mode(
+        :redis_authoritative,
+        store: InMemoryStore,
+        live_namespace: namespace,
+        shadow_namespace: "#{namespace}-shadow"
+      )
+
+      assert_authoritative_mode!()
+      InMemoryStore.inject_process_error(namespace, :build_timeout)
+
+      failed_conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{
+          "scans" => [valid_scan("controller-build-timeout-1", "TEST001")]
+        })
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "scan_hot_state_unavailable", "message" => message}
+             } = json_response(failed_conn, 503)
+
+      assert message =~ "Unable to prepare event scan state"
+      assert all_enqueued(worker: PersistScanBatchJob) == []
+    end
+
+    test "preserves the Android response envelope in authoritative mixed batches", %{
+      conn: conn,
+      token: token
+    } do
+      configure_mode(:redis_authoritative)
+      assert_authoritative_mode!()
+
+      first_conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{
+          "scans" => [valid_scan("authoritative-dup", "TEST001")]
+        })
+
+      assert %{"data" => %{"results" => [first_result]}} = json_response(first_conn, 200)
+      assert first_result["status"] == "success"
+
+      mixed_conn =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{
+          "scans" => [
+            valid_scan("authoritative-new", "TEST002"),
+            valid_scan("authoritative-dup", "TEST001"),
+            valid_scan("authoritative-missing", "NONEXISTENT")
+          ]
+        })
+
+      assert %{"data" => %{"results" => results, "processed" => 3}, "error" => nil} =
+               json_response(mixed_conn, 200)
+
+      assert Enum.map(results, & &1["idempotency_key"]) == [
+               "authoritative-new",
+               "authoritative-dup",
+               "authoritative-missing"
+             ]
+
+      assert Enum.map(results, &contract_keys/1) == [
+               ["idempotency_key", "message", "status"],
+               ["idempotency_key", "message", "status"],
+               ["idempotency_key", "message", "status"]
+             ]
+
+      assert Enum.at(results, 0)["status"] == "success"
+      assert Enum.at(results, 1)["status"] == "duplicate"
+      assert Enum.at(results, 2)["status"] == "error"
+    end
+
+    test "supports same-ticket concurrent uploads with the same idempotency key", %{
+      token: token,
+      event: event
+    } do
+      namespace = unique_namespace("redis-same-idem")
+      configure_redis_authoritative_mode(namespace)
+      assert_authoritative_mode!()
+      assert {:ok, _version} = RedisStore.ensure_event_loaded(event.id, namespace)
+
+      scan = valid_scan("redis-concurrent-same", "TEST001")
+
+      responses =
+        concurrent_mobile_uploads(token, [scan], 2)
+        |> Enum.map(fn conn -> json_response(conn, 200) end)
+
+      results = Enum.map(responses, &(get_in(&1, ["data", "results"]) |> List.first()))
+      statuses = Enum.map(results, & &1["status"])
+
+      assert Enum.all?(statuses, &(&1 in ["success", "duplicate"]))
+      assert Enum.count(statuses, &(&1 == "success")) >= 1
+      assert Enum.all?(results, &(contract_keys(&1) == ["idempotency_key", "message", "status"]))
+
+      perform_all_persist_jobs()
+
+      assert Repo.aggregate(
+               from(attempt in ScanAttempt,
+                 where:
+                   attempt.event_id == ^event.id and
+                     attempt.idempotency_key == "redis-concurrent-same"
+               ),
+               :count,
+               :id
+             ) == 1
+    end
+
+    test "supports same-ticket concurrent uploads with different idempotency keys", %{
+      token: token,
+      event: event
+    } do
+      namespace = unique_namespace("redis-different-idem")
+      configure_redis_authoritative_mode(namespace)
+      assert_authoritative_mode!()
+      assert {:ok, _version} = RedisStore.ensure_event_loaded(event.id, namespace)
+
+      responses =
+        [
+          [valid_scan("redis-different-1", "TEST001")],
+          [valid_scan("redis-different-2", "TEST001")]
+        ]
+        |> concurrent_mobile_uploads(token)
+        |> Enum.map(fn conn -> json_response(conn, 200) end)
+
+      results = Enum.map(responses, &(get_in(&1, ["data", "results"]) |> List.first()))
+      statuses = Enum.map(results, & &1["status"]) |> Enum.sort()
+
+      assert statuses == ["error", "success"]
+
+      assert Enum.any?(results, fn result ->
+               result["status"] == "error" and result["message"] =~ "Already checked in"
+             end)
+    end
+
+    test "supports different tickets concurrently within the same event", %{
+      token: token,
+      event: event
+    } do
+      namespace = unique_namespace("redis-different-tickets")
+      configure_redis_authoritative_mode(namespace)
+      assert_authoritative_mode!()
+      assert {:ok, _version} = RedisStore.ensure_event_loaded(event.id, namespace)
+
+      responses =
+        [
+          [valid_scan("redis-ticket-1", "TEST001")],
+          [valid_scan("redis-ticket-2", "TEST002")]
+        ]
+        |> concurrent_mobile_uploads(token)
+        |> Enum.map(fn conn -> json_response(conn, 200) end)
+
+      results = Enum.map(responses, &(get_in(&1, ["data", "results"]) |> List.first()))
+
+      assert Enum.all?(results, &(&1["status"] == "success"))
+      assert Enum.all?(results, &(contract_keys(&1) == ["idempotency_key", "message", "status"]))
     end
   end
 
@@ -670,5 +891,67 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         extra
       )
     )
+  end
+
+  defp configure_redis_authoritative_mode(namespace) do
+    configure_mode(
+      :redis_authoritative,
+      live_namespace: namespace,
+      shadow_namespace: "#{namespace}-shadow",
+      store: RedisStore
+    )
+  end
+
+  defp assert_authoritative_mode! do
+    assert MobileUploadService.ingestion_mode() == :redis_authoritative
+    assert MobileUploadService.authoritative_mode?()
+  end
+
+  defp valid_scan(idempotency_key, ticket_code) do
+    %{
+      "idempotency_key" => idempotency_key,
+      "ticket_code" => ticket_code,
+      "direction" => "in",
+      "scanned_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+      "entrance_name" => "Main Gate",
+      "operator_name" => "Scanner 1"
+    }
+  end
+
+  defp contract_keys(result) do
+    result
+    |> Map.keys()
+    |> Enum.sort()
+  end
+
+  defp concurrent_mobile_uploads(token, scans, times) when is_integer(times) do
+    concurrent_mobile_uploads(List.duplicate(scans, times), token)
+  end
+
+  defp concurrent_mobile_uploads(scan_batches, token) when is_list(scan_batches) do
+    parent = self()
+
+    scan_batches
+    |> Enum.map(fn scans ->
+      Task.async(fn ->
+        Sandbox.allow(FastCheck.Repo, parent, self())
+
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{"scans" => scans})
+      end)
+    end)
+    |> Enum.map(&Task.await(&1, 5_000))
+  end
+
+  defp perform_all_persist_jobs do
+    all_enqueued(worker: PersistScanBatchJob)
+    |> Enum.each(fn %{args: args} ->
+      assert :ok = perform_job(PersistScanBatchJob, args)
+    end)
+  end
+
+  defp unique_namespace(prefix) do
+    "#{prefix}-#{System.unique_integer([:positive])}"
   end
 end
