@@ -299,6 +299,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert %{"data" => %{"results" => [result2]}} = json_response(conn2, 200)
       assert result2["status"] == "duplicate"
       assert result2["message"] =~ "Already processed"
+      refute Map.has_key?(result2, "reason_code")
     end
 
     test "rejects scan for refunded ticket (payment validation)", %{conn: conn, token: token} do
@@ -318,6 +319,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert result["status"] == "error"
       assert result["message"] =~ "Payment invalid"
       assert result["message"] =~ "refunded"
+      refute Map.has_key?(result, "reason_code")
     end
 
     test "rejects scan for non-existent ticket", %{conn: conn, token: token} do
@@ -535,7 +537,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert result["idempotency_key"] == "controller-auth-1"
       assert result["status"] == "success"
-      assert contract_keys(result) == ["idempotency_key", "message", "status"]
+      assert_mobile_result_shape(result)
 
       assert Repo.get_by(ScanAttempt, event_id: event_id, idempotency_key: "controller-auth-1") ==
                nil
@@ -612,6 +614,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
                json_response(success_conn, 200)
 
       assert success_result["status"] == "success"
+      assert_mobile_result_shape(success_result)
 
       duplicate_conn =
         build_conn()
@@ -623,6 +626,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert duplicate_result["status"] == "duplicate"
       assert duplicate_result["message"] =~ "Already processed"
+      assert_mobile_result_shape(duplicate_result, "replay_duplicate")
     end
 
     test "returns promotion failure without false final success", %{
@@ -711,6 +715,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert %{"data" => %{"results" => [first_result]}} = json_response(first_conn, 200)
       assert first_result["status"] == "success"
+      assert_mobile_result_shape(first_result)
 
       mixed_conn =
         build_conn()
@@ -732,15 +737,12 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
                "authoritative-missing"
              ]
 
-      assert Enum.map(results, &contract_keys/1) == [
-               ["idempotency_key", "message", "status"],
-               ["idempotency_key", "message", "status"],
-               ["idempotency_key", "message", "status"]
-             ]
-
       assert Enum.at(results, 0)["status"] == "success"
       assert Enum.at(results, 1)["status"] == "duplicate"
       assert Enum.at(results, 2)["status"] == "error"
+      assert_mobile_result_shape(Enum.at(results, 0))
+      assert_mobile_result_shape(Enum.at(results, 1), "replay_duplicate")
+      assert_mobile_result_shape(Enum.at(results, 2))
     end
 
     test "supports same-ticket concurrent uploads with the same idempotency key", %{
@@ -761,9 +763,20 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       results = Enum.map(responses, &(get_in(&1, ["data", "results"]) |> List.first()))
       statuses = Enum.map(results, & &1["status"])
 
+      # This is intentionally permissive. A concurrent same-idempotency request may
+      # observe the original result before it reaches final_acknowledged, so the
+      # authoritative path must not claim replay_duplicate until that result is final.
       assert Enum.all?(statuses, &(&1 in ["success", "duplicate"]))
       assert Enum.count(statuses, &(&1 == "success")) >= 1
-      assert Enum.all?(results, &(contract_keys(&1) == ["idempotency_key", "message", "status"]))
+      assert Enum.all?(results, &valid_mobile_result_shape?/1)
+
+      Enum.each(results, fn result ->
+        if result["status"] == "duplicate" do
+          assert result["reason_code"] == "replay_duplicate"
+        else
+          refute Map.has_key?(result, "reason_code")
+        end
+      end)
 
       perform_all_persist_jobs()
 
@@ -801,8 +814,35 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert statuses == ["error", "success"]
 
       assert Enum.any?(results, fn result ->
-               result["status"] == "error" and result["message"] =~ "Already checked in"
+               result["status"] == "error" and
+                 result["reason_code"] == "business_duplicate" and
+                 result["message"] =~ "Already checked in"
              end)
+
+      assert Enum.any?(results, &(&1["status"] == "success"))
+      assert Enum.all?(results, &valid_mobile_result_shape?/1)
+    end
+
+    test "returns payment invalid reason_code for authoritative operator denials", %{
+      conn: conn,
+      token: token
+    } do
+      configure_mode(:redis_authoritative)
+      assert_authoritative_mode!()
+
+      response_conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post(~p"/api/v1/mobile/scans", %{
+          "scans" => [valid_scan("authoritative-payment-invalid", "REFUND001")]
+        })
+
+      assert %{"data" => %{"results" => [result]}, "error" => nil} =
+               json_response(response_conn, 200)
+
+      assert result["status"] == "error"
+      assert result["message"] =~ "Payment invalid"
+      assert_mobile_result_shape(result, "payment_invalid")
     end
 
     test "supports different tickets concurrently within the same event", %{
@@ -825,7 +865,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       results = Enum.map(responses, &(get_in(&1, ["data", "results"]) |> List.first()))
 
       assert Enum.all?(results, &(&1["status"] == "success"))
-      assert Enum.all?(results, &(contract_keys(&1) == ["idempotency_key", "message", "status"]))
+      assert Enum.all?(results, &valid_mobile_result_shape?/1)
     end
   end
 
@@ -915,10 +955,28 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     }
   end
 
-  defp contract_keys(result) do
-    result
-    |> Map.keys()
-    |> Enum.sort()
+  defp assert_mobile_result_shape(result, reason_code \\ nil) do
+    assert valid_mobile_result_shape?(result)
+
+    case reason_code do
+      nil ->
+        refute Map.has_key?(result, "reason_code")
+
+      expected ->
+        assert result["reason_code"] == expected
+    end
+  end
+
+  defp valid_mobile_result_shape?(result) do
+    keys =
+      result
+      |> Map.keys()
+      |> Enum.sort()
+
+    keys in [
+      ["idempotency_key", "message", "status"],
+      ["idempotency_key", "message", "reason_code", "status"]
+    ]
   end
 
   defp concurrent_mobile_uploads(token, scans, times) when is_integer(times) do

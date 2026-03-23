@@ -122,7 +122,9 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
     configure_mode(:redis_authoritative)
 
     assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event.id, [scan])
-    assert {:ok, [%{status: "duplicate"}]} = MobileUploadService.upload_batch(event.id, [scan])
+
+    assert {:ok, [%{status: "duplicate", reason_code: "replay_duplicate"}]} =
+             MobileUploadService.upload_batch(event.id, [scan])
   end
 
   test "shadow mode does not contaminate the live namespace", %{event: event} do
@@ -168,10 +170,28 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
 
     scan = valid_scan("idem-refund", "REFUND001")
 
-    assert {:ok, [%{status: "error", message: message}]} =
+    assert {:ok, [%{status: "error", message: message, reason_code: "payment_invalid"}]} =
              MobileUploadService.upload_batch(event.id, [scan])
 
     assert message =~ "Payment invalid"
+  end
+
+  test "authoritative mode maps business duplicates without using raw result status semantics", %{
+    event: event
+  } do
+    configure_mode(:redis_authoritative)
+    assert_authoritative_mode!()
+
+    first_scan = valid_scan("idem-business-1", "TEST001")
+    second_scan = valid_scan("idem-business-2", "TEST001")
+
+    assert {:ok, [%{status: "success"}]} =
+             MobileUploadService.upload_batch(event.id, [first_scan])
+
+    assert {:ok, [%{status: "error", reason_code: "business_duplicate", message: message}]} =
+             MobileUploadService.upload_batch(event.id, [second_scan])
+
+    assert message =~ "Already checked in"
   end
 
   test "authoritative mode surfaces build-timeout hot-state failures", %{event: event} do
