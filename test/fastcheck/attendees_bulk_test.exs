@@ -2,7 +2,6 @@ defmodule FastCheck.AttendeesBulkTest do
   use FastCheck.DataCase
 
   alias FastCheck.Attendees
-  alias FastCheck.Events
 
   describe "bulk_check_in/2" do
     setup do
