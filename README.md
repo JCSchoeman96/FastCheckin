@@ -70,8 +70,9 @@ mix setup
 mix phx.server
 ```
 
-Health endpoint:
+Health endpoints:
 
+- `GET /api/v1/live`
 - `GET /api/v1/health`
 
 ### Environment variables
@@ -91,7 +92,10 @@ Build/run via Android Studio or Gradle in `android/scanner-app/`.
 
 - `docker-compose.yml` provides **Postgres 15**, **pgBouncer** (transaction pool mode), and **Redis**.
 - pgBouncer is intended to collapse many client connections into a smaller number of upstream Postgres sessions; monitor it with `SHOW POOLS` / `SHOW STATS` via psql.
-- `.env.example` includes knobs such as `POOL_SIZE`, `ENABLE_HTTPS`, and TLS cert paths.
+- Keep the mobile request path unchanged as `validate -> hot-state decision -> enqueue durability -> promote results -> respond`; PgBouncer helps connection pressure and async durability load, not Redis admission semantics.
+- Keep `/api/v1/live` as process liveness and `/api/v1/health` as DB-backed readiness/dependency signaling.
+- Keep `MIGRATION_DATABASE_URL` pointed at direct Postgres when `DATABASE_URL` points at PgBouncer.
+- See `docs/pgbouncer_rollout.md` for the rollout and verification checklist.
 
 ## Performance testing
 
@@ -110,6 +114,7 @@ Runbook:
 
 - `docs/mobile_scan_performance.md`
 - `docs/mobile_scan_performance_baseline_2026-03-19.md`
+- `docs/pgbouncer_rollout.md`
 
 ## Roadmap (high level)
 Tracked work now lives in Beads (`bd`).

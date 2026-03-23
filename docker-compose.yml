@@ -10,13 +10,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:-perf-small-secret-key-base-perf-small-secret-key-base-1234567890abcd}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-perf-small-encryption-key-perf-small-encryption-key-1234}
       MOBILE_JWT_SECRET: ${MOBILE_JWT_SECRET:-perf-small-mobile-jwt-secret-perf-small-mobile-jwt-secret-1234}
-      DATABASE_URL: ecto://postgres:${DB_PASSWORD:-postgres}@postgres:5432/fastcheck_prod
+      DATABASE_URL: ecto://postgres:${DB_PASSWORD:-postgres}@pgbouncer:5432/fastcheck_prod
+      MIGRATION_DATABASE_URL: ecto://postgres:${DB_PASSWORD:-postgres}@postgres:5432/fastcheck_prod
+      DATABASE_POOLING_MODE: pgbouncer_transaction
+      DB_PREPARE_MODE: unnamed
+      OBAN_NOTIFIER: pg
       DATABASE_SSL: "false"
       DOMAIN: localhost
       PORT: 4000
@@ -80,6 +86,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: fastcheck_prod
+      AUTH_TYPE: scram-sha-256
 
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 500

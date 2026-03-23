@@ -9,6 +9,59 @@ hostname = System.get_env("DB_HOST", "localhost")
 port = String.to_integer(System.get_env("DB_PORT") || "6432")
 database = System.get_env("DB_NAME", "fastcheck_prod")
 
+database_pooling_mode =
+  case System.get_env("DATABASE_POOLING_MODE") do
+    nil ->
+      if is_nil(database_url) and port == 6432 do
+        :pgbouncer_transaction
+      else
+        :direct
+      end
+
+    value ->
+      case String.trim(value) |> String.downcase() do
+        "pgbouncer_transaction" -> :pgbouncer_transaction
+        "pgbouncer_session" -> :pgbouncer_session
+        _ -> :direct
+      end
+  end
+
+database_prepare_mode =
+  case System.get_env("DB_PREPARE_MODE") do
+    nil ->
+      case database_pooling_mode do
+        :pgbouncer_transaction -> :unnamed
+        _ -> :named
+      end
+
+    value ->
+      case String.trim(value) |> String.downcase() do
+        "unnamed" -> :unnamed
+        _ -> :named
+      end
+  end
+
+oban_notifier_name =
+  case System.get_env("OBAN_NOTIFIER") do
+    nil ->
+      case database_pooling_mode do
+        :pgbouncer_transaction -> :pg
+        _ -> :postgres
+      end
+
+    value ->
+      case String.trim(value) |> String.downcase() do
+        "pg" -> :pg
+        _ -> :postgres
+      end
+  end
+
+oban_notifier =
+  case oban_notifier_name do
+    :pg -> {Oban.Notifiers.PG, []}
+    :postgres -> {Oban.Notifiers.Postgres, []}
+  end
+
 repo_connection_opts =
   if database_url do
     [url: database_url]
@@ -26,6 +79,7 @@ config :fastcheck,
        FastCheck.Repo,
        repo_connection_opts
        |> Keyword.merge(
+         prepare: database_prepare_mode,
          stacktrace: true,
          show_sensitive_data_on_connection_error: true,
          pool_size: 20,
@@ -37,6 +91,13 @@ config :fastcheck,
          # Log all queries with timing in development
          log: :info
        )
+
+config :fastcheck, :database_pooling,
+  mode: database_pooling_mode,
+  prepare: database_prepare_mode
+
+config :fastcheck, :oban_runtime, notifier: oban_notifier_name
+config :fastcheck, Oban, notifier: oban_notifier
 
 # For development, we disable any cache and enable
 # debugging and code reloading.
