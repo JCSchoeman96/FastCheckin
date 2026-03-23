@@ -152,6 +152,66 @@ allow_unknown_payment_status =
 
 config :fastcheck, :allow_unknown_payment_status, allow_unknown_payment_status
 
+database_pooling_mode =
+  case System.get_env("DATABASE_POOLING_MODE", "direct")
+       |> String.trim()
+       |> String.downcase() do
+    "pgbouncer_transaction" -> :pgbouncer_transaction
+    "pgbouncer_session" -> :pgbouncer_session
+    _ -> :direct
+  end
+
+database_prepare_mode =
+  case System.get_env("DB_PREPARE_MODE") do
+    nil ->
+      case database_pooling_mode do
+        :pgbouncer_transaction -> :unnamed
+        _ -> :named
+      end
+
+    value ->
+      case String.trim(value) |> String.downcase() do
+        "unnamed" -> :unnamed
+        _ -> :named
+      end
+  end
+
+oban_notifier_name =
+  case System.get_env("OBAN_NOTIFIER") do
+    nil ->
+      case database_pooling_mode do
+        :pgbouncer_transaction -> :pg
+        _ -> :postgres
+      end
+
+    value ->
+      case String.trim(value) |> String.downcase() do
+        "pg" -> :pg
+        _ -> :postgres
+      end
+  end
+
+oban_notifier =
+  case oban_notifier_name do
+    :pg -> {Oban.Notifiers.PG, []}
+    :postgres -> {Oban.Notifiers.Postgres, []}
+  end
+
+if config_env() == :prod and database_pooling_mode == :pgbouncer_transaction and
+     oban_notifier_name == :postgres do
+  raise """
+  OBAN_NOTIFIER=postgres is not safe with DATABASE_POOLING_MODE=pgbouncer_transaction.
+  Use OBAN_NOTIFIER=pg or keep the shared Repo on direct Postgres for this rollout.
+  """
+end
+
+config :fastcheck, :database_pooling,
+  mode: database_pooling_mode,
+  prepare: database_prepare_mode
+
+config :fastcheck, :oban_runtime, notifier: oban_notifier_name
+config :fastcheck, Oban, notifier: oban_notifier
+
 # config/runtime.exs is executed for all environments and is the right place to
 # read secrets that should not be baked into the release.
 # Note: PHX_SERVER is not needed — the prod block below sets server: true.
@@ -186,6 +246,7 @@ if config_env() == :prod do
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "20"),
     ssl: ssl?,
+    prepare: database_prepare_mode,
     queue_target: 5_000,
     queue_interval: 1_000,
     timeout: String.to_integer(System.get_env("DB_TIMEOUT_MS") || "30000"),

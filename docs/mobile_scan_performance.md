@@ -21,12 +21,14 @@ The `perf-small` stack now has two services:
 - `app-perf` runs the Phoenix release in `redis_authoritative`, capped at `cpus: 2.0` and `mem_limit: 2g`
 - `perf-proxy` is the only host-exposed entrypoint for capacity and abuse-control runs
 
+For PgBouncer verification, `app-perf` talks to the `pgbouncer` service in transaction mode while `MIGRATION_DATABASE_URL` stays pointed at direct Postgres for release migrations.
+
 `app-perf` stays internal on the Docker network for capacity measurements. The proxy strips inbound `X-Forwarded-For`, maps one logical device id to one deterministic synthetic IP in `10.250.0.0/16`, and forwards the trusted client identity to Phoenix.
 
 Start the capped stack:
 
 ```bash
-docker compose up -d postgres redis
+docker compose up -d postgres pgbouncer redis
 docker compose --profile perf-small up --build -d app-perf perf-proxy
 ```
 
@@ -121,6 +123,9 @@ The `perf-small` Docker path already bakes in:
 - `MOBILE_SCAN_INGESTION_MODE=redis_authoritative`
 - `ENABLE_METRICS=true`
 - `REDIS_URL=redis://redis:6379`
+- `DATABASE_POOLING_MODE=pgbouncer_transaction`
+- `DB_PREPARE_MODE=unnamed`
+- `OBAN_NOTIFIER=pg`
 - `DATABASE_SSL=false`
 - trusted forwarded-identity modeling through `perf-proxy`
 
@@ -324,8 +329,19 @@ The acceptance report for `redis_authoritative` should include:
 - blocked/`429` counts and blocked-rate distortion status
 - top offending device ids when blocked traffic occurs
 - Oban `scan_persistence` queue depth and lag
+- PgBouncer `SHOW POOLS` and `SHOW STATS` output when the perf slice is routed through the pooler
 - Redis memory and error signals
 - Postgres queue time, connections, and lock pressure
 - auth-refresh behavior
 - offline burst behavior
 - enqueue-failure recovery behavior, when the dedicated failure-injection run is performed
+
+For PgBouncer rollout validation, re-run the same authoritative harness through the pooler and compare:
+
+- same-ticket burst validation slice
+- duplicate-heavy slice
+- short steady-state or stability slice
+- Repo queue time
+- PgBouncer pool stats
+- upstream Postgres connection counts
+- Oban `scan_persistence` backlog and drain behavior

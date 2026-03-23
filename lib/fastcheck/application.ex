@@ -48,6 +48,8 @@ defmodule FastCheck.Application do
       "Mobile scan ingestion mode resolved: #{FastCheck.Scans.MobileUploadService.ingestion_mode()}"
     )
 
+    log_database_pooling_mode()
+
     {:ok, pid}
   end
 
@@ -81,5 +83,25 @@ defmodule FastCheck.Application do
       |> then(&(&1 in ["1", "true", "yes"]))
 
     dev_enabled? || env_flag
+  end
+
+  defp log_database_pooling_mode do
+    database_pooling = Application.get_env(:fastcheck, :database_pooling, [])
+    oban_runtime = Application.get_env(:fastcheck, :oban_runtime, [])
+
+    Logger.info(
+      "Database pooling resolved: mode=#{Keyword.get(database_pooling, :mode, :direct)} " <>
+        "prepare=#{Keyword.get(database_pooling, :prepare, :named)} " <>
+        "oban_notifier=#{Keyword.get(oban_runtime, :notifier, :postgres)}"
+    )
+
+    if Keyword.get(database_pooling, :mode) == :pgbouncer_transaction and
+         Keyword.get(oban_runtime, :notifier) == :pg and
+         is_nil(Application.get_env(:fastcheck, :dns_cluster_query)) do
+      Logger.warning(
+        "Oban.Notifiers.PG is enabled without DNS_CLUSTER_QUERY. Verify the Railway " <>
+          "deployment is single-node or cluster discovery is configured before production cutover."
+      )
+    end
   end
 end

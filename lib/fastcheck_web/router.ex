@@ -75,6 +75,7 @@ defmodule FastCheckWeb.Router do
   scope "/api/v1", FastCheckWeb do
     pipe_through :api
 
+    get "/live", HealthController, :live
     get "/health", HealthController, :check
 
     # Public mobile API routes

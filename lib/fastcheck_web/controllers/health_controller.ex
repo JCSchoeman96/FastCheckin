@@ -13,6 +13,12 @@ defmodule FastCheckWeb.HealthController do
   alias Ecto.Adapters.SQL
   alias FastCheck.Repo
 
+  def live(conn, _params) do
+    conn
+    |> put_status(:ok)
+    |> json(%{data: %{status: "alive", timestamp: DateTime.utc_now()}, error: nil})
+  end
+
   def check(conn, _params) do
     case SQL.query(Repo, "SELECT 1", []) do
       {:ok, _result} ->

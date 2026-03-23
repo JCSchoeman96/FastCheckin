@@ -1,0 +1,726 @@
+{
+  "generated_at": "2026-03-23T17:15:37.961514Z",
+  "base_url": "http://127.0.0.1:4100",
+  "manifest": "C:\\headless_projects\\PETAL_blueprint_project\\FastCheckin\\performance\\manifests\\mobile-load-event-pgbouncer.json",
+  "mode_proof": {
+    "mobile_scan_ingestion_mode": "redis_authoritative",
+    "database_url": "ecto://postgres:postgres@pgbouncer:5432/fastcheck_prod",
+    "database_pooling_mode": "pgbouncer_transaction",
+    "oban_notifier": "pg"
+  },
+  "slices": {
+    "same_ticket_replay_burst": {
+      "result_mix": {
+        "http_statuses": {
+          "200": 12
+        },
+        "statuses": {
+          "success": 1,
+          "duplicate": 11
+        },
+        "messages": {
+          "Check-in successful": 1,
+          "Already processed: Check-in successful": 11
+        },
+        "reason_codes": {
+          "replay_duplicate": 11
+        },
+        "latency_ms": {
+          "min": 27.317399995808955,
+          "avg": 119.14103333219828,
+          "p95": 130.8844000013778,
+          "max": 131.753599998774
+        }
+      },
+      "metrics": {
+        "repo_queue_time_delta_sum": 0.2641629999999964,
+        "repo_queue_time_delta_count": 7.0,
+        "repo_queue_time_avg_ms": 0.03773757142857091,
+        "repo_query_time_delta_sum": 17.04941800000006,
+        "repo_query_time_delta_count": 23.0,
+        "repo_query_time_avg_ms": 0.7412790434782635,
+        "pgbouncer_pools_after": [
+          {
+            "database": "fastcheck_prod",
+            "user": "postgres",
+            "cl_active": "20",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "18",
+            "sv_used": "1",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "transaction",
+            "load_balance_hosts": ""
+          },
+          {
+            "database": "pgbouncer",
+            "user": "pgbouncer",
+            "cl_active": "1",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "0",
+            "sv_used": "0",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "statement",
+            "load_balance_hosts": ""
+          }
+        ],
+        "pgbouncer_stats_after": [
+          {
+            "database": "fastcheck_prod",
+            "total_server_assignment_count": "6993",
+            "total_xact_count": "6993",
+            "total_query_count": "9255",
+            "total_received": "566173",
+            "total_sent": "341563",
+            "total_xact_time": "5691612",
+            "total_query_time": "5015390",
+            "total_wait_time": "198805",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "10",
+            "avg_xact_count": "10",
+            "avg_query_count": "14",
+            "avg_recv": "1453",
+            "avg_sent": "1760",
+            "avg_xact_time": "923",
+            "avg_query_time": "558",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          },
+          {
+            "database": "pgbouncer",
+            "total_server_assignment_count": "0",
+            "total_xact_count": "20",
+            "total_query_count": "20",
+            "total_received": "0",
+            "total_sent": "0",
+            "total_xact_time": "0",
+            "total_query_time": "0",
+            "total_wait_time": "0",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "0",
+            "avg_xact_count": "0",
+            "avg_query_count": "0",
+            "avg_recv": "0",
+            "avg_sent": "0",
+            "avg_xact_time": "0",
+            "avg_query_time": "0",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          }
+        ],
+        "postgres_activity_after": [
+          {
+            "state": "idle",
+            "coalesce": "ClientRead",
+            "count": "19"
+          },
+          {
+            "state": "active",
+            "coalesce": "",
+            "count": "1"
+          }
+        ],
+        "postgres_numbackends_after": [
+          {
+            "numbackends": "20",
+            "xact_commit": "1142",
+            "xact_rollback": "0"
+          }
+        ],
+        "oban_after": {
+          "total": "14",
+          "available": "0",
+          "executing": "0",
+          "retryable": "0"
+        }
+      }
+    },
+    "same_ticket_business_duplicate_burst": {
+      "result_mix": {
+        "http_statuses": {
+          "200": 12
+        },
+        "statuses": {
+          "error": 11,
+          "success": 1
+        },
+        "messages": {
+          "Already checked in: Already checked in at 2026-03-23T17:15:49Z": 11,
+          "Check-in successful": 1
+        },
+        "reason_codes": {
+          "business_duplicate": 11
+        },
+        "latency_ms": {
+          "min": 16.83459999912884,
+          "avg": 21.113366667123046,
+          "p95": 24.181599997973535,
+          "max": 24.222799998824485
+        }
+      },
+      "metrics": {
+        "repo_queue_time_delta_sum": 2.0599689999999953,
+        "repo_queue_time_delta_count": 40.0,
+        "repo_queue_time_avg_ms": 0.051499224999999885,
+        "repo_query_time_delta_sum": 187.09405000000015,
+        "repo_query_time_delta_count": 124.0,
+        "repo_query_time_avg_ms": 1.508822983870969,
+        "pgbouncer_pools_after": [
+          {
+            "database": "fastcheck_prod",
+            "user": "postgres",
+            "cl_active": "20",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "18",
+            "sv_used": "1",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "transaction",
+            "load_balance_hosts": ""
+          },
+          {
+            "database": "pgbouncer",
+            "user": "pgbouncer",
+            "cl_active": "1",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "0",
+            "sv_used": "0",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "statement",
+            "load_balance_hosts": ""
+          }
+        ],
+        "pgbouncer_stats_after": [
+          {
+            "database": "fastcheck_prod",
+            "total_server_assignment_count": "7116",
+            "total_xact_count": "7116",
+            "total_query_count": "9485",
+            "total_received": "612657",
+            "total_sent": "374615",
+            "total_xact_time": "5948108",
+            "total_query_time": "5230801",
+            "total_wait_time": "198805",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "10",
+            "avg_xact_count": "10",
+            "avg_query_count": "16",
+            "avg_recv": "1879",
+            "avg_sent": "2000",
+            "avg_xact_time": "1078",
+            "avg_query_time": "621",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          },
+          {
+            "database": "pgbouncer",
+            "total_server_assignment_count": "0",
+            "total_xact_count": "24",
+            "total_query_count": "24",
+            "total_received": "0",
+            "total_sent": "0",
+            "total_xact_time": "0",
+            "total_query_time": "0",
+            "total_wait_time": "0",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "0",
+            "avg_xact_count": "0",
+            "avg_query_count": "0",
+            "avg_recv": "0",
+            "avg_sent": "0",
+            "avg_xact_time": "0",
+            "avg_query_time": "0",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          }
+        ],
+        "postgres_activity_after": [
+          {
+            "state": "idle",
+            "coalesce": "ClientRead",
+            "count": "19"
+          },
+          {
+            "state": "active",
+            "coalesce": "",
+            "count": "1"
+          }
+        ],
+        "postgres_numbackends_after": [
+          {
+            "numbackends": "20",
+            "xact_commit": "1174",
+            "xact_rollback": "0"
+          }
+        ],
+        "oban_after": {
+          "total": "26",
+          "available": "0",
+          "executing": "0",
+          "retryable": "0"
+        }
+      }
+    },
+    "duplicate_heavy": {
+      "k6": {
+        "summary_path": "C:\\headless_projects\\PETAL_blueprint_project\\FastCheckin\\performance\\results\\k6-duplicate-heavy-2026-03-23T17-15-56Z.json",
+        "http_req_duration_p95": 9.254525000000001,
+        "http_req_duration_p99": null,
+        "http_req_failed_rate": 0,
+        "success_results": 225,
+        "replay_duplicates": 30,
+        "business_duplicates": 390,
+        "invalid_results": 31,
+        "retryable_failures": 0,
+        "capacity_scan_requests": 676,
+        "blocked_rate": 0
+      },
+      "metrics": {
+        "repo_queue_time_delta_sum": 85.45540099999994,
+        "repo_queue_time_delta_count": 3217.0,
+        "repo_queue_time_avg_ms": 0.026563693192415274,
+        "repo_query_time_delta_sum": 7538.447966999996,
+        "repo_query_time_delta_count": 10217.0,
+        "repo_query_time_avg_ms": 0.737833803171185,
+        "pgbouncer_pools_after": [
+          {
+            "database": "fastcheck_prod",
+            "user": "postgres",
+            "cl_active": "20",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "2",
+            "sv_used": "17",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "transaction",
+            "load_balance_hosts": ""
+          },
+          {
+            "database": "pgbouncer",
+            "user": "pgbouncer",
+            "cl_active": "1",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "0",
+            "sv_used": "0",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "statement",
+            "load_balance_hosts": ""
+          }
+        ],
+        "pgbouncer_stats_after": [
+          {
+            "database": "fastcheck_prod",
+            "total_server_assignment_count": "10396",
+            "total_xact_count": "10396",
+            "total_query_count": "19783",
+            "total_received": "3958350",
+            "total_sent": "2730322",
+            "total_xact_time": "14082208",
+            "total_query_time": "11830304",
+            "total_wait_time": "199522",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "33",
+            "avg_xact_count": "33",
+            "avg_query_count": "94",
+            "avg_recv": "28266",
+            "avg_sent": "20361",
+            "avg_xact_time": "2173",
+            "avg_query_time": "638",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          },
+          {
+            "database": "pgbouncer",
+            "total_server_assignment_count": "0",
+            "total_xact_count": "28",
+            "total_query_count": "28",
+            "total_received": "0",
+            "total_sent": "0",
+            "total_xact_time": "0",
+            "total_query_time": "0",
+            "total_wait_time": "0",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "0",
+            "avg_xact_count": "0",
+            "avg_query_count": "0",
+            "avg_recv": "0",
+            "avg_sent": "0",
+            "avg_xact_time": "0",
+            "avg_query_time": "0",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          }
+        ],
+        "postgres_activity_after": [
+          {
+            "state": "idle",
+            "coalesce": "ClientRead",
+            "count": "19"
+          },
+          {
+            "state": "active",
+            "coalesce": "",
+            "count": "1"
+          }
+        ],
+        "postgres_numbackends_after": [
+          {
+            "numbackends": "20",
+            "xact_commit": "4451",
+            "xact_rollback": "0"
+          }
+        ],
+        "oban_after": {
+          "total": "672",
+          "available": "0",
+          "executing": "0",
+          "retryable": "0"
+        }
+      },
+      "oban_drain_10s": {
+        "total": "672",
+        "available": "0",
+        "executing": "0",
+        "retryable": "0"
+      }
+    },
+    "short_stability": {
+      "k6": {
+        "summary_path": "C:\\headless_projects\\PETAL_blueprint_project\\FastCheckin\\performance\\results\\k6-short-stability-2026-03-23T17-16-42Z.json",
+        "http_req_duration_p95": 8.17,
+        "http_req_duration_p99": null,
+        "http_req_failed_rate": 0,
+        "success_results": 147,
+        "replay_duplicates": 121,
+        "business_duplicates": 903,
+        "invalid_results": 30,
+        "retryable_failures": 0,
+        "capacity_scan_requests": 1201,
+        "blocked_rate": 0
+      },
+      "metrics": {
+        "repo_queue_time_delta_sum": 126.64012900000023,
+        "repo_queue_time_delta_count": 5504.0,
+        "repo_queue_time_avg_ms": 0.0230087443677326,
+        "repo_query_time_delta_sum": 11688.696879999978,
+        "repo_query_time_delta_count": 16875.0,
+        "repo_query_time_avg_ms": 0.6926635188148135,
+        "pgbouncer_pools_after": [
+          {
+            "database": "fastcheck_prod",
+            "user": "postgres",
+            "cl_active": "20",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "2",
+            "sv_used": "17",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "transaction",
+            "load_balance_hosts": ""
+          },
+          {
+            "database": "pgbouncer",
+            "user": "pgbouncer",
+            "cl_active": "1",
+            "cl_waiting": "0",
+            "cl_active_cancel_req": "0",
+            "cl_waiting_cancel_req": "0",
+            "sv_active": "0",
+            "sv_active_cancel": "0",
+            "sv_being_canceled": "0",
+            "sv_idle": "0",
+            "sv_used": "0",
+            "sv_tested": "0",
+            "sv_login": "0",
+            "maxwait": "0",
+            "maxwait_us": "0",
+            "pool_mode": "statement",
+            "load_balance_hosts": ""
+          }
+        ],
+        "pgbouncer_stats_after": [
+          {
+            "database": "fastcheck_prod",
+            "total_server_assignment_count": "16046",
+            "total_xact_count": "16046",
+            "total_query_count": "36843",
+            "total_received": "9510064",
+            "total_sent": "6654077",
+            "total_xact_time": "26533054",
+            "total_query_time": "21952755",
+            "total_wait_time": "208269",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "81",
+            "avg_xact_count": "81",
+            "avg_query_count": "248",
+            "avg_recv": "81283",
+            "avg_sent": "57460",
+            "avg_xact_time": "2220",
+            "avg_query_time": "593",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          },
+          {
+            "database": "pgbouncer",
+            "total_server_assignment_count": "0",
+            "total_xact_count": "34",
+            "total_query_count": "34",
+            "total_received": "0",
+            "total_sent": "0",
+            "total_xact_time": "0",
+            "total_query_time": "0",
+            "total_wait_time": "0",
+            "total_client_parse_count": "0",
+            "total_server_parse_count": "0",
+            "total_bind_count": "0",
+            "avg_server_assignment_count": "0",
+            "avg_xact_count": "0",
+            "avg_query_count": "0",
+            "avg_recv": "0",
+            "avg_sent": "0",
+            "avg_xact_time": "0",
+            "avg_query_time": "0",
+            "avg_wait_time": "0",
+            "avg_client_parse_count": "0",
+            "avg_server_parse_count": "0",
+            "avg_bind_count": "0"
+          }
+        ],
+        "postgres_activity_after": [
+          {
+            "state": "idle",
+            "coalesce": "ClientRead",
+            "count": "19"
+          },
+          {
+            "state": "active",
+            "coalesce": "",
+            "count": "1"
+          }
+        ],
+        "postgres_numbackends_after": [
+          {
+            "numbackends": "20",
+            "xact_commit": "10015",
+            "xact_rollback": "0"
+          }
+        ],
+        "oban_after": {
+          "total": "1752",
+          "available": "0",
+          "executing": "0",
+          "retryable": "0"
+        }
+      },
+      "oban_drain_15s": {
+        "total": "1752",
+        "available": "0",
+        "executing": "0",
+        "retryable": "0"
+      }
+    }
+  },
+  "initial_snapshot": {
+    "repo_queue_time_sum": 66.224088,
+    "repo_queue_time_count": 771.0,
+    "repo_query_time_sum": 2428.625723999999,
+    "repo_query_time_count": 3001.0,
+    "pools": [
+      {
+        "database": "fastcheck_prod",
+        "user": "postgres",
+        "cl_active": "20",
+        "cl_waiting": "0",
+        "cl_active_cancel_req": "0",
+        "cl_waiting_cancel_req": "0",
+        "sv_active": "0",
+        "sv_active_cancel": "0",
+        "sv_being_canceled": "0",
+        "sv_idle": "19",
+        "sv_used": "0",
+        "sv_tested": "0",
+        "sv_login": "0",
+        "maxwait": "0",
+        "maxwait_us": "0",
+        "pool_mode": "transaction",
+        "load_balance_hosts": ""
+      },
+      {
+        "database": "pgbouncer",
+        "user": "pgbouncer",
+        "cl_active": "1",
+        "cl_waiting": "0",
+        "cl_active_cancel_req": "0",
+        "cl_waiting_cancel_req": "0",
+        "sv_active": "0",
+        "sv_active_cancel": "0",
+        "sv_being_canceled": "0",
+        "sv_idle": "0",
+        "sv_used": "0",
+        "sv_tested": "0",
+        "sv_login": "0",
+        "maxwait": "0",
+        "maxwait_us": "0",
+        "pool_mode": "statement",
+        "load_balance_hosts": ""
+      }
+    ],
+    "stats": [
+      {
+        "database": "fastcheck_prod",
+        "total_server_assignment_count": "6966",
+        "total_xact_count": "6966",
+        "total_query_count": "9206",
+        "total_received": "558109",
+        "total_sent": "303615",
+        "total_xact_time": "5662760",
+        "total_query_time": "4991921",
+        "total_wait_time": "198805",
+        "total_client_parse_count": "0",
+        "total_server_parse_count": "0",
+        "total_bind_count": "0",
+        "avg_server_assignment_count": "10",
+        "avg_xact_count": "10",
+        "avg_query_count": "14",
+        "avg_recv": "1395",
+        "avg_sent": "1310",
+        "avg_xact_time": "918",
+        "avg_query_time": "561",
+        "avg_wait_time": "0",
+        "avg_client_parse_count": "0",
+        "avg_server_parse_count": "0",
+        "avg_bind_count": "0"
+      },
+      {
+        "database": "pgbouncer",
+        "total_server_assignment_count": "0",
+        "total_xact_count": "16",
+        "total_query_count": "16",
+        "total_received": "0",
+        "total_sent": "0",
+        "total_xact_time": "0",
+        "total_query_time": "0",
+        "total_wait_time": "0",
+        "total_client_parse_count": "0",
+        "total_server_parse_count": "0",
+        "total_bind_count": "0",
+        "avg_server_assignment_count": "0",
+        "avg_xact_count": "0",
+        "avg_query_count": "0",
+        "avg_recv": "0",
+        "avg_sent": "0",
+        "avg_xact_time": "0",
+        "avg_query_time": "0",
+        "avg_wait_time": "0",
+        "avg_client_parse_count": "0",
+        "avg_server_parse_count": "0",
+        "avg_bind_count": "0"
+      }
+    ],
+    "activity": [
+      {
+        "state": "idle",
+        "coalesce": "ClientRead",
+        "count": "19"
+      },
+      {
+        "state": "active",
+        "coalesce": "",
+        "count": "1"
+      }
+    ],
+    "numbackends": [
+      {
+        "numbackends": "20",
+        "xact_commit": "1119",
+        "xact_rollback": "0"
+      }
+    ],
+    "oban": {
+      "total": "13",
+      "available": "0",
+      "executing": "0",
+      "retryable": "0"
+    }
+  }
+}
