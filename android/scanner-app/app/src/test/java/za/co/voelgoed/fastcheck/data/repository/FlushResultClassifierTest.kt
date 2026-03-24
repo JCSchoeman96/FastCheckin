@@ -11,54 +11,133 @@ class FlushResultClassifierTest {
     private val classifier = FlushResultClassifier()
 
     @Test
-    fun classifiesCurrentPhoenixMessageShapedResults() {
-        val outcomes =
-            classifier.classify(
-                pendingScans =
-                    listOf(
-                        samplePendingScan("idem-1", "VG-1"),
-                        samplePendingScan("idem-2", "VG-2"),
-                        samplePendingScan("idem-3", "VG-3"),
-                        samplePendingScan("idem-4", "VG-4")
-                    ),
-                uploadedResults =
-                    listOf(
-                        UploadedScanResult("idem-1", "success", "Check-in successful"),
-                        UploadedScanResult("idem-2", "duplicate", "Already checked in", "replay_duplicate"),
-                        UploadedScanResult("idem-3", "error", "Ticket not found")
-                    )
+    fun duplicateWithReplayDuplicatePreservesFinalReplayRefinement() {
+        val outcome =
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "duplicate",
+                    message = "Already checked in",
+                    reason_code = "replay_duplicate"
+                )
             )
 
-        assertThat(outcomes.map { it.outcome })
-            .containsExactly(
-                FlushItemOutcome.SUCCESS,
-                FlushItemOutcome.DUPLICATE,
-                FlushItemOutcome.TERMINAL_ERROR,
-                FlushItemOutcome.RETRYABLE_FAILURE
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.DUPLICATE)
+        assertThat(outcome.reasonCode).isEqualTo("replay_duplicate")
+    }
+
+    @Test
+    fun duplicateWithoutReplayDuplicateDoesNotClaimFinalReplayRefinement() {
+        val outcome =
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "duplicate",
+                    message = "Already checked in"
+                )
             )
-            .inOrder()
-        assertThat(outcomes[1].reasonCode).isEqualTo("replay_duplicate")
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.DUPLICATE)
+        assertThat(outcome.reasonCode).isNull()
+    }
+
+    @Test
+    fun errorWithBusinessDuplicatePreservesSecondaryReason() {
+        val outcome =
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "error",
+                    message = "Already processed",
+                    reason_code = "business_duplicate"
+                )
+            )
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.TERMINAL_ERROR)
+        assertThat(outcome.reasonCode).isEqualTo("business_duplicate")
+    }
+
+    @Test
+    fun errorWithPaymentInvalidPreservesSecondaryReason() {
+        val outcome =
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "error",
+                    message = "Payment invalid",
+                    reason_code = "payment_invalid"
+                )
+            )
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.TERMINAL_ERROR)
+        assertThat(outcome.reasonCode).isEqualTo("payment_invalid")
+    }
+
+    @Test
+    fun errorWithUnknownReasonCodeStaysWithinBroadSemantics() {
+        val outcome =
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "error",
+                    message = "Unknown failure",
+                    reason_code = "something_new"
+                )
+            )
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.TERMINAL_ERROR)
+        assertThat(outcome.reasonCode).isNull()
+    }
+
+    @Test
+    fun successWithUnexpectedReasonCodeDoesNotDistortSuccessSemantics() {
+        val outcome =
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "success",
+                    message = "Check-in successful",
+                    reason_code = "payment_invalid"
+                )
+            )
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.SUCCESS)
+        assertThat(outcome.reasonCode).isNull()
+    }
+
+    @Test
+    fun missingResultRowAfterHttp200RemainsRetryable() {
+        val outcome =
+            classifier.classify(
+                pendingScans = listOf(samplePendingScan("idem-1", "VG-1")),
+                uploadedResults = emptyList()
+            ).single()
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.RETRYABLE_FAILURE)
+        assertThat(outcome.reasonCode).isNull()
     }
 
     @Test
     fun ignoresReasonCodesThatDoNotMatchTheStatusShape() {
         val outcome =
-            classifier.classify(
-                pendingScans = listOf(samplePendingScan("idem-1", "VG-1")),
-                uploadedResults =
-                    listOf(
-                        UploadedScanResult(
-                            idempotency_key = "idem-1",
-                            status = "duplicate",
-                            message = "Already checked in",
-                            reason_code = "payment_invalid"
-                        )
-                    )
-            ).single()
+            classifySingle(
+                UploadedScanResult(
+                    idempotency_key = "idem-1",
+                    status = "duplicate",
+                    message = "Already checked in",
+                    reason_code = "payment_invalid"
+                )
+            )
 
         assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.DUPLICATE)
         assertThat(outcome.reasonCode).isNull()
     }
+
+    private fun classifySingle(uploadedResult: UploadedScanResult) =
+        classifier.classify(
+            pendingScans = listOf(samplePendingScan(uploadedResult.idempotency_key, "VG-1")),
+            uploadedResults = listOf(uploadedResult)
+        ).single()
 
     private fun samplePendingScan(idempotencyKey: String, ticketCode: String): PendingScan =
         PendingScan(

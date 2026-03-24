@@ -214,6 +214,13 @@ Runtime notes:
   - `message`
 - the backend may add optional `reason_code` for authoritative outcomes, but
   Android must continue to key runtime behavior off `status`
+- proven additive refinements are only `replay_duplicate`,
+  `business_duplicate`, and `payment_invalid`
+- `replay_duplicate` is trustworthy only for final replay duplicates
+- concurrent same-idempotency ambiguity must remain broad unless the backend
+  proves the final replay reason
+- plain `duplicate` without `replay_duplicate` must stay broader than final
+  replay wording in Android projections
 - `direction = "out"` is still not a successful mobile business flow
 - the server performs the business-rule decision; client runtime queues,
   replay-suppresses, and uploads only
@@ -276,6 +283,10 @@ Current client rule:
 
 - classify queue behavior by `status`
 - do not parse `message` for unproven causes
+- treat missing result rows after HTTP `200` as retryable
+- diagnostics remain the canonical detailed server-truth surface
+- queue may show one restart-stable persisted server-result hint from latest
+  flush history, but not detailed category breakdown
 
 ## JWT Expiry During Background Flush
 

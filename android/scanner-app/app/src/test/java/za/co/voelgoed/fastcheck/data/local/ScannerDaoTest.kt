@@ -132,7 +132,7 @@ class ScannerDaoTest {
                         ticketCode = "VG-100",
                         outcome = "SUCCESS",
                         message = "Check-in successful",
-                        reasonCode = null,
+                        reasonCode = "business_duplicate",
                         completedAt = "2026-03-12T09:10:00Z"
                     )
                 )
@@ -145,5 +145,76 @@ class ScannerDaoTest {
         assertThat(replaySuppression?.seenAtEpochMillis).isEqualTo(3_000L)
         assertThat(snapshot?.summaryMessage).isEqualTo("Flush completed.")
         assertThat(outcomes.single().ticketCode).isEqualTo("VG-100")
+        assertThat(outcomes.single().reasonCode).isEqualTo("business_duplicate")
+    }
+
+    @Test
+    fun replaceLatestFlushStateReplacesRowsAndPreservesOutcomeOrdering() = runTest {
+        dao.replaceLatestFlushState(
+            snapshot =
+                LatestFlushSnapshotEntity(
+                    executionStatus = "COMPLETED",
+                    uploadedCount = 1,
+                    retryableRemainingCount = 0,
+                    authExpired = false,
+                    backlogRemaining = false,
+                    summaryMessage = "First flush.",
+                    completedAt = "2026-03-12T09:00:00Z"
+                ),
+            outcomes =
+                listOf(
+                    RecentFlushOutcomeEntity(
+                        outcomeOrder = 0,
+                        idempotencyKey = "old-idem",
+                        ticketCode = "OLD-1",
+                        outcome = "SUCCESS",
+                        message = "Old result",
+                        reasonCode = null,
+                        completedAt = "2026-03-12T09:00:00Z"
+                    )
+                )
+        )
+
+        dao.replaceLatestFlushState(
+            snapshot =
+                LatestFlushSnapshotEntity(
+                    executionStatus = "COMPLETED",
+                    uploadedCount = 2,
+                    retryableRemainingCount = 0,
+                    authExpired = false,
+                    backlogRemaining = false,
+                    summaryMessage = "Second flush.",
+                    completedAt = "2026-03-12T09:05:00Z"
+                ),
+            outcomes =
+                listOf(
+                    RecentFlushOutcomeEntity(
+                        outcomeOrder = 0,
+                        idempotencyKey = "idem-1",
+                        ticketCode = "VG-001",
+                        outcome = "DUPLICATE",
+                        message = "Already processed",
+                        reasonCode = "business_duplicate",
+                        completedAt = "2026-03-12T09:05:00Z"
+                    ),
+                    RecentFlushOutcomeEntity(
+                        outcomeOrder = 1,
+                        idempotencyKey = "idem-2",
+                        ticketCode = "VG-002",
+                        outcome = "TERMINAL_ERROR",
+                        message = "Payment invalid",
+                        reasonCode = "payment_invalid",
+                        completedAt = "2026-03-12T09:05:00Z"
+                    )
+                )
+        )
+
+        val outcomes = dao.loadRecentFlushOutcomes()
+
+        assertThat(outcomes.map { it.ticketCode }).containsExactly("VG-001", "VG-002").inOrder()
+        assertThat(outcomes.map { it.reasonCode })
+            .containsExactly("business_duplicate", "payment_invalid")
+            .inOrder()
+        assertThat(outcomes).hasSize(2)
     }
 }

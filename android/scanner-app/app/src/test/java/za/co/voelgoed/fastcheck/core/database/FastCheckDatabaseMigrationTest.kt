@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.core.database
 
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -12,6 +13,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
+import za.co.voelgoed.fastcheck.data.local.RecentFlushOutcomeEntity
 
 @RunWith(RobolectricTestRunner::class)
 class FastCheckDatabaseMigrationTest {
@@ -44,9 +47,12 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(FastCheckDatabaseMigrations.MIGRATION_2_3)
                 .allowMainThreadQueries()
                 .build()
-
+        val sqliteDb = database.openHelper.readableDatabase
         val replayCache = database.scannerDao().findReplayCache("idem-cache")
         val outcomes = database.scannerDao().loadRecentFlushOutcomes(limit = 5)
+
+        assertNullableReasonCodeColumn(sqliteDb.query("PRAGMA table_info(recent_flush_outcomes)"), "reasonCode")
+        assertNullableReasonCodeColumn(sqliteDb.query("PRAGMA table_info(scan_replay_cache)"), "reasonCode")
 
         assertThat(replayCache).isNotNull()
         assertThat(replayCache?.message).isEqualTo("Already checked in")
@@ -55,7 +61,61 @@ class FastCheckDatabaseMigrationTest {
         assertThat(outcomes.single().ticketCode).isEqualTo("VG-001")
         assertThat(outcomes.single().reasonCode).isNull()
 
+        database.scannerDao().replaceLatestFlushState(
+            snapshot =
+                LatestFlushSnapshotEntity(
+                    executionStatus = "COMPLETED",
+                    uploadedCount = 2,
+                    retryableRemainingCount = 0,
+                    authExpired = false,
+                    backlogRemaining = false,
+                    summaryMessage = "Migrated flush completed.",
+                    completedAt = "2026-03-24T06:05:00Z"
+                ),
+            outcomes =
+                listOf(
+                    RecentFlushOutcomeEntity(
+                        outcomeOrder = 0,
+                        idempotencyKey = "idem-new-1",
+                        ticketCode = "VG-010",
+                        outcome = "DUPLICATE",
+                        message = "Already processed",
+                        reasonCode = "business_duplicate",
+                        completedAt = "2026-03-24T06:05:00Z"
+                    ),
+                    RecentFlushOutcomeEntity(
+                        outcomeOrder = 1,
+                        idempotencyKey = "idem-new-2",
+                        ticketCode = "VG-011",
+                        outcome = "TERMINAL_ERROR",
+                        message = "Payment invalid",
+                        reasonCode = "payment_invalid",
+                        completedAt = "2026-03-24T06:05:00Z"
+                    )
+                )
+        )
+
+        val replacedOutcomes = database.scannerDao().loadRecentFlushOutcomes(limit = 5)
+
+        assertThat(replacedOutcomes.map { it.ticketCode }).containsExactly("VG-010", "VG-011").inOrder()
+        assertThat(replacedOutcomes.map { it.reasonCode })
+            .containsExactly("business_duplicate", "payment_invalid")
+            .inOrder()
+
         database.close()
+    }
+
+    private fun assertNullableReasonCodeColumn(cursor: Cursor, columnName: String) {
+        cursor.use {
+            while (it.moveToNext()) {
+                if (it.getString(it.getColumnIndexOrThrow("name")) == columnName) {
+                    assertThat(it.getInt(it.getColumnIndexOrThrow("notnull"))).isEqualTo(0)
+                    return
+                }
+            }
+        }
+
+        error("Column $columnName was not found")
     }
 
     private fun createVersion2Schema(databaseFile: File) {

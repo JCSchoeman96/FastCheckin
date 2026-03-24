@@ -32,10 +32,11 @@ class QueueViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 autoFlushCoordinator.state,
-                mobileScanRepository.observePendingQueueDepth()
-            ) { coordinatorState, queueDepth ->
-                coordinatorState to queueDepth
-            }.collectLatest { (coordinatorState, queueDepth) ->
+                mobileScanRepository.observePendingQueueDepth(),
+                mobileScanRepository.observeLatestFlushReport()
+            ) { coordinatorState, queueDepth, latestFlushReport ->
+                Triple(coordinatorState, queueDepth, latestFlushReport)
+            }.collectLatest { (coordinatorState, queueDepth, latestFlushReport) ->
                 val uploadStateLabel =
                     when {
                         coordinatorState.isFlushing -> "Uploading"
@@ -53,8 +54,8 @@ class QueueViewModel @Inject constructor(
                         isFlushing = coordinatorState.isFlushing,
                         localQueueDepth = queueDepth,
                         uploadStateLabel = uploadStateLabel,
-                        // Keep the queue panel low-noise: this is intentionally empty by default.
-                        serverResultHint = ""
+                        serverResultHint =
+                            queueUiStateFactory.serverResultHintForFlushReport(latestFlushReport)
                     )
                 }
             }
