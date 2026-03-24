@@ -37,12 +37,22 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     # Environment variables for all steps
     env:
       MIX_ENV: test
       # PostgreSQL connection for Ecto
       DATABASE_URL: ecto://postgres:postgres@localhost:5432/fastcheck_test
+      REDIS_URL: redis://localhost:6379
       # Required for Phoenix - must be 64+ characters
       SECRET_KEY_BASE: test_secret_key_base_for_github_actions_ci_pipeline_needs_64_chars_minimum
 

@@ -90,7 +90,20 @@ cache_ttl = [
   occupancy: :timer.seconds(10)
 ]
 
-redis_url = System.get_env("REDIS_URL", "redis://localhost:6379")
+default_redis_url =
+  cond do
+    System.get_env("GITHUB_ACTIONS") ->
+      "redis://localhost:6379"
+
+    config_env() == :prod ->
+      "redis://localhost:6379"
+
+    true ->
+      # Local Docker compose publishes the Redis container on host port 6380.
+      "redis://localhost:6380"
+  end
+
+redis_url = System.get_env("REDIS_URL", default_redis_url)
 
 config :fastcheck,
   cache_enabled: cache_enabled,

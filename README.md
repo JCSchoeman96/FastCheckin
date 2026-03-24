@@ -73,6 +73,10 @@ Set `DB_PASSWORD` in your environment (or a local `.env`) so compose can seed bo
 - Postgres direct: `ecto://postgres:${DB_PASSWORD}@localhost:5432/fastcheck_prod`
 - pgBouncer: `ecto://postgres:${DB_PASSWORD}@localhost:6432/fastcheck_prod`
 
+For Redis-backed mobile scan work, the same compose stack publishes Redis on
+`redis://localhost:6380`. The non-production runtime/test default follows that
+host port unless you override `REDIS_URL`.
+
 ### Run the app
 
 ```bash
@@ -86,6 +90,9 @@ Health endpoints:
 - `GET /api/v1/health`
 
 ### Environment variables
+
+Set `REDIS_URL` explicitly when you are not using the default local Docker
+compose port mapping or when production points at a managed Redis host.
 
 See `.env.example` for the full set of production-style env vars. At minimum you’ll need values for `SECRET_KEY_BASE`, `ENCRYPTION_KEY`, `MOBILE_JWT_SECRET`, and `DATABASE_URL` in the environment you run the server under.
 
