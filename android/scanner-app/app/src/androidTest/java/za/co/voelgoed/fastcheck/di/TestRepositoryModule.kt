@@ -8,7 +8,13 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import za.co.voelgoed.fastcheck.app.di.RepositoryModule
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
@@ -72,6 +78,7 @@ object TestRepositoryModule {
         object : SyncRepository {
             override suspend fun syncAttendees(): AttendeeSyncStatus? = null
             override suspend fun currentSyncStatus(): AttendeeSyncStatus? = null
+            override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
         }
 
     @Provides
@@ -87,6 +94,10 @@ object TestRepositoryModule {
             override suspend fun pendingQueueDepth(): Int = 0
 
             override suspend fun latestFlushReport(): FlushReport? = null
+
+            override fun observePendingQueueDepth(): Flow<Int> = flowOf(0)
+
+            override fun observeLatestFlushReport(): Flow<FlushReport?> = flowOf(null)
         }
 
     @Provides
@@ -122,5 +133,15 @@ object TestRepositoryModule {
         object : FlushQueuedScansUseCase {
             override suspend fun run(maxBatchSize: Int): FlushReport =
                 FlushReport(executionStatus = FlushExecutionStatus.COMPLETED)
+        }
+
+    @Provides
+    @Singleton
+    fun provideAutoFlushCoordinator(): AutoFlushCoordinator =
+        object : AutoFlushCoordinator {
+            override val state: MutableStateFlow<AutoFlushCoordinatorState> =
+                MutableStateFlow(AutoFlushCoordinatorState())
+
+            override fun requestFlush(trigger: AutoFlushTrigger) = Unit
         }
 }
