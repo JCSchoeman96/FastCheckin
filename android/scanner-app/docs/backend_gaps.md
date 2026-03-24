@@ -4,33 +4,19 @@
 
 - Android runtime still authenticates with event-scoped JWT login instead of a
   hybrid device/session model.
-- Repo config still falls back to `:legacy` unless runtime overrides it.
-  Authoritative tests and local perf docs are pinned to `:redis_authoritative`,
-  but deployed production truth still requires explicit runtime verification.
-- `/api/v1/mobile/scans` preserves the stable per-item envelope
-  `idempotency_key`, `status`, `message`, with optional authoritative-only
-  `reason_code` values for `replay_duplicate`, `business_duplicate`, and
-  `payment_invalid`.
-- Mobile scan upload result taxonomy is intentionally narrow:
-  - `status` remains one of `success`, `duplicate`, `error`
-  - Android must continue to key behavior off `status`
-  - `reason_code` is additive
-  - Android must not infer invalid/not-found or other unproven causes from
-    `message`
-  - proven refinements are only `replay_duplicate`, `business_duplicate`, and
-    `payment_invalid`
-  - `replay_duplicate` is emitted only for final replay duplicates
-  - concurrent same-idempotency uploads may still surface without
-    `replay_duplicate` while the original authoritative result is not yet final
-  - plain `duplicate` without `replay_duplicate` must remain broader in Android
-    wording and tests
-- Partial success is not described by explicit per-item retry flags, so the
-  client must interpret missing result items as retryable.
-- Backend admission is authoritative in hot state, but durable Postgres
-  projection still happens asynchronously after acknowledgement.
-- The exact QR payload normalization contract is unresolved: it is not yet
-  confirmed that raw scanned payload always equals backend `ticket_code`.
-- Runtime mobile direction support is effectively `IN` only.
+- `/api/v1/mobile/scans` returns `status` plus free-form `message` instead of a
+  richer machine-readable decision taxonomy.
+- Mobile scan upload result taxonomy is status-only today:
+  - `status` is one of `success`, `duplicate`, `error`
+  - Android must classify queue outcomes from `status` and missing result rows,
+    not from parsing `message`
+- Partial success is not described by explicit per-item retry flags, so Android
+  must interpret missing result items as retryable.
+- Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
+- Phoenix currently trims required mobile scan fields during validation, but no
+  broader QR normalization or scanned-payload mapping policy is promoted.
+- Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
+- redis_authoritative is the target/proven path in tests and perf; legacy and shadow are fallback/migration modes; deployed production truth cannot be proven from repo code alone.
 
 ## Future Routes Are Inactive
 

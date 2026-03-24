@@ -7,13 +7,13 @@ defmodule FastCheck.Scans.MobileUploadService do
   require Logger
 
   alias FastCheck.Repo
-  alias FastCheck.Scans.AuthoritativeResultMapper
+  alias FastCheck.Scans.IngestionMode
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
   alias FastCheck.Scans.LegacyUploadService
   alias FastCheck.Scans.Result
   alias FastCheck.Scans.Validator
 
-  @type api_result :: AuthoritativeResultMapper.api_result()
+  @type api_result :: %{idempotency_key: String.t(), status: String.t(), message: String.t()}
   @type service_error :: %{status: atom(), code: String.t(), message: String.t()}
 
   @spec upload_batch(integer(), list()) :: {:ok, [api_result()]} | {:error, service_error()}
@@ -57,8 +57,11 @@ defmodule FastCheck.Scans.MobileUploadService do
          {:api_result, result} ->
            result
 
+         {:result, %Result{delivery_state: :final_acknowledged} = result} ->
+           Result.to_duplicate_api_result(result)
+
          {:result, %Result{} = result} ->
-           AuthoritativeResultMapper.to_api_result(result)
+           Result.to_api_result(result)
        end)}
     else
       {:error, %{status: _status} = error} ->
@@ -263,7 +266,7 @@ defmodule FastCheck.Scans.MobileUploadService do
     config = Application.get_env(:fastcheck, :mobile_scan_ingestion, [])
 
     %{
-      mode: Keyword.get(config, :mode, :legacy),
+      mode: config |> Keyword.get(:mode, :legacy) |> IngestionMode.resolve(),
       chunk_size: Keyword.get(config, :chunk_size, 100),
       live_namespace: Keyword.get(config, :live_namespace, "live"),
       shadow_namespace: Keyword.get(config, :shadow_namespace, "shadow"),

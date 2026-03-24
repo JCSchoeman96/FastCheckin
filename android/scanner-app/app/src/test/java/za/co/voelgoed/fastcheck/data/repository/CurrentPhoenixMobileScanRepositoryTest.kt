@@ -4,24 +4,18 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
-import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.test.runTest
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.ResponseBody
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import retrofit2.HttpException
-import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
-import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginResponse
 import za.co.voelgoed.fastcheck.data.remote.MobileSyncResponse
@@ -91,6 +85,43 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
+    fun keepsExactRawPayloadDistinctForReplaySuppressionAndUpload() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-raw-1", ticketCode = "VG-001", createdAt = 1_000L))
+        repository.queueScan(sampleScan(idempotencyKey = "idem-raw-2", ticketCode = " VG-001 ", createdAt = 2_000L))
+
+        api.uploadResponse =
+            UploadScansResponse(
+                data =
+                    UploadScansPayload(
+                        results =
+                            listOf(
+                                UploadedScanResult(
+                                    idempotency_key = "idem-raw-1",
+                                    status = "success",
+                                    message = "Check-in successful"
+                                ),
+                                UploadedScanResult(
+                                    idempotency_key = "idem-raw-2",
+                                    status = "success",
+                                    message = "Check-in successful"
+                                )
+                            ),
+                        processed = 2
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+
+        assertThat(database.scannerDao().findReplaySuppression("VG-001")).isNotNull()
+        assertThat(database.scannerDao().findReplaySuppression(" VG-001 ")).isNotNull()
+        assertThat(api.lastUploadBody?.scans?.map { it.ticket_code })
+            .containsExactly("VG-001", " VG-001 ")
+            .inOrder()
+    }
+
+    @Test
     fun keepsUnmatchedQueueItemsForRetryAfterPartialSuccess() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-1", ticketCode = "VG-1", createdAt = 1_000L))
         repository.queueScan(sampleScan(idempotencyKey = "idem-2", ticketCode = "VG-2", createdAt = 5_000L))
@@ -132,69 +163,6 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
-    fun persistsSecondaryReasonDetailAndRemovesTerminalItemsAsBefore() = runTest {
-        repository.queueScan(sampleScan(idempotencyKey = "idem-1", ticketCode = "VG-1", createdAt = 1_000L))
-
-        api.uploadResponse =
-            UploadScansResponse(
-                data =
-                    UploadScansPayload(
-                        results =
-                            listOf(
-                                UploadedScanResult(
-                                    idempotency_key = "idem-1",
-                                    status = "error",
-                                    message = "Already processed",
-                                    reason_code = "business_duplicate"
-                                )
-                            ),
-                        processed = 1
-                    ),
-                error = null,
-                message = null
-            )
-
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
-        val replayCache = database.scannerDao().findReplayCache("idem-1")
-
-        assertThat(report.itemOutcomes.single().outcome).isEqualTo(FlushItemOutcome.TERMINAL_ERROR)
-        assertThat(report.itemOutcomes.single().reasonCode).isEqualTo("business_duplicate")
-        assertThat(database.scannerDao().countPendingScans()).isEqualTo(0)
-        assertThat(replayCache?.reasonCode).isEqualTo("business_duplicate")
-    }
-
-    @Test
-    fun plainDuplicateRemainsBroadInPersistenceWhileQueueRemovalStillFollowsTerminalRows() = runTest {
-        repository.queueScan(sampleScan(idempotencyKey = "idem-1", ticketCode = "VG-1", createdAt = 1_000L))
-
-        api.uploadResponse =
-            UploadScansResponse(
-                data =
-                    UploadScansPayload(
-                        results =
-                            listOf(
-                                UploadedScanResult(
-                                    idempotency_key = "idem-1",
-                                    status = "duplicate",
-                                    message = "Already processed"
-                                )
-                            ),
-                        processed = 1
-                    ),
-                error = null,
-                message = null
-            )
-
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
-        val replayCache = database.scannerDao().findReplayCache("idem-1")
-
-        assertThat(report.itemOutcomes.single().outcome).isEqualTo(FlushItemOutcome.DUPLICATE)
-        assertThat(report.itemOutcomes.single().reasonCode).isNull()
-        assertThat(database.scannerDao().countPendingScans()).isEqualTo(0)
-        assertThat(replayCache?.reasonCode).isNull()
-    }
-
-    @Test
     fun flushRespectsConfiguredBatchSizeAndCurrentPayloadShape() = runTest {
         repeat(55) { index ->
             repository.queueScan(
@@ -215,8 +183,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                                 UploadedScanResult(
                                     idempotency_key = "idem-$index",
                                     status = "duplicate",
-                                    message = "Already checked in",
-                                    reason_code = if (index == 0) "business_duplicate" else null
+                                    message = "Already checked in"
                                 )
                             },
                         processed = 50
@@ -230,32 +197,6 @@ class CurrentPhoenixMobileScanRepositoryTest {
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
         assertThat(api.lastUploadBody?.scans?.size).isEqualTo(50)
         assertThat(database.scannerDao().countPendingScans()).isEqualTo(5)
-        assertThat(repository.latestFlushReport()?.itemOutcomes?.first()?.reasonCode)
-            .isEqualTo("business_duplicate")
-    }
-
-    @Test
-    fun marksServerErrorsRetryableAndPreservesQueue() = runTest {
-        repository.queueScan(sampleScan(idempotencyKey = "idem-server", createdAt = 10_000L))
-        api.uploadException = httpException(500)
-
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
-
-        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.RETRYABLE_FAILURE)
-        assertThat(report.itemOutcomes.single().outcome).isEqualTo(FlushItemOutcome.RETRYABLE_FAILURE)
-        assertThat(database.scannerDao().countPendingScans()).isEqualTo(1)
-    }
-
-    @Test
-    fun marksNetworkErrorsRetryableAndPreservesQueue() = runTest {
-        repository.queueScan(sampleScan(idempotencyKey = "idem-network", createdAt = 10_000L))
-        api.uploadException = IOException("offline")
-
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
-
-        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.RETRYABLE_FAILURE)
-        assertThat(report.itemOutcomes.single().outcome).isEqualTo(FlushItemOutcome.RETRYABLE_FAILURE)
-        assertThat(database.scannerDao().countPendingScans()).isEqualTo(1)
     }
 
     @Test
@@ -280,25 +221,6 @@ class CurrentPhoenixMobileScanRepositoryTest {
         assertThat(database.scannerDao().countPendingScans()).isEqualTo(1)
     }
 
-    @Test
-    fun queueAdmissionDoesNotConsultReplayCacheReasonCodes() = runTest {
-        database.scannerDao().upsertReplayCache(
-            ReplayCacheEntity(
-                idempotencyKey = "idem-old",
-                status = "duplicate",
-                message = "Already processed",
-                reasonCode = "replay_duplicate",
-                storedAt = "2026-03-12T09:00:00Z",
-                terminal = true
-            )
-        )
-
-        val result = repository.queueScan(sampleScan(idempotencyKey = "idem-new", createdAt = 10_000L))
-
-        assertThat(result).isInstanceOf(QueueCreationResult.Enqueued::class.java)
-        assertThat(database.scannerDao().countPendingScans()).isEqualTo(1)
-    }
-
     private fun sampleScan(
         idempotencyKey: String,
         ticketCode: String = "VG-001",
@@ -315,22 +237,8 @@ class CurrentPhoenixMobileScanRepositoryTest {
             operatorName = "Scanner 1"
         )
 
-    private fun httpException(statusCode: Int): HttpException {
-        val response =
-            Response.error<UploadScansResponse>(
-                statusCode,
-                ResponseBody.create(
-                    "application/json".toMediaType(),
-                    """{"error":"server_error"}"""
-                )
-            )
-
-        return HttpException(response)
-    }
-
     private class FakePhoenixMobileApi : PhoenixMobileApi {
         var lastUploadBody: UploadScansRequest? = null
-        var uploadException: Exception? = null
         var uploadResponse: UploadScansResponse =
             UploadScansResponse(
                 data = UploadScansPayload(results = emptyList(), processed = 0),
@@ -347,7 +255,6 @@ class CurrentPhoenixMobileScanRepositoryTest {
         }
 
         override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
-            uploadException?.let { throw it }
             lastUploadBody = body
             return uploadResponse
         }

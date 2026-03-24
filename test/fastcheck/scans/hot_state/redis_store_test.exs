@@ -97,12 +97,28 @@ defmodule FastCheck.Scans.HotState.RedisStoreTest do
     assert {:error, :build_timeout} = RedisStore.ensure_event_loaded(event.id, namespace)
   end
 
-  defp scan_command(event_id, idempotency_key, ticket_code) do
+  test "rejects out direction as not implemented instead of returning success", %{
+    event: event,
+    namespace: namespace
+  } do
+    assert {:ok, result} =
+             RedisStore.process_scan(
+               scan_command(event.id, "idem-out-1", "TEST001", "out"),
+               namespace
+             )
+
+    assert result.status == "error"
+    assert result.reason_code == "NOT_IMPLEMENTED"
+    assert result.delivery_state == :new_staged
+    assert result.message =~ "Check-out functionality not yet available"
+  end
+
+  defp scan_command(event_id, idempotency_key, ticket_code, direction \\ "in") do
     %ScanCommand{
       event_id: event_id,
       idempotency_key: idempotency_key,
       ticket_code: ticket_code,
-      direction: "in",
+      direction: direction,
       entrance_name: "Main Gate",
       operator_name: "Scanner 1",
       scanned_at: DateTime.utc_now() |> DateTime.truncate(:second)

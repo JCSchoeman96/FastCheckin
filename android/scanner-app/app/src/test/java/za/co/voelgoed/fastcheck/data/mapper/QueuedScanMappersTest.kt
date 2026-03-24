@@ -11,7 +11,7 @@ import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 
 class QueuedScanMappersTest {
     @Test
-    fun mapsPendingScanToEntityAndPhoenixPayload() {
+    fun preservesExactQueuedPayloadAndDirectionAcrossEntityAndUploadMapping() {
         val scan =
             PendingScan(
                 localId = 7,
@@ -34,11 +34,11 @@ class QueuedScanMappersTest {
         assertThat(entity.direction).isEqualTo("out")
         assertThat(payload.idempotency_key).isEqualTo("idem-777")
         assertThat(payload.ticket_code).isEqualTo("  VG-777  ")
-        assertThat(payload.direction).isEqualTo("in")
+        assertThat(payload.direction).isEqualTo("out")
     }
 
     @Test
-    fun mapsQueuedEntityBackToRuntimeInDirectionOnly() {
+    fun preservesStoredDirectionWhenMappingQueuedEntityBackToDomain() {
         val entity =
             PendingScan(
                 localId = 2,
@@ -54,7 +54,7 @@ class QueuedScanMappersTest {
 
         val domain = entity.toDomain()
 
-        assertThat(domain.direction).isEqualTo(ScanDirection.IN)
+        assertThat(domain.direction).isEqualTo(ScanDirection.OUT)
     }
 
     @Test
