@@ -1,33 +1,31 @@
 package za.co.voelgoed.fastcheck.feature.queue
 
-/**
- * Focused B1 projection tests for QueueViewModel.
- *
- * Verifies queue depth comes from repository-backed observation and that
- * transient upload/retry state comes from coordinator state only.
- */
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
+import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
+import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
+import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
-import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class QueueViewModelTest {
@@ -46,21 +44,26 @@ class QueueViewModelTest {
     private class FakeAutoFlushCoordinator : AutoFlushCoordinator {
         private val _state = MutableStateFlow(AutoFlushCoordinatorState())
         override val state: StateFlow<AutoFlushCoordinatorState> = _state
+        var lastTrigger: AutoFlushTrigger? = null
 
         fun emit(value: AutoFlushCoordinatorState) {
             _state.value = value
         }
 
-        override fun requestFlush(trigger: za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger) = Unit
+        override fun requestFlush(trigger: AutoFlushTrigger) {
+            lastTrigger = trigger
+        }
     }
 
     private class FakeQueueCapturedScanUseCase : QueueCapturedScanUseCase {
+        var result: QueueCreationResult = QueueCreationResult.InvalidTicketCode
+
         override suspend fun enqueue(
             ticketCode: String,
-            direction: za.co.voelgoed.fastcheck.domain.model.ScanDirection,
+            direction: ScanDirection,
             operatorName: String,
             entranceName: String
-        ): QueueCreationResult = QueueCreationResult.InvalidTicketCode
+        ): QueueCreationResult = result
     }
 
     private class FakeMobileScanRepository : MobileScanRepository {
@@ -88,13 +91,7 @@ class QueueViewModelTest {
     fun queueDepthIsObserved_notManuallyRefreshed() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
         val repo = FakeMobileScanRepository()
-        val viewModel =
-            QueueViewModel(
-                queueCapturedScanUseCase = FakeQueueCapturedScanUseCase(),
-                autoFlushCoordinator = coordinator,
-                mobileScanRepository = repo,
-                queueUiStateFactory = QueueUiStateFactory()
-            )
+        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
 
         repo.depthFlow.value = 7
         advanceUntilIdle()
@@ -103,16 +100,108 @@ class QueueViewModelTest {
     }
 
     @Test
+    fun uploadStateLabelComesFromCoordinatorTruth_notPersistedFlushTruth() = runTest(dispatcher) {
+        val coordinator = FakeAutoFlushCoordinator()
+        val repo = FakeMobileScanRepository()
+        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+
+        repo.reportFlow.value =
+            FlushReport(
+                executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
+                authExpired = true,
+                summaryMessage = "Persisted auth expired"
+            )
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.uploadStateLabel).isEqualTo("Idle")
+    }
+
+    @Test
+    fun persistedLatestFlushReportDrivesQueueHint_evenWhenCoordinatorHasNoLastFlushReport() =
+        runTest(dispatcher) {
+            val coordinator = FakeAutoFlushCoordinator()
+            val repo = FakeMobileScanRepository()
+            val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+
+            repo.reportFlow.value =
+                FlushReport(
+                    executionStatus = FlushExecutionStatus.COMPLETED,
+                    itemOutcomes =
+                        listOf(
+                            FlushItemResult(
+                                idempotencyKey = "idem-1",
+                                ticketCode = "VG-1",
+                                outcome = FlushItemOutcome.DUPLICATE,
+                                message = "Already processed"
+                            )
+                        ),
+                    uploadedCount = 1
+                )
+            advanceUntilIdle()
+
+            assertThat(viewModel.uiState.value.serverResultHint).isEqualTo("Already processed by server: 1")
+        }
+
+    @Test
+    fun recreatedViewModelRestoresHintFromRepository_evenWhenCoordinatorReportIsNullOrStale() =
+        runTest(dispatcher) {
+            val repo = FakeMobileScanRepository()
+            repo.reportFlow.value =
+                FlushReport(
+                    executionStatus = FlushExecutionStatus.COMPLETED,
+                    itemOutcomes =
+                        listOf(
+                            FlushItemResult(
+                                idempotencyKey = "idem-1",
+                                ticketCode = "VG-1",
+                                outcome = FlushItemOutcome.TERMINAL_ERROR,
+                                message = "Payment issue",
+                                reasonCode = "payment_invalid"
+                            )
+                        ),
+                    uploadedCount = 1
+                )
+
+            val firstCoordinator = FakeAutoFlushCoordinator()
+            val firstViewModel = createViewModel(firstCoordinator, repo, FakeQueueCapturedScanUseCase())
+            advanceUntilIdle()
+
+            val secondCoordinator = FakeAutoFlushCoordinator()
+            secondCoordinator.emit(
+                AutoFlushCoordinatorState(
+                    lastFlushReport =
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
+                            authExpired = true,
+                            summaryMessage = "stale"
+                        )
+                )
+            )
+            val recreatedViewModel =
+                createViewModel(secondCoordinator, repo, FakeQueueCapturedScanUseCase())
+            advanceUntilIdle()
+
+            assertThat(firstViewModel.uiState.value.serverResultHint).isEqualTo("Payment invalid: 1")
+            assertThat(recreatedViewModel.uiState.value.serverResultHint).isEqualTo("Payment invalid: 1")
+        }
+
+    @Test
+    fun queueHintStaysNeutralWhenNoPersistedFlushTruthExists() = runTest(dispatcher) {
+        val coordinator = FakeAutoFlushCoordinator()
+        val repo = FakeMobileScanRepository()
+        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+
+        repo.depthFlow.value = 4
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.serverResultHint).isEqualTo("No server outcomes yet.")
+    }
+
+    @Test
     fun uploadingWhileQueueExists_setsUploadingState() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
         val repo = FakeMobileScanRepository()
-        val viewModel =
-            QueueViewModel(
-                queueCapturedScanUseCase = FakeQueueCapturedScanUseCase(),
-                autoFlushCoordinator = coordinator,
-                mobileScanRepository = repo,
-                queueUiStateFactory = QueueUiStateFactory()
-            )
+        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
 
         repo.depthFlow.value = 3
         coordinator.emit(AutoFlushCoordinatorState(isFlushing = true))
@@ -126,13 +215,7 @@ class QueueViewModelTest {
     fun retryPending_showsAttemptMetadata() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
         val repo = FakeMobileScanRepository()
-        val viewModel =
-            QueueViewModel(
-                queueCapturedScanUseCase = FakeQueueCapturedScanUseCase(),
-                autoFlushCoordinator = coordinator,
-                mobileScanRepository = repo,
-                queueUiStateFactory = QueueUiStateFactory()
-            )
+        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
 
         coordinator.emit(
             AutoFlushCoordinatorState(
@@ -150,13 +233,7 @@ class QueueViewModelTest {
     fun authExpired_reflectedInUploadState() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
         val repo = FakeMobileScanRepository()
-        val viewModel =
-            QueueViewModel(
-                queueCapturedScanUseCase = FakeQueueCapturedScanUseCase(),
-                autoFlushCoordinator = coordinator,
-                mobileScanRepository = repo,
-                queueUiStateFactory = QueueUiStateFactory()
-            )
+        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
 
         coordinator.emit(
             AutoFlushCoordinatorState(
@@ -172,5 +249,46 @@ class QueueViewModelTest {
 
         assertThat(viewModel.uiState.value.uploadStateLabel).isEqualTo("Auth expired")
     }
-}
 
+    @Test
+    fun manualQueueingSuccessMessageRemainsLocalOnly() = runTest(dispatcher) {
+        val coordinator = FakeAutoFlushCoordinator()
+        val repo = FakeMobileScanRepository()
+        val useCase = FakeQueueCapturedScanUseCase()
+        useCase.result =
+            QueueCreationResult.Enqueued(
+                PendingScan(
+                    eventId = 5,
+                    ticketCode = "VG-LOCAL",
+                    idempotencyKey = "idem-local",
+                    createdAt = 1_773_487_800_000,
+                    scannedAt = "2026-03-13T08:30:00Z",
+                    direction = ScanDirection.IN,
+                    entranceName = "Manual Debug",
+                    operatorName = "Operator"
+                )
+            )
+        val viewModel = createViewModel(coordinator, repo, useCase)
+
+        viewModel.updateTicketCode("VG-LOCAL")
+        viewModel.queueManualScan()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.lastActionMessage).isEqualTo("Queued VG-LOCAL for upload.")
+        assertThat(viewModel.uiState.value.lastActionMessage).doesNotContain("Confirmed")
+        assertThat(viewModel.uiState.value.lastActionMessage).doesNotContain("accepted by server")
+        assertThat(coordinator.lastTrigger).isEqualTo(AutoFlushTrigger.AfterEnqueue)
+    }
+
+    private fun createViewModel(
+        coordinator: FakeAutoFlushCoordinator,
+        repo: FakeMobileScanRepository,
+        useCase: FakeQueueCapturedScanUseCase
+    ): QueueViewModel =
+        QueueViewModel(
+            queueCapturedScanUseCase = useCase,
+            autoFlushCoordinator = coordinator,
+            mobileScanRepository = repo,
+            queueUiStateFactory = QueueUiStateFactory()
+        )
+}

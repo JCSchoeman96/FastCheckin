@@ -42,6 +42,12 @@ Supported targets:
 - `dev`
 - `device`
 
+Release notes:
+
+- normal release flow uses the fixed production URL
+- `FASTCHECK_API_BASE_URL_RELEASE` is exceptional-only if used
+- emulator cleartext support is debug-only and limited to `10.0.2.2`
+
 Example build commands:
 
 ```powershell

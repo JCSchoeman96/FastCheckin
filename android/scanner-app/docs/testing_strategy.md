@@ -51,3 +51,13 @@ Worker tests should verify:
 ## Contract Discipline
 
 No Android test should reference future scanner routes as active dependencies.
+
+Reason-code coverage must also prove:
+
+- `status` and row presence still decide terminal vs retryable behavior
+- `reason_code` is optional and additive only
+- proven refinements are only `replay_duplicate`, `business_duplicate`, and
+  `payment_invalid`
+- `replay_duplicate` is trusted only for final replay duplicates
+- `message` is not contract truth
+- missing result rows after HTTP 200 remain retryable

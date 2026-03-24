@@ -17,9 +17,13 @@
   - `reason_code` is additive
   - Android must not infer invalid/not-found or other unproven causes from
     `message`
+  - proven refinements are only `replay_duplicate`, `business_duplicate`, and
+    `payment_invalid`
   - `replay_duplicate` is emitted only for final replay duplicates
   - concurrent same-idempotency uploads may still surface without
     `replay_duplicate` while the original authoritative result is not yet final
+  - plain `duplicate` without `replay_duplicate` must remain broader in Android
+    wording and tests
 - Partial success is not described by explicit per-item retry flags, so the
   client must interpret missing result items as retryable.
 - Backend admission is authoritative in hot state, but durable Postgres

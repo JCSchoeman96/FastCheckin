@@ -200,6 +200,7 @@ class MainActivity : ComponentActivity() {
                         binding.flushQueueButton.isEnabled = !state.isFlushing
                         binding.manualQueueDepthValue.text = "Queued locally: ${state.localQueueDepth}"
                         binding.manualUploadStateValue.text = state.uploadStateLabel
+                        binding.manualServerResultHintValue.text = state.serverResultHint
                     }
                 }
 

@@ -8,9 +8,9 @@ import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 
 /**
- * Isolates the current Phoenix mobile API's message-shaped scan result
- * semantics. Replace this classifier if the backend later publishes stable
- * reason codes.
+ * Isolates the current Phoenix mobile API's additive scan-result semantics.
+ * Row presence plus status remain authoritative for retry vs terminal
+ * handling; optional reason codes only refine persisted detail.
  */
 @Singleton
 class FlushResultClassifier @Inject constructor() {
@@ -57,7 +57,7 @@ class FlushResultClassifier @Inject constructor() {
                 reasonCode in setOf("replay_duplicate", "business_duplicate") -> reasonCode
 
             result.status.equals("error", ignoreCase = true) &&
-                reasonCode == "payment_invalid" -> reasonCode
+                reasonCode in setOf("payment_invalid", "business_duplicate") -> reasonCode
 
             else -> null
         }

@@ -34,6 +34,7 @@
     <string name="latest_flush_state_label">Upload state</string>
     <string name="latest_flush_summary_label">Latest Flush Summary</string>
     <string name="recent_outcome_summary_label">Server result</string>
+    <string name="no_server_outcomes_yet">No server outcomes yet.</string>
     <string name="no_active_event">No active event</string>
     <string name="no_active_session">No active session</string>
     <string name="no_sync_yet">No attendee sync has run yet.</string>

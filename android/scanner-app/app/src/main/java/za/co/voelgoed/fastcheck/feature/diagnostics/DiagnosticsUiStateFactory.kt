@@ -97,14 +97,10 @@ class DiagnosticsUiStateFactory @Inject constructor(
             outcomes.count {
                 it.outcome == FlushItemOutcome.DUPLICATE && it.reasonCode == "replay_duplicate"
             }
-        val businessDuplicate =
+        val alreadyProcessed =
             outcomes.count {
-                it.outcome == FlushItemOutcome.DUPLICATE && it.reasonCode == "business_duplicate"
-            }
-        val genericDuplicate =
-            outcomes.count {
-                it.outcome == FlushItemOutcome.DUPLICATE &&
-                    it.reasonCode !in setOf("replay_duplicate", "business_duplicate")
+                (it.outcome == FlushItemOutcome.DUPLICATE && it.reasonCode != "replay_duplicate") ||
+                    (it.outcome == FlushItemOutcome.TERMINAL_ERROR && it.reasonCode == "business_duplicate")
             }
         val paymentInvalid =
             outcomes.count {
@@ -112,21 +108,25 @@ class DiagnosticsUiStateFactory @Inject constructor(
             }
         val genericRejected =
             outcomes.count {
-                it.outcome == FlushItemOutcome.TERMINAL_ERROR && it.reasonCode != "payment_invalid"
+                it.outcome == FlushItemOutcome.TERMINAL_ERROR &&
+                    it.reasonCode !in setOf("payment_invalid", "business_duplicate")
+            }
+        val retryPending =
+            outcomes.count {
+                it.outcome == FlushItemOutcome.RETRYABLE_FAILURE
             }
 
         val parts = buildList {
             if (confirmed > 0) add("Confirmed: $confirmed")
             if (replayDuplicate > 0) add("Replay duplicate (final): $replayDuplicate")
-            if (businessDuplicate > 0) add("Already processed by server: $businessDuplicate")
-            if (genericDuplicate > 0) add("Duplicate: $genericDuplicate")
+            if (alreadyProcessed > 0) add("Already processed by server: $alreadyProcessed")
             if (paymentInvalid > 0) add("Payment invalid: $paymentInvalid")
             if (genericRejected > 0) add("Rejected: $genericRejected")
+            if (retryPending > 0) add("Retry backlog unresolved: $retryPending")
         }
 
         return if (parts.isEmpty()) {
-            // Outcomes exist but none are terminal classifications we can safely summarize.
-            "Server outcomes recorded."
+            "No server outcomes yet."
         } else {
             parts.joinToString(" | ")
         }

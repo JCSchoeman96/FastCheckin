@@ -80,3 +80,19 @@ Operators must be able to distinguish:
 Do not infer invalid/not found from message strings. Android continues to key
 runtime behavior off `status`; any backend `reason_code` remains additive unless
 the contract is versioned.
+
+Proven `reason_code` refinements remain only:
+
+- `replay_duplicate`
+- `business_duplicate`
+- `payment_invalid`
+
+`replay_duplicate` is trustworthy only for final replay duplicates. If the
+backend has not emitted that final reason, concurrent same-idempotency
+ambiguity must remain broad. Missing result rows after HTTP 200 remain
+retryable.
+
+Diagnostics remain the canonical detailed server-truth surface. The queue panel
+may show one concise persisted server-result hint, but that hint must be
+derived from persisted latest flush truth, not from local queue contents or
+coordinator-only in-memory state.

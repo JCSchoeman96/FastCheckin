@@ -125,6 +125,163 @@ class DiagnosticsUiStateFactoryTest {
     }
 
     @Test
+    fun duplicatesWithoutReplayRefinementUseBroaderAlreadyProcessedWording() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 0,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        itemOutcomes =
+                            listOf(
+                                FlushItemResult(
+                                    idempotencyKey = "idem-1",
+                                    ticketCode = "VG-1",
+                                    outcome = FlushItemOutcome.DUPLICATE,
+                                    message = "Already processed",
+                                    reasonCode = "business_duplicate"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-2",
+                                    ticketCode = "VG-2",
+                                    outcome = FlushItemOutcome.DUPLICATE,
+                                    message = "Already processed"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-3",
+                                    ticketCode = "VG-3",
+                                    outcome = FlushItemOutcome.TERMINAL_ERROR,
+                                    message = "Already processed",
+                                    reasonCode = "business_duplicate"
+                                )
+                            )
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.serverResultSummary).contains("Already processed by server: 3")
+        assertThat(state.serverResultSummary).doesNotContain("Duplicate:")
+        assertThat(state.serverResultSummary).doesNotContain("Replay duplicate")
+    }
+
+    @Test
+    fun paymentInvalidSummaryOnlyShownWhenReasonCodeExists() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 0,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        itemOutcomes =
+                            listOf(
+                                FlushItemResult(
+                                    idempotencyKey = "idem-1",
+                                    ticketCode = "VG-1",
+                                    outcome = FlushItemOutcome.TERMINAL_ERROR,
+                                    message = "Payment required",
+                                    reasonCode = "payment_invalid"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-2",
+                                    ticketCode = "VG-2",
+                                    outcome = FlushItemOutcome.TERMINAL_ERROR,
+                                    message = "Invalid / not found"
+                                )
+                            )
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.serverResultSummary).contains("Payment invalid: 1")
+        assertThat(state.serverResultSummary).contains("Rejected: 1")
+        assertThat(state.serverResultSummary).doesNotContain("Invalid")
+        assertThat(state.serverResultSummary).doesNotContain("not found")
+    }
+
+    @Test
+    fun genericDuplicateWithoutReplayReasonStaysBroaderThanReplayFinalWording() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 0,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        itemOutcomes =
+                            listOf(
+                                FlushItemResult(
+                                    idempotencyKey = "idem-1",
+                                    ticketCode = "VG-1",
+                                    outcome = FlushItemOutcome.DUPLICATE,
+                                    message = "Already processed"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-2",
+                                    ticketCode = "VG-2",
+                                    outcome = FlushItemOutcome.TERMINAL_ERROR,
+                                    message = "Some backend error"
+                                )
+                            )
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.serverResultSummary).contains("Already processed by server: 1")
+        assertThat(state.serverResultSummary).contains("Rejected: 1")
+        assertThat(state.serverResultSummary).doesNotContain("Replay duplicate")
+        assertThat(state.serverResultSummary).doesNotContain("Payment invalid")
+    }
+
+    @Test
+    fun retryBacklogRemainsClearlyUnresolved_notRejected() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 2,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                        itemOutcomes =
+                            listOf(
+                                FlushItemResult(
+                                    idempotencyKey = "idem-1",
+                                    ticketCode = "VG-1",
+                                    outcome = FlushItemOutcome.RETRYABLE_FAILURE,
+                                    message = "Temporary error"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-2",
+                                    ticketCode = "VG-2",
+                                    outcome = FlushItemOutcome.RETRYABLE_FAILURE,
+                                    message = "Temporary error"
+                                )
+                            ),
+                        retryableRemainingCount = 2,
+                        backlogRemaining = true,
+                        summaryMessage = "Retry pending"
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.serverResultSummary).contains("Retry backlog unresolved: 2")
+        assertThat(state.serverResultSummary).doesNotContain("Rejected")
+    }
+
+    @Test
     fun queuedLocallyWithoutFlushResult_hidesServerOutcomes() {
         val state =
             factory.create(
@@ -180,7 +337,53 @@ class DiagnosticsUiStateFactoryTest {
     }
 
     @Test
-    fun serverResultShownOnlyFromPersistedOutcomes_andTerminalErrorIsGeneric() {
+    fun uploadingTakesPrecedenceOverAuthExpired() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 1,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
+                        authExpired = true,
+                        summaryMessage = "Auth expired"
+                    ),
+                coordinatorState = AutoFlushCoordinatorState(isFlushing = true)
+            )
+
+        assertThat(state.uploadStateLabel).isEqualTo("Uploading")
+    }
+
+    @Test
+    fun retryPendingTakesPrecedenceOverAuthExpired() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 1,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
+                        authExpired = true,
+                        summaryMessage = "Auth expired"
+                    ),
+                coordinatorState =
+                    AutoFlushCoordinatorState(
+                        isRetryScheduled = true,
+                        retryAttempt = 3
+                    )
+            )
+
+        assertThat(state.uploadStateLabel).contains("Retry pending")
+    }
+
+    @Test
+    fun serverResultShownOnlyFromPersistedOutcomes_andMessageIsNotParsed() {
         val state =
             factory.create(
                 apiEnvironmentConfig = apiEnvironmentConfig,
@@ -260,6 +463,6 @@ class DiagnosticsUiStateFactoryTest {
             )
 
         assertThat(state.serverResultSummary).contains("Replay duplicate (final): 1")
-        assertThat(state.serverResultSummary).contains("Duplicate: 1")
+        assertThat(state.serverResultSummary).contains("Already processed by server: 1")
     }
 }

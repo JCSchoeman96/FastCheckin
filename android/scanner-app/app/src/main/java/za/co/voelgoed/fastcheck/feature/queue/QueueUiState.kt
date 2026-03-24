@@ -8,6 +8,6 @@ data class QueueUiState(
     val isFlushing: Boolean = false,
     val localQueueDepth: Int = 0,
     val uploadStateLabel: String = "Idle",
-    val serverResultHint: String = "",
+    val serverResultHint: String = "No server outcomes yet.",
     val directionLabel: String = "IN"
 )

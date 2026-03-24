@@ -1,4 +1,5 @@
 import com.android.build.api.dsl.ApplicationExtension
+import java.net.URI
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -14,49 +15,69 @@ require(fastcheckApiTarget in allowedApiTargets) {
     "FASTCHECK_API_TARGET must be one of ${allowedApiTargets.joinToString()}, got '$fastcheckApiTarget'."
 }
 
-fun Project.requiredUrlProperty(name: String): String =
+val fixedReleaseApiBaseUrl = "https://scan.voelgoed.co.za/"
+val fixedEmulatorApiBaseUrl = "http://10.0.2.2:4000/"
+
+fun normalizeAndValidateBaseUrl(
+    propertyName: String,
+    rawValue: String,
+    allowedSchemes: Set<String>
+): String {
+    val trimmed = rawValue.trim()
+    require(trimmed.isNotBlank()) { "$propertyName must not be blank." }
+
+    val normalized = if (trimmed.endsWith("/")) trimmed else "$trimmed/"
+    val uri =
+        try {
+            URI(normalized)
+        } catch (error: Exception) {
+            throw IllegalArgumentException("$propertyName must be a valid absolute URL.", error)
+        }
+
+    require(uri.isAbsolute && !uri.host.isNullOrBlank()) {
+        "$propertyName must be a valid absolute URL."
+    }
+
+    val scheme = uri.scheme.lowercase()
+    require(scheme in allowedSchemes) {
+        "$propertyName must use one of ${allowedSchemes.joinToString()}."
+    }
+
+    return normalized
+}
+
+fun Project.optionalValidatedUrlProperty(name: String, allowedSchemes: Set<String>): String? =
     (findProperty(name) as String?)
-        ?.trim()
         ?.takeIf { it.isNotBlank() }
+        ?.let { normalizeAndValidateBaseUrl(name, it, allowedSchemes) }
+
+fun Project.requiredValidatedUrlProperty(name: String, allowedSchemes: Set<String>): String =
+    optionalValidatedUrlProperty(name, allowedSchemes)
         ?: error("$name is required when FASTCHECK_API_TARGET selects this target.")
 
-val releaseApiBaseUrl =
-    (findProperty("FASTCHECK_API_BASE_URL_RELEASE") as String?)
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: "https://scan.voelgoed.co.za/"
+val requestedTasks = gradle.startParameter.taskNames.map { it.lowercase() }
+val isReleaseTaskRequested = requestedTasks.any { it.contains("release") }
+require(!isReleaseTaskRequested || fastcheckApiTarget == "release") {
+    "Release tasks must use FASTCHECK_API_TARGET=release."
+}
 
-val emulatorApiBaseUrl =
-    (findProperty("FASTCHECK_API_BASE_URL_EMULATOR") as String?)
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: "http://10.0.2.2:4000/"
+val releaseApiBaseUrl =
+    project.optionalValidatedUrlProperty("FASTCHECK_API_BASE_URL_RELEASE", setOf("https"))
+        ?: fixedReleaseApiBaseUrl
 
 val devApiBaseUrl =
-    (findProperty("FASTCHECK_API_BASE_URL_DEV") as String?)
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: if (fastcheckApiTarget == "dev") {
-            project.requiredUrlProperty("FASTCHECK_API_BASE_URL_DEV")
-        } else {
-            emulatorApiBaseUrl
-        }
+    project.optionalValidatedUrlProperty("FASTCHECK_API_BASE_URL_DEV", setOf("http", "https"))
+        ?: ""
 
 val deviceApiBaseUrl =
-    (findProperty("FASTCHECK_API_BASE_URL_DEVICE") as String?)
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: if (fastcheckApiTarget == "device") {
-            project.requiredUrlProperty("FASTCHECK_API_BASE_URL_DEVICE")
-        } else {
-            releaseApiBaseUrl
-        }
+    project.optionalValidatedUrlProperty("FASTCHECK_API_BASE_URL_DEVICE", setOf("https"))
+        ?: ""
 
 val selectedApiBaseUrl =
     when (fastcheckApiTarget) {
-        "dev" -> devApiBaseUrl
-        "emulator" -> emulatorApiBaseUrl
-        "device" -> deviceApiBaseUrl
+        "dev" -> project.requiredValidatedUrlProperty("FASTCHECK_API_BASE_URL_DEV", setOf("http", "https"))
+        "emulator" -> fixedEmulatorApiBaseUrl
+        "device" -> project.requiredValidatedUrlProperty("FASTCHECK_API_BASE_URL_DEVICE", setOf("https"))
         else -> releaseApiBaseUrl
     }
 
@@ -80,16 +101,16 @@ extensions.configure<ApplicationExtension>("android") {
 
         buildConfigField("String", "API_TARGET", "\"$fastcheckApiTarget\"")
         buildConfigField("String", "API_BASE_URL", "\"$selectedApiBaseUrl\"")
-        buildConfigField("String", "API_BASE_URL_RELEASE", "\"$releaseApiBaseUrl\"")
-        buildConfigField("String", "API_BASE_URL_EMULATOR", "\"$emulatorApiBaseUrl\"")
-        buildConfigField("String", "API_BASE_URL_DEV", "\"$devApiBaseUrl\"")
-        buildConfigField("String", "API_BASE_URL_DEVICE", "\"$deviceApiBaseUrl\"")
         testInstrumentationRunner = "za.co.voelgoed.fastcheck.app.HiltTestRunner"
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "ENABLE_HTTP_BASIC_LOGGING", "true")
+        }
         release {
             isMinifyEnabled = false
+            buildConfigField("boolean", "ENABLE_HTTP_BASIC_LOGGING", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

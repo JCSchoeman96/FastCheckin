@@ -14,9 +14,11 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfigResolver
 import za.co.voelgoed.fastcheck.core.network.AuthHeaderInterceptor
+import za.co.voelgoed.fastcheck.core.network.HttpLoggingPolicy
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
+import za.co.voelgoed.fastcheck.BuildConfig
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -36,7 +38,11 @@ object NetworkModule {
     fun provideOkHttpClient(authHeaderInterceptor: AuthHeaderInterceptor): OkHttpClient =
         OkHttpClient.Builder()
             .addInterceptor(authHeaderInterceptor)
-            .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
+            .addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = HttpLoggingPolicy.levelFor(BuildConfig.ENABLE_HTTP_BASIC_LOGGING)
+                }
+            )
             .build()
 
     @Provides
