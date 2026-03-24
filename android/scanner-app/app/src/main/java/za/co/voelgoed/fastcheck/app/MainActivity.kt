@@ -23,6 +23,7 @@ import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
+import za.co.voelgoed.fastcheck.feature.queue.ManualQueueInputController
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var scannerInputSource: CameraScannerInputSource
     private lateinit var scannerSourceBinding: ScannerSourceBinding
+    private lateinit var manualQueueInputController: ManualQueueInputController
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -86,6 +88,12 @@ class MainActivity : ComponentActivity() {
             LOG_TAG,
             "FastCheck API target=${apiEnvironmentConfig.target.wireName} baseUrl=${apiEnvironmentConfig.baseUrl}"
         )
+        manualQueueInputController =
+            ManualQueueInputController(
+                input = binding.manualTicketCodeInput,
+                onTicketCodeChanged = queueViewModel::updateTicketCode
+            )
+        manualQueueInputController.bind()
 
         scannerInputSource =
             CameraScannerInputSource(
@@ -119,7 +127,7 @@ class MainActivity : ComponentActivity() {
         }
 
         binding.queueScanButton.setOnClickListener {
-            queueViewModel.updateTicketCode(binding.manualTicketCodeInput.text.toString())
+            manualQueueInputController.submitCurrentValue(queueViewModel::updateTicketCode)
             queueViewModel.queueManualScan()
         }
 
@@ -191,7 +199,7 @@ class MainActivity : ComponentActivity() {
 
                 launch {
                     queueViewModel.uiState.collectLatest { state ->
-                        binding.manualTicketCodeInput.setText(state.ticketCodeInput)
+                        manualQueueInputController.render(state.ticketCodeInput)
                         binding.manualDirectionValue.text = state.directionLabel
                         binding.scanActionValue.text = state.lastActionMessage
                         binding.scanErrorValue.text =
