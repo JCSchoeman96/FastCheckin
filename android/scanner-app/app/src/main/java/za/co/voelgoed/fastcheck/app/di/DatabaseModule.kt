@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
+import za.co.voelgoed.fastcheck.core.database.FastCheckDatabaseMigrations
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 
 @Module
@@ -22,7 +23,7 @@ object DatabaseModule {
             FastCheckDatabase::class.java,
             FastCheckDatabase.DATABASE_NAME
         )
-            .fallbackToDestructiveMigration()
+            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_2_3)
             .build()
 
     @Provides

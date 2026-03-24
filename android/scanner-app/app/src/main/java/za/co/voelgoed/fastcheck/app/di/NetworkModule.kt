@@ -11,7 +11,8 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
-import za.co.voelgoed.fastcheck.BuildConfig
+import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
+import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfigResolver
 import za.co.voelgoed.fastcheck.core.network.AuthHeaderInterceptor
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
@@ -20,6 +21,11 @@ import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+    @Provides
+    @Singleton
+    fun provideApiEnvironmentConfig(): ApiEnvironmentConfig =
+        ApiEnvironmentConfigResolver().resolve()
+
     @Provides
     @Singleton
     fun provideAuthHeaderInterceptor(sessionProvider: SessionProvider): AuthHeaderInterceptor =
@@ -42,9 +48,13 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
+    fun provideRetrofit(
+        okHttpClient: OkHttpClient,
+        moshi: Moshi,
+        apiEnvironmentConfig: ApiEnvironmentConfig
+    ): Retrofit =
         Retrofit.Builder()
-            .baseUrl(BuildConfig.API_BASE_URL)
+            .baseUrl(apiEnvironmentConfig.baseUrl)
             .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()

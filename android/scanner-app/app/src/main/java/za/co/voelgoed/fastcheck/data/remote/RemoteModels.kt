@@ -75,5 +75,6 @@ data class UploadScansPayload(
 data class UploadedScanResult(
     val idempotency_key: String,
     val status: String,
-    val message: String
+    val message: String,
+    val reason_code: String? = null
 )

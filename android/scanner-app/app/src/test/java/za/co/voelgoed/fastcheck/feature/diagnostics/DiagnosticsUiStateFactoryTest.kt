@@ -6,6 +6,8 @@ import java.time.Instant
 import java.time.ZoneOffset
 import org.junit.Test
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
+import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
+import za.co.voelgoed.fastcheck.core.network.ApiTarget
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
@@ -16,11 +18,17 @@ import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 class DiagnosticsUiStateFactoryTest {
     private val clock = Clock.fixed(Instant.parse("2026-03-13T08:30:00Z"), ZoneOffset.UTC)
     private val factory = DiagnosticsUiStateFactory(clock)
+    private val apiEnvironmentConfig =
+        ApiEnvironmentConfig(
+            target = ApiTarget.EMULATOR,
+            baseUrl = "http://10.0.2.2:4000/"
+        )
 
     @Test
     fun derivesLoggedOutStateWithoutSessionOrToken() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session = null,
                 tokenPresent = false,
                 syncStatus = null,
@@ -32,6 +40,8 @@ class DiagnosticsUiStateFactoryTest {
         assertThat(state.currentEvent).isEqualTo("No active event")
         assertThat(state.authSessionState).isEqualTo("Logged out")
         assertThat(state.tokenExpiryState).isEqualTo("Missing")
+        assertThat(state.apiTargetLabel).isEqualTo("emulator")
+        assertThat(state.apiBaseUrl).isEqualTo("http://10.0.2.2:4000/")
         assertThat(state.lastAttendeeSyncTime).isEqualTo("Never")
         assertThat(state.attendeeCount).isEqualTo("No attendees synced")
         assertThat(state.uploadStateLabel).isEqualTo("Idle")
@@ -41,6 +51,7 @@ class DiagnosticsUiStateFactoryTest {
     fun derivesAuthenticatedStateAndQueueDiagnostics() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session =
                     ScannerSession(
                         eventId = 5,
@@ -92,6 +103,7 @@ class DiagnosticsUiStateFactoryTest {
     fun sessionMissingButLocalSyncMetadataExists_showsLastSyncedAttendees_notZero() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session = null,
                 tokenPresent = false,
                 syncStatus =
@@ -116,6 +128,7 @@ class DiagnosticsUiStateFactoryTest {
     fun queuedLocallyWithoutFlushResult_hidesServerOutcomes() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session = null,
                 tokenPresent = false,
                 syncStatus = null,
@@ -132,6 +145,7 @@ class DiagnosticsUiStateFactoryTest {
     fun uploadingWhileQueueExists_setsUploadingState() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session = null,
                 tokenPresent = false,
                 syncStatus = null,
@@ -148,6 +162,7 @@ class DiagnosticsUiStateFactoryTest {
     fun retryPendingWithMetadata_includesAttempt() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session = null,
                 tokenPresent = false,
                 syncStatus = null,
@@ -168,6 +183,7 @@ class DiagnosticsUiStateFactoryTest {
     fun serverResultShownOnlyFromPersistedOutcomes_andTerminalErrorIsGeneric() {
         val state =
             factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
                 session = null,
                 tokenPresent = false,
                 syncStatus = null,
@@ -187,13 +203,15 @@ class DiagnosticsUiStateFactoryTest {
                                     idempotencyKey = "idem-2",
                                     ticketCode = "VG-2",
                                     outcome = FlushItemOutcome.DUPLICATE,
-                                    message = "Already scanned"
+                                    message = "Already scanned",
+                                    reasonCode = "business_duplicate"
                                 ),
                                 FlushItemResult(
                                     idempotencyKey = "idem-3",
                                     ticketCode = "VG-3",
                                     outcome = FlushItemOutcome.TERMINAL_ERROR,
-                                    message = "Invalid / not found"
+                                    message = "Invalid / not found",
+                                    reasonCode = "payment_invalid"
                                 )
                             ),
                         uploadedCount = 3
@@ -203,9 +221,45 @@ class DiagnosticsUiStateFactoryTest {
 
         assertThat(state.serverResultSummary).contains("Confirmed: 1")
         assertThat(state.serverResultSummary).contains("Already processed by server: 1")
-        assertThat(state.serverResultSummary).contains("Rejected: 1")
+        assertThat(state.serverResultSummary).contains("Payment invalid: 1")
         // No message parsing: we never surface "Invalid / not found" as a structured classification.
         assertThat(state.serverResultSummary).doesNotContain("Invalid")
         assertThat(state.serverResultSummary).doesNotContain("not found")
+    }
+
+    @Test
+    fun replayDuplicateSummaryOnlyShownWhenFinalReasonCodeExists() {
+        val state =
+            factory.create(
+                apiEnvironmentConfig = apiEnvironmentConfig,
+                session = null,
+                tokenPresent = false,
+                syncStatus = null,
+                queueDepth = 0,
+                latestFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        itemOutcomes =
+                            listOf(
+                                FlushItemResult(
+                                    idempotencyKey = "idem-1",
+                                    ticketCode = "VG-1",
+                                    outcome = FlushItemOutcome.DUPLICATE,
+                                    message = "Already processed",
+                                    reasonCode = "replay_duplicate"
+                                ),
+                                FlushItemResult(
+                                    idempotencyKey = "idem-2",
+                                    ticketCode = "VG-2",
+                                    outcome = FlushItemOutcome.DUPLICATE,
+                                    message = "Already processed"
+                                )
+                            )
+                    ),
+                coordinatorState = AutoFlushCoordinatorState()
+            )
+
+        assertThat(state.serverResultSummary).contains("Replay duplicate (final): 1")
+        assertThat(state.serverResultSummary).contains("Duplicate: 1")
     }
 }

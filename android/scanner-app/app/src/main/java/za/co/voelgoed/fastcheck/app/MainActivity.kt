@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.app
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -17,6 +18,7 @@ import za.co.voelgoed.fastcheck.R
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
+import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
@@ -51,6 +53,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var autoFlushCoordinator: AutoFlushCoordinator
 
+    @Inject
+    lateinit var apiEnvironmentConfig: ApiEnvironmentConfig
+
     private val authViewModel: AuthViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
@@ -68,6 +73,8 @@ class MainActivity : ComponentActivity() {
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
                     scannerSourceBinding.start()
                 }
+            } else {
+                scannerSourceBinding.stop()
             }
         }
 
@@ -75,6 +82,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        Log.i(
+            LOG_TAG,
+            "FastCheck API target=${apiEnvironmentConfig.target.wireName} baseUrl=${apiEnvironmentConfig.baseUrl}"
+        )
 
         scannerInputSource =
             CameraScannerInputSource(
@@ -167,6 +178,8 @@ class MainActivity : ComponentActivity() {
                         binding.currentEventValue.text = state.currentEvent
                         binding.authStateValue.text = state.authSessionState
                         binding.tokenExpiryValue.text = state.tokenExpiryState
+                        binding.apiTargetValue.text = state.apiTargetLabel
+                        binding.apiBaseUrlValue.text = state.apiBaseUrl
                         binding.lastSyncValue.text = state.lastAttendeeSyncTime
                         binding.attendeeCountValue.text = state.attendeeCount
                         binding.queueDepthValue.text = state.localQueueDepthLabel
@@ -223,16 +236,19 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        scanningViewModel.refreshPermissionState(hasCameraPermission())
+        syncScannerBindingForPermission()
         diagnosticsViewModel.refresh()
     }
 
     override fun onStart() {
         super.onStart()
         autoFlushCoordinator.requestFlush(AutoFlushTrigger.ForegroundResume)
-        if (hasCameraPermission()) {
-            scannerSourceBinding.start()
-        }
+        syncScannerBindingForPermission()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        syncScannerBindingForPermission()
     }
 
     override fun onStop() {
@@ -245,4 +261,19 @@ class MainActivity : ComponentActivity() {
             this,
             android.Manifest.permission.CAMERA
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun syncScannerBindingForPermission() {
+        val hasPermission = hasCameraPermission()
+        scanningViewModel.refreshPermissionState(hasPermission)
+
+        if (hasPermission && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            scannerSourceBinding.start()
+        } else {
+            scannerSourceBinding.stop()
+        }
+    }
+
+    private companion object {
+        const val LOG_TAG: String = "FastCheckMainActivity"
+    }
 }

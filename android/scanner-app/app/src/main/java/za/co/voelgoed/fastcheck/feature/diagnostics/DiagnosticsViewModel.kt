@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
@@ -18,6 +19,7 @@ import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 
 @HiltViewModel
 class DiagnosticsViewModel @Inject constructor(
+    private val apiEnvironmentConfig: ApiEnvironmentConfig,
     private val sessionRepository: SessionRepository,
     private val sessionProvider: SessionProvider,
     private val syncRepository: SyncRepository,
@@ -44,6 +46,7 @@ class DiagnosticsViewModel @Inject constructor(
                 val (inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState) = quin
                 _uiState.update {
                     diagnosticsUiStateFactory.create(
+                        apiEnvironmentConfig = apiEnvironmentConfig,
                         session = inputs.session,
                         tokenPresent = inputs.tokenPresent,
                         syncStatus = lastSyncedStatus,

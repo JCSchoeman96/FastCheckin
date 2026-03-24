@@ -24,7 +24,7 @@ class FlushResultClassifierTest {
                 uploadedResults =
                     listOf(
                         UploadedScanResult("idem-1", "success", "Check-in successful"),
-                        UploadedScanResult("idem-2", "duplicate", "Already checked in"),
+                        UploadedScanResult("idem-2", "duplicate", "Already checked in", "replay_duplicate"),
                         UploadedScanResult("idem-3", "error", "Ticket not found")
                     )
             )
@@ -37,6 +37,27 @@ class FlushResultClassifierTest {
                 FlushItemOutcome.RETRYABLE_FAILURE
             )
             .inOrder()
+        assertThat(outcomes[1].reasonCode).isEqualTo("replay_duplicate")
+    }
+
+    @Test
+    fun ignoresReasonCodesThatDoNotMatchTheStatusShape() {
+        val outcome =
+            classifier.classify(
+                pendingScans = listOf(samplePendingScan("idem-1", "VG-1")),
+                uploadedResults =
+                    listOf(
+                        UploadedScanResult(
+                            idempotency_key = "idem-1",
+                            status = "duplicate",
+                            message = "Already checked in",
+                            reason_code = "payment_invalid"
+                        )
+                    )
+            ).single()
+
+        assertThat(outcome.outcome).isEqualTo(FlushItemOutcome.DUPLICATE)
+        assertThat(outcome.reasonCode).isNull()
     }
 
     private fun samplePendingScan(idempotencyKey: String, ticketCode: String): PendingScan =

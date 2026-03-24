@@ -35,6 +35,8 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 "Preparing scanner input source."
             lifecycle is ScannerSourceState.Ready ->
                 "Scanner ready. Decoded values hand off to the existing local queue only."
+            lifecycle is ScannerSourceState.Stopping ->
+                "Stopping scanner input source."
             lifecycle is ScannerSourceState.Error ->
                 "Scanner could not start: ${lifecycle.reason}"
             else ->

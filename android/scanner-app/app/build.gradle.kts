@@ -2,6 +2,64 @@ import com.android.build.api.dsl.ApplicationExtension
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+val fastcheckApiTarget =
+    (findProperty("FASTCHECK_API_TARGET") as String?)
+        ?.trim()
+        ?.lowercase()
+        ?.takeIf { it.isNotBlank() }
+        ?: "release"
+
+val allowedApiTargets = setOf("dev", "emulator", "device", "release")
+require(fastcheckApiTarget in allowedApiTargets) {
+    "FASTCHECK_API_TARGET must be one of ${allowedApiTargets.joinToString()}, got '$fastcheckApiTarget'."
+}
+
+fun Project.requiredUrlProperty(name: String): String =
+    (findProperty(name) as String?)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: error("$name is required when FASTCHECK_API_TARGET selects this target.")
+
+val releaseApiBaseUrl =
+    (findProperty("FASTCHECK_API_BASE_URL_RELEASE") as String?)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "https://scan.voelgoed.co.za/"
+
+val emulatorApiBaseUrl =
+    (findProperty("FASTCHECK_API_BASE_URL_EMULATOR") as String?)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "http://10.0.2.2:4000/"
+
+val devApiBaseUrl =
+    (findProperty("FASTCHECK_API_BASE_URL_DEV") as String?)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: if (fastcheckApiTarget == "dev") {
+            project.requiredUrlProperty("FASTCHECK_API_BASE_URL_DEV")
+        } else {
+            emulatorApiBaseUrl
+        }
+
+val deviceApiBaseUrl =
+    (findProperty("FASTCHECK_API_BASE_URL_DEVICE") as String?)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: if (fastcheckApiTarget == "device") {
+            project.requiredUrlProperty("FASTCHECK_API_BASE_URL_DEVICE")
+        } else {
+            releaseApiBaseUrl
+        }
+
+val selectedApiBaseUrl =
+    when (fastcheckApiTarget) {
+        "dev" -> devApiBaseUrl
+        "emulator" -> emulatorApiBaseUrl
+        "device" -> deviceApiBaseUrl
+        else -> releaseApiBaseUrl
+    }
+
 plugins {
     id("com.android.application")
     id("com.google.devtools.ksp")
@@ -20,7 +78,12 @@ extensions.configure<ApplicationExtension>("android") {
         versionCode = 1
         versionName = "0.1.0-scaffold"
 
-        buildConfigField("String", "API_BASE_URL", "\"https://scan.voelgoed.co.za/\"")
+        buildConfigField("String", "API_TARGET", "\"$fastcheckApiTarget\"")
+        buildConfigField("String", "API_BASE_URL", "\"$selectedApiBaseUrl\"")
+        buildConfigField("String", "API_BASE_URL_RELEASE", "\"$releaseApiBaseUrl\"")
+        buildConfigField("String", "API_BASE_URL_EMULATOR", "\"$emulatorApiBaseUrl\"")
+        buildConfigField("String", "API_BASE_URL_DEV", "\"$devApiBaseUrl\"")
+        buildConfigField("String", "API_BASE_URL_DEVICE", "\"$deviceApiBaseUrl\"")
         testInstrumentationRunner = "za.co.voelgoed.fastcheck.app.HiltTestRunner"
     }
 

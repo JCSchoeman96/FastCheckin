@@ -56,4 +56,16 @@ class ScannerCameraBinder @Inject constructor(
             executor
         )
     }
+
+    fun unbindAll() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+
+        if (cameraProviderFuture.isDone) {
+            try {
+                cameraProviderFuture.get().unbindAll()
+            } catch (_throwable: Throwable) {
+                // Best-effort cleanup only.
+            }
+        }
+    }
 }

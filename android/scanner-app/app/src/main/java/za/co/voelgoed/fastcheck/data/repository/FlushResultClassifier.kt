@@ -41,9 +41,25 @@ class FlushResultClassifier @Inject constructor() {
                             "error" -> FlushItemOutcome.TERMINAL_ERROR
                             else -> FlushItemOutcome.TERMINAL_ERROR
                         },
-                    message = uploadedResult.message
+                    message = uploadedResult.message,
+                    // Additive only: status remains the primary behavior key.
+                    reasonCode = normalizeReasonCode(uploadedResult)
                 )
             }
+        }
+    }
+
+    private fun normalizeReasonCode(result: UploadedScanResult): String? {
+        val reasonCode = result.reason_code?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+
+        return when {
+            result.status.equals("duplicate", ignoreCase = true) &&
+                reasonCode in setOf("replay_duplicate", "business_duplicate") -> reasonCode
+
+            result.status.equals("error", ignoreCase = true) &&
+                reasonCode == "payment_invalid" -> reasonCode
+
+            else -> null
         }
     }
 }

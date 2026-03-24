@@ -11,5 +11,6 @@ data class RecentFlushOutcomeEntity(
     val ticketCode: String,
     val outcome: String,
     val message: String,
+    val reasonCode: String? = null,
     val completedAt: String
 )
