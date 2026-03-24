@@ -119,6 +119,7 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                             idempotencyKey = outcome.idempotencyKey,
                             status = outcome.outcome.name.lowercase(),
                             message = outcome.message,
+                            reasonCode = outcome.reasonCode,
                             storedAt = now,
                             terminal = true
                         )

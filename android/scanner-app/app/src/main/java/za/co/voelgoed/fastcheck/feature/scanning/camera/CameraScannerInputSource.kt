@@ -81,9 +81,7 @@ class CameraScannerInputSource(
 
     override fun stop() {
         _state.value = ScannerSourceState.Stopping
-        // For C1 the binder does not yet expose a dedicated unbind handle. Camera lifecycle
-        // remains tied to the hosting LifecycleOwner; the source simply reports its own
-        // logical lifecycle.
+        scannerCameraBinder.unbindAll()
         _state.value = ScannerSourceState.Idle
     }
 
@@ -91,4 +89,3 @@ class CameraScannerInputSource(
         private const val DEFAULT_CAMERA_ID: String = "camera-default-0"
     }
 }
-

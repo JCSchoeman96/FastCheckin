@@ -4,6 +4,8 @@ data class DiagnosticsUiState(
     val currentEvent: String = "No active event",
     val authSessionState: String = "Logged out",
     val tokenExpiryState: String = "Unknown",
+    val apiTargetLabel: String = "release",
+    val apiBaseUrl: String = "Unknown",
     val lastAttendeeSyncTime: String = "Never",
     val attendeeCount: String = "0",
     val localQueueDepthLabel: String = "Queued locally: 0",

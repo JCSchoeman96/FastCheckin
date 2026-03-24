@@ -26,6 +26,8 @@
     <string name="current_event_label">Current Event</string>
     <string name="auth_state_label">Auth / Session State</string>
     <string name="token_expiry_label">Token Expiry State</string>
+    <string name="api_target_label">API Target</string>
+    <string name="api_base_url_label">Resolved Base URL</string>
     <string name="last_sync_label">Last Attendee Sync</string>
     <string name="attendee_count_label">Attendee Count</string>
     <string name="queue_depth_label">Queued locally</string>

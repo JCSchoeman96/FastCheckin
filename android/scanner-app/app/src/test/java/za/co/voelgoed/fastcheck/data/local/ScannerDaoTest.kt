@@ -132,6 +132,7 @@ class ScannerDaoTest {
                         ticketCode = "VG-100",
                         outcome = "SUCCESS",
                         message = "Check-in successful",
+                        reasonCode = null,
                         completedAt = "2026-03-12T09:10:00Z"
                     )
                 )

@@ -14,7 +14,8 @@ data class FlushItemResult(
     val idempotencyKey: String,
     val ticketCode: String,
     val outcome: FlushItemOutcome,
-    val message: String
+    val message: String,
+    val reasonCode: String? = null
 )
 
 enum class FlushExecutionStatus {

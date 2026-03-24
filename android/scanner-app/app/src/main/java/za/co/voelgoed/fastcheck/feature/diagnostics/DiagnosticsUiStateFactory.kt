@@ -3,6 +3,7 @@ package za.co.voelgoed.fastcheck.feature.diagnostics
 import java.time.Clock
 import javax.inject.Inject
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
+import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
@@ -14,6 +15,7 @@ class DiagnosticsUiStateFactory @Inject constructor(
     private val clock: Clock
 ) {
     fun create(
+        apiEnvironmentConfig: ApiEnvironmentConfig,
         session: ScannerSession?,
         tokenPresent: Boolean,
         syncStatus: AttendeeSyncStatus?,
@@ -67,6 +69,8 @@ class DiagnosticsUiStateFactory @Inject constructor(
                     SessionState.INVALID -> "Invalid"
                 },
             tokenExpiryState = tokenState,
+            apiTargetLabel = apiEnvironmentConfig.target.wireName,
+            apiBaseUrl = apiEnvironmentConfig.baseUrl,
             lastAttendeeSyncTime = syncStatus?.lastSuccessfulSyncAt ?: "Never",
             attendeeCount =
                 when {
@@ -89,13 +93,35 @@ class DiagnosticsUiStateFactory @Inject constructor(
         if (outcomes.isEmpty()) return "No server outcomes yet."
 
         val confirmed = outcomes.count { it.outcome == FlushItemOutcome.SUCCESS }
-        val duplicate = outcomes.count { it.outcome == FlushItemOutcome.DUPLICATE }
-        val rejected = outcomes.count { it.outcome == FlushItemOutcome.TERMINAL_ERROR }
+        val replayDuplicate =
+            outcomes.count {
+                it.outcome == FlushItemOutcome.DUPLICATE && it.reasonCode == "replay_duplicate"
+            }
+        val businessDuplicate =
+            outcomes.count {
+                it.outcome == FlushItemOutcome.DUPLICATE && it.reasonCode == "business_duplicate"
+            }
+        val genericDuplicate =
+            outcomes.count {
+                it.outcome == FlushItemOutcome.DUPLICATE &&
+                    it.reasonCode !in setOf("replay_duplicate", "business_duplicate")
+            }
+        val paymentInvalid =
+            outcomes.count {
+                it.outcome == FlushItemOutcome.TERMINAL_ERROR && it.reasonCode == "payment_invalid"
+            }
+        val genericRejected =
+            outcomes.count {
+                it.outcome == FlushItemOutcome.TERMINAL_ERROR && it.reasonCode != "payment_invalid"
+            }
 
         val parts = buildList {
             if (confirmed > 0) add("Confirmed: $confirmed")
-            if (duplicate > 0) add("Already processed by server: $duplicate")
-            if (rejected > 0) add("Rejected: $rejected")
+            if (replayDuplicate > 0) add("Replay duplicate (final): $replayDuplicate")
+            if (businessDuplicate > 0) add("Already processed by server: $businessDuplicate")
+            if (genericDuplicate > 0) add("Duplicate: $genericDuplicate")
+            if (paymentInvalid > 0) add("Payment invalid: $paymentInvalid")
+            if (genericRejected > 0) add("Rejected: $genericRejected")
         }
 
         return if (parts.isEmpty()) {

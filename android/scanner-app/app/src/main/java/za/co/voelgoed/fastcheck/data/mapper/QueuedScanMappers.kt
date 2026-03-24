@@ -67,6 +67,7 @@ fun FlushReport.toOutcomeEntities(completedAt: String): List<RecentFlushOutcomeE
             ticketCode = outcome.ticketCode,
             outcome = outcome.outcome.name,
             message = outcome.message,
+            reasonCode = outcome.reasonCode,
             completedAt = completedAt
         )
     }
@@ -83,7 +84,8 @@ fun toFlushReport(
                     idempotencyKey = outcome.idempotencyKey,
                     ticketCode = outcome.ticketCode,
                     outcome = FlushItemOutcome.valueOf(outcome.outcome),
-                    message = outcome.message
+                    message = outcome.message,
+                    reasonCode = outcome.reasonCode
                 )
             },
         uploadedCount = snapshot.uploadedCount,

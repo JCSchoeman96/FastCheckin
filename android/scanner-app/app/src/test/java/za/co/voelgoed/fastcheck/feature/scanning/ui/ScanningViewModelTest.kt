@@ -46,4 +46,15 @@ class ScanningViewModelTest {
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
         assertThat(viewModel.uiState.value.sourceErrorMessage).isEqualTo("camera unavailable")
     }
+
+    @Test
+    fun stoppingStateShowsCalmRuntimeMessage() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.refreshPermissionState(true)
+        viewModel.onSourceStateChanged(ScannerSourceState.Stopping)
+
+        assertThat(viewModel.uiState.value.scannerStatus).isEqualTo("Stopping scanner input source.")
+        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+    }
 }

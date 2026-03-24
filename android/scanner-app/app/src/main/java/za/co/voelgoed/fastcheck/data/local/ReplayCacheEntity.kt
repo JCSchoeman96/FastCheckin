@@ -13,6 +13,7 @@ data class ReplayCacheEntity(
     val idempotencyKey: String,
     val status: String,
     val message: String,
+    val reasonCode: String? = null,
     val storedAt: String,
     val terminal: Boolean
 )

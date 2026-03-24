@@ -146,7 +146,8 @@ class CurrentPhoenixMobileScanRepositoryTest {
                                 UploadedScanResult(
                                     idempotency_key = "idem-$index",
                                     status = "duplicate",
-                                    message = "Already checked in"
+                                    message = "Already checked in",
+                                    reason_code = if (index == 0) "business_duplicate" else null
                                 )
                             },
                         processed = 50
@@ -160,6 +161,8 @@ class CurrentPhoenixMobileScanRepositoryTest {
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
         assertThat(api.lastUploadBody?.scans?.size).isEqualTo(50)
         assertThat(database.scannerDao().countPendingScans()).isEqualTo(5)
+        assertThat(repository.latestFlushReport()?.itemOutcomes?.first()?.reasonCode)
+            .isEqualTo("business_duplicate")
     }
 
     @Test
