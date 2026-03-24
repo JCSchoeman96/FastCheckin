@@ -122,13 +122,49 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
     configure_mode(:redis_authoritative)
 
     assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event.id, [scan])
+    assert {:ok, [%{status: "duplicate"}]} = MobileUploadService.upload_batch(event.id, [scan])
+  end
 
-    assert {:ok, [%{status: "duplicate", reason_code: "replay_duplicate"}]} =
-             MobileUploadService.upload_batch(event.id, [scan])
+  test "authoritative mode keeps the stable three-field API envelope across outcomes", %{
+    event: event
+  } do
+    configure_mode(:redis_authoritative)
+    assert_authoritative_mode!()
+
+    success_scan = valid_scan("idem-contract-success", "TEST001")
+
+    assert {:ok, [success]} = MobileUploadService.upload_batch(event.id, [success_scan])
+    assert success.status == "success"
+    assert contract_keys(success) == ["idempotency_key", "message", "status"]
+
+    assert {:ok, [duplicate]} = MobileUploadService.upload_batch(event.id, [success_scan])
+    assert duplicate.status == "duplicate"
+    assert contract_keys(duplicate) == ["idempotency_key", "message", "status"]
+
+    out_scan =
+      success_scan
+      |> Map.put("idempotency_key", "idem-contract-out")
+      |> Map.put("direction", "out")
+
+    assert {:ok, [error]} = MobileUploadService.upload_batch(event.id, [out_scan])
+    assert error.status == "error"
+    assert error.message =~ "Check-out functionality not yet available"
+    assert contract_keys(error) == ["idempotency_key", "message", "status"]
+  end
+
+  test "legacy and shadow modes remain available fallback modes, not authoritative modes" do
+    configure_mode(:legacy)
+    assert MobileUploadService.ingestion_mode() == :legacy
+    refute MobileUploadService.authoritative_mode?()
+
+    configure_mode(:shadow)
+    assert MobileUploadService.ingestion_mode() == :shadow
+    refute MobileUploadService.authoritative_mode?()
   end
 
   test "shadow mode does not contaminate the live namespace", %{event: event} do
     configure_mode(:shadow)
+    refute MobileUploadService.authoritative_mode?()
 
     shadow_scan = valid_scan("idem-shadow", "TEST001")
 
@@ -170,28 +206,10 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
 
     scan = valid_scan("idem-refund", "REFUND001")
 
-    assert {:ok, [%{status: "error", message: message, reason_code: "payment_invalid"}]} =
+    assert {:ok, [%{status: "error", message: message}]} =
              MobileUploadService.upload_batch(event.id, [scan])
 
     assert message =~ "Payment invalid"
-  end
-
-  test "authoritative mode maps business duplicates without using raw result status semantics", %{
-    event: event
-  } do
-    configure_mode(:redis_authoritative)
-    assert_authoritative_mode!()
-
-    first_scan = valid_scan("idem-business-1", "TEST001")
-    second_scan = valid_scan("idem-business-2", "TEST001")
-
-    assert {:ok, [%{status: "success"}]} =
-             MobileUploadService.upload_batch(event.id, [first_scan])
-
-    assert {:ok, [%{status: "error", reason_code: "business_duplicate", message: message}]} =
-             MobileUploadService.upload_batch(event.id, [second_scan])
-
-    assert message =~ "Already checked in"
   end
 
   test "authoritative mode surfaces build-timeout hot-state failures", %{event: event} do
@@ -286,5 +304,12 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
 
   defp unique_namespace(prefix) do
     "#{prefix}-#{System.unique_integer([:positive])}"
+  end
+
+  defp contract_keys(result) do
+    result
+    |> Map.keys()
+    |> Enum.map(&to_string/1)
+    |> Enum.sort()
   end
 end

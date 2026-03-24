@@ -33,7 +33,7 @@ fun QueuedScanEntity.toDomain(): PendingScan =
         idempotencyKey = idempotencyKey,
         createdAt = createdAt,
         scannedAt = scannedAt,
-        direction = ScanDirection.IN,
+        direction = direction.toScanDirection(),
         entranceName = entranceName,
         operatorName = operatorName
     )
@@ -42,7 +42,7 @@ fun PendingScan.toPayload(): QueuedScanPayload =
     QueuedScanPayload(
         idempotency_key = idempotencyKey,
         ticket_code = ticketCode,
-        direction = "in",
+        direction = direction.name.lowercase(),
         scanned_at = scannedAt,
         entrance_name = entranceName,
         operator_name = operatorName
@@ -67,7 +67,6 @@ fun FlushReport.toOutcomeEntities(completedAt: String): List<RecentFlushOutcomeE
             ticketCode = outcome.ticketCode,
             outcome = outcome.outcome.name,
             message = outcome.message,
-            reasonCode = outcome.reasonCode,
             completedAt = completedAt
         )
     }
@@ -84,8 +83,7 @@ fun toFlushReport(
                     idempotencyKey = outcome.idempotencyKey,
                     ticketCode = outcome.ticketCode,
                     outcome = FlushItemOutcome.valueOf(outcome.outcome),
-                    message = outcome.message,
-                    reasonCode = outcome.reasonCode
+                    message = outcome.message
                 )
             },
         uploadedCount = snapshot.uploadedCount,
@@ -94,3 +92,9 @@ fun toFlushReport(
         backlogRemaining = snapshot.backlogRemaining,
         summaryMessage = snapshot.summaryMessage
     )
+
+private fun String.toScanDirection(): ScanDirection =
+    when (lowercase()) {
+        "out" -> ScanDirection.OUT
+        else -> ScanDirection.IN
+    }

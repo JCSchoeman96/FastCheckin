@@ -1,29 +1,11 @@
 # Current Phoenix Mobile API Contract
 
-This is the current Android runtime contract. Treat it as the only promoted
-mobile API until the backend explicitly replaces it.
-
-## Runtime Truth
-
-The repo now has three different truths that must not be conflated:
-
-- **Code default / fallback truth**:
-  - `config/runtime.exs` still resolves `MOBILE_SCAN_INGESTION_MODE` to
-    `:legacy` when no runtime override is present.
-- **Exercised/runtime-proof truth**:
-  - the local perf path and authoritative controller/service tests are pinned to
-    `:redis_authoritative`
-  - those authoritative tests fail loudly if they drift off that mode
-- **Android runtime truth**:
-  - Android targets only `/api/v1/mobile/*`
-  - scans are queued locally first
-  - backend admission is authoritative in hot state
-  - durability is queued before acknowledgement
-  - durable Postgres projection happens asynchronously afterward
-
-`:redis_authoritative` is the target runtime mode for the documented hot path.
-`:legacy` and `:shadow` remain backend migration/fallback modes and are not
-Android targets.
+This Android app must treat the current Phoenix mobile API as the only promoted
+runtime contract until the backend explicitly replaces it. Future backend
+scanner routes such as `/api/v1/device_sessions`, `/api/v1/check_ins`,
+`/api/v1/check_ins/flush`, config/package/health endpoints, gates, devices,
+and offline package concepts are inactive for Android runtime and must remain
+future-facing placeholders only.
 
 ## Runtime Scope
 
@@ -42,31 +24,6 @@ Inactive for Android runtime:
 - `/api/v1/events/:event_id/package`
 - `/api/v1/events/:event_id/health`
 - gate/device/offline-package runtime entities
-
-## End-To-End Runtime Sequence
-
-The implemented operational sequence is:
-
-1. operator logs in with `event_id` and credential
-2. app stores the event JWT securely and syncs attendees from
-   `GET /api/v1/mobile/attendees`
-3. scanner captures decode into local queue admission only
-4. auto-flush is the normal upload path; manual flush remains a fallback/debug
-   control
-5. backend validates the batch items
-6. backend hot state performs admission and idempotency decisions
-7. backend queues durability work before acknowledgement
-8. backend acknowledges the batch only after enqueue succeeds
-9. backend durability worker projects results into Postgres asynchronously
-10. Android diagnostics and persisted flush outcomes update from later
-    repository/Room state, not from camera-time capture alone
-
-The authoritative request path remains:
-
-`validate -> hot-state decision -> enqueue durability -> promote results -> respond`
-
-No per-scan durable Postgres mutation belongs in the request path before
-acknowledgement.
 
 ## Login
 
@@ -97,12 +54,12 @@ Success response:
 
 Runtime notes:
 
-- login is event-scoped
-- the JWT is reused for attendee sync and scan upload until expiry
-- JWT must be stored in secure storage only
-- non-secret session metadata such as `event_id`, `event_name`, and expiry can
-  be stored separately
-- login credentials are not persisted for silent re-authentication
+- Login is event-scoped.
+- The returned JWT is the active bearer token for attendee sync and scan upload.
+- JWT must be stored in secure storage only.
+- Non-secret session metadata such as `event_id`, `event_name`, and expiry can
+  be stored separately from the token.
+- Login credentials are not persisted for silent re-authentication.
 
 ## Attendee Sync
 
@@ -153,11 +110,12 @@ Success response:
 
 Runtime notes:
 
-- sync attendees only through this endpoint
-- the server remains the business-rule authority; the attendee cache is a local
-  mirror only
-- invalid `since` still falls back to full sync on the backend
-- preserve backend `ticket_code` exactly; do not add client normalization policy
+- Sync attendees only through this endpoint.
+- The server is the business-rule authority; attendee cache is a local mirror,
+  not the source of truth.
+- Invalid `since` falls back to full sync on the backend today.
+- Android stores backend `ticket_code` exactly as delivered in attendee sync
+  until a new contract explicitly promotes a broader normalization policy.
 
 ## Scan Upload
 
@@ -206,32 +164,22 @@ Success response:
 
 Runtime notes:
 
-- always send `{ "scans": [...] }`
-- never send `{ "batches": ... }`
-- the stable per-item envelope remains:
-  - `idempotency_key`
-  - `status`
-  - `message`
-- the backend may add optional `reason_code` for authoritative outcomes, but
-  Android must continue to key runtime behavior off `status`
-- proven additive refinements are only `replay_duplicate`,
-  `business_duplicate`, and `payment_invalid`
-- `replay_duplicate` is trustworthy only for final replay duplicates
-- concurrent same-idempotency ambiguity must remain broad unless the backend
-  proves the final replay reason
-- plain `duplicate` without `replay_duplicate` must stay broader than final
-  replay wording in Android projections
-- `direction = "out"` is still not a successful mobile business flow
-- the server performs the business-rule decision; client runtime queues,
-  replay-suppresses, and uploads only
+- Always send `{ "scans": [...] }`.
+- Never send `{ "batches": ... }`.
+- Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
+- Phoenix currently trims required mobile scan fields during validation. That is
+  backend-side input handling, not a promoted QR normalization policy.
+- Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
+- The server performs the actual business-rule decision; client runtime should
+  queue, replay-suppress, and upload, not simulate approval logic locally.
 
 ## Batch Limit
 
-- Android enforces a maximum batch size of `50` scans per request
-- the auto-flush coordinator currently runs bounded flush loops with batches of
-  `25`, while repository/worker entry points still support `50`
-- this remains an Android operating limit, not a backend-promoted batch-size
-  contract
+- Android enforces a maximum batch size of `50` scans per request.
+- This is a client-side operating limit for predictable WorkManager flushes.
+- The current backend does not publish a stricter explicit limit yet, so the
+  client must treat `50` as its own safe ceiling until the backend contract
+  changes.
 
 ## Error Classes
 
@@ -256,71 +204,58 @@ Terminal item outcomes from `/api/v1/mobile/scans`:
 
 Current Android interpretation rules:
 
-- any item returned in `data.results` is terminal-complete for that
+- item classification is driven by `status` plus whether a queued
+  `idempotency_key` is missing from `data.results`
+- `message` may be shown or stored for diagnostics, but it must not be parsed
+  into business truth
+- any item returned in `data.results` is treated as terminal-complete for that
   `idempotency_key`
 - any queued item missing from `data.results` after HTTP `200` is retained for
   retry
-- additive `reason_code` must not replace `status` semantics unless the API is
-  deliberately versioned
-
-## Stable vs Additive Response Semantics
-
-Stable contract fields Android may rely on:
-
-- login envelope: `data`, `error`
-- login payload: `token`, `event_id`, `event_name`, `expires_in`
-- attendee sync payload: `server_time`, `attendees`, `count`, `sync_type`
-- scan upload payload: `results`, `processed`
-- scan upload result fields: `idempotency_key`, `status`, `message`
-- auth error HTTP `401` from the mobile auth pipeline
-
-Additive only:
-
-- optional authoritative `reason_code`
-- richer backend taxonomy that does not replace the existing envelope
-
-Current client rule:
-
-- classify queue behavior by `status`
-- do not parse `message` for unproven causes
-- treat missing result rows after HTTP `200` as retryable
-- diagnostics remain the canonical detailed server-truth surface
-- queue may show one restart-stable persisted server-result hint from latest
-  flush history, but not detailed category breakdown
 
 ## JWT Expiry During Background Flush
 
-- the JWT bearer token is stored in Keystore-backed secure storage
-- event/session metadata is stored separately from the token
-- the credential used for `/api/v1/mobile/login` is not stored for background
-  re-login
-- if a flush receives HTTP `401`, the worker/coordinator must stop flushing,
-  preserve the queue, mark auth as expired in app state, and require manual
-  re-authentication
+- The JWT bearer token is stored in Keystore-backed secure storage.
+- Event/session metadata is stored separately from the token.
+- The credential used for `/api/v1/mobile/login` is not stored for background
+  re-login.
+- If a WorkManager flush receives HTTP `401`, the worker must stop flushing,
+  preserve the queue, mark auth as expired in app state, and require operator
+  re-authentication before more uploads.
 
 ## Partial Success Semantics
 
 - `/api/v1/mobile/scans` returns HTTP `200` with a per-item `results` array and
-  `processed` count
-- Android reconciles outcomes by `idempotency_key`, not by request order alone
-- returned items are removed from the queue and written to replay cache
-- queued items absent from the response are preserved and retried later
+  `processed` count.
+- Android must reconcile results by `idempotency_key`, not by request ordering
+  alone.
+- Returned items are removed from the queue and written to replay cache.
+- Queued items absent from the response are preserved and retried later.
 
-## Runtime-Truth Checklist
+## Stable Contract Fields
 
-- active Android routes are only:
-  - `/api/v1/mobile/login`
-  - `/api/v1/mobile/attendees`
-  - `/api/v1/mobile/scans`
-- authoritative request path is:
-  `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
-- no per-scan durable Postgres mutation happens before acknowledgement
-- richer result taxonomy is additive only
-- `:legacy` and `:shadow` are backend modes, not Android targets
+Android may rely on:
+
+- login envelope: `data`, `error`
+- login payload: `token`, `event_id`, `event_name`, `expires_in`
+- attendee sync payload: `server_time`, `attendees`, `count`, `sync_type`
+- attendee row fields currently emitted by the backend JSON serializer
+- scan upload payload: `results`, `processed`
+- scan upload result fields: `idempotency_key`, `status`, `message`
+- auth error HTTP `401` from the mobile auth pipeline
+
+## Backend Ingestion Mode Note
+
+- Repo fallback truth remains `legacy` in `config/config.exs` and `config/test.exs`.
+- redis_authoritative is the target/proven path in tests and perf.
+- `legacy` and `shadow` remain fallback or migration modes.
+- Deployed production truth cannot be proven from repo code alone.
 
 ## Known Backend Limitations
 
-- auth is still event JWT login, not hybrid device/session identity
-- gate/device/offline-package models are not active runtime dependencies
-- offline approval is not a full local business-rule engine
-- `direction = "out"` is not yet a successful mobile business flow
+- Auth is still event JWT login, not hybrid device/session identity.
+- Gate/device/offline package models are not active runtime dependencies yet.
+- Offline approval is not a full local business-rule engine; the client should
+  treat uploads and responses as authoritative.
+- Scan upload responses return `status` + `message`, not a richer decision
+  envelope yet.

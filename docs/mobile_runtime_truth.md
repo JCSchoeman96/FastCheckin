@@ -1,28 +1,57 @@
-# Redis-Authoritative Mobile Runtime Truth
+# Mobile Runtime Truth
 
-This note records the current backend truth for the promoted mobile runtime.
+This is the canonical repo note for the current Android mobile runtime truth.
 
-## Mode Truth
+## Raw Payload Truth
 
-Do not collapse these into one statement:
+Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
 
-- repo default:
-  - `config/config.exs` still defaults mobile scan ingestion to `:legacy`
-- runtime override:
+- Android sends the raw scanned payload as `ticket_code` unchanged today.
+- There is no approved client-side normalization policy today.
+- The only proven backend-side normalization today is required-field trimming in
+  Phoenix validation.
+- Android queues and uploads the raw captured payload as `ticket_code`.
+- Android attendee sync preserves backend `ticket_code` exactly as delivered.
+- Phoenix currently trims required mobile scan fields during validation.
+- That trimming does not prove any broader QR normalization policy or scanned
+  payload resolver for `/api/v1/mobile/*`.
+
+## Direction Truth
+
+Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
+
+- Active Android UI and use cases still create `IN` scans only.
+- `OUT` still exists in model and scaffolding code, but the live mobile upload
+  paths reject it as not implemented.
+- Phoenix validation accepting `"out"` is not the same thing as promoted
+  business support.
+
+## Ingestion Mode Truth
+
+redis_authoritative is the target/proven path in tests and perf; legacy and shadow are fallback/migration modes; deployed production truth cannot be proven from repo code alone.
+
+- Repo default and fallback truth today is `legacy`.
+- Exercised authoritative truth today is `redis_authoritative`.
+- Deployed production truth remains unproven from repo code alone.
+- Repo fallback truth:
+  - `config/config.exs` defaults to `:legacy`
+  - `config/test.exs` defaults to `:legacy`
+- Runtime override truth:
   - `config/runtime.exs` resolves `MOBILE_SCAN_INGESTION_MODE`
-- exercised authoritative proof:
-  - local perf docs and authoritative tests are explicitly pinned to
-    `:redis_authoritative`
-- deployed production truth:
-  - not proven by repo code alone
+  - `lib/fastcheck/scans/ingestion_mode.ex` defines the supported values and
+    fallback behavior
+- Exercised authoritative proof:
+  - `README.md`
+  - `docs/mobile_scan_performance.md`
+  - `test/fastcheck/scans/mobile_upload_service_test.exs`
+  - `test/fastcheck_web/controllers/mobile/sync_controller_test.exs`
+- Deployed production truth:
+  - not provable from repo code alone because the live runtime environment is
+    outside this repository
 
-Document `:redis_authoritative` as the target runtime mode and the mode used by
-the documented authoritative test/perf paths, not as an unqualified production
-fact.
+## Current Promoted Request Path
 
-## Current Mobile Request Path
-
-The promoted Android contract remains:
+The promoted Android mobile contract remains:
 
 - `POST /api/v1/mobile/login`
 - `GET /api/v1/mobile/attendees`
@@ -34,61 +63,11 @@ For `POST /api/v1/mobile/scans`, the authoritative path is:
 
 Operationally that means:
 
-1. Android captures and queues locally first
-2. auto-flush is the normal upload path; manual flush remains fallback/debug
-3. backend validates each scan
-4. Redis hot state performs admission and idempotency decisions
-5. durability jobs are enqueued before acknowledgement
-6. acknowledged results are promoted in hot state
-7. durable Postgres projection happens asynchronously afterward through Oban
-
-No per-scan durable Postgres mutation belongs in the request path before
-acknowledgement.
-
-## Contract Truth
-
-Stable mobile scan item envelope:
-
-- `idempotency_key`
-- `status`
-- `message`
-
-Additive only:
-
-- optional authoritative `reason_code`
-
-Current operator-visible semantics:
-
-- `success`
-- `duplicate`
-- `error`
-
-`reason_code` is additive refinement only and must not replace `status` without
-versioning.
-
-## Migration Boundaries
-
-Backend modes:
-
-- `:redis_authoritative`:
-  - target hot path for mobile scans
-- `:legacy`:
-  - fallback/migration mode only
-- `:shadow`:
-  - transitional verification mode only
-
-Android targets:
-
-- Android does not choose among these modes
-- Android must not treat `:legacy` or `:shadow` as promoted runtime targets
-- Android must continue using only `/api/v1/mobile/*`
-
-## Runtime-Truth Checklist
-
-- active Android routes are only `/api/v1/mobile/login`,
-  `/api/v1/mobile/attendees`, and `/api/v1/mobile/scans`
-- authoritative request path stays synchronous through acknowledgement
-- durable Postgres projection stays async after acknowledgement
-- richer result taxonomy is additive only
-- `direction = "out"` is still not a successful mobile business flow
-- future device/session routes are not current Android dependencies
+1. Android captures and queues locally first.
+2. Android flushes via the existing mobile scan upload endpoint.
+3. Phoenix validates each scan.
+4. Redis hot state performs admission and idempotency decisions in the
+   authoritative path.
+5. Durability jobs are enqueued before acknowledgement.
+6. Acknowledged hot-state results are promoted before the response returns.
+7. Durable Postgres projection happens asynchronously afterward through Oban.

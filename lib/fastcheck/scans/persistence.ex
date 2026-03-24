@@ -48,7 +48,9 @@ defmodule FastCheck.Scans.Persistence do
     end
   end
 
-  defp project_legacy_state(%{status: "success", attendee_id: attendee_id} = attrs)
+  defp project_legacy_state(
+         %{status: "success", direction: "in", attendee_id: attendee_id} = attrs
+       )
        when is_integer(attendee_id) do
     attendee = Repo.get!(Attendee, attendee_id)
 

@@ -111,13 +111,9 @@ config :fastcheck,
   redis_url: redis_url
 
 mobile_scan_ingestion_mode =
-  case System.get_env("MOBILE_SCAN_INGESTION_MODE", "legacy")
-       |> String.trim()
-       |> String.downcase() do
-    "redis_authoritative" -> :redis_authoritative
-    "shadow" -> :shadow
-    _ -> :legacy
-  end
+  "MOBILE_SCAN_INGESTION_MODE"
+  |> System.get_env("legacy")
+  |> FastCheck.Scans.IngestionMode.resolve()
 
 mobile_scan_force_enqueue_failure =
   case System.get_env("MOBILE_SCAN_FORCE_ENQUEUE_FAILURE", "false")
