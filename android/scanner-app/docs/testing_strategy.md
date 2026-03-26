@@ -52,6 +52,15 @@ Worker tests should verify:
 
 No Android test should reference future scanner routes as active dependencies.
 
+### Change-set claim boundaries
+
+When writing PR notes or release notes for sync/persistence changes:
+
+- Keep DAO persistence claims to: **single DAO entrypoint persists both tables**.
+- Do **not** claim rollback/all-or-nothing behavior unless a test triggers an in-transaction DB failure and proves no partial commit.
+- Do **not** claim hardened `Retry-After` support until the parser and associated tests are merged.
+- If needed, split `Retry-After` correctness into a dedicated follow-up PR.
+
 Reason-code coverage must also prove:
 
 - `status` and row presence still decide terminal vs retryable behavior
