@@ -204,7 +204,7 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
-    fun mapsHttp429ToSyncRateLimitedExceptionWithRetryAfterHeader() = runTest {
+    fun mapsHttp429ToSyncRateLimitedExceptionWithTrimmedPositiveNumericRetryAfterHeader() = runTest {
         repository = buildRateLimitedRepository(retryAfterHeader = " 120 ")
 
         try {
