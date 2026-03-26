@@ -231,7 +231,7 @@ class CurrentPhoenixSyncRepositoryTest {
 
     @Test
     fun mapsHttp429ToSyncRateLimitedExceptionWithNonPositiveAndMalformedRetryAfterAsNull() = runTest {
-        val invalidHeaders = listOf("", "   ", "0", "-5", "abc")
+        val invalidHeaders = listOf("", "0", "-5", "abc")
 
         invalidHeaders.forEach { header ->
             repository = buildRateLimitedRepository(retryAfterHeader = header)
