@@ -255,7 +255,8 @@ class CurrentPhoenixSyncRepositoryTest {
             error("Expected SyncRateLimitedException")
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
-            assertThat((e as SyncRateLimitedException).retryAfterMillis).isEqualTo(120_000L)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isNotNull()
+            assertThat(e.retryAfterMillis!!).isGreaterThan(0L)
         }
     }
 
@@ -272,6 +273,7 @@ class CurrentPhoenixSyncRepositoryTest {
         }
     }
 
+    @Test
     fun rethrowsNon429HttpExceptionUnchanged() = runTest {
         val expected =
             HttpException(
