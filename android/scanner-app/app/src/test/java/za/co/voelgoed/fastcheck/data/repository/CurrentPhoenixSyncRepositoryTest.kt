@@ -192,38 +192,7 @@ class CurrentPhoenixSyncRepositoryTest {
 
     @Test
     fun mapsHttp429ToSyncRateLimitedExceptionWithoutRetryAfterHeader() = runTest {
-        val rateLimitedApi =
-            object : PhoenixMobileApi {
-                override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
-                    error("Not used in this test")
-
-                override suspend fun syncAttendees(since: String?): MobileSyncResponse {
-                    val response =
-                        Response.error<MobileSyncResponse>(
-                            429,
-                            ResponseBody.create(
-                                "application/json".toMediaType(),
-                                """{"error":"rate_limited"}"""
-                            )
-                        )
-                    throw HttpException(response)
-                }
-
-                override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
-                    error("Not used in this test")
-            }
-
-        repository =
-            CurrentPhoenixSyncRepository(
-                remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
-                scannerDao = database.scannerDao(),
-                sessionRepository = fixedSessionRepository(),
-                clock =
-                    Clock.fixed(
-                        Instant.parse("2026-03-13T08:00:00Z"),
-                        ZoneOffset.UTC
-                    )
-            )
+        repository = buildRateLimitedRepository(retryAfterHeader = null)
 
         try {
             repository.syncAttendees()
@@ -236,44 +205,7 @@ class CurrentPhoenixSyncRepositoryTest {
 
     @Test
     fun mapsHttp429ToSyncRateLimitedExceptionWithRetryAfterHeader() = runTest {
-        val rateLimitedApi =
-            object : PhoenixMobileApi {
-                override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
-                    error("Not used in this test")
-
-                override suspend fun syncAttendees(since: String?): MobileSyncResponse {
-                    val responseBody =
-                        ResponseBody.create(
-                            "application/json".toMediaType(),
-                            """{"error":"rate_limited"}"""
-                        )
-                    val rawResponse =
-                        okhttp3.Response.Builder()
-                            .request(Request.Builder().url("https://example.test/api/v1/mobile/attendees").build())
-                            .protocol(Protocol.HTTP_1_1)
-                            .code(429)
-                            .message("Too Many Requests")
-                            .header("Retry-After", "120")
-                            .build()
-                    val response = Response.error<MobileSyncResponse>(responseBody, rawResponse)
-                    throw HttpException(response)
-                }
-
-                override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
-                    error("Not used in this test")
-            }
-
-        repository =
-            CurrentPhoenixSyncRepository(
-                remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
-                scannerDao = database.scannerDao(),
-                sessionRepository = fixedSessionRepository(),
-                clock =
-                    Clock.fixed(
-                        Instant.parse("2026-03-13T08:00:00Z"),
-                        ZoneOffset.UTC
-                    )
-            )
+        repository = buildRateLimitedRepository(retryAfterHeader = " 120 ")
 
         try {
             repository.syncAttendees()
@@ -281,6 +213,58 @@ class CurrentPhoenixSyncRepositoryTest {
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
             assertThat((e as SyncRateLimitedException).retryAfterMillis).isEqualTo(120_000L)
+        }
+    }
+
+    @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithBlankRetryAfterAsNull() = runTest {
+        repository = buildRateLimitedRepository(retryAfterHeader = "   ")
+
+        try {
+            repository.syncAttendees()
+            error("Expected SyncRateLimitedException")
+        } catch (e: Exception) {
+            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isNull()
+        }
+    }
+
+    @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithFutureRetryAfterHttpDate() = runTest {
+        repository = buildRateLimitedRepository(retryAfterHeader = "Fri, 13 Mar 2026 08:02:00 GMT")
+
+        try {
+            repository.syncAttendees()
+            error("Expected SyncRateLimitedException")
+        } catch (e: Exception) {
+            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isEqualTo(120_000L)
+        }
+    }
+
+    @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithPastRetryAfterHttpDateAsNull() = runTest {
+        repository = buildRateLimitedRepository(retryAfterHeader = "Fri, 13 Mar 2026 07:59:00 GMT")
+
+        try {
+            repository.syncAttendees()
+            error("Expected SyncRateLimitedException")
+        } catch (e: Exception) {
+            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isNull()
+        }
+    }
+
+    @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithMalformedRetryAfterAsNull() = runTest {
+        repository = buildRateLimitedRepository(retryAfterHeader = "definitely-not-a-date")
+
+        try {
+            repository.syncAttendees()
+            error("Expected SyncRateLimitedException")
+        } catch (e: Exception) {
+            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isNull()
         }
     }
 
@@ -406,6 +390,42 @@ class CurrentPhoenixSyncRepositoryTest {
             sessionRepository = sessionRepository,
             clock = Clock.systemUTC()
         )
+
+    private fun buildRateLimitedRepository(retryAfterHeader: String?): CurrentPhoenixSyncRepository {
+        val rateLimitedApi =
+            object : PhoenixMobileApi {
+                override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                    error("Not used in this test")
+
+                override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                    val responseBody =
+                        ResponseBody.create(
+                            "application/json".toMediaType(),
+                            """{"error":"rate_limited"}"""
+                        )
+                    val rawResponse =
+                        okhttp3.Response.Builder()
+                            .request(Request.Builder().url("https://example.test/api/v1/mobile/attendees").build())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(429)
+                            .message("Too Many Requests")
+                            .apply { if (retryAfterHeader != null) header("Retry-After", retryAfterHeader) }
+                            .build()
+                    val response = Response.error<MobileSyncResponse>(responseBody, rawResponse)
+                    throw HttpException(response)
+                }
+
+                override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
+                    error("Not used in this test")
+            }
+
+        return CurrentPhoenixSyncRepository(
+            remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
+            scannerDao = database.scannerDao(),
+            sessionRepository = fixedSessionRepository(),
+            clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC)
+        )
+    }
 
     private fun fixedSessionRepository(): SessionRepository =
         object : SessionRepository {

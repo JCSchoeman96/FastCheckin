@@ -2,7 +2,8 @@ package za.co.voelgoed.fastcheck.data.repository
 
 import java.time.Clock
 import java.time.Duration
-import java.time.Instant
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -67,19 +68,20 @@ class SyncRateLimitedException(
 ) : RuntimeException(message)
 
 private fun parseRetryAfterMillis(exception: HttpException, clock: Clock): Long? {
-    val headerValue = exception.response()?.headers()?.get("Retry-After") ?: return null
+    val headerValue = exception.response()?.headers()?.get("Retry-After")?.trim()
+    if (headerValue.isNullOrBlank()) return null
 
-    // Retry-After can be either seconds or HTTP-date; support the common seconds form first.
+    // Retry-After can be either seconds or an RFC 1123 HTTP-date; support the seconds form first.
     headerValue.toLongOrNull()?.let { seconds ->
+        if (seconds <= 0) return null
         return Duration.ofSeconds(seconds).toMillis()
     }
 
-    // Fallback: try HTTP-date parsing if needed in the future.
+    // Parse the RFC 1123 HTTP-date form and convert it to retry delay milliseconds.
     return try {
-        val retryTime = Instant.parse(headerValue)
-        val now = Instant.ofEpochMilli(clock.millis())
-        val diff = Duration.between(now, retryTime).toMillis()
-        if (diff > 0) diff else null
+        val retryTime = ZonedDateTime.parse(headerValue, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()
+        val diff = Duration.between(clock.instant(), retryTime).toMillis()
+        if (diff <= 0) null else diff
     } catch (_: Exception) {
         null
     }
