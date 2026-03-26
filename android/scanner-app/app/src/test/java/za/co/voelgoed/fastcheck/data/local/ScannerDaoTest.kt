@@ -217,4 +217,42 @@ class ScannerDaoTest {
             .inOrder()
         assertThat(outcomes).hasSize(2)
     }
+
+    @Test
+    fun upsertAttendeesAndSyncMetadataPersistsBothTablesViaSingleDaoEntrypoint() = runTest {
+        dao.upsertAttendeesAndSyncMetadata(
+            attendees =
+                listOf(
+                    AttendeeEntity(
+                        id = 77,
+                        eventId = 5,
+                        ticketCode = "VG-TX-77",
+                        firstName = "Taylor",
+                        lastName = "Txn",
+                        email = "taylor@example.com",
+                        ticketType = "General",
+                        allowedCheckins = 1,
+                        checkinsRemaining = 1,
+                        paymentStatus = "completed",
+                        isCurrentlyInside = false,
+                        updatedAt = "2026-03-13T10:00:00Z"
+                    )
+                ),
+            metadata =
+                SyncMetadataEntity(
+                    eventId = 5,
+                    lastServerTime = "2026-03-13T10:01:00Z",
+                    lastSuccessfulSyncAt = "2026-03-13T10:01:00Z",
+                    lastSyncType = "full",
+                    attendeeCount = 1
+                )
+        )
+
+        val attendee = dao.findAttendee(5, "VG-TX-77")
+        val metadata = dao.loadSyncMetadata(5)
+
+        assertThat(attendee).isNotNull()
+        assertThat(metadata).isNotNull()
+        assertThat(metadata?.lastServerTime).isEqualTo("2026-03-13T10:01:00Z")
+    }
 }
