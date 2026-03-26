@@ -230,6 +230,23 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithNonPositiveAndMalformedRetryAfterAsNull() = runTest {
+        val invalidHeaders = listOf("", "0", "-5", "abc")
+
+        invalidHeaders.forEach { header ->
+            repository = buildRateLimitedRepository(retryAfterHeader = header)
+
+            try {
+                repository.syncAttendees()
+                error("Expected SyncRateLimitedException for Retry-After header: $header")
+            } catch (e: Exception) {
+                assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+                assertThat((e as SyncRateLimitedException).retryAfterMillis).isNull()
+            }
+        }
+    }
+
+    @Test
     fun mapsHttp429ToSyncRateLimitedExceptionWithFutureRetryAfterHttpDate() = runTest {
         repository = buildRateLimitedRepository(retryAfterHeader = "Fri, 13 Mar 2026 08:02:00 GMT")
 
@@ -255,20 +272,6 @@ class CurrentPhoenixSyncRepositoryTest {
         }
     }
 
-    @Test
-    fun mapsHttp429ToSyncRateLimitedExceptionWithMalformedRetryAfterAsNull() = runTest {
-        repository = buildRateLimitedRepository(retryAfterHeader = "definitely-not-a-date")
-
-        try {
-            repository.syncAttendees()
-            error("Expected SyncRateLimitedException")
-        } catch (e: Exception) {
-            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
-            assertThat((e as SyncRateLimitedException).retryAfterMillis).isNull()
-        }
-    }
-
-    @Test
     fun rethrowsNon429HttpExceptionUnchanged() = runTest {
         val expected =
             HttpException(
