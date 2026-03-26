@@ -31,14 +31,12 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             val payload =
                 requireNotNull(response.data) { response.message ?: response.error ?: "Sync failed" }
 
-            // TODO(B3-techdebt): Atomicity assumption.
-            // Attendee upsert and sync_metadata upsert are sequential, not a single DAO transaction.
-            // If partial-sync edge cases appear (e.g. process death between these calls), collapse
-            // them into a single Room @Transaction method that writes attendees + metadata together.
             // Preserve the backend ticket_code as delivered until QR normalization is explicitly defined.
-            scannerDao.upsertAttendees(payload.attendees.map { it.toEntity() })
             val metadata = payload.toSyncMetadata(session.eventId)
-            scannerDao.upsertSyncMetadata(metadata)
+            scannerDao.upsertAttendeesAndSyncMetadata(
+                attendees = payload.attendees.map { it.toEntity() },
+                metadata = metadata
+            )
 
             return metadata.toDomain()
         } catch (http: HttpException) {

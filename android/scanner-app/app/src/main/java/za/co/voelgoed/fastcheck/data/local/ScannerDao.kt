@@ -97,6 +97,15 @@ interface ScannerDao {
     suspend fun upsertSyncMetadata(metadata: SyncMetadataEntity)
 
     @Transaction
+    suspend fun upsertAttendeesAndSyncMetadata(
+        attendees: List<AttendeeEntity>,
+        metadata: SyncMetadataEntity
+    ) {
+        upsertAttendees(attendees)
+        upsertSyncMetadata(metadata)
+    }
+
+    @Transaction
     suspend fun replaceLatestFlushState(
         snapshot: LatestFlushSnapshotEntity,
         outcomes: List<RecentFlushOutcomeEntity>

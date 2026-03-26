@@ -4,20 +4,25 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import kotlinx.coroutines.test.runTest
-import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.ResponseBody
-import retrofit2.HttpException
-import retrofit2.Response
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import retrofit2.HttpException
+import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
+import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.remote.AttendeeDto
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
@@ -43,21 +48,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 .allowMainThreadQueries()
                 .build()
         api = FakePhoenixMobileApi()
-        repository =
-            CurrentPhoenixSyncRepository(
-                remoteDataSource = PhoenixMobileRemoteDataSource(api),
-                scannerDao = database.scannerDao(),
-                sessionRepository =
-                    object : SessionRepository {
-                        override suspend fun login(eventId: Long, credential: String): ScannerSession =
-                            sampleSession()
-
-                        override suspend fun currentSession(): ScannerSession = sampleSession()
-
-                        override suspend fun logout() = Unit
-                    },
-                clock = java.time.Clock.systemUTC()
-            )
+        repository = buildRepository(sessionRepository = fixedSessionRepository())
     }
 
     @After
@@ -66,7 +57,7 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
-    fun initialSyncUsesNullWatermarkAndUpsertsAttendees() = runTest {
+    fun initialSyncUsesNullWatermarkAndPersistsAttendeeAndMetadata() = runTest {
         api.syncResponse =
             MobileSyncResponse(
                 data =
@@ -100,15 +91,18 @@ class CurrentPhoenixSyncRepositoryTest {
 
         val status = repository.syncAttendees()
         val attendee = database.scannerDao().findAttendee(5, "VG-100")
+        val metadata = database.scannerDao().loadSyncMetadata(5)
 
         assertThat(api.lastSince).isNull()
         assertThat(attendee?.ticketCode).isEqualTo("VG-100")
+        assertThat(metadata?.lastServerTime).isEqualTo("2026-03-13T08:10:00Z")
+        assertThat(metadata?.lastSyncType).isEqualTo("full")
         assertThat(status?.attendeeCount).isEqualTo(1)
         assertThat(status?.syncType).isEqualTo("full")
     }
 
     @Test
-    fun incrementalSyncUsesStoredWatermark() = runTest {
+    fun incrementalSyncUsesStoredLastServerTimeWatermark() = runTest {
         database.scannerDao().upsertSyncMetadata(
             SyncMetadataEntity(
                 eventId = 5,
@@ -140,52 +134,295 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
-    fun mapsHttp429ToSyncRateLimitedException_withOptionalRetryAfter() =
-        runTest {
-            // API that always throws a 429 HttpException for syncAttendees.
-            val rateLimitedApi =
-                object : PhoenixMobileApi {
-                    override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
-                        error("Not used in this test")
+    fun syncAttendeesWithoutSessionReturnsNullAndDoesNotWrite() = runTest {
+        repository = buildRepository(sessionRepository = noSessionRepository())
 
-                    override suspend fun syncAttendees(since: String?): MobileSyncResponse {
-                        val response =
-                            Response.error<MobileSyncResponse>(
-                                429,
-                                ResponseBody.create(
-                                    "application/json".toMediaType(),
-                                    """{"error":"rate_limited"}"""
+        val status = repository.syncAttendees()
+
+        assertThat(status).isNull()
+        assertThat(api.lastSince).isNull()
+        assertThat(database.scannerDao().findAttendee(5, "VG-100")).isNull()
+        assertThat(database.scannerDao().loadSyncMetadata(5)).isNull()
+    }
+
+    @Test
+    fun successfulSyncPersistsAttendeeRowAndSyncMetadataRow() = runTest {
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:30:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 12,
+                                    event_id = 5,
+                                    ticket_code = "VG-ROW-12",
+                                    first_name = "Sam",
+                                    last_name = "Example",
+                                    email = "sam@example.com",
+                                    ticket_type = "General",
+                                    allowed_checkins = 2,
+                                    checkins_remaining = 2,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T08:29:00Z"
                                 )
+                            ),
+                        count = 1,
+                        sync_type = "full"
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees()
+
+        val attendee = database.scannerDao().findAttendee(5, "VG-ROW-12")
+        val metadata = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(attendee).isNotNull()
+        assertThat(attendee?.id).isEqualTo(12)
+        assertThat(metadata).isNotNull()
+        assertThat(metadata?.eventId).isEqualTo(5)
+        assertThat(metadata?.attendeeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithoutRetryAfterHeader() = runTest {
+        val rateLimitedApi =
+            object : PhoenixMobileApi {
+                override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                    error("Not used in this test")
+
+                override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                    val response =
+                        Response.error<MobileSyncResponse>(
+                            429,
+                            ResponseBody.create(
+                                "application/json".toMediaType(),
+                                """{"error":"rate_limited"}"""
                             )
-                        throw HttpException(response)
-                    }
-
-                    override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
-                        error("Not used in this test")
+                        )
+                    throw HttpException(response)
                 }
-            repository =
-                CurrentPhoenixSyncRepository(
-                    remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
-                    scannerDao = database.scannerDao(),
-                    sessionRepository =
-                        object : SessionRepository {
-                            override suspend fun login(
-                                eventId: Long,
-                                credential: String
-                            ): ScannerSession = sampleSession()
 
-                            override suspend fun currentSession(): ScannerSession = sampleSession()
-
-                            override suspend fun logout() = Unit
-                        },
-                    clock = java.time.Clock.systemUTC()
-                )
-
-            try {
-                repository.syncAttendees()
-            } catch (e: Exception) {
-                assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+                override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
+                    error("Not used in this test")
             }
+
+        repository =
+            CurrentPhoenixSyncRepository(
+                remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
+                scannerDao = database.scannerDao(),
+                sessionRepository = fixedSessionRepository(),
+                clock =
+                    Clock.fixed(
+                        Instant.parse("2026-03-13T08:00:00Z"),
+                        ZoneOffset.UTC
+                    )
+            )
+
+        try {
+            repository.syncAttendees()
+            error("Expected SyncRateLimitedException")
+        } catch (e: Exception) {
+            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isNull()
+        }
+    }
+
+    @Test
+    fun mapsHttp429ToSyncRateLimitedExceptionWithRetryAfterHeader() = runTest {
+        val rateLimitedApi =
+            object : PhoenixMobileApi {
+                override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                    error("Not used in this test")
+
+                override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                    val responseBody =
+                        ResponseBody.create(
+                            "application/json".toMediaType(),
+                            """{"error":"rate_limited"}"""
+                        )
+                    val rawResponse =
+                        okhttp3.Response.Builder()
+                            .request(Request.Builder().url("https://example.test/api/v1/mobile/attendees").build())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(429)
+                            .message("Too Many Requests")
+                            .header("Retry-After", "120")
+                            .build()
+                    val response = Response.error<MobileSyncResponse>(responseBody, rawResponse)
+                    throw HttpException(response)
+                }
+
+                override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
+                    error("Not used in this test")
+            }
+
+        repository =
+            CurrentPhoenixSyncRepository(
+                remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
+                scannerDao = database.scannerDao(),
+                sessionRepository = fixedSessionRepository(),
+                clock =
+                    Clock.fixed(
+                        Instant.parse("2026-03-13T08:00:00Z"),
+                        ZoneOffset.UTC
+                    )
+            )
+
+        try {
+            repository.syncAttendees()
+            error("Expected SyncRateLimitedException")
+        } catch (e: Exception) {
+            assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
+            assertThat((e as SyncRateLimitedException).retryAfterMillis).isEqualTo(120_000L)
+        }
+    }
+
+    @Test
+    fun rethrowsNon429HttpExceptionUnchanged() = runTest {
+        val expected =
+            HttpException(
+                Response.error<MobileSyncResponse>(
+                    500,
+                    ResponseBody.create(
+                        "application/json".toMediaType(),
+                        """{"error":"server_error"}"""
+                    )
+                )
+            )
+
+        repository =
+            CurrentPhoenixSyncRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        object : PhoenixMobileApi {
+                            override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                                error("Not used in this test")
+
+                            override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                                throw expected
+                            }
+
+                            override suspend fun uploadScans(
+                                body: UploadScansRequest
+                            ): UploadScansResponse = error("Not used in this test")
+                        }
+                    ),
+                scannerDao = database.scannerDao(),
+                sessionRepository = fixedSessionRepository(),
+                clock = Clock.systemUTC()
+            )
+
+        try {
+            repository.syncAttendees()
+            error("Expected HttpException")
+        } catch (e: Exception) {
+            assertThat(e).isSameInstanceAs(expected)
+        }
+    }
+
+    @Test
+    fun failedSyncLeavesSeededAttendeeAndMetadataUnchanged() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 501,
+                    eventId = 5,
+                    ticketCode = "VG-SEED-501",
+                    firstName = "Seed",
+                    updatedAt = "2026-03-13T07:59:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
+        val expected =
+            HttpException(
+                Response.error<MobileSyncResponse>(
+                    500,
+                    ResponseBody.create(
+                        "application/json".toMediaType(),
+                        """{"error":"server_error"}"""
+                    )
+                )
+            )
+
+        repository =
+            CurrentPhoenixSyncRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        object : PhoenixMobileApi {
+                            override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                                error("Not used in this test")
+
+                            override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                                throw expected
+                            }
+
+                            override suspend fun uploadScans(
+                                body: UploadScansRequest
+                            ): UploadScansResponse = error("Not used in this test")
+                        }
+                    ),
+                scannerDao = database.scannerDao(),
+                sessionRepository = fixedSessionRepository(),
+                clock = Clock.systemUTC()
+            )
+
+        try {
+            repository.syncAttendees()
+            error("Expected HttpException")
+        } catch (e: Exception) {
+            assertThat(e).isSameInstanceAs(expected)
+        }
+
+        val attendeeAfterFailure = database.scannerDao().findAttendee(5, "VG-SEED-501")
+        val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(attendeeAfterFailure?.id).isEqualTo(501)
+        assertThat(attendeeAfterFailure?.updatedAt).isEqualTo("2026-03-13T07:59:00Z")
+        assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
+        assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+    }
+
+    private fun buildRepository(sessionRepository: SessionRepository): CurrentPhoenixSyncRepository =
+        CurrentPhoenixSyncRepository(
+            remoteDataSource = PhoenixMobileRemoteDataSource(api),
+            scannerDao = database.scannerDao(),
+            sessionRepository = sessionRepository,
+            clock = Clock.systemUTC()
+        )
+
+    private fun fixedSessionRepository(): SessionRepository =
+        object : SessionRepository {
+            override suspend fun login(eventId: Long, credential: String): ScannerSession = sampleSession()
+
+            override suspend fun currentSession(): ScannerSession = sampleSession()
+
+            override suspend fun logout() = Unit
+        }
+
+    private fun noSessionRepository(): SessionRepository =
+        object : SessionRepository {
+            override suspend fun login(eventId: Long, credential: String): ScannerSession = sampleSession()
+
+            override suspend fun currentSession(): ScannerSession? = null
+
+            override suspend fun logout() = Unit
         }
 
     private fun sampleSession(): ScannerSession =
@@ -196,6 +433,29 @@ class CurrentPhoenixSyncRepositoryTest {
             authenticatedAtEpochMillis = 1_773_388_800_000,
             expiresAtEpochMillis = 1_773_392_400_000
         )
+
+    private fun attendeeEntity(
+        id: Long,
+        eventId: Long,
+        ticketCode: String,
+        firstName: String,
+        updatedAt: String
+    ) = AttendeeDto(
+        id = id,
+        event_id = eventId,
+        ticket_code = ticketCode,
+        first_name = firstName,
+        last_name = "User",
+        email = "seed@example.com",
+        ticket_type = "General",
+        allowed_checkins = 1,
+        checkins_remaining = 1,
+        payment_status = "completed",
+        is_currently_inside = false,
+        checked_in_at = null,
+        checked_out_at = null,
+        updated_at = updatedAt
+    ).toEntity()
 
     private class FakePhoenixMobileApi : PhoenixMobileApi {
         var lastSince: String? = null
