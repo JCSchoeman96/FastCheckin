@@ -18,7 +18,7 @@ FastCheck is a Phoenix + LiveView event check-in system with a separate Kotlin A
 
 - **Backend**: Phoenix `~> 1.8.1`, Phoenix LiveView `~> 1.1.17`, Elixir `~> 1.17` (see `mix.exs`).
 - **Frontend**: LiveView + Tailwind (assets in `assets/`).
-- **Data**: PostgreSQL (Docker compose uses Postgres 15). Optional pgBouncer + Redis are provided in `docker-compose.yml`.
+- **Data**: PostgreSQL (Docker compose uses Postgres 18). Optional pgBouncer + Redis are provided in `docker-compose.yml`.
 - **Android**: Kotlin, Room, Retrofit/OkHttp, WorkManager (see `android/scanner-app/docs/architecture.md`).
 
 ## Active API contract (Android runtime)
@@ -70,12 +70,13 @@ docker compose up -d postgres pgbouncer redis
 
 Set `DB_PASSWORD` in your environment (or a local `.env`) so compose can seed both Postgres and pgBouncer. For local development you can point `DATABASE_URL` at either:
 
-- Postgres direct: `ecto://postgres:${DB_PASSWORD}@localhost:5432/fastcheck_prod`
+- Postgres direct: `ecto://postgres:${DB_PASSWORD}@localhost:5434/fastcheck_prod`
 - pgBouncer: `ecto://postgres:${DB_PASSWORD}@localhost:6432/fastcheck_prod`
 
 For Redis-backed mobile scan work, the same compose stack publishes Redis on
-`redis://localhost:6380`. The non-production runtime/test default follows that
-host port unless you override `REDIS_URL`.
+`redis://localhost:6380` from the host. Container-internal and default env
+examples may still use `redis://localhost:6379` (for example `.env.example`
+and in-network service wiring).
 
 ### Run the app
 
@@ -107,7 +108,7 @@ Build/run via Android Studio or Gradle in `android/scanner-app/`.
 
 ## Deployment notes (infra + pooling)
 
-- `docker-compose.yml` provides **Postgres 15**, **pgBouncer** (transaction pool mode), and **Redis**.
+- `docker-compose.yml` provides **Postgres 18**, **pgBouncer** (transaction pool mode), and **Redis**.
 - pgBouncer is intended to collapse many client connections into a smaller number of upstream Postgres sessions; monitor it with `SHOW POOLS` / `SHOW STATS` via psql.
 - Keep the mobile request path unchanged as `validate -> hot-state decision -> enqueue durability -> promote results -> respond`; PgBouncer helps connection pressure and async durability load, not Redis admission semantics.
 - Keep `/api/v1/live` as process liveness and `/api/v1/health` as DB-backed readiness/dependency signaling.
