@@ -15,6 +15,9 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.R
+import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
+import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
+import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceSelectionResolver
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
@@ -25,8 +28,10 @@ import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.queue.ManualQueueInputController
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
+import za.co.voelgoed.fastcheck.feature.scanning.broadcast.DataWedgeScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerSourceBinding
@@ -63,21 +68,18 @@ class MainActivity : ComponentActivity() {
     private val queueViewModel: QueueViewModel by viewModels()
     private val scanningViewModel: ScanningViewModel by viewModels()
 
-    private lateinit var scannerInputSource: CameraScannerInputSource
+    private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
+    private val scannerSourceActivationPolicy = ScannerSourceActivationPolicy()
+
+    private lateinit var selectedScannerSourceMode: ScannerShellSourceMode
+    private lateinit var scannerInputSource: ScannerInputSource
     private lateinit var scannerSourceBinding: ScannerSourceBinding
     private lateinit var manualQueueInputController: ManualQueueInputController
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             scanningViewModel.refreshPermissionState(granted)
-
-            if (granted) {
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                    scannerSourceBinding.start()
-                }
-            } else {
-                scannerSourceBinding.stop()
-            }
+            syncScannerBindingForPermission()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +90,9 @@ class MainActivity : ComponentActivity() {
             LOG_TAG,
             "FastCheck API target=${apiEnvironmentConfig.target.wireName} baseUrl=${apiEnvironmentConfig.baseUrl}"
         )
+        selectedScannerSourceMode = scannerSourceSelectionResolver.resolve()
+        Log.i(LOG_TAG, "Active scanner source=${selectedScannerSourceMode.wireName}")
+        scanningViewModel.onActiveSourceTypeChanged(selectedScannerSourceMode.sourceType)
         manualQueueInputController =
             ManualQueueInputController(
                 input = binding.manualTicketCodeInput,
@@ -95,15 +100,7 @@ class MainActivity : ComponentActivity() {
             )
         manualQueueInputController.bind()
 
-        scannerInputSource =
-            CameraScannerInputSource(
-                scannerCameraBinder = scannerCameraBinder,
-                lifecycleOwnerProvider = { this },
-                previewViewProvider = { binding.scannerPreview },
-                appDispatchers = appDispatchers,
-                clock = clock,
-                barcodeScannerEngine = barcodeScannerEngine
-            )
+        scannerInputSource = createScannerInputSource(selectedScannerSourceMode)
         scannerSourceBinding =
             ScannerSourceBinding(
                 source = scannerInputSource,
@@ -217,6 +214,12 @@ class MainActivity : ComponentActivity() {
                         binding.scannerPermissionValue.text = state.permissionSummary
                         binding.scannerStatusValue.text = state.scannerStatus
                         binding.requestCameraPermissionButton.isEnabled = state.isPermissionRequestEnabled
+                        binding.requestCameraPermissionButton.visibility =
+                            if (state.isPermissionRequestVisible) {
+                                android.view.View.VISIBLE
+                            } else {
+                                android.view.View.GONE
+                            }
                         binding.scannerPreview.visibility =
                             if (state.isPreviewVisible) {
                                 android.view.View.VISIBLE
@@ -275,12 +278,40 @@ class MainActivity : ComponentActivity() {
         val hasPermission = hasCameraPermission()
         scanningViewModel.refreshPermissionState(hasPermission)
 
-        if (hasPermission && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+        val decision =
+            scannerSourceActivationPolicy.evaluate(
+                sourceMode = selectedScannerSourceMode,
+                hasCameraPermission = hasPermission,
+                isShellStarted = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            )
+
+        if (decision.shouldStartBinding) {
             scannerSourceBinding.start()
         } else {
             scannerSourceBinding.stop()
         }
     }
+
+    private fun createScannerInputSource(
+        sourceMode: ScannerShellSourceMode
+    ): ScannerInputSource =
+        when (sourceMode) {
+            ScannerShellSourceMode.CAMERA ->
+                CameraScannerInputSource(
+                    scannerCameraBinder = scannerCameraBinder,
+                    lifecycleOwnerProvider = { this },
+                    previewViewProvider = { binding.scannerPreview },
+                    appDispatchers = appDispatchers,
+                    clock = clock,
+                    barcodeScannerEngine = barcodeScannerEngine
+                )
+            ScannerShellSourceMode.DATAWEDGE ->
+                DataWedgeScannerInputSource(
+                    appContext = applicationContext,
+                    appDispatchers = appDispatchers,
+                    clock = clock
+                )
+        }
 
     private companion object {
         const val LOG_TAG: String = "FastCheckMainActivity"

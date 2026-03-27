@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 
 class ScanningViewModelTest {
     @Test
@@ -56,5 +57,30 @@ class ScanningViewModelTest {
 
         assertThat(viewModel.uiState.value.scannerStatus).isEqualTo("Stopping scanner input source.")
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+    }
+
+    @Test
+    fun dataWedgeModeDoesNotImplyCameraPermissionOrPreview() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.BROADCAST_INTENT)
+        viewModel.refreshPermissionState(false)
+        viewModel.onSourceStateChanged(ScannerSourceState.Ready)
+
+        assertThat(viewModel.uiState.value.isPermissionRequestVisible).isFalse()
+        assertThat(viewModel.uiState.value.isPermissionRequestEnabled).isFalse()
+        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+        assertThat(viewModel.uiState.value.permissionSummary).contains("not required")
+        assertThat(viewModel.uiState.value.scannerStatus).contains("Zebra DataWedge scanner ready")
+    }
+
+    @Test
+    fun permissionRequestStartedRemainsTruthfulForDataWedgeMode() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.BROADCAST_INTENT)
+        viewModel.onPermissionRequestStarted()
+
+        assertThat(viewModel.uiState.value.scannerStatus).contains("not required")
     }
 }

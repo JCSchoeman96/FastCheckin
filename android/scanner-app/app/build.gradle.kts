@@ -10,9 +10,21 @@ val fastcheckApiTarget =
         ?.takeIf { it.isNotBlank() }
         ?: "release"
 
+val fastcheckScannerSource =
+    (findProperty("FASTCHECK_SCANNER_SOURCE") as String?)
+        ?.trim()
+        ?.lowercase()
+        ?.takeIf { it.isNotBlank() }
+        ?: "camera"
+
 val allowedApiTargets = setOf("dev", "emulator", "device", "release")
 require(fastcheckApiTarget in allowedApiTargets) {
     "FASTCHECK_API_TARGET must be one of ${allowedApiTargets.joinToString()}, got '$fastcheckApiTarget'."
+}
+
+val allowedScannerSources = setOf("camera", "datawedge")
+require(fastcheckScannerSource in allowedScannerSources) {
+    "FASTCHECK_SCANNER_SOURCE must be one of ${allowedScannerSources.joinToString()}, got '$fastcheckScannerSource'."
 }
 
 val fixedReleaseApiBaseUrl = "https://scan.voelgoed.co.za/"
@@ -101,6 +113,7 @@ extensions.configure<ApplicationExtension>("android") {
 
         buildConfigField("String", "API_TARGET", "\"$fastcheckApiTarget\"")
         buildConfigField("String", "API_BASE_URL", "\"$selectedApiBaseUrl\"")
+        buildConfigField("String", "SCANNER_SOURCE", "\"$fastcheckScannerSource\"")
         testInstrumentationRunner = "za.co.voelgoed.fastcheck.app.HiltTestRunner"
     }
 

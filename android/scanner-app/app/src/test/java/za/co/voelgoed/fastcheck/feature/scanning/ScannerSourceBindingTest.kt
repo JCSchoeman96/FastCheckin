@@ -205,6 +205,22 @@ class ScannerSourceBindingTest {
     }
 
     @Test
+    fun broadcastSourceCanBindStartStopThroughExistingBindingPath() = runTest {
+        val fakeSource = FakeScannerInputSource(type = ScannerSourceType.BROADCAST_INTENT, id = "dw-0")
+        val recordingHandler = RecordingDecodedBarcodeHandler()
+        val binding = ScannerSourceBinding(fakeSource, recordingHandler, this)
+
+        binding.start()
+        fakeSource.emitCapture("VG-DW-BIND-001")
+        advanceUntilIdle()
+        binding.stop()
+
+        assertThat(recordingHandler.values).containsExactly("VG-DW-BIND-001")
+        assertThat(fakeSource.startCallCount.get()).isEqualTo(1)
+        assertThat(fakeSource.stopCallCount.get()).isEqualTo(1)
+    }
+
+    @Test
     fun cleansUpWhenSourceStartThrows() = runTest {
         val throwingSource = ThrowingStartScannerInputSource()
         val recordingHandler = RecordingDecodedBarcodeHandler()
@@ -231,16 +247,16 @@ class ScannerSourceBindingTest {
         binding.stop()
     }
 
-    private class FakeScannerInputSource : ScannerInputSource {
+    private class FakeScannerInputSource(
+        override val type: ScannerSourceType = ScannerSourceType.CAMERA,
+        override val id: String? = "fake-camera-0"
+    ) : ScannerInputSource {
 
         private val _state = MutableStateFlow<ScannerSourceState>(ScannerSourceState.Idle)
         private val _captures = MutableSharedFlow<ScannerCaptureEvent>(extraBufferCapacity = 16)
 
         val startCallCount = AtomicInteger(0)
         val stopCallCount = AtomicInteger(0)
-
-        override val type = ScannerSourceType.CAMERA
-        override val id: String? = "fake-camera-0"
 
         override val state: StateFlow<ScannerSourceState>
             get() = _state
@@ -317,4 +333,3 @@ class ScannerSourceBindingTest {
         }
     }
 }
-
