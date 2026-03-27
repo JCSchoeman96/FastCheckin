@@ -59,12 +59,41 @@ class ScannerEndToEndQueueTest {
         binding.stop()
     }
 
-    private class FakeScannerInputSource : ScannerInputSource {
+    @Test
+    fun broadcastCaptureUsesSameQueueAndCooldownSemantics() = runTest {
+        val fakeSource = FakeScannerInputSource(type = ScannerSourceType.BROADCAST_INTENT)
+        val recordingUseCase = RecordingQueueCapturedScanUseCase()
+        var now = 10_000L
+        val pipeline = ScanCapturePipeline(recordingUseCase) { now }
+        val binding = ScannerSourceBinding(fakeSource, pipeline, this)
+
+        binding.start()
+        advanceUntilIdle()
+
+        fakeSource.emitCapture("VG-DW-QUEUE-001")
+        advanceUntilIdle()
+
+        now += 500L
+        fakeSource.emitCapture("VG-DW-QUEUE-001")
+        advanceUntilIdle()
+
+        now += 2_000L
+        fakeSource.emitCapture("VG-DW-QUEUE-002")
+        advanceUntilIdle()
+
+        assertThat(recordingUseCase.enqueueCallCount.get()).isEqualTo(2)
+        assertThat(recordingUseCase.ticketCode).isEqualTo("VG-DW-QUEUE-002")
+
+        binding.stop()
+    }
+
+    private class FakeScannerInputSource(
+        override val type: ScannerSourceType = ScannerSourceType.CAMERA
+    ) : ScannerInputSource {
 
         private val _state = MutableStateFlow<ScannerSourceState>(ScannerSourceState.Idle)
         private val _captures = MutableSharedFlow<ScannerCaptureEvent>(extraBufferCapacity = 16)
 
-        override val type: ScannerSourceType = ScannerSourceType.CAMERA
         override val id: String? = "fake-camera-queue"
 
         override val state: StateFlow<ScannerSourceState>
@@ -116,4 +145,3 @@ class ScannerEndToEndQueueTest {
         }
     }
 }
-

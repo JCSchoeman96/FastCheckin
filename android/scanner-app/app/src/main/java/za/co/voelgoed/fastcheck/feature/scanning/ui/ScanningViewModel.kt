@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
@@ -17,30 +18,66 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     private val _uiState = MutableStateFlow(ScanningUiState())
     val uiState: StateFlow<ScanningUiState> = _uiState.asStateFlow()
 
-    private fun shouldShowPreview(
-        permission: CameraPermissionState,
-        lifecycle: ScannerSourceState
-    ): Boolean =
-        permission == CameraPermissionState.GRANTED &&
-            lifecycle is ScannerSourceState.Ready
+    private fun isCameraSource(sourceType: ScannerSourceType): Boolean =
+        sourceType == ScannerSourceType.CAMERA
 
-    private fun computeScannerStatus(
-        lifecycle: ScannerSourceState,
+    private fun permissionSummaryFor(
+        sourceType: ScannerSourceType,
         permission: CameraPermissionState
     ): String =
         when {
+            !isCameraSource(sourceType) ->
+                "Camera permission is not required for the active Zebra DataWedge source."
+            permission == CameraPermissionState.GRANTED ->
+                "Camera permission granted."
             permission == CameraPermissionState.DENIED ->
                 "Camera permission required before scanner preview can start."
-            lifecycle is ScannerSourceState.Starting ->
-                "Preparing scanner input source."
-            lifecycle is ScannerSourceState.Ready ->
-                "Scanner ready. Decoded values hand off to the existing local queue only."
-            lifecycle is ScannerSourceState.Stopping ->
-                "Stopping scanner input source."
-            lifecycle is ScannerSourceState.Error ->
-                "Scanner could not start: ${lifecycle.reason}"
             else ->
-                "Scanner scaffold ready. Decoded values will feed the existing local queue only."
+                "Camera permission status unknown."
+        }
+
+    private fun shouldShowPreview(
+        sourceType: ScannerSourceType,
+        permission: CameraPermissionState,
+        lifecycle: ScannerSourceState
+    ): Boolean =
+        isCameraSource(sourceType) &&
+            permission == CameraPermissionState.GRANTED &&
+            lifecycle is ScannerSourceState.Ready
+
+    private fun computeScannerStatus(
+        sourceType: ScannerSourceType,
+        lifecycle: ScannerSourceState,
+        permission: CameraPermissionState
+    ): String =
+        if (!isCameraSource(sourceType)) {
+            when (lifecycle) {
+                is ScannerSourceState.Starting ->
+                    "Preparing Zebra DataWedge scanner input source."
+                is ScannerSourceState.Ready ->
+                    "Zebra DataWedge scanner ready. Broadcast captures hand off to the existing local queue only."
+                is ScannerSourceState.Stopping ->
+                    "Stopping Zebra DataWedge scanner input source."
+                is ScannerSourceState.Error ->
+                    "Zebra DataWedge scanner could not start: ${lifecycle.reason}"
+                else ->
+                    "Zebra DataWedge source selected. Broadcast captures will feed the existing local queue only."
+            }
+        } else {
+            when {
+                permission == CameraPermissionState.DENIED ->
+                    "Camera permission required before scanner preview can start."
+                lifecycle is ScannerSourceState.Starting ->
+                    "Preparing scanner input source."
+                lifecycle is ScannerSourceState.Ready ->
+                    "Scanner ready. Decoded values hand off to the existing local queue only."
+                lifecycle is ScannerSourceState.Stopping ->
+                    "Stopping scanner input source."
+                lifecycle is ScannerSourceState.Error ->
+                    "Scanner could not start: ${lifecycle.reason}"
+                else ->
+                    "Scanner scaffold ready. Decoded values will feed the existing local queue only."
+            }
         }
 
     fun onCaptureHandoffResult(result: CaptureHandoffResult) {
@@ -79,8 +116,10 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         is ScannerSourceState.Error -> state.reason
                         else -> null
                     },
-                isPreviewVisible = shouldShowPreview(current.cameraPermissionState, state),
-                scannerStatus = computeScannerStatus(state, current.cameraPermissionState)
+                isPreviewVisible =
+                    shouldShowPreview(current.activeSourceType, current.cameraPermissionState, state),
+                scannerStatus =
+                    computeScannerStatus(current.activeSourceType, state, current.cameraPermissionState)
             )
         }
     }
@@ -96,22 +135,44 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
 
             current.copy(
                 cameraPermissionState = newPermission,
-                permissionSummary =
-                    if (isGranted) {
-                        "Camera permission granted."
-                    } else {
-                        "Camera permission required before scanner preview can start."
-                    },
-                isPermissionRequestEnabled = !isGranted,
-                isPreviewVisible = shouldShowPreview(newPermission, current.sourceLifecycle),
-                scannerStatus = computeScannerStatus(current.sourceLifecycle, newPermission)
+                permissionSummary = permissionSummaryFor(current.activeSourceType, newPermission),
+                isPermissionRequestEnabled =
+                    isCameraSource(current.activeSourceType) && !isGranted,
+                isPermissionRequestVisible = isCameraSource(current.activeSourceType),
+                isPreviewVisible =
+                    shouldShowPreview(current.activeSourceType, newPermission, current.sourceLifecycle),
+                scannerStatus =
+                    computeScannerStatus(current.activeSourceType, current.sourceLifecycle, newPermission)
             )
         }
     }
 
     fun onPermissionRequestStarted() {
         _uiState.update {
-            it.copy(scannerStatus = "Requesting camera permission for scanner input.")
+            val status =
+                if (isCameraSource(it.activeSourceType)) {
+                    "Requesting camera permission for scanner input."
+                } else {
+                    "Camera permission is not required for the active Zebra DataWedge source."
+                }
+            it.copy(scannerStatus = status)
+        }
+    }
+
+    fun onActiveSourceTypeChanged(sourceType: ScannerSourceType) {
+        _uiState.update { current ->
+            current.copy(
+                activeSourceType = sourceType,
+                permissionSummary = permissionSummaryFor(sourceType, current.cameraPermissionState),
+                isPermissionRequestEnabled =
+                    isCameraSource(sourceType) &&
+                        current.cameraPermissionState != CameraPermissionState.GRANTED,
+                isPermissionRequestVisible = isCameraSource(sourceType),
+                isPreviewVisible =
+                    shouldShowPreview(sourceType, current.cameraPermissionState, current.sourceLifecycle),
+                scannerStatus =
+                    computeScannerStatus(sourceType, current.sourceLifecycle, current.cameraPermissionState)
+            )
         }
     }
 

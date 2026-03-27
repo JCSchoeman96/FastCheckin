@@ -127,6 +127,19 @@ class RuntimeContractAuditTest {
         assertThat(auditedDocs).doesNotContain("shadow is the promoted runtime")
     }
 
+    @Test
+    fun dataWedgeDesignNoteLocksFirstHardwareContract() {
+        val designNote =
+            repoFile("docs/datawedge_source_contract.md", "android/scanner-app/docs/datawedge_source_contract.md")
+                .readText()
+
+        assertThat(designNote).contains("FASTCHECK_SCANNER_SOURCE")
+        assertThat(designNote).contains("za.co.voelgoed.fastcheck.ACTION_SCAN")
+        assertThat(designNote).contains("com.symbol.datawedge.data_string")
+        assertThat(designNote).contains("No keyboard wedge yet")
+        assertThat(designNote).contains("there is no operator picker")
+    }
+
     private fun runtimeSourceText(): String =
         runtimeRoot().walkTopDown()
             .filter { file -> file.isFile && file.extension == "kt" }
