@@ -36,6 +36,7 @@ Canonical contract doc:
 Notes:
 
 - The backend is the business-rule authority; the Android app caches + queues and uploads for server decisions.
+- Flush status snapshots and their recent outcomes are persisted atomically, so operators see a consistent flush report (not a mixed old/new state) after each update.
 - For the promoted hot path, scans are queued locally first, admitted
   authoritatively in backend hot state, queued for durability before
   acknowledgement, and projected into Postgres asynchronously afterward.
