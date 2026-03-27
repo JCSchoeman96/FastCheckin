@@ -15,9 +15,10 @@ This performance target assumes the current authoritative runtime path:
 Admission remains synchronous through acknowledgement. Durable Postgres
 projection happens asynchronously afterward through `scan_persistence`.
 
-Current recorded local baseline:
+Current recorded local baselines:
 
 - `docs/mobile_scan_performance_baseline_2026-03-19.md`
+- `docs/mobile_scan_performance_baseline_2026-03-27.md`
 
 ## App-Capped Local Docker Path
 
@@ -69,9 +70,12 @@ set MIX_ENV=dev
 set DB_HOST=localhost
 set DB_PORT=5434
 set DB_PASSWORD=postgres
+set ENCRYPTION_KEY=perf-small-encryption-key-perf-small-encryption-key-1234
 mix ecto.migrate
 mix fastcheck.load.seed_mobile_event --attendees 50000 --credential scanner-secret --ticket-prefix PERF --output performance/manifests/mobile-load-event.json
 ```
+
+If the app under test is `app-perf`, the seed must use the same `ENCRYPTION_KEY` as the container runtime. If the host seed uses the dev fallback key instead, `POST /api/v1/mobile/login` will fail with `403 invalid_credential` because Phoenix cannot decrypt `mobile_access_secret_encrypted`.
 
 The manifest includes:
 
@@ -84,6 +88,8 @@ The manifest includes:
 ## Cleanup Seeded Perf Data
 
 Keep the `performance/results/` JSON artifacts if you want to preserve run evidence. The cleanup task removes only the seeded mobile perf data from Postgres and Redis.
+
+Cleanup is manual. k6 runs do not automatically delete seeded events, scan attempts, check-ins, Oban jobs, or Redis hot-state keys after a smoke, stress, or soak run.
 
 Cleanup all marker-matched perf events plus their related rows:
 
@@ -112,6 +118,14 @@ The cleanup task deletes, in order:
 - `attendees`
 - the seeded `events` row
 - Redis hot-state keys for the event across namespaces, or the full current Redis DB when `--flush-redis` is used
+
+For a clean rerun after knee-finding or soak work, use:
+
+```bash
+mix fastcheck.load.cleanup_mobile_event --event-id 123 --flush-redis
+```
+
+Then reseed a fresh event before the next run.
 
 ## Runtime Configuration
 
@@ -270,6 +284,24 @@ The k6 capacity summary reports total blocked counts plus the top offending devi
 
 - Local shakeout soak: 30 to 60 minutes, only after the distortion gate passes
 - Perf/staging soak: minimum 120 minutes, extend to 180 minutes if the environment remains stable
+
+## Current Local Envelope
+
+The latest clean local app-tier measurements are recorded in:
+
+- `docs/mobile_scan_performance_baseline_2026-03-27.md`
+
+Current interpretation for the `perf-small` path:
+
+- `800 req/s` for `45s` stayed clean with `0` blocked responses, `0` auth failures, `0` HTTP failures, and `p95` about `96.7 ms`
+- `1200 req/s` transport stayed clean in the bracket run, but that run followed a heavier duplicate-primed run and is best treated as transport confirmation rather than a pristine fresh-event business-mix sample
+- `1600 req/s` is the first measured degradation point
+  - `p95` about `2208.9 ms`
+  - non-zero HTTP failure rate
+  - repeated transport-level `EOF` request failures
+  - k6 VU pressure warnings
+
+Use that as the current local knee estimate until a newer clean baseline replaces it.
 
 ## Observability
 
