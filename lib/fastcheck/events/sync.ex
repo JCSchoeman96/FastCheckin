@@ -99,7 +99,7 @@ defmodule FastCheck.Events.Sync do
   end
 
   defp attendees_for_sync(event, attendees, true) do
-    filter_incremental_attendees(event.id, attendees, event.last_sync_at)
+    incremental_attendees_for_sync(event.id, attendees, event.last_sync_at)
   end
 
   defp attendees_for_sync(_event, attendees, false), do: attendees
@@ -445,22 +445,29 @@ defmodule FastCheck.Events.Sync do
     end
   end
 
-  defp filter_incremental_attendees(event_id, attendees, last_sync_at) do
+  @doc false
+  def incremental_attendees_for_sync(event_id, attendees, last_sync_at) do
     if is_nil(last_sync_at) do
       # No previous sync, process all
       Logger.info("No previous sync found, processing all #{length(attendees)} attendees")
       attendees
     else
-      # Get existing ticket codes for this event
-      existing_codes = get_existing_ticket_codes(event_id)
+      existing_attendees_by_code = get_existing_incremental_sync_fields(event_id)
 
-      # Filter to only new tickets
-      # In a more sophisticated implementation, we could compare payment_date or other fields
       new_attendees =
-        attendees
-        |> Enum.filter(fn attendee ->
-          ticket_code = Map.get(attendee, :ticket_code) || Map.get(attendee, "checksum")
-          ticket_code not in existing_codes
+        Enum.filter(attendees, fn attendee ->
+          case attendee_ticket_code(attendee) do
+            nil ->
+              false
+
+            ticket_code ->
+              remote_fields = attendee_incremental_sync_fields(attendee)
+
+              case Map.get(existing_attendees_by_code, ticket_code) do
+                nil -> true
+                existing_fields -> existing_fields != remote_fields
+              end
+          end
         end)
 
       Logger.info(
@@ -471,22 +478,62 @@ defmodule FastCheck.Events.Sync do
     end
   end
 
-  defp get_existing_ticket_codes(event_id) do
+  defp attendee_ticket_code(attendee) do
+    Map.get(attendee, :ticket_code) ||
+      Map.get(attendee, "ticket_code") ||
+      Map.get(attendee, "checksum")
+  end
+
+  defp attendee_incremental_sync_fields(attendee) do
+    parsed = TickeraClient.parse_attendee(attendee)
+
+    %{
+      first_name: Map.get(parsed, :first_name),
+      last_name: Map.get(parsed, :last_name),
+      email: Map.get(parsed, :email),
+      payment_status: Map.get(parsed, :payment_status),
+      ticket_type: Map.get(parsed, :ticket_type),
+      allowed_checkins: normalize_allowed_checkins(Map.get(parsed, :allowed_checkins))
+    }
+  end
+
+  defp normalize_allowed_checkins(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_allowed_checkins(_), do: 1
+
+  defp get_existing_incremental_sync_fields(event_id) do
     import Ecto.Query
 
     FastCheck.Attendees.Attendee
     |> where([a], a.event_id == ^event_id)
-    |> select([a], a.ticket_code)
+    |> select([a], %{
+      ticket_code: a.ticket_code,
+      first_name: a.first_name,
+      last_name: a.last_name,
+      email: a.email,
+      payment_status: a.payment_status,
+      ticket_type: a.ticket_type,
+      allowed_checkins: a.allowed_checkins
+    })
     |> Repo.all(timeout: 15_000)
-    |> MapSet.new()
+    |> Map.new(fn attendee ->
+      {attendee.ticket_code,
+       %{
+         first_name: attendee.first_name,
+         last_name: attendee.last_name,
+         email: attendee.email,
+         payment_status: attendee.payment_status,
+         ticket_type: attendee.ticket_type,
+         allowed_checkins: normalize_allowed_checkins(attendee.allowed_checkins)
+       }}
+    end)
   rescue
     exception ->
       if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
-        Logger.error("Query timeout fetching existing ticket codes for event #{event_id}")
-        MapSet.new()
+        Logger.error("Query timeout fetching existing attendees for event #{event_id}")
+        %{}
       else
-        Logger.error("Database error fetching ticket codes: #{Exception.message(exception)}")
-        MapSet.new()
+        Logger.error("Database error fetching existing attendees: #{Exception.message(exception)}")
+        %{}
       end
   end
 
