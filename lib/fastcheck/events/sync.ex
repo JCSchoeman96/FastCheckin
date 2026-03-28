@@ -445,7 +445,18 @@ defmodule FastCheck.Events.Sync do
     end
   end
 
-  @doc false
+  @doc """
+  Selects attendees to process during incremental sync.
+
+  This is intentionally public to keep selection behavior directly testable and
+  stable for callers that may need the same "new-or-changed" policy.
+
+  Selection policy:
+  - include attendees with ticket codes not found locally
+  - include attendees where sync-relevant fields changed (`first_name`,
+    `last_name`, `email`, `payment_status`, `ticket_type`, `allowed_checkins`)
+  """
+  @spec incremental_attendees_for_sync(integer(), list(map()), DateTime.t() | nil) :: list(map())
   def incremental_attendees_for_sync(event_id, attendees, last_sync_at) do
     if is_nil(last_sync_at) do
       # No previous sync, process all
@@ -471,7 +482,7 @@ defmodule FastCheck.Events.Sync do
         end)
 
       Logger.info(
-        "Incremental sync: #{length(new_attendees)} new attendees out of #{length(attendees)} total"
+        "Incremental sync: #{length(new_attendees)} new/updated attendees out of #{length(attendees)} total"
       )
 
       new_attendees
@@ -529,10 +540,19 @@ defmodule FastCheck.Events.Sync do
   rescue
     exception ->
       if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
-        Logger.error("Query timeout fetching existing attendees for event #{event_id}")
+        Logger.warning(
+          "Query timeout fetching existing attendees for event #{event_id}; " <>
+            "falling back to include all remote attendees in incremental sync"
+        )
+
         %{}
       else
-        Logger.error("Database error fetching existing attendees: #{Exception.message(exception)}")
+        Logger.warning(
+          "Database error fetching existing attendees for event #{event_id}; " <>
+            "falling back to include all remote attendees in incremental sync: " <>
+            Exception.message(exception)
+        )
+
         %{}
       end
   end

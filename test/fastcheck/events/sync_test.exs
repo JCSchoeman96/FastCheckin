@@ -40,6 +40,22 @@ defmodule FastCheck.Events.SyncTest do
   end
 
   describe "incremental_attendees_for_sync/3" do
+    test "includes all attendees when there is no previous sync timestamp" do
+      event = create_event()
+
+      remote_attendees = [
+        %{"checksum" => "EXISTING-1", "buyer_first" => "John"},
+        %{"checksum" => "NEW-2", "buyer_first" => "Jane"}
+      ]
+
+      assert remote_attendees ==
+               Sync.incremental_attendees_for_sync(
+                 event.id,
+                 remote_attendees,
+                 nil
+               )
+    end
+
     test "includes existing attendee when sync-relevant fields changed remotely" do
       event = create_event()
       _attendee = create_attendee(event, %{ticket_code: "EXISTING-1", payment_status: "pending"})
