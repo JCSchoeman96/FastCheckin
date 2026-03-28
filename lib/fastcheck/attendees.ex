@@ -316,8 +316,10 @@ defmodule FastCheck.Attendees do
 
   # Private Helpers
 
-  defp normalize_allowed_checkins(value) when is_integer(value) and value >= 0, do: value
-  defp normalize_allowed_checkins(_), do: 1
+  @doc false
+  @spec normalize_allowed_checkins(term()) :: non_neg_integer()
+  def normalize_allowed_checkins(value) when is_integer(value) and value >= 0, do: value
+  def normalize_allowed_checkins(_), do: 1
 
   defp fetch_from_cachex(cache_key) do
     if cachex_available?() do
