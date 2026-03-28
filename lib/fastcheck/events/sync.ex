@@ -504,12 +504,9 @@ defmodule FastCheck.Events.Sync do
       email: Map.get(parsed, :email),
       payment_status: Map.get(parsed, :payment_status),
       ticket_type: Map.get(parsed, :ticket_type),
-      allowed_checkins: normalize_allowed_checkins(Map.get(parsed, :allowed_checkins))
+      allowed_checkins: Attendees.normalize_allowed_checkins(Map.get(parsed, :allowed_checkins))
     }
   end
-
-  defp normalize_allowed_checkins(value) when is_integer(value) and value >= 0, do: value
-  defp normalize_allowed_checkins(_), do: 1
 
   defp get_existing_incremental_sync_fields(event_id) do
     import Ecto.Query
@@ -534,7 +531,7 @@ defmodule FastCheck.Events.Sync do
          email: attendee.email,
          payment_status: attendee.payment_status,
          ticket_type: attendee.ticket_type,
-         allowed_checkins: normalize_allowed_checkins(attendee.allowed_checkins)
+         allowed_checkins: Attendees.normalize_allowed_checkins(attendee.allowed_checkins)
        }}
     end)
   rescue
