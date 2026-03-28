@@ -255,6 +255,44 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
+    fun pagedSyncFailsFastWhenCursorRepeats() = runTest {
+        api.pagedResponses =
+            mutableListOf(
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees = listOf(attendeeDto(1001, "VG-PAGE-001")),
+                            count = 1,
+                            sync_type = "full",
+                            next_cursor = "cursor-1"
+                        ),
+                    error = null,
+                    message = null
+                ),
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees = listOf(attendeeDto(1002, "VG-PAGE-002")),
+                            count = 1,
+                            sync_type = "full",
+                            next_cursor = "cursor-1"
+                        ),
+                    error = null,
+                    message = null
+                )
+            )
+
+        try {
+            repository.syncAttendees()
+            error("Expected IllegalStateException")
+        } catch (e: IllegalStateException) {
+            assertThat(e.message).contains("cursor repeated")
+        }
+    }
+
+    @Test
     fun mapsHttp429ToSyncRateLimitedExceptionWithoutRetryAfterHeader() = runTest {
         repository = buildRateLimitedRepository(retryAfterHeader = null)
 
