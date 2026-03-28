@@ -230,13 +230,19 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert length(attendees) >= 1
     end
 
-    test "falls back to full sync on invalid since parameter", %{conn: conn, token: token} do
+    test "returns 400 on invalid since parameter", %{conn: conn, token: token} do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
         |> get(~p"/api/v1/mobile/attendees?since=invalid-date")
 
-      assert %{"data" => %{"sync_type" => "full"}} = json_response(conn, 200)
+      assert %{
+               "data" => nil,
+               "error" => %{
+                 "code" => "invalid_since",
+                 "message" => "since must be a valid ISO8601 datetime"
+               }
+             } = json_response(conn, 400)
     end
   end
 

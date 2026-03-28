@@ -48,6 +48,9 @@ defmodule FastCheckWeb.Mobile.SyncController do
         error: nil
       })
     else
+      {:error, :invalid_since} ->
+        bad_request(conn, "invalid_since", "since must be a valid ISO8601 datetime")
+
       {:error, reason} ->
         Logger.error("Mobile sync down failed",
           event_id: event_id,
@@ -161,8 +164,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
         {:ok, datetime}
 
       {:error, _reason} ->
-        Logger.warning("Invalid 'since' parameter, falling back to full sync", since: since_str)
-        {:ok, nil}
+        Logger.warning("Invalid 'since' parameter", since: since_str)
+        {:error, :invalid_since}
     end
   end
 
