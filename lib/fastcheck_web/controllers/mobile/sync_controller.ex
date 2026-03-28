@@ -164,6 +164,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
         {:ok, datetime}
 
       {:error, _reason} ->
+        Logger.warning("Invalid 'since' parameter", since: since_str)
         {:error, :invalid_since}
     end
   end
