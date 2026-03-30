@@ -8,7 +8,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
 
   setup do
     # Clear rate limiter storage before tests
-    PlugAttack.Storage.Ets.clean(FastCheck.RateLimiter)
+    clear_rate_limiter_storage()
     :ok
   end
 
@@ -133,7 +133,17 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
 
     assert conn_two.status == 429
     assert get_resp_header(conn_two, "retry-after") != []
+    assert get_resp_header(conn_two, "x-ratelimit-limit") == []
+    assert get_resp_header(conn_two, "x-ratelimit-remaining") == []
     assert Enum.join(get_resp_header(conn_two, "content-type"), ",") =~ "application/json"
+
+    assert %{
+             "error" => "rate_limited",
+             "message" => "Too many requests. Please wait and try again.",
+             "retry_after" => retry_after
+           } = json_response(conn_two, 429)
+
+    assert retry_after >= 1
   end
 
   test "scan throttle is scoped by per-token identity for the same event", %{conn: conn} do
@@ -172,6 +182,30 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
     assert conn_two.status == 200
   end
 
+  test "mobile throttle responses stay consistent with default storage", %{conn: conn} do
+    with_rate_limiter_config(
+      fn ->
+        assert_mobile_scan_throttle_response(conn, "198.51.100.50")
+      end,
+      scan_limit: 1,
+      storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter},
+      mobile_storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+    )
+  end
+
+  test "mobile throttle responses stay consistent with mobile storage override", %{conn: conn} do
+    ensure_ets_storage_started(FastCheck.RateLimiter.MobileTest)
+
+    with_rate_limiter_config(
+      fn ->
+        assert_mobile_scan_throttle_response(conn, "198.51.100.51")
+      end,
+      scan_limit: 1,
+      storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter},
+      mobile_storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter.MobileTest}
+    )
+  end
+
   defp insert_event(name) do
     api_key = "api-key-#{System.unique_integer([:positive])}"
     {:ok, encrypted_key} = Crypto.encrypt(api_key)
@@ -188,5 +222,80 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
       status: "active"
     })
     |> Repo.insert!()
+  end
+
+  defp assert_mobile_scan_throttle_response(conn, forwarded_for) do
+    event = insert_event("Rate Limit Backend Parity Event #{forwarded_for}")
+    {:ok, token} = Token.issue_scanner_token(event.id)
+
+    conn_one =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> put_req_header("x-forwarded-for", forwarded_for)
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> post("/api/v1/mobile/scans", %{"scans" => []})
+
+    assert conn_one.status == 200
+    assert get_resp_header(conn_one, "x-ratelimit-limit") == ["1"]
+    assert get_resp_header(conn_one, "x-ratelimit-remaining") == ["0"]
+    assert get_resp_header(conn_one, "x-ratelimit-reset") != []
+
+    conn_two =
+      build_conn()
+      |> put_req_header("accept", "application/json")
+      |> put_req_header("x-forwarded-for", forwarded_for)
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> post("/api/v1/mobile/scans", %{"scans" => []})
+
+    assert conn_two.status == 429
+    assert get_resp_header(conn_two, "retry-after") != []
+    assert get_resp_header(conn_two, "x-ratelimit-limit") == []
+    assert get_resp_header(conn_two, "x-ratelimit-remaining") == []
+
+    assert %{
+             "error" => "rate_limited",
+             "message" => "Too many requests. Please wait and try again.",
+             "retry_after" => retry_after
+           } = json_response(conn_two, 429)
+
+    assert retry_after >= 1
+  end
+
+  defp with_rate_limiter_config(fun, overrides) when is_function(fun, 0) and is_list(overrides) do
+    previous = Application.get_env(:fastcheck, FastCheck.RateLimiter, [])
+
+    on_exit(fn ->
+      Application.put_env(:fastcheck, FastCheck.RateLimiter, previous)
+      clear_rate_limiter_storage()
+    end)
+
+    Application.put_env(:fastcheck, FastCheck.RateLimiter, Keyword.merge(previous, overrides))
+    clear_rate_limiter_storage()
+    fun.()
+  end
+
+  defp clear_rate_limiter_storage do
+    config = Application.get_env(:fastcheck, FastCheck.RateLimiter, [])
+
+    [Keyword.get(config, :storage), Keyword.get(config, :mobile_storage)]
+    |> Enum.uniq()
+    |> Enum.each(fn
+      {PlugAttack.Storage.Ets, table_name} when is_atom(table_name) ->
+        PlugAttack.Storage.Ets.clean(table_name)
+
+      _other ->
+        :ok
+    end)
+  end
+
+  defp ensure_ets_storage_started(name) when is_atom(name) do
+    case Process.whereis(name) do
+      pid when is_pid(pid) ->
+        :ok
+
+      _ ->
+        {:ok, _pid} = PlugAttack.Storage.Ets.start_link(name: name, clean_period: 60_000)
+        :ok
+    end
   end
 end

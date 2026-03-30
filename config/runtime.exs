@@ -313,8 +313,38 @@ if config_env() == :prod do
 end
 
 # Runtime configurable rate limiting
-# Override defaults via environment variables for production tuning without recompilation
+# Override defaults via environment variables for production tuning without recompilation.
+# RATE_LIMIT_BACKEND controls where counters are stored:
+# - single-node (default): all rules in ETS
+# - multi-node: mobile login/sync/scan rules in shared backend, others remain ETS
+rate_limit_backend_mode =
+  case System.get_env("RATE_LIMIT_BACKEND", "single-node")
+       |> String.trim()
+       |> String.downcase() do
+    "multi-node" -> :multi_node
+    _ -> :single_node
+  end
+
+default_rate_limit_storage = {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+
+mobile_rate_limit_storage =
+  case rate_limit_backend_mode do
+    :single_node ->
+      default_rate_limit_storage
+
+    :multi_node ->
+      case System.get_env("RATE_LIMIT_SHARED_BACKEND", "redis")
+           |> String.trim()
+           |> String.downcase() do
+        "redis" -> {PlugAttack.Storage.Redis, FastCheck.Redix}
+        _ -> default_rate_limit_storage
+      end
+  end
+
 config :fastcheck, FastCheck.RateLimiter,
+  storage: default_rate_limit_storage,
+  mobile_storage: mobile_rate_limit_storage,
+  backend_mode: rate_limit_backend_mode,
   sync_limit: String.to_integer(System.get_env("RATE_LIMIT_SYNC") || "3"),
   sync_period: 300_000,
   occupancy_limit: String.to_integer(System.get_env("RATE_LIMIT_OCCUPANCY") || "10"),

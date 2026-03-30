@@ -40,10 +40,27 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # ---------------------------------------------------------------------------
 
   defp get_limit(key, default) when is_atom(key) and is_integer(default) do
-    :fastcheck
-    |> Application.get_env(FastCheck.RateLimiter, [])
+    rate_limiter_config()
     |> Keyword.get(key, default)
     |> normalize_limit(default)
+  end
+
+  defp rate_limiter_config do
+    Application.get_env(:fastcheck, FastCheck.RateLimiter, [])
+  end
+
+  defp default_storage do
+    {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+  end
+
+  defp storage_for(conn) do
+    config = rate_limiter_config()
+
+    if mobile_shared_route?(conn) do
+      Keyword.get(config, :mobile_storage, Keyword.get(config, :storage, default_storage()))
+    else
+      Keyword.get(config, :storage, default_storage())
+    end
   end
 
   defp normalize_limit(value, _default) when is_integer(value) and value > 0, do: value
@@ -109,7 +126,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       throttle(key,
         limit: get_limit(:sync_limit, 3),
         period: 300_000,
-        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+        storage: storage_for(conn)
       )
     else
       nil
@@ -123,7 +140,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       throttle(key,
         limit: get_limit(:occupancy_limit, 10),
         period: 60_000,
-        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+        storage: storage_for(conn)
       )
     else
       nil
@@ -138,7 +155,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       throttle(key,
         limit: get_limit(:login_limit, 5),
         period: 60_000,
-        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+        storage: storage_for(conn)
       )
     else
       nil
@@ -153,7 +170,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       throttle(key,
         limit: get_limit(:checkin_limit, 30),
         period: 60_000,
-        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+        storage: storage_for(conn)
       )
     else
       nil
@@ -167,7 +184,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       throttle(key,
         limit: get_limit(:scan_limit, 50),
         period: 60_000,
-        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+        storage: storage_for(conn)
       )
     else
       nil
@@ -183,7 +200,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       throttle(key,
         limit: get_limit(:dashboard_limit, 100),
         period: 60_000,
-        storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
+        storage: storage_for(conn)
       )
     else
       nil
@@ -294,6 +311,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     conn.request_path in ["/", "/dashboard"] or
       String.starts_with?(conn.request_path, "/dashboard/") or
       String.starts_with?(conn.request_path, "/export/")
+  end
+
+  defp mobile_shared_route?(conn) do
+    conn.request_path in ["/api/v1/mobile/login", "/api/v1/mobile/attendees", "/api/v1/mobile/scans"]
   end
 
   # Helper: Extract event ID from path or params
