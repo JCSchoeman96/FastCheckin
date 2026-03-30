@@ -154,7 +154,8 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
                  "server_time" => server_time,
                  "attendees" => attendees,
                  "count" => count,
-                 "sync_type" => "full"
+                 "sync_type" => "full",
+                 "next_cursor" => nil
                },
                "error" => nil
              } = json_response(conn, 200)
@@ -243,6 +244,137 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
                  "message" => "since must be a valid ISO8601 datetime"
                }
              } = json_response(conn, 400)
+    end
+
+    test "returns 400 for invalid limit values", %{conn: conn, token: token} do
+      conn_non_integer =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=abc")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "invalid_limit"}
+             } = json_response(conn_non_integer, 400)
+
+      conn_zero =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=0")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "invalid_limit"}
+             } = json_response(conn_zero, 400)
+    end
+
+    test "returns 400 when limit exceeds max", %{conn: conn, token: token} do
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=501")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "limit_too_large"}
+             } = json_response(conn, 400)
+    end
+
+    test "returns 400 for invalid cursor", %{conn: conn, token: token} do
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&cursor=garbage")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "invalid_cursor"}
+             } = json_response(conn, 400)
+    end
+
+    test "returns first page with next_cursor when more attendees exist", %{conn: conn} do
+      {event, token} = create_paged_sync_event()
+      insert_paged_attendees(event.id, 5)
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2")
+
+      assert %{
+               "data" => %{
+                 "attendees" => attendees,
+                 "count" => 2,
+                 "next_cursor" => next_cursor
+               }
+             } = json_response(conn, 200)
+
+      assert length(attendees) == 2
+      assert is_binary(next_cursor)
+    end
+
+    test "returns middle page with cursor and keeps next_cursor", %{conn: conn} do
+      {event, token} = create_paged_sync_event()
+      insert_paged_attendees(event.id, 5)
+
+      first_cursor =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2")
+        |> json_response(200)
+        |> get_in(["data", "next_cursor"])
+
+      assert is_binary(first_cursor)
+
+      middle_conn =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&cursor=#{first_cursor}")
+
+      assert %{
+               "data" => %{
+                 "attendees" => attendees,
+                 "count" => 2,
+                 "next_cursor" => next_cursor
+               }
+             } = json_response(middle_conn, 200)
+
+      assert length(attendees) == 2
+      assert is_binary(next_cursor)
+    end
+
+    test "returns final page without next_cursor", %{conn: conn} do
+      {event, token} = create_paged_sync_event()
+      insert_paged_attendees(event.id, 5)
+
+      first_cursor =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2")
+        |> json_response(200)
+        |> get_in(["data", "next_cursor"])
+
+      second_cursor =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&cursor=#{first_cursor}")
+        |> json_response(200)
+        |> get_in(["data", "next_cursor"])
+
+      final_conn =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&cursor=#{second_cursor}")
+
+      assert %{
+               "data" => %{
+                 "attendees" => attendees,
+                 "count" => 1,
+                 "next_cursor" => nil
+               }
+             } = json_response(final_conn, 200)
+
+      assert length(attendees) == 1
     end
   end
 
@@ -929,6 +1061,43 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert result["status"] == "error"
       assert result["message"] =~ "Ticket not found"
     end
+  end
+
+  defp insert_paged_attendees(event_id, count) do
+    base_time = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    Enum.each(1..count, fn index ->
+      %Attendee{
+        event_id: event_id,
+        ticket_code: "PAGE#{String.pad_leading(Integer.to_string(index), 3, "0")}",
+        first_name: "Page",
+        last_name: "User #{index}",
+        payment_status: "completed",
+        allowed_checkins: 1,
+        checkins_remaining: 1,
+        updated_at: NaiveDateTime.add(base_time, index, :second)
+      }
+      |> Repo.insert!()
+    end)
+  end
+
+  defp create_paged_sync_event do
+    {:ok, encrypted_secret} = Crypto.encrypt("scanner-secret")
+
+    event =
+      %Event{
+        name: "Paged Sync Event",
+        site_url: "https://paged.example.com",
+        tickera_site_url: "https://paged.example.com",
+        tickera_api_key_encrypted: "encrypted_key",
+        mobile_access_secret_encrypted: encrypted_secret,
+        scanner_login_code: unique_scanner_code(),
+        status: "active"
+      }
+      |> Repo.insert!()
+
+    {:ok, token} = Token.issue_scanner_token(event.id)
+    {event, token}
   end
 
   defp unique_scanner_code do
