@@ -19,6 +19,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
   alias FastCheck.Repo
   alias FastCheck.Scans.MobileUploadService
 
+  @max_sync_page_size 500
+
   @doc """
   Returns attendee data for the authenticated event (sync down).
   """
@@ -26,7 +28,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
     event_id = conn.assigns.current_event_id
 
     with {:ok, since_timestamp} <- parse_since_parameter(params),
-         {:ok, attendees} <- fetch_attendees(event_id, since_timestamp) do
+         {:ok, page_options} <- parse_page_options(params),
+         {:ok, attendees, next_cursor} <- fetch_attendees(event_id, since_timestamp, page_options) do
       server_time = DateTime.utc_now() |> DateTime.truncate(:second)
       sync_type = if since_timestamp, do: "incremental", else: "full"
 
@@ -34,6 +37,9 @@ defmodule FastCheckWeb.Mobile.SyncController do
         event_id: event_id,
         sync_type: sync_type,
         count: length(attendees),
+        cursor: page_options.cursor,
+        page_limit: page_options.limit,
+        next_cursor: next_cursor,
         since: since_timestamp,
         ip: get_peer_ip(conn)
       )
@@ -43,13 +49,23 @@ defmodule FastCheckWeb.Mobile.SyncController do
           server_time: DateTime.to_iso8601(server_time),
           attendees: Enum.map(attendees, &serialize_attendee/1),
           count: length(attendees),
-          sync_type: sync_type
+          sync_type: sync_type,
+          next_cursor: next_cursor
         },
         error: nil
       })
     else
       {:error, :invalid_since} ->
         bad_request(conn, "invalid_since", "since must be a valid ISO8601 datetime")
+
+      {:error, :invalid_limit} ->
+        bad_request(conn, "invalid_limit", "Parameter 'limit' must be a positive integer")
+
+      {:error, :limit_too_large} ->
+        bad_request(conn, "limit_too_large", "Parameter 'limit' must be <= #{@max_sync_page_size}")
+
+      {:error, :invalid_cursor} ->
+        bad_request(conn, "invalid_cursor", "Parameter 'cursor' is invalid")
 
       {:error, reason} ->
         Logger.error("Mobile sync down failed",
@@ -171,11 +187,42 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp parse_since_parameter(_params), do: {:ok, nil}
 
-  defp fetch_attendees(event_id, since) do
+  defp parse_page_options(params) do
+    with {:ok, limit} <- parse_limit_parameter(params),
+         {:ok, cursor} <- parse_cursor_parameter(params) do
+      {:ok, %{limit: limit, cursor: cursor}}
+    end
+  end
+
+  defp parse_limit_parameter(%{"limit" => limit}) do
+    case Integer.parse(limit) do
+      {parsed_limit, ""} when parsed_limit > 0 and parsed_limit <= @max_sync_page_size ->
+        {:ok, parsed_limit}
+
+      {parsed_limit, ""} when parsed_limit > @max_sync_page_size ->
+        {:error, :limit_too_large}
+
+      _ ->
+        {:error, :invalid_limit}
+    end
+  end
+
+  defp parse_limit_parameter(_params), do: {:ok, nil}
+
+  defp parse_cursor_parameter(%{"cursor" => cursor}) when is_binary(cursor) do
+    case decode_cursor(cursor) do
+      {:ok, _decoded} = ok -> ok
+      :error -> {:error, :invalid_cursor}
+    end
+  end
+
+  defp parse_cursor_parameter(_params), do: {:ok, nil}
+
+  defp fetch_attendees(event_id, since, page_options) do
     query =
       from attendee in Attendee,
         where: attendee.event_id == ^event_id,
-        order_by: [asc: attendee.ticket_code]
+        order_by: [asc: attendee.updated_at, asc: attendee.id]
 
     query =
       if since do
@@ -184,10 +231,62 @@ defmodule FastCheckWeb.Mobile.SyncController do
         query
       end
 
-    {:ok, Repo.all(query)}
+    query =
+      case page_options.cursor do
+        {cursor_updated_at, cursor_id} ->
+          from attendee in query,
+            where:
+              attendee.updated_at > ^cursor_updated_at or
+                (attendee.updated_at == ^cursor_updated_at and attendee.id > ^cursor_id)
+
+        nil ->
+          query
+      end
+
+    {attendees, next_cursor} =
+      case page_options.limit do
+        nil ->
+          {Repo.all(query), nil}
+
+        limit ->
+          page_results = Repo.all(from attendee in query, limit: ^(limit + 1))
+          {visible_results, overflow_results} = Enum.split(page_results, limit)
+
+          next_cursor =
+            case overflow_results do
+              [] -> nil
+              [_ | _] -> encode_cursor(List.last(visible_results))
+            end
+
+          {visible_results, next_cursor}
+      end
+
+    {:ok, attendees, next_cursor}
   rescue
     error ->
       {:error, error}
+  end
+
+  defp decode_cursor(encoded_cursor) do
+    with {:ok, decoded} <- Base.url_decode64(encoded_cursor, padding: false),
+         [updated_at_iso8601, id_str] <- String.split(decoded, "|", parts: 2),
+         {:ok, updated_at, _offset} <- DateTime.from_iso8601(updated_at_iso8601),
+         {id, ""} <- Integer.parse(id_str) do
+      {:ok, {updated_at, id}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp encode_cursor(attendee) do
+    cursor =
+      [
+        serialize_datetime(attendee.updated_at),
+        attendee.id
+      ]
+      |> Enum.join("|")
+
+    Base.url_encode64(cursor, padding: false)
   end
 
   defp serialize_attendee(attendee) do

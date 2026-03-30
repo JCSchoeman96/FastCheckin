@@ -7,7 +7,11 @@ class PhoenixMobileRemoteDataSource(
 ) {
     suspend fun login(request: MobileLoginRequest): MobileLoginResponse = api.login(request)
 
-    suspend fun syncAttendees(since: String?): MobileSyncResponse = api.syncAttendees(since)
+    suspend fun syncAttendees(
+        since: String?,
+        cursor: String? = null,
+        limit: Int? = null
+    ): MobileSyncResponse = api.syncAttendees(since = since, cursor = cursor, limit = limit)
 
     suspend fun uploadScans(scans: List<QueuedScanPayload>): UploadScansResponse =
         api.uploadScans(UploadScansRequest(scans = scans))

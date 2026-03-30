@@ -23,21 +23,41 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     private val sessionRepository: SessionRepository,
     private val clock: Clock
 ) : SyncRepository {
+    private val syncPageLimit = 500
+
     override suspend fun syncAttendees(): AttendeeSyncStatus? {
         val session = sessionRepository.currentSession() ?: return null
         val existing = scannerDao.loadSyncMetadata(session.eventId)
 
         try {
-            val response = remoteDataSource.syncAttendees(existing?.lastServerTime)
-            val payload =
-                requireNotNull(response.data) { response.message ?: response.error ?: "Sync failed" }
+            var cursor: String? = null
+            var latestPayload: za.co.voelgoed.fastcheck.data.remote.MobileSyncPayload? = null
+            var totalFetched = 0
 
-            // Preserve the backend ticket_code as delivered until QR normalization is explicitly defined.
-            val metadata = payload.toSyncMetadata(session.eventId)
-            scannerDao.upsertAttendeesAndSyncMetadata(
-                attendees = payload.attendees.map { it.toEntity() },
-                metadata = metadata
-            )
+            do {
+                val response =
+                    remoteDataSource.syncAttendees(
+                        since = existing?.lastServerTime,
+                        cursor = cursor,
+                        limit = syncPageLimit
+                    )
+                val payload =
+                    requireNotNull(response.data) { response.message ?: response.error ?: "Sync failed" }
+
+                latestPayload = payload
+                totalFetched += payload.attendees.size
+
+                // Preserve the backend ticket_code as delivered until QR normalization is explicitly defined.
+                if (payload.attendees.isNotEmpty()) {
+                    scannerDao.upsertAttendees(payload.attendees.map { it.toEntity() })
+                }
+
+                cursor = payload.next_cursor
+            } while (cursor != null)
+
+            val finalPayload = requireNotNull(latestPayload) { "Sync failed" }
+            val metadata = finalPayload.toSyncMetadata(session.eventId).copy(attendeeCount = totalFetched)
+            scannerDao.upsertSyncMetadata(metadata)
 
             return metadata.toDomain()
         } catch (http: HttpException) {

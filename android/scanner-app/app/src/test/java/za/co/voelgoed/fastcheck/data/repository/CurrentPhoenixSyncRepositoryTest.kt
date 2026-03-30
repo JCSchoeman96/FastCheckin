@@ -83,7 +83,8 @@ class CurrentPhoenixSyncRepositoryTest {
                                 )
                             ),
                         count = 1,
-                        sync_type = "full"
+                        sync_type = "full",
+                        next_cursor = null
                     ),
                 error = null,
                 message = null
@@ -120,7 +121,8 @@ class CurrentPhoenixSyncRepositoryTest {
                         server_time = "2026-03-13T08:20:00Z",
                         attendees = emptyList(),
                         count = 5,
-                        sync_type = "incremental"
+                        sync_type = "incremental",
+                        next_cursor = null
                     ),
                 error = null,
                 message = null
@@ -172,7 +174,8 @@ class CurrentPhoenixSyncRepositoryTest {
                                 )
                             ),
                         count = 1,
-                        sync_type = "full"
+                        sync_type = "full",
+                        next_cursor = null
                     ),
                 error = null,
                 message = null
@@ -188,6 +191,67 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(metadata).isNotNull()
         assertThat(metadata?.eventId).isEqualTo(5)
         assertThat(metadata?.attendeeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun pagedSyncFetchesUntilCursorExhaustedAndPersistsAllPages() = runTest {
+        api.pagedResponses =
+            mutableListOf(
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees =
+                                listOf(
+                                    attendeeDto(1001, "VG-PAGE-001"),
+                                    attendeeDto(1002, "VG-PAGE-002")
+                                ),
+                            count = 2,
+                            sync_type = "full",
+                            next_cursor = "cursor-1"
+                        ),
+                    error = null,
+                    message = null
+                ),
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees =
+                                listOf(
+                                    attendeeDto(1003, "VG-PAGE-003"),
+                                    attendeeDto(1004, "VG-PAGE-004")
+                                ),
+                            count = 2,
+                            sync_type = "full",
+                            next_cursor = "cursor-2"
+                        ),
+                    error = null,
+                    message = null
+                ),
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees = listOf(attendeeDto(1005, "VG-PAGE-005")),
+                            count = 1,
+                            sync_type = "full",
+                            next_cursor = null
+                        ),
+                    error = null,
+                    message = null
+                )
+            )
+
+        val status = repository.syncAttendees()
+
+        assertThat(api.syncCalls).hasSize(3)
+        assertThat(api.syncCalls[0].cursor).isNull()
+        assertThat(api.syncCalls[1].cursor).isEqualTo("cursor-1")
+        assertThat(api.syncCalls[2].cursor).isEqualTo("cursor-2")
+        assertThat(database.scannerDao().findAttendee(5, "VG-PAGE-005")).isNotNull()
+        assertThat(database.scannerDao().loadSyncMetadata(5)?.attendeeCount).isEqualTo(5)
+        assertThat(status?.attendeeCount).isEqualTo(5)
     }
 
     @Test
@@ -294,7 +358,7 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int?): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -358,7 +422,7 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int?): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -402,7 +466,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                     error("Not used in this test")
 
-                override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+                override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int?): MobileSyncResponse {
                     val responseBody =
                         ResponseBody.create(
                             "application/json".toMediaType(),
@@ -482,8 +546,34 @@ class CurrentPhoenixSyncRepositoryTest {
         updated_at = updatedAt
     ).toEntity()
 
+    private fun attendeeDto(id: Long, ticketCode: String): AttendeeDto =
+        AttendeeDto(
+            id = id,
+            event_id = 5,
+            ticket_code = ticketCode,
+            first_name = "Paged",
+            last_name = "User",
+            email = "paged@example.com",
+            ticket_type = "General",
+            allowed_checkins = 1,
+            checkins_remaining = 1,
+            payment_status = "completed",
+            is_currently_inside = false,
+            checked_in_at = null,
+            checked_out_at = null,
+            updated_at = "2026-03-13T08:39:00Z"
+        )
+
     private class FakePhoenixMobileApi : PhoenixMobileApi {
+        data class SyncCall(
+            val since: String?,
+            val cursor: String?,
+            val limit: Int?
+        )
+
         var lastSince: String? = null
+        val syncCalls: MutableList<SyncCall> = mutableListOf()
+        var pagedResponses: MutableList<MobileSyncResponse> = mutableListOf()
         var syncResponse: MobileSyncResponse =
             MobileSyncResponse(
                 data = null,
@@ -504,9 +594,19 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+        override suspend fun syncAttendees(
+            since: String?,
+            cursor: String?,
+            limit: Int?
+        ): MobileSyncResponse {
             lastSince = since
-            return syncResponse
+            syncCalls += SyncCall(since = since, cursor = cursor, limit = limit)
+
+            return if (pagedResponses.isNotEmpty()) {
+                pagedResponses.removeFirst()
+            } else {
+                syncResponse
+            }
         }
 
         override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {

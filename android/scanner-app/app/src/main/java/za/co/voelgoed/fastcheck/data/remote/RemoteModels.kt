@@ -28,7 +28,8 @@ data class MobileSyncPayload(
     val server_time: String,
     val attendees: List<AttendeeDto>,
     val count: Int,
-    val sync_type: String
+    val sync_type: String,
+    val next_cursor: String?
 )
 
 data class AttendeeDto(

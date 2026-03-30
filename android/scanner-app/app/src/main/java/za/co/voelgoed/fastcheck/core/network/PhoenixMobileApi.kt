@@ -15,7 +15,11 @@ interface PhoenixMobileApi {
     suspend fun login(@Body body: MobileLoginRequest): MobileLoginResponse
 
     @GET("/api/v1/mobile/attendees")
-    suspend fun syncAttendees(@Query("since") since: String? = null): MobileSyncResponse
+    suspend fun syncAttendees(
+        @Query("since") since: String? = null,
+        @Query("cursor") cursor: String? = null,
+        @Query("limit") limit: Int? = null
+    ): MobileSyncResponse
 
     @POST("/api/v1/mobile/scans")
     suspend fun uploadScans(@Body body: UploadScansRequest): UploadScansResponse
