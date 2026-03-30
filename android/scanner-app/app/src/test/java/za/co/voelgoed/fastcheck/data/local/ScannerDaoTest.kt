@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.data.local
 
 import android.content.Context
 import androidx.room.Room
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
@@ -255,4 +256,105 @@ class ScannerDaoTest {
         assertThat(metadata).isNotNull()
         assertThat(metadata?.lastServerTime).isEqualTo("2026-03-13T10:01:00Z")
     }
+
+    @Test
+    fun upsertAttendeesAndSyncMetadataRollsBackAttendeeWriteWhenMetadataWriteFails() = runTest {
+        createAbortInsertTrigger(
+            tableName = "sync_metadata",
+            triggerName = "abort_sync_metadata_insert"
+        )
+
+        val failure =
+            runCatching {
+                dao.upsertAttendeesAndSyncMetadata(
+                    attendees =
+                        listOf(
+                            AttendeeEntity(
+                                id = 88,
+                                eventId = 5,
+                                ticketCode = "VG-TX-88",
+                                firstName = "Fail",
+                                lastName = "Metadata",
+                                email = "fail-metadata@example.com",
+                                ticketType = "General",
+                                allowedCheckins = 1,
+                                checkinsRemaining = 1,
+                                paymentStatus = "completed",
+                                isCurrentlyInside = false,
+                                updatedAt = "2026-03-13T10:02:00Z"
+                            )
+                        ),
+                    metadata =
+                        SyncMetadataEntity(
+                            eventId = 5,
+                            lastServerTime = "2026-03-13T10:03:00Z",
+                            lastSuccessfulSyncAt = "2026-03-13T10:03:00Z",
+                            lastSyncType = "full",
+                            attendeeCount = 1
+                        )
+                )
+            }.exceptionOrNull()
+
+        assertThat(failure).isNotNull()
+        assertThat(dao.findAttendee(5, "VG-TX-88")).isNull()
+        assertThat(dao.loadSyncMetadata(5)).isNull()
+    }
+
+    @Test
+    fun upsertAttendeesAndSyncMetadataDoesNotWriteMetadataWhenAttendeeWriteFails() = runTest {
+        createAbortInsertTrigger(
+            tableName = "attendees",
+            triggerName = "abort_attendees_insert"
+        )
+
+        val failure =
+            runCatching {
+                dao.upsertAttendeesAndSyncMetadata(
+                    attendees =
+                        listOf(
+                            AttendeeEntity(
+                                id = 89,
+                                eventId = 5,
+                                ticketCode = "VG-TX-89",
+                                firstName = "Fail",
+                                lastName = "Attendee",
+                                email = "fail-attendee@example.com",
+                                ticketType = "General",
+                                allowedCheckins = 1,
+                                checkinsRemaining = 1,
+                                paymentStatus = "completed",
+                                isCurrentlyInside = false,
+                                updatedAt = "2026-03-13T10:04:00Z"
+                            )
+                        ),
+                    metadata =
+                        SyncMetadataEntity(
+                            eventId = 5,
+                            lastServerTime = "2026-03-13T10:05:00Z",
+                            lastSuccessfulSyncAt = "2026-03-13T10:05:00Z",
+                            lastSyncType = "full",
+                            attendeeCount = 1
+                        )
+                )
+            }.exceptionOrNull()
+
+        assertThat(failure).isNotNull()
+        assertThat(dao.findAttendee(5, "VG-TX-89")).isNull()
+        assertThat(dao.loadSyncMetadata(5)).isNull()
+    }
+
+    private fun createAbortInsertTrigger(tableName: String, triggerName: String) {
+        writableDatabase().execSQL("DROP TRIGGER IF EXISTS $triggerName")
+        writableDatabase().execSQL(
+            """
+            CREATE TRIGGER $triggerName
+            BEFORE INSERT ON $tableName
+            BEGIN
+                SELECT RAISE(ABORT, '$triggerName');
+            END
+            """.trimIndent()
+        )
+    }
+
+    private fun writableDatabase(): SupportSQLiteDatabase = database.openHelper.writableDatabase
 }

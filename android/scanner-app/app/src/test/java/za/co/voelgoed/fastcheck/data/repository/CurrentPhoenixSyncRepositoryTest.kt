@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.data.repository
 
 import android.content.Context
 import androidx.room.Room
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import java.time.Clock
@@ -388,6 +389,77 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
     }
 
+    @Test
+    fun syncAttendeesRollsBackAttendeeUpsertWhenSyncMetadataUpsertFails() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 700,
+                    eventId = 5,
+                    ticketCode = "VG-SEED-700",
+                    firstName = "Seed",
+                    updatedAt = "2026-03-13T07:50:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T07:50:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T07:50:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:40:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 701,
+                                    event_id = 5,
+                                    ticket_code = "VG-NEW-701",
+                                    first_name = "New",
+                                    last_name = "User",
+                                    email = "new@example.com",
+                                    ticket_type = "VIP",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 1,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T08:39:00Z"
+                                )
+                            ),
+                        count = 2,
+                        sync_type = "incremental"
+                    ),
+                error = null,
+                message = null
+            )
+
+        createAbortInsertTrigger(
+            tableName = "sync_metadata",
+            triggerName = "abort_sync_metadata_insert"
+        )
+
+        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val seededAttendee = database.scannerDao().findAttendee(5, "VG-SEED-700")
+        val newAttendee = database.scannerDao().findAttendee(5, "VG-NEW-701")
+        val metadata = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(failure).isNotNull()
+        assertThat(seededAttendee?.id).isEqualTo(700)
+        assertThat(newAttendee).isNull()
+        assertThat(metadata?.lastServerTime).isEqualTo("2026-03-13T07:50:00Z")
+        assertThat(metadata?.attendeeCount).isEqualTo(1)
+    }
+
     private fun buildRepository(sessionRepository: SessionRepository): CurrentPhoenixSyncRepository =
         CurrentPhoenixSyncRepository(
             remoteDataSource = PhoenixMobileRemoteDataSource(api),
@@ -513,4 +585,19 @@ class CurrentPhoenixSyncRepositoryTest {
             error("Not used in this test")
         }
     }
+
+    private fun createAbortInsertTrigger(tableName: String, triggerName: String) {
+        writableDatabase().execSQL("DROP TRIGGER IF EXISTS $triggerName")
+        writableDatabase().execSQL(
+            """
+            CREATE TRIGGER $triggerName
+            BEFORE INSERT ON $tableName
+            BEGIN
+                SELECT RAISE(ABORT, '$triggerName');
+            END
+            """.trimIndent()
+        )
+    }
+
+    private fun writableDatabase(): SupportSQLiteDatabase = database.openHelper.writableDatabase
 }
