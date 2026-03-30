@@ -37,9 +37,6 @@ defmodule FastCheckWeb.Mobile.SyncController do
         event_id: event_id,
         sync_type: sync_type,
         count: length(attendees),
-        cursor: page_options.cursor,
-        page_limit: page_options.limit,
-        next_cursor: next_cursor,
         since: since_timestamp,
         ip: get_peer_ip(conn)
       )
@@ -62,7 +59,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
         bad_request(conn, "invalid_limit", "Parameter 'limit' must be a positive integer")
 
       {:error, :limit_too_large} ->
-        bad_request(conn, "limit_too_large", "Parameter 'limit' must be <= #{@max_sync_page_size}")
+        bad_request(
+          conn,
+          "limit_too_large",
+          "Parameter 'limit' must be <= #{@max_sync_page_size}"
+        )
 
       {:error, :invalid_cursor} ->
         bad_request(conn, "invalid_cursor", "Parameter 'cursor' is invalid")
@@ -270,11 +271,24 @@ defmodule FastCheckWeb.Mobile.SyncController do
   defp decode_cursor(encoded_cursor) do
     with {:ok, decoded} <- Base.url_decode64(encoded_cursor, padding: false),
          [updated_at_iso8601, id_str] <- String.split(decoded, "|", parts: 2),
-         {:ok, updated_at, _offset} <- DateTime.from_iso8601(updated_at_iso8601),
+         {:ok, updated_at} <- parse_cursor_datetime(updated_at_iso8601),
          {id, ""} <- Integer.parse(id_str) do
       {:ok, {updated_at, id}}
     else
       _ -> :error
+    end
+  end
+
+  defp parse_cursor_datetime(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, updated_at, _offset} ->
+        {:ok, updated_at}
+
+      {:error, _reason} ->
+        case NaiveDateTime.from_iso8601(value) do
+          {:ok, updated_at} -> {:ok, updated_at}
+          {:error, _reason} -> :error
+        end
     end
   end
 
@@ -310,6 +324,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp serialize_datetime(nil), do: nil
   defp serialize_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp serialize_datetime(%NaiveDateTime{} = datetime), do: NaiveDateTime.to_iso8601(datetime)
   defp serialize_datetime(_), do: nil
 
   defp get_peer_ip(conn) do
