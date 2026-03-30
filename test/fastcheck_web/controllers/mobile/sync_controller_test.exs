@@ -246,6 +246,52 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
              } = json_response(conn, 400)
     end
 
+    test "returns 400 for invalid limit values", %{conn: conn, token: token} do
+      conn_non_integer =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=abc")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "invalid_limit"}
+             } = json_response(conn_non_integer, 400)
+
+      conn_zero =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=0")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "invalid_limit"}
+             } = json_response(conn_zero, 400)
+    end
+
+    test "returns 400 when limit exceeds max", %{conn: conn, token: token} do
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=501")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "limit_too_large"}
+             } = json_response(conn, 400)
+    end
+
+    test "returns 400 for invalid cursor", %{conn: conn, token: token} do
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&cursor=garbage")
+
+      assert %{
+               "data" => nil,
+               "error" => %{"code" => "invalid_cursor"}
+             } = json_response(conn, 400)
+    end
+
     test "returns first page with next_cursor when more attendees exist", %{
       conn: conn,
       token: token,
