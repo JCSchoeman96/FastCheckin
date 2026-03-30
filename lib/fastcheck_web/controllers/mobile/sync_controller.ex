@@ -37,6 +37,9 @@ defmodule FastCheckWeb.Mobile.SyncController do
         event_id: event_id,
         sync_type: sync_type,
         count: length(attendees),
+        cursor: page_options.cursor,
+        page_limit: page_options.limit,
+        next_cursor: next_cursor,
         since: since_timestamp,
         ip: get_peer_ip(conn)
       )
@@ -220,6 +223,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
   defp parse_cursor_parameter(_params), do: {:ok, nil}
 
   defp fetch_attendees(event_id, since, page_options) do
+    since = normalize_attendee_timestamp(since)
+
     query =
       from attendee in Attendee,
         where: attendee.event_id == ^event_id,
@@ -271,24 +276,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
   defp decode_cursor(encoded_cursor) do
     with {:ok, decoded} <- Base.url_decode64(encoded_cursor, padding: false),
          [updated_at_iso8601, id_str] <- String.split(decoded, "|", parts: 2),
-         {:ok, updated_at} <- parse_cursor_datetime(updated_at_iso8601),
+         {:ok, updated_at, _offset} <- DateTime.from_iso8601(updated_at_iso8601),
          {id, ""} <- Integer.parse(id_str) do
-      {:ok, {updated_at, id}}
+      {:ok, {DateTime.to_naive(updated_at), id}}
     else
       _ -> :error
-    end
-  end
-
-  defp parse_cursor_datetime(value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, updated_at, _offset} ->
-        {:ok, updated_at}
-
-      {:error, _reason} ->
-        case NaiveDateTime.from_iso8601(value) do
-          {:ok, updated_at} -> {:ok, updated_at}
-          {:error, _reason} -> :error
-        end
     end
   end
 
@@ -324,8 +316,16 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp serialize_datetime(nil), do: nil
   defp serialize_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
-  defp serialize_datetime(%NaiveDateTime{} = datetime), do: NaiveDateTime.to_iso8601(datetime)
+
+  defp serialize_datetime(%NaiveDateTime{} = datetime),
+    do: datetime |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_iso8601()
+
   defp serialize_datetime(_), do: nil
+
+  defp normalize_attendee_timestamp(nil), do: nil
+  defp normalize_attendee_timestamp(%DateTime{} = datetime), do: DateTime.to_naive(datetime)
+  defp normalize_attendee_timestamp(%NaiveDateTime{} = datetime), do: datetime
+  defp normalize_attendee_timestamp(other), do: other
 
   defp get_peer_ip(conn) do
     case get_req_header(conn, "x-forwarded-for") do

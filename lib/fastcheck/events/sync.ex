@@ -472,12 +472,11 @@ defmodule FastCheck.Events.Sync do
               false
 
             ticket_code ->
-              remote_fields = attendee_incremental_sync_fields(attendee)
-
-              case Map.get(existing_attendees_by_code, ticket_code) do
-                nil -> true
-                existing_fields -> existing_fields != remote_fields
-              end
+              incremental_attendee_changed?(
+                attendee,
+                ticket_code,
+                existing_attendees_by_code
+              )
           end
         end)
 
@@ -506,6 +505,15 @@ defmodule FastCheck.Events.Sync do
       ticket_type: Map.get(parsed, :ticket_type),
       allowed_checkins: Attendees.normalize_allowed_checkins(Map.get(parsed, :allowed_checkins))
     }
+  end
+
+  defp incremental_attendee_changed?(attendee, ticket_code, existing_attendees_by_code) do
+    remote_fields = attendee_incremental_sync_fields(attendee)
+
+    case Map.get(existing_attendees_by_code, ticket_code) do
+      nil -> true
+      existing_fields -> existing_fields != remote_fields
+    end
   end
 
   defp get_existing_incremental_sync_fields(event_id) do

@@ -292,8 +292,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
              } = json_response(conn, 400)
     end
 
-    test "returns first page with next_cursor when more attendees exist", %{conn: conn} do
-      {event, token} = create_paged_sync_event()
+    test "returns first page with next_cursor when more attendees exist", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
       insert_paged_attendees(event.id, 5)
 
       conn =
@@ -313,8 +316,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert is_binary(next_cursor)
     end
 
-    test "returns middle page with cursor and keeps next_cursor", %{conn: conn} do
-      {event, token} = create_paged_sync_event()
+    test "returns middle page with cursor and keeps next_cursor", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
       insert_paged_attendees(event.id, 5)
 
       first_cursor =
@@ -343,8 +349,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert is_binary(next_cursor)
     end
 
-    test "returns final page without next_cursor", %{conn: conn} do
-      {event, token} = create_paged_sync_event()
+    test "returns final page without next_cursor", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
       insert_paged_attendees(event.id, 5)
 
       first_cursor =
@@ -1066,6 +1075,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   defp insert_paged_attendees(event_id, count) do
     base_time = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
+    from(attendee in Attendee, where: attendee.event_id == ^event_id)
+    |> Repo.delete_all()
+
     Enum.each(1..count, fn index ->
       %Attendee{
         event_id: event_id,
@@ -1079,25 +1091,6 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       }
       |> Repo.insert!()
     end)
-  end
-
-  defp create_paged_sync_event do
-    {:ok, encrypted_secret} = Crypto.encrypt("scanner-secret")
-
-    event =
-      %Event{
-        name: "Paged Sync Event",
-        site_url: "https://paged.example.com",
-        tickera_site_url: "https://paged.example.com",
-        tickera_api_key_encrypted: "encrypted_key",
-        mobile_access_secret_encrypted: encrypted_secret,
-        scanner_login_code: unique_scanner_code(),
-        status: "active"
-      }
-      |> Repo.insert!()
-
-    {:ok, token} = Token.issue_scanner_token(event.id)
-    {event, token}
   end
 
   defp unique_scanner_code do
