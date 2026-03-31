@@ -1,15 +1,18 @@
-{
-  "verbose": true,
-  "private": false,
-  "skip": false,
-  "router": "lib/fastcheck_web/router.ex",
-  "exit": "low",
-  "format": "txt",
-  "out": "",
-  "threshold": "low",
-  "ignore": [],
-  "ignore_files": [
+[
+  verbose: true,
+  private: false,
+  # Enable narrowly-scoped `# sobelow_skip [...]` comments for accepted function-level blind spots.
+  skip: true,
+  router: "lib/fastcheck_web/router.ex",
+  exit: "low",
+  format: "txt",
+  out: "",
+  threshold: "low",
+  # HTTPS is enforced from config/runtime.exs because production endpoint settings are runtime-owned.
+  ignore: ["Config.HTTPS"],
+  ignore_files: [
+    # Preserve the existing local exclusion for the shared layout component.
     "lib/fastcheck_web/components/layouts.ex"
   ],
-  "mark_skip_all": false
-}
+  mark_skip_all: false
+]

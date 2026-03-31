@@ -45,9 +45,6 @@ defmodule FastCheck.Crypto do
 
       :error ->
         {:error, :invalid_ciphertext}
-
-      _other ->
-        {:error, :invalid_ciphertext}
     end
   rescue
     _ -> {:error, :invalid_ciphertext}

@@ -164,13 +164,6 @@ defmodule FastCheck.Events.Config do
           )
 
           {:halt, {:error, "CONFIG_FETCH_FAILED"}}
-
-        {:error, reason} ->
-          Logger.error(
-            "Tickera ticket config fetch failed for event #{event_id} ticket #{ticket_type_id}: #{inspect(reason)}"
-          )
-
-          {:halt, {:error, "CONFIG_FETCH_FAILED"}}
       end
     end)
     |> case do

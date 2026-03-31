@@ -294,7 +294,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
         :ok
 
       _ ->
-        {:ok, _pid} = PlugAttack.Storage.Ets.start_link(name: name, clean_period: 60_000)
+        {:ok, _pid} = PlugAttack.Storage.Ets.start_link(name, clean_period: 60_000)
         :ok
     end
   end

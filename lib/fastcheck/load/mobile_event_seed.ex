@@ -233,6 +233,8 @@ defmodule FastCheck.Load.MobileEventSeed do
     write_manifest(manifest, default_path)
   end
 
+  # Internal CLI helper: the operator intentionally chooses the manifest output path.
+  # sobelow_skip ["Traversal"]
   defp write_manifest(manifest, output_path) do
     output_path = Path.expand(output_path)
     File.mkdir_p!(Path.dirname(output_path))

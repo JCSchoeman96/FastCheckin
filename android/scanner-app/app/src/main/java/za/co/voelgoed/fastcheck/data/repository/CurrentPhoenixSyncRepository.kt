@@ -9,6 +9,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import retrofit2.HttpException
+import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.mapper.toDomain
@@ -35,6 +36,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             val seenCursors = mutableSetOf<String>()
             var latestPayload: MobileSyncPayload? = null
             var totalFetched = 0
+            val attendeesToUpsert = mutableListOf<AttendeeEntity>()
 
             do {
                 val response =
@@ -51,7 +53,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
                 // Preserve the backend ticket_code as delivered until QR normalization is explicitly defined.
                 if (payload.attendees.isNotEmpty()) {
-                    scannerDao.upsertAttendees(payload.attendees.map { it.toEntity() })
+                    attendeesToUpsert += payload.attendees.map { it.toEntity() }
                 }
 
                 cursor = payload.next_cursor
@@ -62,7 +64,12 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
             val finalPayload = requireNotNull(latestPayload) { "Sync failed" }
             val metadata = finalPayload.toSyncMetadata(session.eventId).copy(attendeeCount = totalFetched)
-            scannerDao.upsertSyncMetadata(metadata)
+
+            if (attendeesToUpsert.isNotEmpty()) {
+                scannerDao.upsertAttendeesAndSyncMetadata(attendeesToUpsert, metadata)
+            } else {
+                scannerDao.upsertSyncMetadata(metadata)
+            }
 
             return metadata.toDomain()
         } catch (http: HttpException) {

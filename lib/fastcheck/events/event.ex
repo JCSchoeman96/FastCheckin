@@ -17,6 +17,7 @@ defmodule FastCheck.Events.Event do
   @scanner_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
 
   @type t :: %__MODULE__{
+          __meta__: Ecto.Schema.Metadata.t(),
           id: integer() | nil,
           name: String.t() | nil,
           site_url: String.t() | nil,
@@ -41,8 +42,9 @@ defmodule FastCheck.Events.Event do
           last_soft_sync_at: DateTime.t() | nil,
           last_checked_at: DateTime.t() | nil,
           last_config_sync: DateTime.t() | nil,
-          inserted_at: DateTime.t() | nil,
-          updated_at: DateTime.t() | nil
+          attendees: [FastCheck.Attendees.Attendee.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: NaiveDateTime.t() | nil,
+          updated_at: NaiveDateTime.t() | nil
         }
 
   schema "events" do

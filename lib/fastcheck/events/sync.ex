@@ -75,7 +75,7 @@ defmodule FastCheck.Events.Sync do
   defp sync_event_with_api_key(event, api_key, callback, incremental, sync_log_id) do
     _ = refresh_event_window_from_tickera(event, api_key)
 
-    case TickeraClient.fetch_all_attendees(event.tickera_site_url, api_key, 50, callback) do
+    case fetch_remote_attendees(event.tickera_site_url, api_key, callback) do
       {:ok, attendees, total_count} ->
         process_fetched_attendees(event, attendees, total_count, incremental, sync_log_id)
 
@@ -183,14 +183,6 @@ defmodule FastCheck.Events.Sync do
           normalized ->
             {:ok, normalized}
         end
-
-      {:ok, _unexpected} ->
-        Logger.warning("Tickera API key decrypted to a non-binary value for event #{id}")
-        {:error, :decryption_failed}
-
-      {:error, :decryption_failed} ->
-        Logger.warning("Unable to decrypt Tickera API key for event #{id}")
-        {:error, :decryption_failed}
 
       {:error, _reason} ->
         Logger.warning("Unable to decrypt Tickera API key for event #{id}")
@@ -544,22 +536,20 @@ defmodule FastCheck.Events.Sync do
     end)
   rescue
     exception ->
-      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+      if query_timeout_exception?(exception) do
         Logger.warning(
           "Query timeout fetching existing attendees for event #{event_id}; " <>
             "falling back to include all remote attendees in incremental sync"
         )
-
-        %{}
       else
         Logger.warning(
           "Database error fetching existing attendees for event #{event_id}; " <>
             "falling back to include all remote attendees in incremental sync: " <>
             Exception.message(exception)
         )
-
-        %{}
       end
+
+      %{}
   end
 
   defp refresh_event_window_from_tickera(%Event{} = event, api_key) do
@@ -576,10 +566,6 @@ defmodule FastCheck.Events.Sync do
             Map.get(essentials, :event_end_date)
 
         persist_event_window(event, start_dt, end_dt)
-
-      {:error, :decryption_failed} ->
-        Logger.warning("Unable to decrypt credentials for window refresh event #{event.id}")
-        :error
 
       {:error, reason} ->
         Logger.debug(fn ->
@@ -720,8 +706,6 @@ defmodule FastCheck.Events.Sync do
     end)
   end
 
-  defp parse_window_datetime_human(_value), do: nil
-
   defp build_datetime_from_human_parts(parts) when is_map(parts) do
     with {:ok, year} <- parse_int(Map.get(parts, "year")),
          {:ok, month} <- parse_month(Map.get(parts, "month")),
@@ -737,8 +721,6 @@ defmodule FastCheck.Events.Sync do
       _ -> nil
     end
   end
-
-  defp build_datetime_from_human_parts(_parts), do: nil
 
   defp parse_month(nil), do: :error
 
@@ -886,4 +868,18 @@ defmodule FastCheck.Events.Sync do
   end
 
   defp same_datetime?(left, right), do: left == right
+
+  @spec fetch_remote_attendees(
+          String.t(),
+          String.t(),
+          (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil
+        ) :: {:ok, list(), non_neg_integer()} | {:error, term(), list()}
+  defp fetch_remote_attendees(site_url, api_key, callback) do
+    fetch_attendees_fun().(site_url, api_key, 50, callback)
+  end
+
+  defp fetch_attendees_fun, do: &TickeraClient.fetch_all_attendees/4
+
+  defp query_timeout_exception?(%{__struct__: struct}) when is_atom(struct),
+    do: Atom.to_string(struct) == "Elixir.DBConnection.QueryError"
 end

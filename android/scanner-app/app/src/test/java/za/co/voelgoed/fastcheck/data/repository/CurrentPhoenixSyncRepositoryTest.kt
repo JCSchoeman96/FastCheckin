@@ -539,7 +539,8 @@ class CurrentPhoenixSyncRepositoryTest {
                                 )
                             ),
                         count = 2,
-                        sync_type = "incremental"
+                        sync_type = "incremental",
+                        next_cursor = null
                     ),
                 error = null,
                 message = null

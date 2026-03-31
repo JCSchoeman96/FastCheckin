@@ -549,7 +549,7 @@ defmodule FastCheck.Cache.CacheManager do
   @doc """
   Fetches an attendee lookup record from the cache.
   """
-  @spec get_attendee(integer(), term()) :: cache_result(map() | nil)
+  @spec get_attendee(integer(), term()) :: cache_result(map() | atom() | nil)
   def get_attendee(event_id, ticket_code) do
     get(attendee_key(event_id, ticket_code))
   end
@@ -647,8 +647,7 @@ defmodule FastCheck.Cache.CacheManager do
       ]
 
       case Cachex.start_link(name, cache_options) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+        {status, _pid} when status in [:ok, :ignore] -> :ok
         {:error, reason} -> {:error, reason}
       end
     end
@@ -909,18 +908,12 @@ defmodule FastCheck.Cache.CacheManager do
     end
   end
 
-  defp find_cached_ticket_config(_entry, _ticket_identifier), do: nil
-
-  defp parse_ticket_type_id(value) when is_integer(value) and value > 0, do: value
-
   defp parse_ticket_type_id(value) when is_binary(value) do
     case Integer.parse(String.trim(value)) do
       {number, ""} when number > 0 -> number
       _ -> nil
     end
   end
-
-  defp parse_ticket_type_id(_value), do: nil
 
   defp normalize_ticket_label(nil), do: nil
 

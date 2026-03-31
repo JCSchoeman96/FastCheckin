@@ -188,9 +188,6 @@ defmodule FastCheckWeb.Mobile.AuthController do
 
         :missing_credential ->
           unauthorized(conn, "missing_credential", "credential is required")
-
-        _ ->
-          forbidden(conn, "invalid_credential", "credential is invalid")
       end
     else
       {:error, :missing_event_id} ->

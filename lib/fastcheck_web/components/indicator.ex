@@ -249,7 +249,7 @@ defmodule FastCheckWeb.Components.Indicator do
   defp drop_rest(rest) do
     all_rest =
       (["pinging"] ++ @indicator_positions)
-      |> Enum.map(&if(is_binary(&1), do: String.to_atom(&1), else: &1))
+      |> Enum.map(&if(is_binary(&1), do: String.to_existing_atom(&1), else: &1))
 
     Map.drop(rest, all_rest)
   end

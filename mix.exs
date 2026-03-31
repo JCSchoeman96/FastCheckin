@@ -14,6 +14,9 @@ defmodule FastCheck.MixProject do
         fastcheck: [
           validate_compile_env: false
         ]
+      ],
+      dialyzer: [
+        plt_add_apps: [:mix]
       ]
     ]
   end
@@ -30,7 +33,12 @@ defmodule FastCheck.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test, ci: :test, security: :test, quality: :test]
+      preferred_envs: [
+        precommit: :test,
+        ci: :test,
+        security: :test,
+        quality: :test
+      ]
     ]
   end
 
@@ -84,6 +92,7 @@ defmodule FastCheck.MixProject do
 
       # Code quality
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
 
       # Security scanning
       # Security scanning
@@ -129,6 +138,7 @@ defmodule FastCheck.MixProject do
       quality: [
         "format --check-formatted",
         "credo --strict",
+        "dialyzer_check",
         "sobelow --exit"
       ],
 
@@ -138,6 +148,7 @@ defmodule FastCheck.MixProject do
         "compile --warnings-as-errors",
         "format --check-formatted",
         "credo --strict",
+        "dialyzer_check",
         "sobelow --exit --compact",
         "test"
       ],
@@ -149,6 +160,9 @@ defmodule FastCheck.MixProject do
         "format",
         "credo --strict",
         "test"
+      ],
+      dialyzer_check: [
+        "cmd cmd.exe /c \"set MIX_ENV=dev&& mix dialyzer --quiet-with-result\""
       ]
     ]
   end

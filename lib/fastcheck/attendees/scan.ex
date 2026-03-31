@@ -766,9 +766,6 @@ defmodule FastCheck.Attendees.Scan do
     )
   end
 
-  defp validate_ticket_code(_value) when true,
-    do: invalid_error(:ticket_code, "is invalid")
-
   defp validate_entrance_name(value) when is_binary(value) do
     value
     |> String.trim()
@@ -779,9 +776,6 @@ defmodule FastCheck.Attendees.Scan do
       :entrance_name
     )
   end
-
-  defp validate_entrance_name(_value) when true,
-    do: invalid_error(:entrance_name, "is invalid")
 
   defp validate_trimmed_value(value, min, max, pattern, field) when is_binary(value) do
     if value == "" do
@@ -950,8 +944,6 @@ defmodule FastCheck.Attendees.Scan do
       :ok
   end
 
-  defp refresh_event_occupancy(_), do: :ok
-
   defp occupancy_cache_key(event_id), do: "occupancy:event:#{event_id}:breakdown"
 
   defp occupancy_cache_available? do
@@ -1019,16 +1011,12 @@ defmodule FastCheck.Attendees.Scan do
     :ok
   end
 
-  defp broadcast_event_stats_async(_event_id, _opts), do: :ok
-
   defp maybe_broadcast_stats_for_scan(event_id, result) when is_integer(event_id) do
     if should_broadcast_stats_for_scan?(result),
       do: broadcast_event_stats_async(event_id, caller: self())
 
     result
   end
-
-  defp maybe_broadcast_stats_for_scan(_event_id, result), do: result
 
   defp should_broadcast_stats_for_scan?({:ok, %Attendee{}, _}), do: true
 
@@ -1112,12 +1100,9 @@ defmodule FastCheck.Attendees.Scan do
   defp log_level_for_check_in(result) do
     case result do
       :success -> :info
-      :duplicate -> :info
-      :invalid -> :info
       :update_failed -> :error
       :transaction_failed -> :error
       :exception -> :error
-      _ -> :info
     end
   end
 
@@ -1251,35 +1236,28 @@ defmodule FastCheck.Attendees.Scan do
     if occupancy_tasks_disabled?() do
       :ok
     else
-      case Task.start(fn ->
-             try do
-               CacheManager.increment_occupancy(event_id, change_type)
-             rescue
-               exception ->
-                 Logger.error(
-                   "Failed to increment occupancy for event #{event_id} (#{change_type}): #{Exception.message(exception)}"
-                 )
+      {:ok, _pid} =
+        Task.start(fn ->
+          try do
+            CacheManager.increment_occupancy(event_id, change_type)
+          rescue
+            exception ->
+              Logger.error(
+                "Failed to increment occupancy for event #{event_id} (#{change_type}): #{Exception.message(exception)}"
+              )
 
-                 reraise(exception, __STACKTRACE__)
-             catch
-               kind, reason ->
-                 Logger.error(
-                   "Occupancy increment task crashed for event #{event_id} (#{change_type}): #{inspect({kind, reason})}"
-                 )
+              reraise(exception, __STACKTRACE__)
+          catch
+            kind, reason ->
+              Logger.error(
+                "Occupancy increment task crashed for event #{event_id} (#{change_type}): #{inspect({kind, reason})}"
+              )
 
-                 :erlang.raise(kind, reason, __STACKTRACE__)
-             end
-           end) do
-        {:ok, _pid} ->
-          :ok
+              :erlang.raise(kind, reason, __STACKTRACE__)
+          end
+        end)
 
-        {:error, reason} ->
-          Logger.error(
-            "Failed to start occupancy increment task for event #{event_id} (#{change_type}): #{inspect(reason)}"
-          )
-
-          :ok
-      end
+      :ok
     end
   end
 
@@ -1394,7 +1372,7 @@ defmodule FastCheck.Attendees.Scan do
             {:error, "ARCHIVED_EVENT", message}
 
           {:error, {_reason, message}} ->
-            {:error, "SCANS_DISABLED", message || "Scanning disabled"}
+            {:error, "SCANS_DISABLED", message}
         end
     end
   end
@@ -1423,8 +1401,6 @@ defmodule FastCheck.Attendees.Scan do
   rescue
     _ -> :ok
   end
-
-  defp emit_scan_telemetry(_operation, _event_id, _result, _started_at), do: :ok
 
   defp lock_not_available?(%Postgrex.Error{postgres: %{code: :lock_not_available}}), do: true
   defp lock_not_available?(_), do: false
