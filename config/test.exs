@@ -13,7 +13,11 @@ config :fastcheck, FastCheck.Repo,
   password: "postgres",
   hostname: if(System.get_env("GITHUB_ACTIONS"), do: "localhost", else: "localhost"),
   # Docker-for-Windows local Postgres is exposed on 5434 (container 5432).
-  port: String.to_integer(System.get_env("DB_PORT") || "5434"),
+  port:
+    if(System.get_env("GITHUB_ACTIONS"),
+      do: 5432,
+      else: String.to_integer(System.get_env("DB_PORT") || "5434")
+    ),
   database: "fastcheck_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2

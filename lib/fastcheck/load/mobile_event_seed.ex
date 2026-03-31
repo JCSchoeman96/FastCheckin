@@ -53,7 +53,8 @@ defmodule FastCheck.Load.MobileEventSeed do
   defp normalize_options(opts) do
     opts = if is_map(opts), do: Enum.into(opts, []), else: opts
 
-    with {:ok, attendees} <- require_positive_integer(opts[:attendees], "--attendees is required"),
+    with {:ok, attendees} <-
+           require_positive_integer(opts[:attendees], "--attendees is required"),
          :ok <- validate_attendee_count(attendees),
          {:ok, credential} <-
            require_non_empty_string(opts[:credential], "--credential is required") do

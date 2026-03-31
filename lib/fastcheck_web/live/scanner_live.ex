@@ -1920,7 +1920,8 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   defp normalize_camera_permission_status(value)
-       when value in [:granted, :denied, :error, :unsupported], do: value
+       when value in [:granted, :denied, :error, :unsupported],
+       do: value
 
   defp normalize_camera_permission_status(_), do: :unknown
 
