@@ -185,7 +185,8 @@ defmodule FastCheckWeb.ScannerSessionController do
 
   defp ensure_scanner_event_lock(conn, event_id) do
     with true <- get_session(conn, @scanner_authenticated_key) == true,
-         {:ok, session_event_id} <- parse_event_id_value(get_session(conn, @scanner_event_id_key)),
+         {:ok, session_event_id} <-
+           parse_event_id_value(get_session(conn, @scanner_event_id_key)),
          true <- session_event_id == event_id do
       :ok
     else
