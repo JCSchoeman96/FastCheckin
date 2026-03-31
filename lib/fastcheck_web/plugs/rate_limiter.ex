@@ -314,7 +314,11 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   end
 
   defp mobile_shared_route?(conn) do
-    conn.request_path in ["/api/v1/mobile/login", "/api/v1/mobile/attendees", "/api/v1/mobile/scans"]
+    conn.request_path in [
+      "/api/v1/mobile/login",
+      "/api/v1/mobile/attendees",
+      "/api/v1/mobile/scans"
+    ]
   end
 
   # Helper: Extract event ID from path or params
