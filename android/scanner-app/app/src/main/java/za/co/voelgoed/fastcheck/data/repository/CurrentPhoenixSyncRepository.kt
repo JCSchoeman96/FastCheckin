@@ -25,7 +25,10 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     private val sessionRepository: SessionRepository,
     private val clock: Clock
 ) : SyncRepository {
-    private val syncPageLimit = 500
+    companion object {
+        private const val SYNC_PAGE_LIMIT = 500
+        private const val MAX_SYNC_PAGE_COUNT = 100
+    }
 
     override suspend fun syncAttendees(): AttendeeSyncStatus? {
         val session = sessionRepository.currentSession() ?: return null
@@ -36,17 +39,28 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             val seenCursors = mutableSetOf<String>()
             var latestPayload: MobileSyncPayload? = null
             var totalFetched = 0
+            var pagesFetched = 0
             val attendeesToUpsert = mutableListOf<AttendeeEntity>()
 
             do {
+                if (pagesFetched >= MAX_SYNC_PAGE_COUNT) {
+                    throw SyncPaginationException(
+                        message =
+                            "Paged attendee sync exceeded max page count $MAX_SYNC_PAGE_COUNT " +
+                                "with page size $SYNC_PAGE_LIMIT; sync was aborted to avoid an infinite loop " +
+                                "before requesting page ${pagesFetched + 1}."
+                    )
+                }
+
                 val response =
                     remoteDataSource.syncAttendees(
                         since = existing?.lastServerTime,
                         cursor = cursor,
-                        limit = syncPageLimit
+                        limit = SYNC_PAGE_LIMIT
                     )
                 val payload =
                     requireNotNull(response.data) { response.message ?: response.error ?: "Sync failed" }
+                pagesFetched += 1
 
                 latestPayload = payload
                 totalFetched += payload.attendees.size
@@ -58,7 +72,13 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
                 cursor = payload.next_cursor
                 cursor?.let {
-                    check(seenCursors.add(it)) { "Sync pagination cursor repeated: $it" }
+                    if (!seenCursors.add(it)) {
+                        throw SyncPaginationException(
+                            message =
+                                "Paged attendee sync received repeated pagination cursor '$it'; " +
+                                    "sync was aborted to avoid an infinite loop."
+                        )
+                    }
                 }
             } while (cursor != null)
 
@@ -97,6 +117,10 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 class SyncRateLimitedException(
     override val message: String,
     val retryAfterMillis: Long?
+) : RuntimeException(message)
+
+class SyncPaginationException(
+    override val message: String
 ) : RuntimeException(message)
 
 private fun parseRetryAfterMillis(exception: HttpException, clock: Clock): Long? {
