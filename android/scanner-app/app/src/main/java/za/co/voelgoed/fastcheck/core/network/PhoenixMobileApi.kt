@@ -18,7 +18,7 @@ interface PhoenixMobileApi {
     suspend fun syncAttendees(
         @Query("since") since: String? = null,
         @Query("cursor") cursor: String? = null,
-        @Query("limit") limit: Int? = null
+        @Query("limit") limit: Int
     ): MobileSyncResponse
 
     @POST("/api/v1/mobile/scans")

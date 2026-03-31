@@ -97,6 +97,7 @@ class CurrentPhoenixSyncRepositoryTest {
         val metadata = database.scannerDao().loadSyncMetadata(5)
 
         assertThat(api.lastSince).isNull()
+        assertThat(api.syncCalls.single().limit).isEqualTo(500)
         assertThat(attendee?.ticketCode).isEqualTo("VG-100")
         assertThat(metadata?.lastServerTime).isEqualTo("2026-03-13T08:10:00Z")
         assertThat(metadata?.lastSyncType).isEqualTo("full")
@@ -133,6 +134,7 @@ class CurrentPhoenixSyncRepositoryTest {
         val status = repository.syncAttendees()
 
         assertThat(api.lastSince).isEqualTo("2026-03-13T08:00:00Z")
+        assertThat(api.syncCalls.single().limit).isEqualTo(500)
         assertThat(status?.lastSuccessfulSyncAt).isEqualTo("2026-03-13T08:20:00Z")
         assertThat(database.scannerDao().loadSyncMetadata(5)?.lastSyncType).isEqualTo("incremental")
     }
@@ -248,6 +250,7 @@ class CurrentPhoenixSyncRepositoryTest {
         val status = repository.syncAttendees()
 
         assertThat(api.syncCalls).hasSize(3)
+        assertAllSyncCallsUsePageLimit()
         assertThat(api.syncCalls[0].cursor).isNull()
         assertThat(api.syncCalls[1].cursor).isEqualTo("cursor-1")
         assertThat(api.syncCalls[2].cursor).isEqualTo("cursor-2")
@@ -377,6 +380,7 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(exception.message).contains("page size 500")
         assertThat(exception.message).contains("aborted to avoid an infinite loop")
         assertThat(api.syncCalls).hasSize(100)
+        assertAllSyncCallsUsePageLimit()
         assertThat(api.syncCalls.last().cursor).isEqualTo("cursor-99")
         assertThat(countAttendeesForEvent(5)).isEqualTo(1)
         assertThat(seededAttendee?.id).isEqualTo(602)
@@ -491,7 +495,7 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int?): MobileSyncResponse {
+                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -555,7 +559,7 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int?): MobileSyncResponse {
+                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -671,7 +675,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                     error("Not used in this test")
 
-                override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int?): MobileSyncResponse {
+                override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
                     val responseBody =
                         ResponseBody.create(
                             "application/json".toMediaType(),
@@ -773,7 +777,7 @@ class CurrentPhoenixSyncRepositoryTest {
         data class SyncCall(
             val since: String?,
             val cursor: String?,
-            val limit: Int?
+            val limit: Int
         )
 
         var lastSince: String? = null
@@ -802,7 +806,7 @@ class CurrentPhoenixSyncRepositoryTest {
         override suspend fun syncAttendees(
             since: String?,
             cursor: String?,
-            limit: Int?
+            limit: Int
         ): MobileSyncResponse {
             lastSince = since
             syncCalls += SyncCall(since = since, cursor = cursor, limit = limit)
@@ -842,6 +846,10 @@ class CurrentPhoenixSyncRepositoryTest {
             cursor.moveToFirst()
             cursor.getInt(0)
         }
+
+    private fun assertAllSyncCallsUsePageLimit() {
+        assertThat(api.syncCalls.map { it.limit }).containsExactlyElementsIn(List(api.syncCalls.size) { 500 })
+    }
 
     private fun writableDatabase(): SupportSQLiteDatabase = database.openHelper.writableDatabase
 }

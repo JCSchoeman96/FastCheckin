@@ -341,7 +341,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
         override suspend fun syncAttendees(
             since: String?,
             cursor: String?,
-            limit: Int?
+            limit: Int
         ): MobileSyncResponse {
             error("syncAttendees is not used by this migration test")
         }
