@@ -10,7 +10,7 @@ class PhoenixMobileRemoteDataSource(
     suspend fun syncAttendees(
         since: String?,
         cursor: String? = null,
-        limit: Int? = null
+        limit: Int
     ): MobileSyncResponse = api.syncAttendees(since = since, cursor = cursor, limit = limit)
 
     suspend fun uploadScans(scans: List<QueuedScanPayload>): UploadScansResponse =

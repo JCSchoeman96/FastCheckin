@@ -58,6 +58,9 @@ defmodule FastCheckWeb.Mobile.SyncController do
       {:error, :invalid_since} ->
         bad_request(conn, "invalid_since", "since must be a valid ISO8601 datetime")
 
+      {:error, :missing_limit} ->
+        bad_request(conn, "missing_limit", "Parameter 'limit' is required")
+
       {:error, :invalid_limit} ->
         bad_request(conn, "invalid_limit", "Parameter 'limit' must be a positive integer")
 
@@ -211,7 +214,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
     end
   end
 
-  defp parse_limit_parameter(_params), do: {:ok, nil}
+  defp parse_limit_parameter(_params), do: {:error, :missing_limit}
 
   defp parse_cursor_parameter(%{"cursor" => cursor}) when is_binary(cursor) do
     case decode_cursor(cursor) do
@@ -249,25 +252,17 @@ defmodule FastCheckWeb.Mobile.SyncController do
           query
       end
 
-    {attendees, next_cursor} =
-      case page_options.limit do
-        nil ->
-          {Repo.all(query), nil}
+    limit = page_options.limit
+    page_results = Repo.all(from attendee in query, limit: ^(limit + 1))
+    {visible_results, overflow_results} = Enum.split(page_results, limit)
 
-        limit ->
-          page_results = Repo.all(from attendee in query, limit: ^(limit + 1))
-          {visible_results, overflow_results} = Enum.split(page_results, limit)
-
-          next_cursor =
-            case overflow_results do
-              [] -> nil
-              [_ | _] -> encode_cursor(List.last(visible_results))
-            end
-
-          {visible_results, next_cursor}
+    next_cursor =
+      case overflow_results do
+        [] -> nil
+        [_ | _] -> encode_cursor(List.last(visible_results))
       end
 
-    {:ok, attendees, next_cursor}
+    {:ok, visible_results, next_cursor}
   rescue
     error ->
       {:error, error}

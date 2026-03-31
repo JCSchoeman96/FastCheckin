@@ -138,16 +138,32 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert json_response(conn, 401)["error"] in ["invalid_signature", "malformed_token"]
     end
 
-    test "returns all attendees for authenticated event (full sync)", %{
-      conn: conn,
-      token: token,
-      attendee1: attendee1,
-      attendee2: attendee2
-    } do
+    test "returns 400 when limit is missing", %{conn: conn, token: token} do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
         |> get(~p"/api/v1/mobile/attendees")
+
+      assert %{
+               "data" => nil,
+               "error" => %{
+                 "code" => "missing_limit",
+                 "message" => "Parameter 'limit' is required"
+               }
+             } = json_response(conn, 400)
+    end
+
+    test "returns all attendees for authenticated event when full sync is requested with a limit",
+         %{
+           conn: conn,
+           token: token,
+           attendee1: attendee1,
+           attendee2: attendee2
+         } do
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
 
       assert %{
                "data" => %{
@@ -162,7 +178,6 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert is_binary(server_time)
       assert count >= 2
-      # Should include both attendees (and the refunded one)
       ticket_codes = Enum.map(attendees, & &1["ticket_code"])
       assert attendee1.ticket_code in ticket_codes
       assert attendee2.ticket_code in ticket_codes
@@ -175,7 +190,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/v1/mobile/attendees")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
 
       assert %{"data" => %{"attendees" => attendees}} = json_response(conn, 200)
 
@@ -188,7 +203,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/v1/mobile/attendees")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
 
       assert %{"data" => %{"attendees" => [first_attendee | _]}} = json_response(conn, 200)
 
@@ -222,7 +237,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> get(~p"/api/v1/mobile/attendees?since=#{past_time}")
+        |> get(~p"/api/v1/mobile/attendees?since=#{past_time}&limit=50")
 
       assert %{"data" => %{"sync_type" => "incremental", "attendees" => attendees}} =
                json_response(conn, 200)
@@ -289,6 +304,21 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert %{
                "data" => nil,
                "error" => %{"code" => "invalid_cursor"}
+             } = json_response(conn, 400)
+    end
+
+    test "returns 400 for cursor without limit", %{conn: conn, token: token} do
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?cursor=garbage")
+
+      assert %{
+               "data" => nil,
+               "error" => %{
+                 "code" => "missing_limit",
+                 "message" => "Parameter 'limit' is required"
+               }
              } = json_response(conn, 400)
     end
 
