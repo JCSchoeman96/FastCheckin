@@ -23,8 +23,10 @@ object DatabaseModule {
             FastCheckDatabase::class.java,
             FastCheckDatabase.DATABASE_NAME
         )
-            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_2_3)
-            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_3_4)
+            .addMigrations(
+                FastCheckDatabaseMigrations.MIGRATION_2_3,
+                FastCheckDatabaseMigrations.MIGRATION_3_4
+            )
             .build()
 
     @Provides
