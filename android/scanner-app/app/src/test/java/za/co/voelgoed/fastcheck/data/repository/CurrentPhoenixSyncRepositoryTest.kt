@@ -3,6 +3,7 @@ package za.co.voelgoed.fastcheck.data.repository
 import android.content.Context
 import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import java.time.Clock
@@ -257,6 +258,27 @@ class CurrentPhoenixSyncRepositoryTest {
 
     @Test
     fun pagedSyncFailsFastWhenCursorRepeats() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 601,
+                    eventId = 5,
+                    ticketCode = "VG-SEED-601",
+                    firstName = "Seed",
+                    updatedAt = "2026-03-13T07:59:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
         api.pagedResponses =
             mutableListOf(
                 MobileSyncResponse(
@@ -285,12 +307,84 @@ class CurrentPhoenixSyncRepositoryTest {
                 )
             )
 
-        try {
-            repository.syncAttendees()
-            error("Expected IllegalStateException")
-        } catch (e: IllegalStateException) {
-            assertThat(e.message).contains("cursor repeated")
-        }
+        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val exception = failure as SyncPaginationException
+        val seededAttendee = database.scannerDao().findAttendee(5, "VG-SEED-601")
+        val firstPagedAttendee = database.scannerDao().findAttendee(5, "VG-PAGE-001")
+        val secondPagedAttendee = database.scannerDao().findAttendee(5, "VG-PAGE-002")
+        val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(failure).isInstanceOf(SyncPaginationException::class.java)
+        assertThat(exception.message).contains("repeated pagination cursor")
+        assertThat(exception.message).contains("cursor-1")
+        assertThat(countAttendeesForEvent(5)).isEqualTo(1)
+        assertThat(seededAttendee?.id).isEqualTo(601)
+        assertThat(seededAttendee?.updatedAt).isEqualTo("2026-03-13T07:59:00Z")
+        assertThat(firstPagedAttendee).isNull()
+        assertThat(secondPagedAttendee).isNull()
+        assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
+        assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun pagedSyncAbortsBeforePage101WhenMaxPageCountIsExceeded() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 602,
+                    eventId = 5,
+                    ticketCode = "VG-SEED-602",
+                    firstName = "Seed",
+                    updatedAt = "2026-03-13T07:58:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
+        api.pagedResponses =
+            (1..100).map { page ->
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees = listOf(attendeeDto(2000L + page, "VG-MAX-${page.toString().padStart(3, '0')}")),
+                            count = 1,
+                            sync_type = "full",
+                            next_cursor = "cursor-$page"
+                        ),
+                    error = null,
+                    message = null
+                )
+            }.toMutableList()
+
+        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val exception = failure as SyncPaginationException
+        val seededAttendee = database.scannerDao().findAttendee(5, "VG-SEED-602")
+        val firstPagedAttendee = database.scannerDao().findAttendee(5, "VG-MAX-001")
+        val lastPagedAttendee = database.scannerDao().findAttendee(5, "VG-MAX-100")
+        val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(failure).isInstanceOf(SyncPaginationException::class.java)
+        assertThat(exception.message).contains("max page count 100")
+        assertThat(exception.message).contains("page size 500")
+        assertThat(exception.message).contains("aborted to avoid an infinite loop")
+        assertThat(api.syncCalls).hasSize(100)
+        assertThat(api.syncCalls.last().cursor).isEqualTo("cursor-99")
+        assertThat(countAttendeesForEvent(5)).isEqualTo(1)
+        assertThat(seededAttendee?.id).isEqualTo(602)
+        assertThat(seededAttendee?.updatedAt).isEqualTo("2026-03-13T07:58:00Z")
+        assertThat(firstPagedAttendee).isNull()
+        assertThat(lastPagedAttendee).isNull()
+        assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
+        assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
     }
 
     @Test
@@ -737,6 +831,17 @@ class CurrentPhoenixSyncRepositoryTest {
             """.trimIndent()
         )
     }
+
+    private fun countAttendeesForEvent(eventId: Long): Int =
+        writableDatabase().query(
+            SimpleSQLiteQuery(
+                "SELECT COUNT(*) FROM attendees WHERE eventId = ?",
+                arrayOf(eventId)
+            )
+        ).use { cursor ->
+            cursor.moveToFirst()
+            cursor.getInt(0)
+        }
 
     private fun writableDatabase(): SupportSQLiteDatabase = database.openHelper.writableDatabase
 }
