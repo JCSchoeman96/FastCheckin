@@ -11,18 +11,20 @@ defmodule FastCheck.Events.SyncLog do
   alias FastCheck.Repo
 
   @type t :: %__MODULE__{
+          __meta__: Ecto.Schema.Metadata.t(),
+          event: FastCheck.Events.Event.t() | Ecto.Association.NotLoaded.t(),
           id: integer() | nil,
-          event_id: integer(),
-          started_at: DateTime.t(),
+          event_id: integer() | nil,
+          started_at: DateTime.t() | nil,
           completed_at: DateTime.t() | nil,
-          status: String.t(),
-          attendees_synced: integer(),
+          status: String.t() | nil,
+          attendees_synced: integer() | nil,
           total_pages: integer() | nil,
-          pages_processed: integer(),
+          pages_processed: integer() | nil,
           error_message: String.t() | nil,
           duration_ms: integer() | nil,
-          inserted_at: DateTime.t() | nil,
-          updated_at: DateTime.t() | nil
+          inserted_at: NaiveDateTime.t() | nil,
+          updated_at: NaiveDateTime.t() | nil
         }
 
   schema "sync_logs" do

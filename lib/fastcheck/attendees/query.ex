@@ -32,13 +32,13 @@ defmodule FastCheck.Attendees.Query do
     |> Repo.all(timeout: 15_000)
   rescue
     exception ->
-      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+      if query_timeout_exception?(exception) do
         Logger.error("Query timeout listing attendees for event #{event_id}")
-        []
       else
         Logger.error("Database error listing attendees: #{Exception.message(exception)}")
-        []
       end
+
+      []
   end
 
   def list_event_attendees(_), do: []
@@ -55,16 +55,15 @@ defmodule FastCheck.Attendees.Query do
     Repo.get_by(Attendee, [event_id: event_id, ticket_code: ticket_code], timeout: 5_000)
   rescue
     exception ->
-      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+      if query_timeout_exception?(exception) do
         Logger.error(
           "Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}"
         )
-
-        nil
       else
         Logger.error("Database error fetching attendee: #{Exception.message(exception)}")
-        nil
       end
+
+      nil
   end
 
   def get_attendee_by_ticket_code(_, _), do: nil
@@ -102,7 +101,7 @@ defmodule FastCheck.Attendees.Query do
         lock_not_available?(exception) ->
           {:error, "TICKET_IN_USE_ELSEWHERE", "Ticket is currently being processed"}
 
-        is_exception(exception) and exception.__struct__ == DBConnection.QueryError ->
+        query_timeout_exception?(exception) ->
           Logger.error(
             "Query timeout fetching attendee for event #{event_id} ticket #{ticket_code}"
           )
@@ -235,13 +234,13 @@ defmodule FastCheck.Attendees.Query do
     |> Repo.all(timeout: 30_000)
   rescue
     exception ->
-      if is_exception(exception) and exception.__struct__ == DBConnection.QueryError do
+      if query_timeout_exception?(exception) do
         Logger.error("Query timeout listing check-ins for event #{event_id}")
-        []
       else
         Logger.error("Database error listing check-ins: #{Exception.message(exception)}")
-        []
       end
+
+      []
   end
 
   def list_event_check_ins(_), do: []
@@ -328,8 +327,9 @@ defmodule FastCheck.Attendees.Query do
     |> String.replace("_", "\\_")
   end
 
-  defp escape_like(term), do: term
-
   defp lock_not_available?(%Postgrex.Error{postgres: %{code: :lock_not_available}}), do: true
   defp lock_not_available?(_), do: false
+
+  defp query_timeout_exception?(%{__struct__: struct}) when is_atom(struct),
+    do: Atom.to_string(struct) == "Elixir.DBConnection.QueryError"
 end

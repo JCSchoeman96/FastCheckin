@@ -100,9 +100,6 @@ defmodule FastCheck.Scans.LegacyUploadService do
     end
   end
 
-  defp process_reserved_scan(_scan, _reservation_status),
-    do: {:error, "Invalid reservation status"}
-
   defp await_idempotency_result(event_id, idempotency_key, attempts_left)
        when attempts_left > 0 do
     case fetch_idempotency_result(event_id, idempotency_key) do

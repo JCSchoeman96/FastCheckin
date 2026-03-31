@@ -9,6 +9,7 @@ defmodule FastCheck.Devices.Device do
   alias FastCheck.Devices.DeviceSession
 
   @type t :: %__MODULE__{
+          __meta__: Ecto.Schema.Metadata.t(),
           id: integer() | nil,
           installation_id: String.t() | nil,
           platform: String.t() | nil,
@@ -16,7 +17,9 @@ defmodule FastCheck.Devices.Device do
           app_version: String.t() | nil,
           status: String.t() | nil,
           last_seen_at: DateTime.t() | nil,
-          sessions: [DeviceSession.t()] | Ecto.Association.NotLoaded.t()
+          sessions: [DeviceSession.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: NaiveDateTime.t() | nil,
+          updated_at: NaiveDateTime.t() | nil
         }
 
   schema "devices" do

@@ -4,12 +4,10 @@ defmodule FastCheck.Devices.SessionService do
   """
 
   import Ecto.Query, warn: false
-
-  alias Ecto.Multi
   alias FastCheck.Devices.{Device, DeviceSession}
   alias FastCheck.Events
+  alias FastCheck.Events.Event
   alias FastCheck.Repo
-  alias FastCheck.Ticketing
 
   @token_salt "device_session_token"
 
@@ -18,7 +16,7 @@ defmodule FastCheck.Devices.SessionService do
     with {:ok, scanner_code} <- fetch_required_string(attrs, "scanner_code"),
          {:ok, credential} <- fetch_required_string(attrs, "credential"),
          {:ok, installation_id} <- fetch_required_string(attrs, "device_installation_id"),
-         {:ok, %FastCheck.Ticketing.Event{} = event} <- fetch_event(scanner_code),
+         {:ok, %Event{} = event} <- fetch_event(scanner_code),
          :ok <- verify_credential(event, credential) do
       gate_id = parse_optional_int(attrs["gate_id"])
       operator_name = optional_string(attrs["operator_name"])
@@ -26,34 +24,38 @@ defmodule FastCheck.Devices.SessionService do
       device_label = optional_string(attrs["device_label"])
       now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-      Multi.new()
-      |> Multi.insert_or_update(
-        :device,
-        device_changeset(installation_id, device_label, app_version, now)
-      )
-      |> Multi.insert(:session, fn %{device: device} ->
-        DeviceSession.changeset(%DeviceSession{}, %{
-          device_id: device.id,
-          event_id: event.id,
-          gate_id: gate_id,
-          operator_name: operator_name,
-          app_version: app_version,
-          last_seen_at: now,
-          expires_at: DateTime.add(now, session_ttl_seconds(), :second)
-        })
+      Repo.transaction(fn ->
+        with {:ok, device} <-
+               installation_id
+               |> device_changeset(device_label, app_version, now)
+               |> Repo.insert_or_update(),
+             {:ok, session} <-
+               %DeviceSession{}
+               |> DeviceSession.changeset(%{
+                 device_id: device.id,
+                 event_id: event.id,
+                 gate_id: gate_id,
+                 operator_name: operator_name,
+                 app_version: app_version,
+                 last_seen_at: now,
+                 expires_at: DateTime.add(now, session_ttl_seconds(), :second)
+               })
+               |> Repo.insert() do
+          %{
+            token: issue_token(session, device),
+            session: Repo.preload(session, [:gate]),
+            device: device,
+            event: event
+          }
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
       end)
-      |> Repo.transaction()
       |> case do
-        {:ok, %{device: device, session: session}} ->
-          {:ok,
-           %{
-             token: issue_token(session, device),
-             session: Repo.preload(session, [:gate]),
-             device: device,
-             event: event
-           }}
+        {:ok, session_data} ->
+          {:ok, session_data}
 
-        {:error, _operation, reason, _changes} ->
+        {:error, reason} ->
           {:error, reason}
       end
     end
@@ -95,14 +97,8 @@ defmodule FastCheck.Devices.SessionService do
   end
 
   defp fetch_event(scanner_code) do
-    case Ticketing.get_event_by_scanner_code(scanner_code) do
-      %FastCheck.Events.Event{} = event ->
-        case Ticketing.get_event(event.id) do
-          %FastCheck.Ticketing.Event{} = ticketing_event -> {:ok, ticketing_event}
-          nil -> {:error, {"INVALID", "Unknown scanner code"}}
-        end
-
-      %FastCheck.Ticketing.Event{} = event ->
+    case Events.get_event_by_scanner_login_code(scanner_code) do
+      %Event{} = event ->
         {:ok, event}
 
       nil ->
@@ -110,16 +106,12 @@ defmodule FastCheck.Devices.SessionService do
     end
   end
 
-  defp verify_credential(event, credential) do
-    event.id
-    |> Events.get_event!()
-    |> Events.verify_mobile_access_secret(credential)
-    |> case do
+  defp verify_credential(%Event{} = event, credential) do
+    case Events.verify_mobile_access_secret(event, credential) do
       :ok -> :ok
       {:error, :invalid_credential} -> {:error, {"FORBIDDEN", "Invalid credential"}}
       {:error, :missing_secret} -> {:error, {"FORBIDDEN", "Scanner credential not configured"}}
       {:error, :missing_credential} -> {:error, {"UNAUTHORIZED", "Credential is required"}}
-      _ -> {:error, {"FORBIDDEN", "Invalid credential"}}
     end
   end
 

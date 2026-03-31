@@ -1,13 +1,18 @@
 defmodule FastCheckWeb.Router do
   use FastCheckWeb, :router
 
+  @browser_secure_headers %{
+    "content-security-policy" =>
+      FastCheckWeb.Plugs.SecurityHeaders.browser_content_security_policy()
+  }
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
     plug :fetch_live_flash
     plug :put_root_layout, html: {FastCheckWeb.Layouts, :root}
     plug :protect_from_forgery
-    plug :put_secure_browser_headers
+    plug :put_secure_browser_headers, @browser_secure_headers
     plug FastCheckWeb.Plugs.LoggerMetadata
     plug FastCheckWeb.Plugs.RateLimiter
   end

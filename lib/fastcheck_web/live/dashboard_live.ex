@@ -87,35 +87,25 @@ defmodule FastCheckWeb.DashboardLive do
                " Auto full sync not started because another sync is already running."
            )}
         else
-          case start_sync_task(event.id, incremental: false) do
-            {:ok, task_meta} ->
-              start_time = System.monotonic_time(:second)
+          {:ok, task_meta} = start_sync_task(event.id, incremental: false)
+          start_time = System.monotonic_time(:second)
 
-              {:noreply,
-               socket_after_create
-               |> assign(:selected_event_id, event.id)
-               |> assign(:sync_progress, {0, 0, 0})
-               |> assign(:sync_start_time, start_time)
-               |> assign(:sync_timing_data, [])
-               |> assign(:sync_paused, false)
-               |> assign(:sync_task_pid, task_meta.pid)
-               |> assign(:sync_task_ref, task_meta.monitor_ref)
-               |> assign(:sync_run_ref, task_meta.run_ref)
-               |> assign(:sync_attempt, 1)
-               |> assign(
-                 :sync_status,
-                 created_status <>
-                   " Starting full attendee sync (attempt 1/#{@max_sync_attempts})..."
-               )}
-
-            {:error, reason} ->
-              {:noreply,
-               assign(
-                 socket_after_create,
-                 :sync_status,
-                 created_status <> " Auto full sync could not start: #{format_error(reason)}"
-               )}
-          end
+          {:noreply,
+           socket_after_create
+           |> assign(:selected_event_id, event.id)
+           |> assign(:sync_progress, {0, 0, 0})
+           |> assign(:sync_start_time, start_time)
+           |> assign(:sync_timing_data, [])
+           |> assign(:sync_paused, false)
+           |> assign(:sync_task_pid, task_meta.pid)
+           |> assign(:sync_task_ref, task_meta.monitor_ref)
+           |> assign(:sync_run_ref, task_meta.run_ref)
+           |> assign(:sync_attempt, 1)
+           |> assign(
+             :sync_status,
+             created_status <>
+               " Starting full attendee sync (attempt 1/#{@max_sync_attempts})..."
+           )}
         end
 
       {:error, %Changeset{} = changeset} ->
@@ -1556,24 +1546,21 @@ defmodule FastCheckWeb.DashboardLive do
     attempt_timeout_ms = Keyword.get(opts, :attempt_timeout_ms, @sync_attempt_timeout_ms)
     run_ref = make_ref()
 
-    case Task.start(fn ->
-           maybe_allow_sandbox_connection(caller)
+    {:ok, pid} =
+      Task.start(fn ->
+        maybe_allow_sandbox_connection(caller)
 
-           run_sync_with_retries(
-             parent,
-             run_ref,
-             event_id,
-             incremental,
-             max_attempts,
-             attempt_timeout_ms
-           )
-         end) do
-      {:ok, pid} ->
-        {:ok, %{pid: pid, monitor_ref: Process.monitor(pid), run_ref: run_ref}}
+        run_sync_with_retries(
+          parent,
+          run_ref,
+          event_id,
+          incremental,
+          max_attempts,
+          attempt_timeout_ms
+        )
+      end)
 
-      error ->
-        error
-    end
+    {:ok, %{pid: pid, monitor_ref: Process.monitor(pid), run_ref: run_ref}}
   end
 
   defp run_sync_with_retries(
@@ -1771,8 +1758,6 @@ defmodule FastCheckWeb.DashboardLive do
     :ok
   end
 
-  defp maybe_allow_sandbox_connection(_caller), do: :ok
-
   defp sandbox_pool? do
     Application.get_env(:fastcheck, Repo, [])
     |> Keyword.get(:pool)
@@ -1809,8 +1794,6 @@ defmodule FastCheckWeb.DashboardLive do
       reason
     end
   end
-
-  defp shorten_reason(reason), do: format_error(reason)
 
   defp progress_status(page, total, count, estimated_remaining) do
     base_status =

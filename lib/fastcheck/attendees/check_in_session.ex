@@ -11,10 +11,13 @@ defmodule FastCheck.Attendees.CheckInSession do
   alias FastCheck.Events.Event
 
   @type t :: %__MODULE__{
+          __meta__: Ecto.Schema.Metadata.t(),
+          attendee: Attendee.t() | Ecto.Association.NotLoaded.t(),
+          event: Event.t() | Ecto.Association.NotLoaded.t(),
           id: integer() | nil,
-          attendee_id: integer(),
-          event_id: integer(),
-          entry_time: DateTime.t(),
+          attendee_id: integer() | nil,
+          event_id: integer() | nil,
+          entry_time: DateTime.t() | nil,
           exit_time: DateTime.t() | nil,
           entrance_name: String.t() | nil,
           inserted_at: DateTime.t() | nil,

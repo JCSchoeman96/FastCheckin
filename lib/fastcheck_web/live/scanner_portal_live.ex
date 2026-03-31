@@ -234,13 +234,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
     if socket.assigns.syncing do
       {:noreply, socket}
     else
-      case start_incremental_sync_task(socket.assigns.event_id, self()) do
-        {:ok, pid} ->
-          {:noreply, assign_sync_started(socket, pid)}
-
-        {:error, reason} ->
-          {:noreply, assign_sync_start_failed(socket, reason)}
-      end
+      {:ok, pid} = start_incremental_sync_task(socket.assigns.event_id, self())
+      {:noreply, assign_sync_started(socket, pid)}
     end
   end
 
@@ -1136,7 +1131,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
     {scans_disabled?, scans_disabled_message} =
       case Events.can_check_in?(event) do
         {:ok, _state} -> {false, nil}
-        {:error, {_reason, message}} -> {true, message || "Scanning is disabled for this event."}
+        {:error, {_reason, message}} -> {true, message}
       end
 
     socket
@@ -1424,14 +1419,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
     |> assign(:operator_form_open, false)
   end
 
-  defp assign_sync_start_failed(socket, reason) do
-    socket
-    |> assign(:sync_status, "Unable to start incremental sync: #{inspect(reason)}")
-    |> assign(:sync_status_kind, :danger)
-    |> assign(:menu_open, false)
-    |> assign(:operator_form_open, false)
-  end
-
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value
   defp normalize_capacity(value) when is_float(value) and value > 0, do: trunc(value)
   defp normalize_capacity(_), do: 0
@@ -1606,13 +1593,13 @@ defmodule FastCheckWeb.ScannerPortalLive do
       true ->
         caller = self()
 
-        case Task.start(fn ->
-               maybe_allow_sandbox_connection(caller)
-               Events.warm_event_cache(event)
-             end) do
-          {:ok, _pid} -> :ok
-          {:error, reason} -> Logger.warning("Scanner cache warmup failed: #{inspect(reason)}")
-        end
+        {:ok, _pid} =
+          Task.start(fn ->
+            maybe_allow_sandbox_connection(caller)
+            Events.warm_event_cache(event)
+          end)
+
+        :ok
     end
   rescue
     exception ->
@@ -1639,8 +1626,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
     :ok
   end
-
-  defp maybe_allow_sandbox_connection(_caller), do: :ok
 
   defp sandbox_pool? do
     Application.get_env(:fastcheck, FastCheck.Repo, [])

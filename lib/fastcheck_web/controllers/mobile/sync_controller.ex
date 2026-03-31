@@ -324,8 +324,6 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp normalize_attendee_timestamp(nil), do: nil
   defp normalize_attendee_timestamp(%DateTime{} = datetime), do: DateTime.to_naive(datetime)
-  defp normalize_attendee_timestamp(%NaiveDateTime{} = datetime), do: datetime
-  defp normalize_attendee_timestamp(other), do: other
 
   defp get_peer_ip(conn) do
     case get_req_header(conn, "x-forwarded-for") do

@@ -139,9 +139,6 @@ defmodule FastCheck.Events do
       event_archived_by_status?(event) ->
         :archived
 
-      is_nil(now) ->
-        :unknown
-
       is_nil(start_time) and is_nil(end_time) ->
         :unknown
 
@@ -360,11 +357,11 @@ defmodule FastCheck.Events do
   """
   @spec archive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
   def archive_event(event_id) when is_integer(event_id) and event_id > 0 do
-    case Cache.get_event!(event_id) do
-      %Event{status: "archived"} = event ->
+    case fetch_cached_event(event_id) do
+      {:ok, %Event{status: "archived"} = event} ->
         {:ok, event}
 
-      %Event{} = event ->
+      {:ok, %Event{} = event} ->
         event
         |> Event.changeset(%{status: "archived"})
         |> Repo.update()
@@ -380,7 +377,7 @@ defmodule FastCheck.Events do
             {:error, reason}
         end
 
-      nil ->
+      {:error, :not_found} ->
         {:error, :not_found}
     end
   end
@@ -399,11 +396,11 @@ defmodule FastCheck.Events do
   """
   @spec unarchive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
   def unarchive_event(event_id) when is_integer(event_id) and event_id > 0 do
-    case Cache.get_event!(event_id) do
-      %Event{status: "active"} = event ->
+    case fetch_cached_event(event_id) do
+      {:ok, %Event{status: "active"} = event} ->
         {:ok, event}
 
-      %Event{} = event ->
+      {:ok, %Event{} = event} ->
         event
         |> Event.changeset(%{status: "active"})
         |> Repo.update()
@@ -419,7 +416,7 @@ defmodule FastCheck.Events do
             {:error, reason}
         end
 
-      nil ->
+      {:error, :not_found} ->
         {:error, :not_found}
     end
   end
@@ -442,8 +439,8 @@ defmodule FastCheck.Events do
   """
   @spec update_event(integer(), map()) :: {:ok, Event.t()} | {:error, term()}
   def update_event(event_id, attrs) when is_integer(event_id) and event_id > 0 do
-    case Cache.get_event!(event_id) do
-      %Event{} = event ->
+    case fetch_cached_event(event_id) do
+      {:ok, %Event{} = event} ->
         case validate_update_credentials(attrs, event) do
           {:ok, validated_attrs} ->
             persist_event_update(event, validated_attrs, event_id)
@@ -452,7 +449,7 @@ defmodule FastCheck.Events do
             {:error, reason}
         end
 
-      nil ->
+      {:error, :not_found} ->
         {:error, :not_found}
     end
   end
@@ -740,8 +737,6 @@ defmodule FastCheck.Events do
     end
   end
 
-  defp derive_last4(_), do: nil
-
   defp credential_attrs_from_struct(%Event{} = event) do
     event
     |> Map.take(@credential_fields)
@@ -990,25 +985,6 @@ defmodule FastCheck.Events do
             {:error, :invalid_credentials}
           end
 
-        {:ok, _response} ->
-          {:error, :invalid_credentials}
-
-        {:error, {:http_error, code, _body}}
-        when code in [401, 403, 404] ->
-          {:error, :invalid_credentials}
-
-        {:error, {:http_error, _code, _body} = reason} ->
-          {:error, {:credential_check_failed, reason}}
-
-        {:error, {:network_timeout, _reason} = reason} ->
-          {:error, {:credential_check_failed, reason}}
-
-        {:error, {:network_error, _reason} = reason} ->
-          {:error, {:credential_check_failed, reason}}
-
-        {:error, {:exception, _message} = reason} ->
-          {:error, {:credential_check_failed, reason}}
-
         {:error, reason} ->
           {:error, {:credential_check_failed, reason}}
       end
@@ -1099,8 +1075,6 @@ defmodule FastCheck.Events do
     end
   end
 
-  defp normalize_scanner_login_code(_), do: {:error, :invalid_scanner_login_code}
-
   defp normalize_scanner_login_code_attr(value) when is_binary(value) do
     case String.trim(value) do
       "" -> nil
@@ -1165,5 +1139,11 @@ defmodule FastCheck.Events do
   defp event_post_grace_days do
     val = Application.get_env(:fastcheck, :event_post_grace_days, 0)
     if is_integer(val) and val >= 0, do: val, else: 0
+  end
+
+  defp fetch_cached_event(event_id) do
+    {:ok, Cache.get_event!(event_id)}
+  rescue
+    Ecto.NoResultsError -> {:error, :not_found}
   end
 end

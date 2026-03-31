@@ -10,6 +10,7 @@ defmodule FastCheck.Devices.DeviceSession do
   alias FastCheck.Ticketing.{Event, Gate}
 
   @type t :: %__MODULE__{
+          __meta__: Ecto.Schema.Metadata.t(),
           id: integer() | nil,
           device_id: integer() | nil,
           event_id: integer() | nil,
@@ -21,7 +22,9 @@ defmodule FastCheck.Devices.DeviceSession do
           revoked_at: DateTime.t() | nil,
           device: Device.t() | Ecto.Association.NotLoaded.t(),
           event: Event.t() | Ecto.Association.NotLoaded.t(),
-          gate: Gate.t() | Ecto.Association.NotLoaded.t()
+          gate: Gate.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: NaiveDateTime.t() | nil,
+          updated_at: NaiveDateTime.t() | nil
         }
 
   schema "device_sessions" do

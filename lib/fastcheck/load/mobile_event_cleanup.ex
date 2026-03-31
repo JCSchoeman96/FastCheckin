@@ -75,6 +75,8 @@ defmodule FastCheck.Load.MobileEventCleanup do
     end
   end
 
+  # Internal CLI helper: the operator intentionally supplies the manifest path.
+  # sobelow_skip ["Traversal"]
   defp resolve_event_ids_from_manifest(path) when is_binary(path) do
     with {:ok, body} <- File.read(Path.expand(path)),
          {:ok, manifest} <- Jason.decode(body),

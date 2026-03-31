@@ -171,7 +171,7 @@ defmodule FastCheck.TickeraClient.Fallback do
   end
 
   defp derive_last4(value) when is_binary(value) do
-    trimmed = String.trim(value || "")
+    trimmed = String.trim(value)
 
     if trimmed == "" do
       nil
@@ -180,6 +180,4 @@ defmodule FastCheck.TickeraClient.Fallback do
       String.slice(trimmed, start, 4)
     end
   end
-
-  defp derive_last4(_), do: nil
 end

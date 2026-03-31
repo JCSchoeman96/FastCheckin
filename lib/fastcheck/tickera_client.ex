@@ -255,7 +255,7 @@ defmodule FastCheck.TickeraClient do
     * `{:ok, response_map}` on success.
     * `{:error, reason}` on failure.
   """
-  @spec check_credentials(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  @spec check_credentials(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def check_credentials(site_url, api_key) do
     site_url
     |> build_url(api_key, "check_credentials")
@@ -273,7 +273,7 @@ defmodule FastCheck.TickeraClient do
     * `{:ok, response_map}` on success.
     * `{:error, reason}` on failure.
   """
-  @spec get_event_essentials(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  @spec get_event_essentials(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def get_event_essentials(site_url, api_key) do
     url = build_url(site_url, api_key, "event_essentials")
 
@@ -360,7 +360,7 @@ defmodule FastCheck.TickeraClient do
     * `page` - Page number to fetch (default 1).
   """
   @spec get_tickets_info(String.t(), String.t(), pos_integer(), pos_integer()) ::
-          {:ok, map()} | {:error, String.t()}
+          {:ok, map() | list()} | {:error, term()}
   def get_tickets_info(site_url, api_key, per_page \\ 50, page \\ 1) do
     per_page = max(1, per_page)
     page = max(1, page)
@@ -648,11 +648,8 @@ defmodule FastCheck.TickeraClient do
       {:error, reason} ->
         case handle_attendee_fallback(site_url, api_key, reason) do
           {:fallback, cached, count} -> {:ok, cached, count}
-          other -> other
+          {:error, fallback_reason, partial} -> {:error, fallback_reason, partial}
         end
-
-      other ->
-        {:error, "HTTP error: unexpected response #{inspect(other)}", []}
     end
   end
 
@@ -720,7 +717,7 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp maybe_put_custom_field(acc, normalized_name, normalized_value) do
-    if is_binary(normalized_name) and normalized_name != "" do
+    if normalized_name != "" do
       Map.put(acc, normalized_name, normalized_value)
     else
       acc
@@ -876,8 +873,6 @@ defmodule FastCheck.TickeraClient do
     |> normalize_ticket_type_id_field()
   end
 
-  defp email_from_field(nil, _value), do: nil
-
   defp email_from_field(name, value) do
     if String.match?(String.downcase(to_string(name)), ~r/email/) do
       value
@@ -894,8 +889,6 @@ defmodule FastCheck.TickeraClient do
       _ -> nil
     end
   end
-
-  defp ticket_type_from_field(nil, _value), do: nil
 
   defp ticket_type_from_field(name, value) do
     if String.match?(String.downcase(to_string(name)), ~r/ticket/) do
@@ -925,9 +918,6 @@ defmodule FastCheck.TickeraClient do
 
       {:error, reason} ->
         handle_attendee_fallback(site_url, api_key, reason, Enum.reverse(acc))
-
-      other ->
-        {:error, "HTTP error: unexpected response #{inspect(other)}", Enum.reverse(acc)}
     end
   end
 
@@ -964,8 +954,6 @@ defmodule FastCheck.TickeraClient do
     end)
     |> then(fn {data, additional} -> {Enum.reverse(data), additional} end)
   end
-
-  defp extract_tickets_page(_response), do: {[], %{}}
 
   defp extract_ticket_data(%{"data" => %{} = inner}), do: inner
   defp extract_ticket_data(%{data: %{} = inner}), do: inner
@@ -1214,6 +1202,8 @@ defmodule FastCheck.TickeraClient do
 
   defp normalize_checked_in_flag(_value), do: nil
 
+  @spec handle_attendee_fallback(String.t(), String.t(), term(), list()) ::
+          {:fallback, list(), non_neg_integer()} | {:error, term(), list()}
   defp handle_attendee_fallback(site_url, api_key, reason, partial \\ []) do
     case Fallback.maybe_use_cached(site_url, api_key, reason) do
       {:ok, cached} ->
@@ -1279,11 +1269,6 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp normalize_advanced_check_in(_payload) do
-    Logger.error("Tickera advanced check-in payload missing")
-    {:error, "JSON_ERROR", "Response not valid JSON"}
-  end
-
   defp normalize_advanced_payload(%{} = data) do
     normalized =
       Enum.reduce(data, %{}, fn {key, value}, acc ->
@@ -1291,10 +1276,6 @@ defmodule FastCheck.TickeraClient do
       end)
 
     {:ok, normalized}
-  end
-
-  defp normalize_advanced_payload(_data) do
-    {:ok, %{}}
   end
 
   defp maybe_callback(nil, _page, _total_pages, _count), do: :ok
@@ -1384,24 +1365,14 @@ defmodule FastCheck.TickeraClient do
             _ -> payload
           end
 
-        if is_map(data_map) do
-          normalized =
-            Enum.reduce(data_map, %{}, fn {key, value}, acc ->
-              maybe_put_ticket_config_field(acc, key, value)
-            end)
-            |> Map.put_new(:allowed_checkins, 1)
+        normalized =
+          Enum.reduce(data_map, %{}, fn {key, value}, acc ->
+            maybe_put_ticket_config_field(acc, key, value)
+          end)
+          |> Map.put_new(:allowed_checkins, 1)
 
-          {:ok, normalized}
-        else
-          Logger.error("Tickera ticket config payload missing data")
-          {:error, "JSON_ERROR", "Response not valid JSON"}
-        end
+        {:ok, normalized}
     end
-  end
-
-  defp normalize_ticket_config(_payload) do
-    Logger.error("Tickera ticket config payload missing")
-    {:error, "JSON_ERROR", "Response not valid JSON"}
   end
 
   defp normalize_ticket_payload(%{} = payload) do
@@ -1432,11 +1403,6 @@ defmodule FastCheck.TickeraClient do
 
         {:ok, Map.merge(@ticket_defaults, normalized, fn _key, _left, right -> right end)}
     end
-  end
-
-  defp normalize_ticket_payload(_payload) do
-    Logger.error("Tickera ticket status payload missing")
-    {:error, "JSON_ERROR", "Response not valid JSON"}
   end
 
   defp maybe_put_advanced_field(acc, key, value) when is_binary(key) do
@@ -1485,11 +1451,6 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp normalize_event_occupancy(_payload) do
-    Logger.error("Tickera event occupancy payload missing")
-    {:error, "JSON_ERROR", "Response not valid JSON"}
-  end
-
   defp extract_business_error(payload) when is_map(payload) do
     case payload_error_status(payload) do
       {:error, code, default_message} ->
@@ -1499,8 +1460,6 @@ defmodule FastCheck.TickeraClient do
         :ok
     end
   end
-
-  defp extract_business_error(_payload), do: :ok
 
   defp payload_error_status(payload) do
     cond do
@@ -1805,25 +1764,26 @@ defmodule FastCheck.TickeraClient do
   end
 
   defp build_url(site_url, api_key, endpoint) do
-    trimmed = site_url |> to_string() |> String.trim()
-
     normalized_site_url =
-      case Regex.match?(~r/^https?:\/\//i, trimmed) do
-        true -> trimmed
-        false -> "https://#{trimmed}"
-      end
+      site_url
+      |> to_string()
+      |> String.trim()
+      |> ensure_site_url_scheme()
       |> String.trim_trailing("/")
 
     endpoint = endpoint |> to_string() |> String.trim_leading("/")
     "#{normalized_site_url}/tc-api/#{api_key}/#{endpoint}"
   end
 
+  defp ensure_site_url_scheme(<<"http://", _::binary>> = site_url), do: site_url
+  defp ensure_site_url_scheme(<<"https://", _::binary>> = site_url), do: site_url
+  defp ensure_site_url_scheme(site_url), do: "https://#{site_url}"
+
   defp safe_log_url(url) when is_binary(url) do
     Regex.replace(~r{/tc-api/[^/?#]+}, url, "/tc-api/[REDACTED]")
   end
 
-  defp safe_log_url(url), do: url
-
+  @spec fetch_json(binary()) :: {:ok, map() | list()} | {:error, term()}
   defp fetch_json(url) do
     Logger.debug("TickeraClient GET #{safe_log_url(url)}")
 
@@ -2011,8 +1971,6 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp extract_api_key_from_url(_url), do: nil
-
   defp put_or_replace_header(headers, key, value) when is_list(headers) do
     downcased_key = String.downcase(key)
 
@@ -2024,8 +1982,6 @@ defmodule FastCheck.TickeraClient do
 
     filtered ++ [{key, value}]
   end
-
-  defp put_or_replace_header(_headers, key, value), do: [{key, value}]
 
   defp header_value(headers, key) when is_list(headers) do
     downcased_key = String.downcase(key)
@@ -2083,8 +2039,6 @@ defmodule FastCheck.TickeraClient do
     _error -> url
   end
 
-  defp ensure_endpoint_trailing_slash(url), do: url
-
   defp empty_body_hint(response_headers, url) do
     content_length = header_value(response_headers, "content-length") || "unknown"
     content_type = header_value(response_headers, "content-type") || "unknown"
@@ -2133,8 +2087,6 @@ defmodule FastCheck.TickeraClient do
     _error -> " credential_check=probe_error"
   end
 
-  defp maybe_probe_credentials_after_empty_body(_url), do: ""
-
   defp decode_credential_pass_value(raw_body) do
     body = normalize_response_body(raw_body)
 
@@ -2168,8 +2120,6 @@ defmodule FastCheck.TickeraClient do
     _error -> nil
   end
 
-  defp extract_site_url_from_tickera_url(_url), do: nil
-
   defp add_cache_buster(url) when is_binary(url) do
     uri = URI.parse(url)
     existing_query = if uri.query in [nil, ""], do: %{}, else: URI.decode_query(uri.query)
@@ -2178,8 +2128,6 @@ defmodule FastCheck.TickeraClient do
   rescue
     _error -> url
   end
-
-  defp add_cache_buster(url), do: url
 
   defp classify_http_status(code, body) when is_integer(code) and code >= 500,
     do: {:server_error, code, body}
@@ -2254,8 +2202,6 @@ defmodule FastCheck.TickeraClient do
     |> String.slice(0, 300)
     |> String.replace(~r/\s+/, " ")
   end
-
-  defp body_preview(_body), do: ""
 
   defp parse_datetime(nil), do: nil
   defp parse_datetime(<<>>), do: nil

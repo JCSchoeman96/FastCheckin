@@ -213,7 +213,7 @@ defmodule FastCheckWeb.ScannerSessionController do
         {:error, :forbidden, message}
 
       {:error, {_reason, message}} ->
-        {:error, :forbidden, message || "Scanning is disabled for this event"}
+        {:error, :forbidden, message}
     end
   end
 
@@ -230,9 +230,6 @@ defmodule FastCheckWeb.ScannerSessionController do
 
       {:error, :missing_credential} ->
         {:error, :unauthorized, "Event password is required"}
-
-      _other ->
-        {:error, :forbidden, "Event password is invalid"}
     end
   end
 
@@ -262,8 +259,6 @@ defmodule FastCheckWeb.ScannerSessionController do
     base_prefix = "/scanner/#{event_id}"
     path == base_prefix or String.starts_with?(path, base_prefix <> "?")
   end
-
-  defp valid_scanner_redirect_for_event?(_path, _event_id), do: false
 
   defp parse_event_id_value(value) when is_integer(value) and value > 0, do: {:ok, value}
 
@@ -357,20 +352,13 @@ defmodule FastCheckWeb.ScannerSessionController do
       true ->
         caller = self()
 
-        case Task.start(fn ->
-               maybe_allow_sandbox_connection(caller)
-               Events.warm_event_cache(event)
-             end) do
-          {:ok, _pid} ->
-            :ok
+        {:ok, _pid} =
+          Task.start(fn ->
+            maybe_allow_sandbox_connection(caller)
+            Events.warm_event_cache(event)
+          end)
 
-          {:error, reason} ->
-            Logger.warning(
-              "Unable to start scanner cache warmup for event #{event.id}: #{inspect(reason)}"
-            )
-
-            :ok
-        end
+        :ok
     end
   rescue
     exception ->
@@ -398,8 +386,6 @@ defmodule FastCheckWeb.ScannerSessionController do
 
     :ok
   end
-
-  defp maybe_allow_sandbox_connection(_caller), do: :ok
 
   defp sandbox_pool? do
     Application.get_env(:fastcheck, FastCheck.Repo, [])

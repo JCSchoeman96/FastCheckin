@@ -314,7 +314,11 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   end
 
   defp mobile_shared_route?(conn) do
-    conn.request_path in ["/api/v1/mobile/login", "/api/v1/mobile/attendees", "/api/v1/mobile/scans"]
+    conn.request_path in [
+      "/api/v1/mobile/login",
+      "/api/v1/mobile/attendees",
+      "/api/v1/mobile/scans"
+    ]
   end
 
   # Helper: Extract event ID from path or params
@@ -369,7 +373,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   defp token_fingerprint(token) when is_binary(token) do
     token
-    |> :crypto.hash(:sha256)
+    |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
     |> String.slice(0, 16)
   end
@@ -391,10 +395,8 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
       _ ->
         # Fallback to direct connection IP (handles IPv4 and IPv6)
-        case Plug.Conn.get_peer_data(conn) do
-          %{address: address} -> :inet.ntoa(address) |> to_string()
-          _ -> "unknown"
-        end
+        %{address: address} = Plug.Conn.get_peer_data(conn)
+        :inet.ntoa(address) |> to_string()
     end
   end
 

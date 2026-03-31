@@ -2103,12 +2103,12 @@ defmodule FastCheckWeb.Components.Button do
   defp drop_rest(rest) do
     all_rest =
       (["pinging", "circle", "right_icon", "left_icon"] ++ @indicator_positions)
-      |> Enum.map(&if(is_binary(&1), do: String.to_atom(&1), else: &1))
+      |> Enum.map(&if(is_binary(&1), do: String.to_existing_atom(&1), else: &1))
 
     Map.drop(rest, all_rest)
   end
 
   defp indicators?(rest) do
-    Enum.any?(@indicator_positions, &Map.get(rest, String.to_atom(&1)))
+    Enum.any?(@indicator_positions, &Map.get(rest, String.to_existing_atom(&1)))
   end
 end
