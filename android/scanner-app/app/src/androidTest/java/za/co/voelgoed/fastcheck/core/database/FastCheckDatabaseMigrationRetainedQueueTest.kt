@@ -54,7 +54,10 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
 
         val migratedDatabase =
             Room.databaseBuilder(context, FastCheckDatabase::class.java, DATABASE_NAME)
-                .addMigrations(FastCheckDatabaseMigrations.MIGRATION_2_3)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_2_3,
+                    FastCheckDatabaseMigrations.MIGRATION_3_4
+                )
                 .allowMainThreadQueries()
                 .build()
         database = migratedDatabase
@@ -335,7 +338,11 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
             error("login is not used by this migration test")
         }
 
-        override suspend fun syncAttendees(since: String?): MobileSyncResponse {
+        override suspend fun syncAttendees(
+            since: String?,
+            cursor: String?,
+            limit: Int?
+        ): MobileSyncResponse {
             error("syncAttendees is not used by this migration test")
         }
 

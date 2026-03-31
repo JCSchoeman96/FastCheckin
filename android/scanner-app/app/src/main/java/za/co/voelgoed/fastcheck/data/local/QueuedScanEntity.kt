@@ -6,7 +6,10 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "queued_scans",
-    indices = [Index(value = ["idempotencyKey"], unique = true)]
+    indices = [
+        Index(value = ["idempotencyKey"], unique = true),
+        Index(value = ["replayed", "createdAt", "id"])
+    ]
 )
 data class QueuedScanEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

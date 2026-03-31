@@ -24,6 +24,7 @@ object DatabaseModule {
             FastCheckDatabase.DATABASE_NAME
         )
             .addMigrations(FastCheckDatabaseMigrations.MIGRATION_2_3)
+            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_3_4)
             .build()
 
     @Provides

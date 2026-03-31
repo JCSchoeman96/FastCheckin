@@ -15,4 +15,16 @@ object FastCheckDatabaseMigrations {
                 )
             }
         }
+
+    val MIGRATION_3_4: Migration =
+        object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_queued_scans_replayed_createdAt_id
+                    ON queued_scans(replayed, createdAt, id)
+                    """.trimIndent()
+                )
+            }
+        }
 }
