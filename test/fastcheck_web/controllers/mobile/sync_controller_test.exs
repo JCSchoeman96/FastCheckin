@@ -349,6 +349,47 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert is_binary(next_cursor)
     end
 
+    test "orders cursor pagination by updated_at and id when timestamps match", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
+      attendees = insert_same_timestamp_attendees(event.id, 3)
+
+      first_page =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2")
+        |> json_response(200)
+
+      assert %{
+               "data" => %{
+                 "attendees" => first_attendees,
+                 "count" => 2,
+                 "next_cursor" => next_cursor
+               }
+             } = first_page
+
+      assert Enum.map(first_attendees, & &1["id"]) == Enum.map(Enum.take(attendees, 2), & &1.id)
+      assert is_binary(next_cursor)
+
+      second_page =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&cursor=#{next_cursor}")
+        |> json_response(200)
+
+      assert %{
+               "data" => %{
+                 "attendees" => second_attendees,
+                 "count" => 1,
+                 "next_cursor" => nil
+               }
+             } = second_page
+
+      assert Enum.map(second_attendees, & &1["id"]) == [Enum.at(attendees, 2).id]
+    end
+
     test "returns final page without next_cursor", %{
       conn: conn,
       token: token,
@@ -1091,6 +1132,29 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       }
       |> Repo.insert!()
     end)
+  end
+
+  defp insert_same_timestamp_attendees(event_id, count) do
+    shared_time = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    from(attendee in Attendee, where: attendee.event_id == ^event_id)
+    |> Repo.delete_all()
+
+    1..count
+    |> Enum.map(fn index ->
+      %Attendee{
+        event_id: event_id,
+        ticket_code: "TIE#{String.pad_leading(Integer.to_string(index), 3, "0")}",
+        first_name: "Tie",
+        last_name: "Breaker #{index}",
+        payment_status: "completed",
+        allowed_checkins: 1,
+        checkins_remaining: 1,
+        updated_at: shared_time
+      }
+      |> Repo.insert!()
+    end)
+    |> Enum.sort_by(& &1.id)
   end
 
   defp unique_scanner_code do
