@@ -78,7 +78,7 @@ fun lightColorRoles(): ColorRoles =
     ColorRoles(
         brand = BrandPrimitives.Red,
         interactivePrimary = BrandPrimitives.Red,
-        interactiveSecondary = InfoPrimitives.Blue,
+        interactiveSecondary = BrandPrimitives.RedDark,
         success = SuccessPrimitives.Green,
         warning = WarningPrimitives.Amber,
         info = InfoPrimitives.Blue,
