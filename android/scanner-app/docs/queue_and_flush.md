@@ -2,7 +2,10 @@
 
 ## Runtime Truth
 
-- Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
+- Android canonicalizes ticket identity by trimming proven scanner boundary
+  whitespace before local lookup, replay suppression, queueing, and upload;
+  structured QR parsing is not promoted.
+- Contract tests are the source of truth for the accepted trim vectors.
 - Active Android UI and use cases currently enqueue only `IN`.
 - Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
 - If future or accidental code inserts `OUT`, the queued direction is preserved
@@ -25,12 +28,12 @@ There is no runtime support for `{ "batches": ... }`.
 - every captured scan is written locally first
 - queue entries are keyed by `idempotency_key`
 - Room enforces unique `idempotency_key` at the local queue layer
-- replay suppression is a local-only 3 second UX guard keyed by the exact raw
+- replay suppression is a local-only 3 second UX guard keyed by the canonical
   `ticket_code` value currently queued for upload
 - replay suppression is true only when `injected_now - seenAtEpochMillis <
   3_000`
 - expired replay-suppression rows are treated as expired immediately and are
-  replaced inline on the next queue attempt for that exact `ticket_code`
+  replaced inline on the next queue attempt for that canonical `ticket_code`
 - replay cache stores server-terminal results by `idempotency_key`
 - `createdAt` is stored as UTC epoch millis (`Long`) and is the only queue
   ordering field

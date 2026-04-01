@@ -4,6 +4,9 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 object FastCheckDatabaseMigrations {
+    private const val TRIMMED_TICKET_CODE_SQL: String =
+        "trim(ticketCode, ' ' || char(9) || char(10) || char(13))"
+
     val MIGRATION_2_3: Migration =
         object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -27,4 +30,154 @@ object FastCheckDatabaseMigrations {
                 )
             }
         }
+
+    val MIGRATION_4_5: Migration =
+        object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    UPDATE queued_scans
+                    SET ticketCode = $TRIMMED_TICKET_CODE_SQL
+                    WHERE $TRIMMED_TICKET_CODE_SQL != '' AND ticketCode != $TRIMMED_TICKET_CODE_SQL
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    UPDATE recent_flush_outcomes
+                    SET ticketCode = $TRIMMED_TICKET_CODE_SQL
+                    WHERE $TRIMMED_TICKET_CODE_SQL != '' AND ticketCode != $TRIMMED_TICKET_CODE_SQL
+                    """.trimIndent()
+                )
+
+                rebuildAttendeesTable(db)
+                rebuildReplaySuppressionTable(db)
+            }
+        }
+
+    private fun rebuildAttendeesTable(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE attendees RENAME TO attendees_legacy")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS attendees (
+                id INTEGER NOT NULL,
+                eventId INTEGER NOT NULL,
+                ticketCode TEXT NOT NULL,
+                firstName TEXT,
+                lastName TEXT,
+                email TEXT,
+                ticketType TEXT,
+                allowedCheckins INTEGER NOT NULL,
+                checkinsRemaining INTEGER NOT NULL,
+                paymentStatus TEXT,
+                isCurrentlyInside INTEGER NOT NULL,
+                updatedAt TEXT,
+                PRIMARY KEY(id)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO attendees (
+                id,
+                eventId,
+                ticketCode,
+                firstName,
+                lastName,
+                email,
+                ticketType,
+                allowedCheckins,
+                checkinsRemaining,
+                paymentStatus,
+                isCurrentlyInside,
+                updatedAt
+            )
+            SELECT
+                attendee.id,
+                attendee.eventId,
+                CASE
+                    WHEN trim(attendee.ticketCode, ' ' || char(9) || char(10) || char(13)) = '' THEN attendee.ticketCode
+                    ELSE trim(attendee.ticketCode, ' ' || char(9) || char(10) || char(13))
+                END,
+                attendee.firstName,
+                attendee.lastName,
+                attendee.email,
+                attendee.ticketType,
+                attendee.allowedCheckins,
+                attendee.checkinsRemaining,
+                attendee.paymentStatus,
+                attendee.isCurrentlyInside,
+                attendee.updatedAt
+            FROM attendees_legacy attendee
+            WHERE trim(attendee.ticketCode, ' ' || char(9) || char(10) || char(13)) = ''
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM attendees_legacy contender
+                    WHERE contender.eventId = attendee.eventId
+                        AND trim(contender.ticketCode, ' ' || char(9) || char(10) || char(13)) =
+                            trim(attendee.ticketCode, ' ' || char(9) || char(10) || char(13))
+                        AND trim(contender.ticketCode, ' ' || char(9) || char(10) || char(13)) != ''
+                        AND (
+                            COALESCE(contender.updatedAt, '') > COALESCE(attendee.updatedAt, '')
+                            OR (
+                                COALESCE(contender.updatedAt, '') = COALESCE(attendee.updatedAt, '')
+                                AND contender.id > attendee.id
+                            )
+                        )
+                )
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE attendees_legacy")
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_attendees_eventId_ticketCode ON attendees(eventId, ticketCode)"
+        )
+    }
+
+    private fun rebuildReplaySuppressionTable(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE local_replay_suppression RENAME TO local_replay_suppression_legacy")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS local_replay_suppression (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                ticketCode TEXT NOT NULL,
+                seenAtEpochMillis INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO local_replay_suppression (
+                id,
+                ticketCode,
+                seenAtEpochMillis
+            )
+            SELECT
+                suppression.id,
+                CASE
+                    WHEN trim(suppression.ticketCode, ' ' || char(9) || char(10) || char(13)) = '' THEN suppression.ticketCode
+                    ELSE trim(suppression.ticketCode, ' ' || char(9) || char(10) || char(13))
+                END,
+                suppression.seenAtEpochMillis
+            FROM local_replay_suppression_legacy suppression
+            WHERE trim(suppression.ticketCode, ' ' || char(9) || char(10) || char(13)) = ''
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM local_replay_suppression_legacy contender
+                    WHERE trim(contender.ticketCode, ' ' || char(9) || char(10) || char(13)) =
+                        trim(suppression.ticketCode, ' ' || char(9) || char(10) || char(13))
+                        AND trim(contender.ticketCode, ' ' || char(9) || char(10) || char(13)) != ''
+                        AND (
+                            contender.seenAtEpochMillis > suppression.seenAtEpochMillis
+                            OR (
+                                contender.seenAtEpochMillis = suppression.seenAtEpochMillis
+                                AND contender.id > suppression.id
+                            )
+                        )
+                )
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE local_replay_suppression_legacy")
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_local_replay_suppression_ticketCode ON local_replay_suppression(ticketCode)"
+        )
+    }
 }

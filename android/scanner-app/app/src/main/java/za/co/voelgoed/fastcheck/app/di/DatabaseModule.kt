@@ -25,7 +25,8 @@ object DatabaseModule {
         )
             .addMigrations(
                 FastCheckDatabaseMigrations.MIGRATION_2_3,
-                FastCheckDatabaseMigrations.MIGRATION_3_4
+                FastCheckDatabaseMigrations.MIGRATION_3_4,
+                FastCheckDatabaseMigrations.MIGRATION_4_5
             )
             .build()
 

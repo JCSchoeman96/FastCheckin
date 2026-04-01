@@ -4,17 +4,17 @@ This is the canonical repo note for the current Android mobile runtime truth.
 
 ## Raw Payload Truth
 
-Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
+Android canonicalizes ticket identity by trimming proven scanner boundary whitespace before local lookup, replay suppression, queueing, and upload; structured QR parsing is not promoted.
 
-- Android sends the raw scanned payload as `ticket_code` unchanged today.
-- There is no approved client-side normalization policy today.
-- The only proven backend-side normalization today is required-field trimming in
-  Phoenix validation.
-- Android queues and uploads the raw captured payload as `ticket_code`.
-- Android attendee sync preserves backend `ticket_code` exactly as delivered.
-- Phoenix currently trims required mobile scan fields during validation.
-- That trimming does not prove any broader QR normalization policy or scanned
-  payload resolver for `/api/v1/mobile/*`.
+- Contract tests are the source of truth for the accepted trim vectors.
+- Android source adapters still emit raw capture strings.
+- Android queues and uploads the canonicalized `ticket_code`.
+- Android attendee sync canonicalizes backend `ticket_code` before local
+  storage.
+- Phoenix currently trims required mobile scan fields during validation for the
+  covered contract cases.
+- That does not promote any broader QR normalization policy or scanned payload
+  resolver for `/api/v1/mobile/*`.
 
 ## Direction Truth
 

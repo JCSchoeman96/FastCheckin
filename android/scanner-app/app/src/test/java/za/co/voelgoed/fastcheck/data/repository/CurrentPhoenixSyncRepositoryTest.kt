@@ -198,6 +198,46 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
+    fun syncCanonicalizesTicketCodeBeforePersistingLocalLookupKey() = runTest {
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:31:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 44,
+                                    event_id = 5,
+                                    ticket_code = " \tVG-TRIM-44\r\n",
+                                    first_name = "Trim",
+                                    last_name = "Case",
+                                    email = "trim@example.com",
+                                    ticket_type = "General",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 1,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T08:30:00Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "full",
+                        next_cursor = null
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees()
+
+        assertThat(database.scannerDao().findAttendee(5, "VG-TRIM-44")?.id).isEqualTo(44)
+        assertThat(database.scannerDao().findAttendee(5, " \tVG-TRIM-44\r\n")).isNull()
+    }
+
+    @Test
     fun pagedSyncFetchesUntilCursorExhaustedAndPersistsAllPages() = runTest {
         api.pagedResponses =
             mutableListOf(

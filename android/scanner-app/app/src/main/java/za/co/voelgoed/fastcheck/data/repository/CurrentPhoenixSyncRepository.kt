@@ -9,6 +9,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import retrofit2.HttpException
+import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
@@ -65,9 +66,16 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 latestPayload = payload
                 totalFetched += payload.attendees.size
 
-                // Preserve the backend ticket_code as delivered until QR normalization is explicitly defined.
                 if (payload.attendees.isNotEmpty()) {
-                    attendeesToUpsert += payload.attendees.map { it.toEntity() }
+                    attendeesToUpsert +=
+                        payload.attendees.map { attendee ->
+                            val canonicalTicketCode =
+                                requireNotNull(TicketCodeNormalizer.normalizeOrNull(attendee.ticket_code)) {
+                                    "Sync payload attendee ${attendee.id} had an invalid ticket_code."
+                                }
+
+                            attendee.toEntity().copy(ticketCode = canonicalTicketCode)
+                        }
                 }
 
                 cursor = payload.next_cursor

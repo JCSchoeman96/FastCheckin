@@ -114,8 +114,8 @@ Runtime notes:
 - The server is the business-rule authority; attendee cache is a local mirror,
   not the source of truth.
 - Invalid `since` falls back to full sync on the backend today.
-- Android stores backend `ticket_code` exactly as delivered in attendee sync
-  until a new contract explicitly promotes a broader normalization policy.
+- Android canonicalizes backend `ticket_code` with the same proven trim vectors
+  used for local ticket identity.
 
 ## Scan Upload
 
@@ -166,9 +166,10 @@ Runtime notes:
 
 - Always send `{ "scans": [...] }`.
 - Never send `{ "batches": ... }`.
-- Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
-- Phoenix currently trims required mobile scan fields during validation. That is
-  backend-side input handling, not a promoted QR normalization policy.
+- Android canonicalizes ticket identity by trimming proven scanner boundary
+  whitespace before local lookup, replay suppression, queueing, and upload;
+  structured QR parsing is not promoted.
+- Contract tests are the source of truth for the accepted trim vectors.
 - Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
 - The server performs the actual business-rule decision; client runtime should
   queue, replay-suppress, and upload, not simulate approval logic locally.

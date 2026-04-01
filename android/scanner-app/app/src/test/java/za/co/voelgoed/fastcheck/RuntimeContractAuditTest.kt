@@ -85,8 +85,9 @@ class RuntimeContractAuditTest {
 
     @Test
     fun lockdownDocsStateCanonicalRuntimeTruth() {
-        val rawPayloadPhrase =
-            "Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted."
+        val canonicalizationPhrase =
+            "Android canonicalizes ticket identity by trimming proven scanner boundary"
+        val noParsingPhrase = "structured QR parsing is not promoted."
         val directionPhrase =
             "Android runtime remains effectively IN-only; OUT is not a promoted successful business flow."
         val modePhrase =
@@ -102,7 +103,8 @@ class RuntimeContractAuditTest {
             repoFile("docs/queue_and_flush.md", "android/scanner-app/docs/queue_and_flush.md").readText()
 
         listOf(lockdownDoc, mobileTruthDoc, currentApiDoc, backendGapsDoc, queueDoc).forEach { text ->
-            assertThat(text).contains(rawPayloadPhrase)
+            assertThat(text).contains(canonicalizationPhrase)
+            assertThat(text).contains(noParsingPhrase)
             assertThat(text).contains(directionPhrase)
         }
 
