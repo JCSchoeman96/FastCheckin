@@ -20,13 +20,13 @@ object BrandPrimitives {
     val RedDark = Color(0xFFA82220)
     val RedLight = Color(0xFFE8635E)
     val RedSubtle = Color(0xFFFDECEB)
-    val White = Color(0xFFFFFFFF)
-    val Black = Color(0xFF1A1A1A)
 }
 
 // ── Neutral ──────────────────────────────────────────────────────────────────
 
 object NeutralPrimitives {
+    val White = Color(0xFFFFFFFF)
+    val Black = Color(0xFF1A1A1A)
     val N50 = Color(0xFFFAFAFA)
     val N100 = Color(0xFFF5F5F5)
     val N200 = Color(0xFFE5E5E5)
