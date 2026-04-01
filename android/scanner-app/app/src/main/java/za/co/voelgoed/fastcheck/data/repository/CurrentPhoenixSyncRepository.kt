@@ -41,7 +41,6 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             var latestPayload: MobileSyncPayload? = null
             var totalFetched = 0
             var pagesFetched = 0
-            val attendeesToUpsert = mutableListOf<AttendeeEntity>()
 
             do {
                 if (pagesFetched >= MAX_SYNC_PAGE_COUNT) {
@@ -64,22 +63,10 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 pagesFetched += 1
 
                 latestPayload = payload
-                totalFetched += payload.attendees.size
+                val attendeesForPage = payload.toPersistableAttendees()
+                val nextCursor = payload.next_cursor
 
-                if (payload.attendees.isNotEmpty()) {
-                    attendeesToUpsert +=
-                        payload.attendees.map { attendee ->
-                            val canonicalTicketCode =
-                                requireNotNull(TicketCodeNormalizer.normalizeOrNull(attendee.ticket_code)) {
-                                    "Sync payload attendee ${attendee.id} had an invalid ticket_code."
-                                }
-
-                            attendee.toEntity().copy(ticketCode = canonicalTicketCode)
-                        }
-                }
-
-                cursor = payload.next_cursor
-                cursor?.let {
+                nextCursor?.let {
                     if (!seenCursors.add(it)) {
                         throw SyncPaginationException(
                             message =
@@ -88,16 +75,22 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                         )
                     }
                 }
+
+                if (attendeesForPage.isNotEmpty()) {
+                    // Progressive attendee writes keep sync heap bounded to a page at a time.
+                    // `sync_metadata` remains the last fully successful sync boundary, so callers
+                    // must tolerate attendee rows being ahead of metadata during or after a failed sync.
+                    scannerDao.upsertAttendees(attendeesForPage)
+                }
+
+                totalFetched += attendeesForPage.size
+                cursor = nextCursor
             } while (cursor != null)
 
             val finalPayload = requireNotNull(latestPayload) { "Sync failed" }
             val metadata = finalPayload.toSyncMetadata(session.eventId).copy(attendeeCount = totalFetched)
 
-            if (attendeesToUpsert.isNotEmpty()) {
-                scannerDao.upsertAttendeesAndSyncMetadata(attendeesToUpsert, metadata)
-            } else {
-                scannerDao.upsertSyncMetadata(metadata)
-            }
+            scannerDao.upsertSyncMetadata(metadata)
 
             return metadata.toDomain()
         } catch (http: HttpException) {
@@ -130,6 +123,16 @@ class SyncRateLimitedException(
 class SyncPaginationException(
     override val message: String
 ) : RuntimeException(message)
+
+private fun MobileSyncPayload.toPersistableAttendees(): List<AttendeeEntity> =
+    attendees.map { attendee ->
+        val canonicalTicketCode =
+            requireNotNull(TicketCodeNormalizer.normalizeOrNull(attendee.ticket_code)) {
+                "Sync payload attendee ${attendee.id} had an invalid ticket_code."
+            }
+
+        attendee.toEntity().copy(ticketCode = canonicalTicketCode)
+    }
 
 private fun parseRetryAfterMillis(exception: HttpException, clock: Clock): Long? {
     val headerValue = exception.response()?.headers()?.get("Retry-After")?.trim()
