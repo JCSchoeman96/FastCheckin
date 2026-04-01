@@ -9,5 +9,5 @@ object TicketCodeNormalizer {
     private val boundaryCharacters = charArrayOf(' ', '\t', '\n', '\r')
 
     fun normalizeOrNull(rawValue: String): String? =
-        rawValue.trim(*boundaryCharacters).takeIf { it.isNotEmpty() }
+        rawValue.trim(*boundaryCharacters).takeIf { it.isNotBlank() }
 }
