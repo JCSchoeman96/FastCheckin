@@ -477,7 +477,6 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(failure).isInstanceOf(IllegalArgumentException::class.java)
         assertThat(failure?.message).contains("invalid ticket_code")
         assertThat(database.scannerDao().findAttendee(5, "VG-VALID-001")?.id).isEqualTo(1101)
-        assertThat(database.scannerDao().findAttendee(5, "VG-VALID-002")).isNull()
         assertThat(countAttendeesForEvent(5)).isEqualTo(1)
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(0)

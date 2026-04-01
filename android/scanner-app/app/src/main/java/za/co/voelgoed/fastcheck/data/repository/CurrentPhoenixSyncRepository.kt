@@ -63,7 +63,6 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 pagesFetched += 1
 
                 latestPayload = payload
-                val attendeesForPage = payload.toPersistableAttendees()
                 val nextCursor = payload.next_cursor
 
                 nextCursor?.let {
@@ -75,6 +74,8 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                         )
                     }
                 }
+
+                val attendeesForPage = payload.toPersistableAttendees()
 
                 if (attendeesForPage.isNotEmpty()) {
                     // Progressive attendee writes keep sync heap bounded to a page at a time.
