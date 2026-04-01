@@ -1,10 +1,9 @@
 /**
- * FastCheck semantic color roles.
+ * Semantic color roles for FastCheck.
  *
  * Maps logical UI intents (success, warning, error, info, neutral) to
- * concrete color tokens from the FastCheck palette. Feature screens use
- * these roles to color-code status indicators without embedding raw
- * Color values.
+ * concrete color tokens from [ColorPrimitives]. Feature screens consume
+ * these roles rather than raw Color values.
  *
  * Brand red (#D12C26) is a brand token, not the universal destructive
  * or error color.
