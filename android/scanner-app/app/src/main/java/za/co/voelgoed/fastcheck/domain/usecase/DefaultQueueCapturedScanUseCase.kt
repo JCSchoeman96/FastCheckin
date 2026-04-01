@@ -4,6 +4,7 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
+import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
@@ -21,11 +22,8 @@ class DefaultQueueCapturedScanUseCase @Inject constructor(
         operatorName: String,
         entranceName: String
     ): QueueCreationResult {
-        if (ticketCode.isBlank()) {
-            return QueueCreationResult.InvalidTicketCode
-        }
-
-        val rawTicketCode = ticketCode
+        val canonicalTicketCode =
+            TicketCodeNormalizer.normalizeOrNull(ticketCode) ?: return QueueCreationResult.InvalidTicketCode
 
         val eventId = sessionAuthGateway.currentEventId() ?: return QueueCreationResult.MissingSessionContext
         val effectiveOperator = sessionAuthGateway.currentOperatorName() ?: operatorName.trim()
@@ -33,7 +31,7 @@ class DefaultQueueCapturedScanUseCase @Inject constructor(
         val scan =
             PendingScan(
                 eventId = eventId,
-                ticketCode = rawTicketCode,
+                ticketCode = canonicalTicketCode,
                 idempotencyKey = UUID.randomUUID().toString(),
                 createdAt = createdAt,
                 scannedAt = Instant.ofEpochMilli(createdAt).toString(),

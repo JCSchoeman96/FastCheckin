@@ -29,6 +29,7 @@ import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
+import za.co.voelgoed.fastcheck.domain.usecase.DefaultQueueCapturedScanUseCase
 
 @RunWith(RobolectricTestRunner::class)
 class CurrentPhoenixMobileScanRepositoryTest {
@@ -85,9 +86,33 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
-    fun keepsExactRawPayloadDistinctForReplaySuppressionAndUpload() = runTest {
-        repository.queueScan(sampleScan(idempotencyKey = "idem-raw-1", ticketCode = "VG-001", createdAt = 1_000L))
-        repository.queueScan(sampleScan(idempotencyKey = "idem-raw-2", ticketCode = " VG-001 ", createdAt = 2_000L))
+    fun canonicalQueueingTreatsTrimmedScannerInputAsOneIdentityForReplaySuppressionAndUpload() = runTest {
+        val queueUseCase =
+            DefaultQueueCapturedScanUseCase(
+                scanRepository = repository,
+                sessionAuthGateway =
+                    object : SessionAuthGateway {
+                        override suspend fun currentEventId(): Long = 5L
+
+                        override suspend fun currentOperatorName(): String? = "Scanner 1"
+                    },
+                clock = clock
+            )
+
+        val firstResult =
+            queueUseCase.enqueue(
+                ticketCode = "VG-001",
+                direction = ScanDirection.IN,
+                operatorName = "Manual",
+                entranceName = "Main Gate"
+            )
+        val secondResult =
+            queueUseCase.enqueue(
+                ticketCode = " \tVG-001\r\n",
+                direction = ScanDirection.IN,
+                operatorName = "Manual",
+                entranceName = "Main Gate"
+            )
 
         api.uploadResponse =
             UploadScansResponse(
@@ -96,17 +121,12 @@ class CurrentPhoenixMobileScanRepositoryTest {
                         results =
                             listOf(
                                 UploadedScanResult(
-                                    idempotency_key = "idem-raw-1",
-                                    status = "success",
-                                    message = "Check-in successful"
-                                ),
-                                UploadedScanResult(
-                                    idempotency_key = "idem-raw-2",
+                                    idempotency_key = database.scannerDao().loadQueuedScans().single().idempotencyKey,
                                     status = "success",
                                     message = "Check-in successful"
                                 )
                             ),
-                        processed = 2
+                        processed = 1
                     ),
                 error = null,
                 message = null
@@ -114,11 +134,11 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         repository.flushQueuedScans(maxBatchSize = 50)
 
+        assertThat(firstResult).isInstanceOf(QueueCreationResult.Enqueued::class.java)
+        assertThat(secondResult).isEqualTo(QueueCreationResult.ReplaySuppressed)
         assertThat(database.scannerDao().findReplaySuppression("VG-001")).isNotNull()
-        assertThat(database.scannerDao().findReplaySuppression(" VG-001 ")).isNotNull()
-        assertThat(api.lastUploadBody?.scans?.map { it.ticket_code })
-            .containsExactly("VG-001", " VG-001 ")
-            .inOrder()
+        assertThat(database.scannerDao().findReplaySuppression(" VG-001 ")).isNull()
+        assertThat(api.lastUploadBody?.scans?.map { it.ticket_code }).containsExactly("VG-001")
     }
 
     @Test

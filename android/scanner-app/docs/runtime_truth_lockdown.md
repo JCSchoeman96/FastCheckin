@@ -5,29 +5,27 @@ product polish or hardware-adapter work.
 
 ## A. Raw Payload Normalization Contract
 
-Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
+Android canonicalizes ticket identity by trimming proven scanner boundary whitespace before local lookup, replay suppression, queueing, and upload; structured QR parsing is not promoted.
 
-- Android sends the raw scanned payload as `ticket_code` unchanged today.
-- There is no approved client-side normalization policy today.
-- The only proven backend-side normalization today is required-field trimming in
-  Phoenix validation. No broader QR normalization or scanned-payload mapping
-  policy is promoted.
+- Contract tests are the source of truth for the accepted trim vectors.
+- Android source adapters still emit raw capture strings, but the shared
+  normalizer canonicalizes ticket identity downstream before persistence or
+  upload.
+- There is no approved client-side structured QR parsing or payload resolver.
 
-- Android currently queues the captured payload as `ticketCode` in
+- Android currently canonicalizes the captured payload before queueing in
   `android/scanner-app/app/src/main/java/za/co/voelgoed/fastcheck/domain/usecase/DefaultQueueCapturedScanUseCase.kt`.
-- Android preserves that exact value through queue storage and upload mapping in
+- Android preserves that canonical value through queue storage and upload
+  mapping in
   `android/scanner-app/app/src/main/java/za/co/voelgoed/fastcheck/data/mapper/QueuedScanMappers.kt`.
-- Android attendee sync also preserves backend `ticket_code` exactly as
-  delivered in
+- Android attendee sync canonicalizes backend `ticket_code` before local
+  storage in
   `android/scanner-app/app/src/main/java/za/co/voelgoed/fastcheck/data/repository/CurrentPhoenixSyncRepository.kt`.
 - Phoenix currently trims required mobile scan fields during validation in
-  `lib/fastcheck/scans/validator.ex`.
-- That trimming is the only proven backend-side normalization here. It does not
-  promote a broader QR normalization or scanned-payload-to-ticket mapping
-  policy.
+  `lib/fastcheck/scans/validator.ex` for the covered contract cases.
 - Supporting anti-drift tests:
+  - `android/scanner-app/app/src/test/java/za/co/voelgoed/fastcheck/core/ticket/TicketCodeNormalizerTest.kt`
   - `test/fastcheck_web/controllers/mobile/sync_controller_test.exs`
-  - `android/scanner-app/app/src/test/java/za/co/voelgoed/fastcheck/data/mapper/QueuedScanMappersTest.kt`
   - `android/scanner-app/app/src/test/java/za/co/voelgoed/fastcheck/data/repository/CurrentPhoenixMobileScanRepositoryTest.kt`
   - `android/scanner-app/app/src/test/java/za/co/voelgoed/fastcheck/RuntimeContractAuditTest.kt`
 

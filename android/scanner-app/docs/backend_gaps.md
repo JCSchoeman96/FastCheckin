@@ -12,9 +12,10 @@
     not from parsing `message`
 - Partial success is not described by explicit per-item retry flags, so Android
   must interpret missing result items as retryable.
-- Raw scanned payload must currently be preserved exactly; no client normalization policy is promoted.
-- Phoenix currently trims required mobile scan fields during validation, but no
-  broader QR normalization or scanned-payload mapping policy is promoted.
+- Android canonicalizes ticket identity by trimming proven scanner boundary
+  whitespace before local lookup, replay suppression, queueing, and upload;
+  structured QR parsing is not promoted.
+- Contract tests are the source of truth for the accepted trim vectors.
 - Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
 - redis_authoritative is the target/proven path in tests and perf; legacy and shadow are fallback/migration modes; deployed production truth cannot be proven from repo code alone.
 
