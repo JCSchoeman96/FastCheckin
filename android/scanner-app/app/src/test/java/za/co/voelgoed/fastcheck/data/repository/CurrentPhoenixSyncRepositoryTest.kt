@@ -360,10 +360,10 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(failure).isInstanceOf(SyncPaginationException::class.java)
         assertThat(exception.message).contains("repeated pagination cursor")
         assertThat(exception.message).contains("cursor-1")
-        assertThat(countAttendeesForEvent(5)).isEqualTo(1)
+        assertThat(countAttendeesForEvent(5)).isEqualTo(2)
         assertThat(seededAttendee?.id).isEqualTo(601)
         assertThat(seededAttendee?.updatedAt).isEqualTo("2026-03-13T07:59:00Z")
-        assertThat(firstPagedAttendee).isNull()
+        assertThat(firstPagedAttendee?.id).isEqualTo(1001)
         assertThat(secondPagedAttendee).isNull()
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
@@ -422,13 +422,64 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(api.syncCalls).hasSize(100)
         assertAllSyncCallsUsePageLimit()
         assertThat(api.syncCalls.last().cursor).isEqualTo("cursor-99")
-        assertThat(countAttendeesForEvent(5)).isEqualTo(1)
+        assertThat(countAttendeesForEvent(5)).isEqualTo(101)
         assertThat(seededAttendee?.id).isEqualTo(602)
         assertThat(seededAttendee?.updatedAt).isEqualTo("2026-03-13T07:58:00Z")
-        assertThat(firstPagedAttendee).isNull()
-        assertThat(lastPagedAttendee).isNull()
+        assertThat(firstPagedAttendee?.id).isEqualTo(2001)
+        assertThat(lastPagedAttendee?.id).isEqualTo(2100)
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun pagedSyncKeepsEarlierPagesWhenLaterPageHasInvalidTicketCode() = runTest {
+        database.scannerDao().upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 0
+            )
+        )
+
+        api.pagedResponses =
+            mutableListOf(
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees = listOf(attendeeDto(1101, "VG-VALID-001")),
+                            count = 1,
+                            sync_type = "full",
+                            next_cursor = "cursor-1"
+                        ),
+                    error = null,
+                    message = null
+                ),
+                MobileSyncResponse(
+                    data =
+                        MobileSyncPayload(
+                            server_time = "2026-03-13T08:40:00Z",
+                            attendees = listOf(attendeeDto(1102, " \t \r\n ")),
+                            count = 1,
+                            sync_type = "full",
+                            next_cursor = null
+                        ),
+                    error = null,
+                    message = null
+                )
+            )
+
+        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(failure).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(failure?.message).contains("invalid ticket_code")
+        assertThat(database.scannerDao().findAttendee(5, "VG-VALID-001")?.id).isEqualTo(1101)
+        assertThat(countAttendeesForEvent(5)).isEqualTo(1)
+        assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
+        assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(0)
     }
 
     @Test
@@ -630,7 +681,7 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
-    fun syncAttendeesRollsBackAttendeeUpsertWhenSyncMetadataUpsertFails() = runTest {
+    fun syncAttendeesKeepsPersistedAttendeeWhenSyncMetadataUpsertFails() = runTest {
         database.scannerDao().upsertAttendees(
             listOf(
                 attendeeEntity(
@@ -696,7 +747,7 @@ class CurrentPhoenixSyncRepositoryTest {
 
         assertThat(failure).isNotNull()
         assertThat(seededAttendee?.id).isEqualTo(700)
-        assertThat(newAttendee).isNull()
+        assertThat(newAttendee?.id).isEqualTo(701)
         assertThat(metadata?.lastServerTime).isEqualTo("2026-03-13T07:50:00Z")
         assertThat(metadata?.attendeeCount).isEqualTo(1)
     }

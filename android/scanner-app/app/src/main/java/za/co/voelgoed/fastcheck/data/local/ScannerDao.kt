@@ -101,6 +101,8 @@ interface ScannerDao {
         attendees: List<AttendeeEntity>,
         metadata: SyncMetadataEntity
     ) {
+        // Keep this atomic helper for callers that need one local boundary.
+        // Paged attendee sync intentionally persists attendees progressively and commits metadata later.
         upsertAttendees(attendees)
         upsertSyncMetadata(metadata)
     }
