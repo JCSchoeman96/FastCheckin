@@ -4,6 +4,11 @@ Use this file as the project-specific source of truth before making changes.
 
 - When verifying android/scanner-app from WSL/Linux, do not assume the Windows Android SDK path in local.properties is usable; prefer Windows-side gradle (gradlew.bat) or a native Linux Android SDK, and rely on Gradle toolchain resolution for JDK 25.
 
+## Review guidelines
+
+- Don't log PII.
+- Verify that authentication middleware wraps every route.
+
 ## Beads / bd Task Tracking
 
 - Use `bd` for new features, blockers, dependencies, technical debt, deferred work, docs follow-ups, infra follow-ups, and cross-file refactors.
