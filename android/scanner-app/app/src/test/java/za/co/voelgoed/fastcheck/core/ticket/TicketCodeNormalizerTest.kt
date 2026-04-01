@@ -20,6 +20,11 @@ class TicketCodeNormalizerTest {
     }
 
     @Test
+    fun rejectsNonAsciiWhitespaceOnlyValueAfterBoundaryTrim() {
+        assertThat(TicketCodeNormalizer.normalizeOrNull("\u00A0")).isNull()
+    }
+
+    @Test
     fun leavesUnsupportedStructuredPayloadLiteralAfterBoundaryTrim() {
         val rawValue = "\r\nhttps://scan.voelgoed.co.za/tickets/VG-101 \t"
 
