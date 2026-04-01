@@ -19,6 +19,6 @@ object GradientTokens {
     )
 
     val SurfaceFade: Brush = Brush.verticalGradient(
-        colors = listOf(Color(0x00000000), Color(0x0D000000)),
+        colors = listOf(Color.Transparent, Color(0x0D000000)),
     )
 }
