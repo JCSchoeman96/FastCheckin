@@ -14,12 +14,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.tokens.IconTokens
+import za.co.voelgoed.fastcheck.core.designsystem.tokens.StrokeTokens
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 
 @Composable
@@ -32,14 +31,14 @@ fun FcBanner(
 ) {
     val theme = MaterialTheme.fastCheck
     val accent = theme.statusRoles.resolve(tone)
-    val colors = resolveBannerColors(accent)
+    val colors = resolveToneSurfaceColors(accent, containerAlpha = 0.08f, borderAlpha = 0.24f)
 
     Surface(
         modifier = modifier,
         shape = theme.shapes.large,
         color = colors.containerColor,
         contentColor = colors.contentColor,
-        border = BorderStroke(1.dp, colors.borderColor),
+        border = BorderStroke(StrokeTokens.Hairline, colors.borderColor),
         shadowElevation = theme.elevation.low,
     ) {
         Row(
@@ -83,16 +82,3 @@ fun FcBanner(
         }
     }
 }
-
-private data class FcBannerColors(
-    val containerColor: Color,
-    val contentColor: Color,
-    val borderColor: Color,
-)
-
-private fun resolveBannerColors(accent: Color): FcBannerColors =
-    FcBannerColors(
-        containerColor = accent.copy(alpha = 0.08f),
-        contentColor = accent,
-        borderColor = accent.copy(alpha = 0.24f),
-    )
