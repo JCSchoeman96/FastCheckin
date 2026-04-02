@@ -75,6 +75,10 @@ class DiagnosticsUiStateFactory @Inject constructor(
         )
     }
 
+    @Deprecated(
+        message = "Test-only compatibility path. Runtime callers must pass SyncUiState directly.",
+        level = DeprecationLevel.WARNING
+    )
     fun create(
         apiEnvironmentConfig: ApiEnvironmentConfig,
         session: ScannerSession?,

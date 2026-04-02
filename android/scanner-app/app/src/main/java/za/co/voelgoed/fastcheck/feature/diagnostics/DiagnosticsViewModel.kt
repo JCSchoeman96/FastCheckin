@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.toSyncUiState
@@ -45,26 +46,27 @@ class DiagnosticsViewModel @Inject constructor(
                 syncRepository.observeLastSyncedStatus(),
                 mobileScanRepository.observePendingQueueDepth(),
                 mobileScanRepository.observeLatestFlushReport(),
-                autoFlushCoordinator.state,
-                connectivityMonitor.isOnline
-            ) { values ->
-                val inputs = values[0] as SessionInputs
-                val lastSyncedStatus = values[1] as AttendeeSyncStatus?
-                val queueDepth = values[2] as Int
-                val latestFlushReport = values[3] as FlushReport?
-                val coordinatorState = values[4] as za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
-                val isOnline = values[5] as Boolean
-                val syncUiState =
-                    coordinatorState.toSyncUiState(
-                        isOnline = isOnline,
-                        latestFlushReport = latestFlushReport,
-                        pendingQueueDepth = queueDepth
-                    )
-                DiagnosticsInputs(
+                autoFlushCoordinator.state
+            ) { inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState ->
+                DiagnosticsProjection(
                     inputs = inputs,
                     lastSyncedStatus = lastSyncedStatus,
                     queueDepth = queueDepth,
                     latestFlushReport = latestFlushReport,
+                    coordinatorState = coordinatorState
+                )
+            }.combine(connectivityMonitor.isOnline) { projection, isOnline ->
+                val syncUiState =
+                    projection.coordinatorState.toSyncUiState(
+                        isOnline = isOnline,
+                        latestFlushReport = projection.latestFlushReport,
+                        pendingQueueDepth = projection.queueDepth
+                    )
+                DiagnosticsInputs(
+                    inputs = projection.inputs,
+                    lastSyncedStatus = projection.lastSyncedStatus,
+                    queueDepth = projection.queueDepth,
+                    latestFlushReport = projection.latestFlushReport,
                     syncUiState = syncUiState
                 )
             }.collect { diagnosticsInputs ->
@@ -88,11 +90,11 @@ class DiagnosticsViewModel @Inject constructor(
             // Guardrail: refresh() updates only ephemeral context (session/token/sync inputs).
             // Durable operational truth (queue depth, persisted flush outcomes) must remain
             // repository/Room-observed to avoid reintroducing UI drift.
-            val session = sessionRepository.currentSession()
-            val tokenPresent = !sessionProvider.bearerToken().isNullOrBlank()
-            sessionInput.value =
-                SessionInputs(
-                    session = session,
+        val session = sessionRepository.currentSession()
+        val tokenPresent = !sessionProvider.bearerToken().isNullOrBlank()
+        sessionInput.value =
+            SessionInputs(
+                session = session,
                     tokenPresent = tokenPresent
                 )
         }
@@ -109,5 +111,13 @@ class DiagnosticsViewModel @Inject constructor(
         val queueDepth: Int,
         val latestFlushReport: za.co.voelgoed.fastcheck.domain.model.FlushReport?,
         val syncUiState: SyncUiState
+    )
+
+    private data class DiagnosticsProjection(
+        val inputs: SessionInputs,
+        val lastSyncedStatus: AttendeeSyncStatus?,
+        val queueDepth: Int,
+        val latestFlushReport: FlushReport?,
+        val coordinatorState: AutoFlushCoordinatorState
     )
 }
