@@ -11,7 +11,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import za.co.voelgoed.fastcheck.core.designsystem.tokens.IconTokens
@@ -27,7 +26,7 @@ fun FcStatusChip(
 ) {
     val theme = MaterialTheme.fastCheck
     val accent = theme.statusRoles.resolve(tone)
-    val colors = resolveStatusChipColors(accent)
+    val colors = resolveToneSurfaceColors(accent, containerAlpha = 0.12f)
 
     Surface(
         modifier = modifier,
@@ -60,14 +59,3 @@ fun FcStatusChip(
         }
     }
 }
-
-private data class FcStatusChipColors(
-    val containerColor: Color,
-    val contentColor: Color,
-)
-
-private fun resolveStatusChipColors(accent: Color): FcStatusChipColors =
-    FcStatusChipColors(
-        containerColor = accent.copy(alpha = 0.12f),
-        contentColor = accent,
-    )
