@@ -5,6 +5,9 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -15,11 +18,15 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.R
+import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
 import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceSelectionResolver
 import za.co.voelgoed.fastcheck.app.session.AppSessionRoute
 import za.co.voelgoed.fastcheck.app.session.SessionGateViewModel
+import za.co.voelgoed.fastcheck.app.shell.AppShellViewModel
+import za.co.voelgoed.fastcheck.app.shell.AuthenticatedShellScreen
+import za.co.voelgoed.fastcheck.app.shell.ScanBridgePlaceholder
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
@@ -66,6 +73,7 @@ class MainActivity : ComponentActivity() {
 
     private val authViewModel: AuthViewModel by viewModels()
     private val sessionGateViewModel: SessionGateViewModel by viewModels()
+    private val appShellViewModel: AppShellViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
     private val queueViewModel: QueueViewModel by viewModels()
@@ -90,6 +98,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.authenticatedShellComposeView.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.authenticatedShellComposeView.setContent {
+            val shellUiState by appShellViewModel.uiState.collectAsState()
+            AuthenticatedShellScreen(
+                uiState = shellUiState,
+                onDestinationSelected = appShellViewModel::selectDestination,
+                onOverflowActionSelected = ::handleShellOverflowAction,
+                onNoticeDismissed = appShellViewModel::clearNotice,
+                scanContent = { ScanBridgePlaceholder() }
+            )
+        }
         Log.i(
             LOG_TAG,
             "FastCheck API target=${apiEnvironmentConfig.target.wireName} baseUrl=${apiEnvironmentConfig.baseUrl}"
@@ -163,6 +184,7 @@ class MainActivity : ComponentActivity() {
                             AppSessionRoute.LoggedOut -> {
                                 val wasAuthenticated = isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = false
+                                appShellViewModel.reset()
                                 binding.loginGateContainer.visibility = android.view.View.VISIBLE
                                 binding.authenticatedRuntimeContainer.visibility = android.view.View.GONE
                                 if (wasAuthenticated) {
@@ -173,6 +195,9 @@ class MainActivity : ComponentActivity() {
                             is AppSessionRoute.Authenticated -> {
                                 val becameAuthenticated = !isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = true
+                                if (becameAuthenticated) {
+                                    appShellViewModel.reset()
+                                }
                                 binding.loginGateContainer.visibility = android.view.View.GONE
                                 binding.authenticatedRuntimeContainer.visibility = android.view.View.VISIBLE
                                 if (becameAuthenticated) {
@@ -319,6 +344,15 @@ class MainActivity : ComponentActivity() {
         } else {
             scannerSourceBinding.stop()
         }
+    }
+
+    private fun handleShellOverflowAction(action: AppShellOverflowAction) {
+        if (action == AppShellOverflowAction.Logout) {
+            sessionGateViewModel.logout()
+            return
+        }
+
+        appShellViewModel.onOverflowActionSelected(action)
     }
 
     private fun createScannerInputSource(
