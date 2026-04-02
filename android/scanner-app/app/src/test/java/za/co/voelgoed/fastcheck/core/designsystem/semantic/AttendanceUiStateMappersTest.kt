@@ -27,6 +27,17 @@ class AttendanceUiStateMappersTest {
     }
 
     @Test
+    fun checkedOutTimestampMapsToCheckedOut() {
+        assertThat(
+            toAttendanceUiState(
+                checkedInAt = null,
+                checkedOutAt = "2026-03-13T09:00:00Z",
+                isCurrentlyInside = false
+            )
+        ).isEqualTo(AttendanceUiState.CheckedOut)
+    }
+
+    @Test
     fun checkedOutWinsOverCheckedIn() {
         assertThat(
             toAttendanceUiState(
@@ -35,6 +46,17 @@ class AttendanceUiStateMappersTest {
                 isCurrentlyInside = false
             )
         ).isEqualTo(AttendanceUiState.CheckedOut)
+    }
+
+    @Test
+    fun currentlyInsideWithoutCheckInMapsToCurrentlyInside() {
+        assertThat(
+            toAttendanceUiState(
+                checkedInAt = null,
+                checkedOutAt = null,
+                isCurrentlyInside = true
+            )
+        ).isEqualTo(AttendanceUiState.CurrentlyInside)
     }
 
     @Test
