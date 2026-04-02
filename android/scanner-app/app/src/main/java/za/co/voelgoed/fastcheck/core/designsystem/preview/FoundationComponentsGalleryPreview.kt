@@ -2,7 +2,8 @@ package za.co.voelgoed.fastcheck.core.designsystem.preview
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +20,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.theme.FastCheckTheme
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 
 @Preview(name = "FoundationGallery", showBackground = true)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun FoundationComponentsGalleryPreview() {
     FastCheckTheme {
@@ -37,12 +39,13 @@ internal fun FoundationComponentsGalleryPreview() {
                 }
 
                 GallerySection(title = "Status chips") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(theme.spacing.small),
+                        verticalArrangement = Arrangement.spacedBy(theme.spacing.small),
+                    ) {
                         FcStatusChip(text = "Synced", tone = StatusTone.Success)
                         FcStatusChip(text = "Offline", tone = StatusTone.Offline)
                         FcStatusChip(text = "Duplicate", tone = StatusTone.Duplicate)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
                         FcStatusChip(text = "Warning", tone = StatusTone.Warning)
                         FcStatusChip(text = "Info", tone = StatusTone.Info)
                         FcStatusChip(text = "Muted", tone = StatusTone.Muted)
@@ -112,17 +115,16 @@ private fun GallerySection(
 @Composable
 private fun ToneLegend(theme: za.co.voelgoed.fastcheck.core.designsystem.theme.FastCheckThemeValues) {
     Column(verticalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(theme.spacing.small),
+            verticalArrangement = Arrangement.spacedBy(theme.spacing.small),
+        ) {
             FcStatusChip(text = "Neutral", tone = StatusTone.Neutral)
             FcStatusChip(text = "Brand", tone = StatusTone.Brand)
             FcStatusChip(text = "Success", tone = StatusTone.Success)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
             FcStatusChip(text = "Warning", tone = StatusTone.Warning)
             FcStatusChip(text = "Info", tone = StatusTone.Info)
             FcStatusChip(text = "Destructive", tone = StatusTone.Destructive)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
             FcStatusChip(text = "Duplicate", tone = StatusTone.Duplicate)
             FcStatusChip(text = "Offline", tone = StatusTone.Offline)
             FcStatusChip(text = "Muted", tone = StatusTone.Muted)
