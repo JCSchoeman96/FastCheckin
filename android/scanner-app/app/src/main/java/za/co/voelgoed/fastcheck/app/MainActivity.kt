@@ -5,8 +5,8 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -18,6 +18,9 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.R
+import za.co.voelgoed.fastcheck.app.legacy.LegacyOperatorRuntimeController
+import za.co.voelgoed.fastcheck.app.legacy.LegacyOperatorRuntimeHost
+import za.co.voelgoed.fastcheck.app.navigation.AppShellDestination
 import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
 import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
@@ -26,22 +29,21 @@ import za.co.voelgoed.fastcheck.app.session.AppSessionRoute
 import za.co.voelgoed.fastcheck.app.session.SessionGateViewModel
 import za.co.voelgoed.fastcheck.app.shell.AppShellViewModel
 import za.co.voelgoed.fastcheck.app.shell.AuthenticatedShellScreen
-import za.co.voelgoed.fastcheck.app.shell.ScanBridgePlaceholder
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
-import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
-import za.co.voelgoed.fastcheck.feature.queue.ManualQueueInputController
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
+import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.broadcast.DataWedgeScannerInputSource
-import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
+import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerSourceBinding
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
@@ -85,14 +87,38 @@ class MainActivity : ComponentActivity() {
     private lateinit var selectedScannerSourceMode: ScannerShellSourceMode
     private lateinit var scannerInputSource: ScannerInputSource
     private lateinit var scannerSourceBinding: ScannerSourceBinding
-    private lateinit var manualQueueInputController: ManualQueueInputController
+
     private var isAuthenticatedRouteActive: Boolean = false
+    private var isScanDestinationActive: Boolean = true
+    private var isLegacyScanSurfaceAttached: Boolean = false
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             scanningViewModel.refreshPermissionState(granted)
             syncScannerBindingForPermission()
         }
+
+    private val legacyOperatorRuntimeController: LegacyOperatorRuntimeController by lazy {
+        LegacyOperatorRuntimeController(
+            lifecycleOwner = this,
+            syncViewModel = syncViewModel,
+            diagnosticsViewModel = diagnosticsViewModel,
+            queueViewModel = queueViewModel,
+            scanningViewModel = scanningViewModel,
+            onRequestCameraPermission = {
+                cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+            },
+            onRefreshDiagnostics = diagnosticsViewModel::refresh,
+            onViewAttached = {
+                isLegacyScanSurfaceAttached = true
+                syncScannerBindingForPermission()
+            },
+            onViewDetached = {
+                isLegacyScanSurfaceAttached = false
+                syncScannerBindingForPermission()
+            }
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,22 +134,22 @@ class MainActivity : ComponentActivity() {
                 onDestinationSelected = appShellViewModel::selectDestination,
                 onOverflowActionSelected = ::handleShellOverflowAction,
                 onNoticeDismissed = appShellViewModel::clearNotice,
-                scanContent = { ScanBridgePlaceholder() }
+                scanContent = {
+                    LegacyOperatorRuntimeHost(
+                        controller = legacyOperatorRuntimeController
+                    )
+                }
             )
         }
+
         Log.i(
             LOG_TAG,
             "FastCheck API target=${apiEnvironmentConfig.target.wireName} baseUrl=${apiEnvironmentConfig.baseUrl}"
         )
+
         selectedScannerSourceMode = scannerSourceSelectionResolver.resolve()
         Log.i(LOG_TAG, "Active scanner source=${selectedScannerSourceMode.wireName}")
         scanningViewModel.onActiveSourceTypeChanged(selectedScannerSourceMode.sourceType)
-        manualQueueInputController =
-            ManualQueueInputController(
-                input = binding.manualTicketCodeInput,
-                onTicketCodeChanged = queueViewModel::updateTicketCode
-            )
-        manualQueueInputController.bind()
 
         scannerInputSource = createScannerInputSource(selectedScannerSourceMode)
         scannerSourceBinding =
@@ -139,39 +165,21 @@ class MainActivity : ComponentActivity() {
             authViewModel.login()
         }
 
-        binding.syncButton.setOnClickListener {
-            syncViewModel.syncAttendees()
-        }
-
-        binding.requestCameraPermissionButton.setOnClickListener {
-            scanningViewModel.onPermissionRequestStarted()
-            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-        }
-
-        binding.queueScanButton.setOnClickListener {
-            manualQueueInputController.submitCurrentValue(queueViewModel::updateTicketCode)
-            queueViewModel.queueManualScan()
-        }
-
-        binding.flushQueueButton.setOnClickListener {
-            queueViewModel.flushQueuedScans()
-        }
-
-        binding.refreshDiagnosticsButton.setOnClickListener {
-            diagnosticsViewModel.refresh()
-        }
-
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     authViewModel.uiState.collectLatest { state ->
                         binding.sessionSummaryValue.text =
                             state.sessionSummary ?: getString(R.string.no_active_session)
-                        binding.authErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
+                        binding.authErrorValue.text =
+                            state.errorMessage ?: getString(R.string.no_errors)
                         binding.loginButton.isEnabled = !state.isSubmitting
 
                         val authenticatedSession = state.authenticatedSession
-                        if (authenticatedSession != null && state.errorMessage == null && !state.isSubmitting) {
+                        if (authenticatedSession != null &&
+                            state.errorMessage == null &&
+                            !state.isSubmitting
+                        ) {
                             sessionGateViewModel.onLoginSucceeded(authenticatedSession)
                         }
                     }
@@ -186,7 +194,8 @@ class MainActivity : ComponentActivity() {
                                 isAuthenticatedRouteActive = false
                                 appShellViewModel.reset()
                                 binding.loginGateContainer.visibility = android.view.View.VISIBLE
-                                binding.authenticatedRuntimeContainer.visibility = android.view.View.GONE
+                                binding.authenticatedShellComposeView.visibility =
+                                    android.view.View.GONE
                                 if (wasAuthenticated) {
                                     scannerSourceBinding.stop()
                                 }
@@ -199,7 +208,8 @@ class MainActivity : ComponentActivity() {
                                     appShellViewModel.reset()
                                 }
                                 binding.loginGateContainer.visibility = android.view.View.GONE
-                                binding.authenticatedRuntimeContainer.visibility = android.view.View.VISIBLE
+                                binding.authenticatedShellComposeView.visibility =
+                                    android.view.View.VISIBLE
                                 if (becameAuthenticated) {
                                     diagnosticsViewModel.refresh()
                                     autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
@@ -211,15 +221,20 @@ class MainActivity : ComponentActivity() {
                 }
 
                 launch {
+                    appShellViewModel.uiState.collectLatest { state ->
+                        isScanDestinationActive =
+                            state.selectedDestination == AppShellDestination.Scan
+                        syncScannerBindingForPermission()
+                    }
+                }
+
+                launch {
                     var lastWasSyncing = false
                     var lastError: String? = null
                     syncViewModel.uiState.collectLatest { state ->
-                        binding.syncSummaryValue.text = state.summaryMessage
-                        binding.syncErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
-                        binding.syncButton.isEnabled = !state.isSyncing
-
                         val completedNow = lastWasSyncing && !state.isSyncing
-                        val succeededNow = completedNow && lastError == null && state.errorMessage == null
+                        val succeededNow =
+                            completedNow && lastError == null && state.errorMessage == null
                         if (succeededNow) {
                             diagnosticsViewModel.refresh()
                             autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostSync)
@@ -227,59 +242,6 @@ class MainActivity : ComponentActivity() {
 
                         lastWasSyncing = state.isSyncing
                         lastError = state.errorMessage
-                    }
-                }
-
-                launch {
-                    diagnosticsViewModel.uiState.collectLatest { state ->
-                        binding.currentEventValue.text = state.currentEvent
-                        binding.authStateValue.text = state.authSessionState
-                        binding.tokenExpiryValue.text = state.tokenExpiryState
-                        binding.apiTargetValue.text = state.apiTargetLabel
-                        binding.apiBaseUrlValue.text = state.apiBaseUrl
-                        binding.lastSyncValue.text = state.lastAttendeeSyncTime
-                        binding.attendeeCountValue.text = state.attendeeCount
-                        binding.queueDepthValue.text = state.localQueueDepthLabel
-                        binding.latestFlushStateValue.text = state.uploadStateLabel
-                        binding.latestFlushSummaryValue.text = state.latestFlushSummary
-                        binding.recentOutcomeSummaryValue.text = state.serverResultSummary
-                    }
-                }
-
-                launch {
-                    queueViewModel.uiState.collectLatest { state ->
-                        manualQueueInputController.render(state.ticketCodeInput)
-                        binding.manualDirectionValue.text = state.directionLabel
-                        binding.scanActionValue.text = state.lastActionMessage
-                        binding.scanErrorValue.text =
-                            state.validationMessage ?: getString(R.string.no_errors)
-                        binding.queueScanButton.isEnabled = !state.isQueueing
-                        binding.flushQueueButton.isEnabled = !state.isFlushing
-                        binding.manualQueueDepthValue.text = "Queued locally: ${state.localQueueDepth}"
-                        binding.manualUploadStateValue.text = state.uploadStateLabel
-                        binding.manualServerResultHintValue.text = state.serverResultHint
-                    }
-                }
-
-                launch {
-                    scanningViewModel.uiState.collectLatest { state ->
-                        binding.scannerPermissionValue.text = state.permissionSummary
-                        binding.scannerStatusValue.text = state.scannerStatus
-                        binding.requestCameraPermissionButton.isEnabled = state.isPermissionRequestEnabled
-                        binding.requestCameraPermissionButton.visibility =
-                            if (state.isPermissionRequestVisible) {
-                                android.view.View.VISIBLE
-                            } else {
-                                android.view.View.GONE
-                            }
-                        binding.scannerPreview.visibility =
-                            if (state.isPreviewVisible) {
-                                android.view.View.VISIBLE
-                            } else {
-                                android.view.View.GONE
-                            }
-                        // Preview visibility now reflects source state; binding to the
-                        // camera-backed source is owned by ScannerSourceBinding.
                     }
                 }
 
@@ -292,7 +254,7 @@ class MainActivity : ComponentActivity() {
                 launch {
                     scanCapturePipeline.handoffResults.collectLatest { result ->
                         scanningViewModel.onCaptureHandoffResult(result)
-                        if (result is za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult.Accepted) {
+                        if (result is CaptureHandoffResult.Accepted) {
                             autoFlushCoordinator.requestFlush(AutoFlushTrigger.AfterEnqueue)
                         }
                     }
@@ -336,7 +298,9 @@ class MainActivity : ComponentActivity() {
                 hasCameraPermission = hasPermission,
                 isShellStarted =
                     lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
-                        isAuthenticatedRouteActive
+                        isAuthenticatedRouteActive &&
+                        isScanDestinationActive &&
+                        isLegacyScanSurfaceAttached
             )
 
         if (decision.shouldStartBinding) {
@@ -355,19 +319,18 @@ class MainActivity : ComponentActivity() {
         appShellViewModel.onOverflowActionSelected(action)
     }
 
-    private fun createScannerInputSource(
-        sourceMode: ScannerShellSourceMode
-    ): ScannerInputSource =
+    private fun createScannerInputSource(sourceMode: ScannerShellSourceMode): ScannerInputSource =
         when (sourceMode) {
             ScannerShellSourceMode.CAMERA ->
                 CameraScannerInputSource(
                     scannerCameraBinder = scannerCameraBinder,
                     lifecycleOwnerProvider = { this },
-                    previewViewProvider = { binding.scannerPreview },
+                    previewViewProvider = { legacyOperatorRuntimeController.requirePreviewView() },
                     appDispatchers = appDispatchers,
                     clock = clock,
                     barcodeScannerEngine = barcodeScannerEngine
                 )
+
             ScannerShellSourceMode.DATAWEDGE ->
                 DataWedgeScannerInputSource(
                     appContext = applicationContext,

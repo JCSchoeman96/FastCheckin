@@ -44,4 +44,16 @@ class ScannerSourceActivationPolicyTest {
         assertThat(decision.shouldStartBinding).isFalse()
         assertThat(decision.shouldShowCameraPermissionRequest).isFalse()
     }
+
+    @Test
+    fun cameraModeDoesNotStartWhenScanSurfaceIsNotEligible() {
+        val decision =
+            policy.evaluate(
+                sourceMode = ScannerShellSourceMode.CAMERA,
+                hasCameraPermission = true,
+                isShellStarted = false
+            )
+
+        assertThat(decision.shouldStartBinding).isFalse()
+    }
 }
