@@ -50,7 +50,7 @@ sealed interface ScanUiState {
     }
 
     data object Suppressed : ScanUiState {
-        override val tone: StatusTone = StatusTone.Duplicate
+        override val tone: StatusTone = StatusTone.Warning
         override val iconKey: String = "scan_suppressed"
         override val labelHook: String = "scan.suppressed.cooldown"
         override val defaultLabel: String = "Capture ignored during active cooldown."
