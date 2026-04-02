@@ -63,14 +63,18 @@ class SyncViewModel @Inject constructor(
                 .onFailure { throwable ->
                     _uiState.update { state ->
                         when (throwable) {
-                            is SyncRateLimitedException ->
+                            is SyncRateLimitedException -> {
+                                val rateLimitThrowable: Throwable = throwable
                                 state.copy(
                                     isSyncing = false,
                                     isRateLimited = true,
                                     nextAllowedSyncAtMillis =
                                         throwable.retryAfterMillis?.let { now + it },
-                                    errorMessage = throwable.message
+                                    errorMessage =
+                                        rateLimitThrowable.message
+                                            ?: "Sync is temporarily rate-limited. Please wait a moment before trying again."
                                 )
+                            }
                             else ->
                                 state.copy(
                                     isSyncing = false,
