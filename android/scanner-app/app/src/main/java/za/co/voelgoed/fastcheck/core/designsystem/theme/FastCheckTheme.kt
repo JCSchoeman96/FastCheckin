@@ -11,6 +11,7 @@ package za.co.voelgoed.fastcheck.core.designsystem.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 
 internal val LocalFastCheckThemeValues = staticCompositionLocalOf {
@@ -19,7 +20,7 @@ internal val LocalFastCheckThemeValues = staticCompositionLocalOf {
 
 @Composable
 fun FastCheckTheme(content: @Composable () -> Unit) {
-    val values = buildFastCheckThemeValues()
+    val values = remember { buildFastCheckThemeValues() }
 
     CompositionLocalProvider(LocalFastCheckThemeValues provides values) {
         MaterialTheme(

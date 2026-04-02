@@ -8,7 +8,9 @@ package za.co.voelgoed.fastcheck.core.designsystem.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 
 val MaterialTheme.fastCheck: FastCheckThemeValues
     @Composable
+    @ReadOnlyComposable
     get() = LocalFastCheckThemeValues.current
