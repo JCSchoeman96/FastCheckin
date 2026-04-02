@@ -17,6 +17,7 @@ import org.junit.Test
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
+import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
@@ -55,6 +56,15 @@ class QueueViewModelTest {
         }
     }
 
+    private class FakeConnectivityMonitor : ConnectivityMonitor {
+        private val _isOnline = MutableStateFlow(true)
+        override val isOnline: StateFlow<Boolean> = _isOnline
+
+        fun emit(value: Boolean) {
+            _isOnline.value = value
+        }
+    }
+
     private class FakeQueueCapturedScanUseCase : QueueCapturedScanUseCase {
         var result: QueueCreationResult = QueueCreationResult.InvalidTicketCode
 
@@ -90,8 +100,9 @@ class QueueViewModelTest {
     @Test
     fun queueDepthIsObserved_notManuallyRefreshed() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
-        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         repo.depthFlow.value = 7
         advanceUntilIdle()
@@ -100,10 +111,11 @@ class QueueViewModelTest {
     }
 
     @Test
-    fun uploadStateLabelComesFromCoordinatorTruth_notPersistedFlushTruth() = runTest(dispatcher) {
+    fun offlineConnectivityWinsOverPersistedFlushTruth() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
-        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         repo.reportFlow.value =
             FlushReport(
@@ -111,17 +123,20 @@ class QueueViewModelTest {
                 authExpired = true,
                 summaryMessage = "Persisted auth expired"
             )
+        connectivityMonitor.emit(false)
         advanceUntilIdle()
 
-        assertThat(viewModel.uiState.value.uploadStateLabel).isEqualTo("Idle")
+        assertThat(viewModel.uiState.value.uploadStateLabel).isEqualTo("Offline")
     }
 
     @Test
     fun persistedLatestFlushReportDrivesQueueHint_evenWhenCoordinatorHasNoLastFlushReport() =
         runTest(dispatcher) {
             val coordinator = FakeAutoFlushCoordinator()
+            val connectivityMonitor = FakeConnectivityMonitor()
             val repo = FakeMobileScanRepository()
-            val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+            val viewModel =
+                createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
             repo.reportFlow.value =
                 FlushReport(
@@ -163,7 +178,14 @@ class QueueViewModelTest {
                 )
 
             val firstCoordinator = FakeAutoFlushCoordinator()
-            val firstViewModel = createViewModel(firstCoordinator, repo, FakeQueueCapturedScanUseCase())
+            val firstConnectivityMonitor = FakeConnectivityMonitor()
+            val firstViewModel =
+                createViewModel(
+                    firstCoordinator,
+                    firstConnectivityMonitor,
+                    repo,
+                    FakeQueueCapturedScanUseCase()
+                )
             advanceUntilIdle()
 
             val secondCoordinator = FakeAutoFlushCoordinator()
@@ -178,7 +200,12 @@ class QueueViewModelTest {
                 )
             )
             val recreatedViewModel =
-                createViewModel(secondCoordinator, repo, FakeQueueCapturedScanUseCase())
+                createViewModel(
+                    secondCoordinator,
+                    FakeConnectivityMonitor(),
+                    repo,
+                    FakeQueueCapturedScanUseCase()
+                )
             advanceUntilIdle()
 
             assertThat(firstViewModel.uiState.value.serverResultHint).isEqualTo("Payment invalid: 1")
@@ -188,8 +215,9 @@ class QueueViewModelTest {
     @Test
     fun queueHintStaysNeutralWhenNoPersistedFlushTruthExists() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
-        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         repo.depthFlow.value = 4
         advanceUntilIdle()
@@ -200,8 +228,9 @@ class QueueViewModelTest {
     @Test
     fun uploadingWhileQueueExists_setsUploadingState() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
-        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         repo.depthFlow.value = 3
         coordinator.emit(AutoFlushCoordinatorState(isFlushing = true))
@@ -214,8 +243,9 @@ class QueueViewModelTest {
     @Test
     fun retryPending_showsAttemptMetadata() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
-        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         coordinator.emit(
             AutoFlushCoordinatorState(
@@ -232,8 +262,9 @@ class QueueViewModelTest {
     @Test
     fun authExpired_reflectedInUploadState() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
-        val viewModel = createViewModel(coordinator, repo, FakeQueueCapturedScanUseCase())
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         coordinator.emit(
             AutoFlushCoordinatorState(
@@ -253,6 +284,7 @@ class QueueViewModelTest {
     @Test
     fun manualQueueingSuccessMessageRemainsLocalOnly() = runTest(dispatcher) {
         val coordinator = FakeAutoFlushCoordinator()
+        val connectivityMonitor = FakeConnectivityMonitor()
         val repo = FakeMobileScanRepository()
         val useCase = FakeQueueCapturedScanUseCase()
         useCase.result =
@@ -268,7 +300,7 @@ class QueueViewModelTest {
                     operatorName = "Operator"
                 )
             )
-        val viewModel = createViewModel(coordinator, repo, useCase)
+        val viewModel = createViewModel(coordinator, connectivityMonitor, repo, useCase)
 
         viewModel.updateTicketCode("VG-LOCAL")
         viewModel.queueManualScan()
@@ -282,12 +314,14 @@ class QueueViewModelTest {
 
     private fun createViewModel(
         coordinator: FakeAutoFlushCoordinator,
+        connectivityMonitor: FakeConnectivityMonitor,
         repo: FakeMobileScanRepository,
         useCase: FakeQueueCapturedScanUseCase
     ): QueueViewModel =
         QueueViewModel(
             queueCapturedScanUseCase = useCase,
             autoFlushCoordinator = coordinator,
+            connectivityMonitor = connectivityMonitor,
             mobileScanRepository = repo,
             queueUiStateFactory = QueueUiStateFactory()
         )
