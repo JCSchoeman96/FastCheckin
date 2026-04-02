@@ -23,6 +23,11 @@ class PaymentUiStateMappersTest {
     }
 
     @Test
+    fun paidMapsToPaid() {
+        assertThat("paid".toPaymentUiState()).isEqualTo(PaymentUiState.Paid)
+    }
+
+    @Test
     fun pendingStatusesMapToPending() {
         assertThat("pending".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
         assertThat("processing".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
