@@ -23,13 +23,21 @@ class PaymentUiStateMappersTest {
     }
 
     @Test
-    fun processingMapsToPending() {
+    fun pendingStatusesMapToPending() {
+        assertThat("pending".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
         assertThat("processing".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
+        assertThat("on hold".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
+        assertThat("on_hold".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
+        assertThat("unpaid".toPaymentUiState()).isEqualTo(PaymentUiState.Pending)
     }
 
     @Test
-    fun refundedMapsToNotValid() {
+    fun invalidStatusesMapToNotValid() {
         assertThat("refunded".toPaymentUiState()).isEqualTo(PaymentUiState.NotValid)
+        assertThat("cancelled".toPaymentUiState()).isEqualTo(PaymentUiState.NotValid)
+        assertThat("canceled".toPaymentUiState()).isEqualTo(PaymentUiState.NotValid)
+        assertThat("voided".toPaymentUiState()).isEqualTo(PaymentUiState.NotValid)
+        assertThat("failed".toPaymentUiState()).isEqualTo(PaymentUiState.NotValid)
     }
 
     @Test
