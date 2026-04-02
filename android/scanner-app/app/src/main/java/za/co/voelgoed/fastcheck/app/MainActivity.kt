@@ -18,6 +18,8 @@ import za.co.voelgoed.fastcheck.R
 import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceSelectionResolver
+import za.co.voelgoed.fastcheck.app.session.AppSessionRoute
+import za.co.voelgoed.fastcheck.app.session.SessionGateViewModel
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
@@ -63,6 +65,7 @@ class MainActivity : ComponentActivity() {
     lateinit var apiEnvironmentConfig: ApiEnvironmentConfig
 
     private val authViewModel: AuthViewModel by viewModels()
+    private val sessionGateViewModel: SessionGateViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
     private val queueViewModel: QueueViewModel by viewModels()
@@ -75,6 +78,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var scannerInputSource: ScannerInputSource
     private lateinit var scannerSourceBinding: ScannerSourceBinding
     private lateinit var manualQueueInputController: ManualQueueInputController
+    private var isAuthenticatedRouteActive: Boolean = false
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -139,22 +143,45 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    var lastHadSession = false
                     authViewModel.uiState.collectLatest { state ->
                         binding.sessionSummaryValue.text =
                             state.sessionSummary ?: getString(R.string.no_active_session)
                         binding.authErrorValue.text = state.errorMessage ?: getString(R.string.no_errors)
                         binding.loginButton.isEnabled = !state.isSubmitting
 
-                        val hasSession =
-                            state.sessionSummary != null &&
-                                state.errorMessage == null &&
-                                !state.isSubmitting
-                        if (!lastHadSession && hasSession) {
-                            diagnosticsViewModel.refresh()
-                            autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
+                        val authenticatedSession = state.authenticatedSession
+                        if (authenticatedSession != null && state.errorMessage == null && !state.isSubmitting) {
+                            sessionGateViewModel.onLoginSucceeded(authenticatedSession)
                         }
-                        lastHadSession = hasSession
+                    }
+                }
+
+                launch {
+                    sessionGateViewModel.route.collectLatest { route ->
+                        when (route) {
+                            AppSessionRoute.RestoringSession,
+                            AppSessionRoute.LoggedOut -> {
+                                val wasAuthenticated = isAuthenticatedRouteActive
+                                isAuthenticatedRouteActive = false
+                                binding.loginGateContainer.visibility = android.view.View.VISIBLE
+                                binding.authenticatedRuntimeContainer.visibility = android.view.View.GONE
+                                if (wasAuthenticated) {
+                                    scannerSourceBinding.stop()
+                                }
+                            }
+
+                            is AppSessionRoute.Authenticated -> {
+                                val becameAuthenticated = !isAuthenticatedRouteActive
+                                isAuthenticatedRouteActive = true
+                                binding.loginGateContainer.visibility = android.view.View.GONE
+                                binding.authenticatedRuntimeContainer.visibility = android.view.View.VISIBLE
+                                if (becameAuthenticated) {
+                                    diagnosticsViewModel.refresh()
+                                    autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
+                                }
+                            }
+                        }
+                        syncScannerBindingForPermission()
                     }
                 }
 
@@ -249,7 +276,7 @@ class MainActivity : ComponentActivity() {
         }
 
         syncScannerBindingForPermission()
-        diagnosticsViewModel.refresh()
+        sessionGateViewModel.refreshSessionRoute()
     }
 
     override fun onStart() {
@@ -282,7 +309,9 @@ class MainActivity : ComponentActivity() {
             scannerSourceActivationPolicy.evaluate(
                 sourceMode = selectedScannerSourceMode,
                 hasCameraPermission = hasPermission,
-                isShellStarted = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                isShellStarted =
+                    lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+                        isAuthenticatedRouteActive
             )
 
         if (decision.shouldStartBinding) {

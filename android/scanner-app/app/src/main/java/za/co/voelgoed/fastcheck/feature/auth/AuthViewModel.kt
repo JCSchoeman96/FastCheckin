@@ -49,7 +49,8 @@ class AuthViewModel @Inject constructor(
                         it.copy(
                             isSubmitting = false,
                             sessionSummary = "${session.eventName} (#${session.eventId})",
-                            errorMessage = null
+                            errorMessage = null,
+                            authenticatedSession = session
                         )
                     }
                 }
@@ -58,7 +59,8 @@ class AuthViewModel @Inject constructor(
                         it.copy(
                             isSubmitting = false,
                             errorMessage = throwable.message ?: "Login failed.",
-                            sessionSummary = null
+                            sessionSummary = null,
+                            authenticatedSession = null
                         )
                     }
                 }
