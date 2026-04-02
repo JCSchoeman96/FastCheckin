@@ -3,13 +3,15 @@ package za.co.voelgoed.fastcheck.feature.diagnostics
 import java.time.Clock
 import javax.inject.Inject
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
+import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
+import za.co.voelgoed.fastcheck.core.designsystem.semantic.toSyncUiState
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
-import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
+import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
+import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.domain.model.SessionState
-import za.co.voelgoed.fastcheck.domain.model.FlushReport
 
 class DiagnosticsUiStateFactory @Inject constructor(
     private val clock: Clock
@@ -21,7 +23,7 @@ class DiagnosticsUiStateFactory @Inject constructor(
         syncStatus: AttendeeSyncStatus?,
         queueDepth: Int,
         latestFlushReport: FlushReport?,
-        coordinatorState: AutoFlushCoordinatorState
+        syncUiState: SyncUiState
     ): DiagnosticsUiState {
         val nowEpochMillis = clock.millis()
         val sessionState =
@@ -39,21 +41,6 @@ class DiagnosticsUiStateFactory @Inject constructor(
                 session == null -> "Unknown"
                 session.expiresAtEpochMillis <= nowEpochMillis -> "Expired"
                 else -> "Valid"
-            }
-
-        val uploadStateLabel =
-            when {
-                coordinatorState.isFlushing ->
-                    "Uploading"
-                coordinatorState.isRetryScheduled ->
-                    "Retry pending (attempt ${coordinatorState.retryAttempt})"
-                latestFlushReport?.executionStatus == FlushExecutionStatus.AUTH_EXPIRED ||
-                    latestFlushReport?.authExpired == true ->
-                    "Auth expired"
-                latestFlushReport?.executionStatus == FlushExecutionStatus.RETRYABLE_FAILURE ->
-                    "Retry pending"
-                else ->
-                    "Idle"
             }
 
         val serverResultSummary =
@@ -82,11 +69,39 @@ class DiagnosticsUiStateFactory @Inject constructor(
                         "Last synced attendees: ${syncStatus.attendeeCount} (stored locally)"
                 },
             localQueueDepthLabel = "Queued locally: $queueDepth",
-            uploadStateLabel = uploadStateLabel,
+            uploadStateLabel = syncUiState.defaultLabel,
             serverResultSummary = serverResultSummary,
             latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet."
         )
     }
+
+    @Deprecated(
+        message = "Test-only compatibility path. Runtime callers must pass SyncUiState directly.",
+        level = DeprecationLevel.WARNING
+    )
+    fun create(
+        apiEnvironmentConfig: ApiEnvironmentConfig,
+        session: ScannerSession?,
+        tokenPresent: Boolean,
+        syncStatus: AttendeeSyncStatus?,
+        queueDepth: Int,
+        latestFlushReport: FlushReport?,
+        coordinatorState: AutoFlushCoordinatorState
+    ): DiagnosticsUiState =
+        create(
+            apiEnvironmentConfig = apiEnvironmentConfig,
+            session = session,
+            tokenPresent = tokenPresent,
+            syncStatus = syncStatus,
+            queueDepth = queueDepth,
+            latestFlushReport = latestFlushReport,
+            syncUiState =
+                coordinatorState.toSyncUiState(
+                    isOnline = true,
+                    latestFlushReport = latestFlushReport,
+                    pendingQueueDepth = queueDepth
+                )
+        )
 
     private fun buildServerResultSummary(report: FlushReport?): String {
         val outcomes = report?.itemOutcomes.orEmpty()

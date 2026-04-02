@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package za.co.voelgoed.fastcheck.feature.diagnostics
 
 import com.google.common.truth.Truth.assertThat

@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Clock
-import java.time.Instant
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,8 +18,8 @@ class SyncViewModel @Inject constructor(
     private val syncRepository: SyncRepository,
     private val clock: Clock
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(SyncUiState())
-    val uiState: StateFlow<SyncUiState> = _uiState.asStateFlow()
+    private val _uiState = MutableStateFlow(SyncScreenUiState())
+    val uiState: StateFlow<SyncScreenUiState> = _uiState.asStateFlow()
 
     fun syncAttendees() {
         val now = clock.millis()
@@ -48,7 +47,12 @@ class SyncViewModel @Inject constructor(
                             isSyncing = false,
                             summaryMessage =
                                 status?.let { sync ->
-                                    "Synced ${sync.attendeeCount} attendees via ${sync.syncType ?: "unknown"} sync."
+                                    val syncType =
+                                        when (val value = sync.syncType) {
+                                            null -> "unknown"
+                                            else -> if (value.isBlank()) "unknown" else value
+                                        }
+                                    "Synced ${sync.attendeeCount} attendees via $syncType sync."
                                 } ?: "No active session. Login before syncing.",
                             errorMessage = null,
                             isRateLimited = false,
@@ -59,16 +63,18 @@ class SyncViewModel @Inject constructor(
                 .onFailure { throwable ->
                     _uiState.update { state ->
                         when (throwable) {
-                            is SyncRateLimitedException ->
+                            is SyncRateLimitedException -> {
+                                val rateLimitThrowable: Throwable = throwable
                                 state.copy(
                                     isSyncing = false,
                                     isRateLimited = true,
                                     nextAllowedSyncAtMillis =
                                         throwable.retryAfterMillis?.let { now + it },
                                     errorMessage =
-                                        throwable.message
+                                        rateLimitThrowable.message
                                             ?: "Sync is temporarily rate-limited. Please wait a moment before trying again."
                                 )
+                            }
                             else ->
                                 state.copy(
                                     isSyncing = false,
