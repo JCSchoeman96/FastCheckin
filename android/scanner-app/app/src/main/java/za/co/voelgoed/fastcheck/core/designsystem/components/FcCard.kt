@@ -7,7 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import za.co.voelgoed.fastcheck.core.designsystem.tokens.StrokeTokens
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 
 @Composable
@@ -23,7 +23,7 @@ fun FcCard(
         color = theme.colorScheme.surface,
         contentColor = theme.colorScheme.onSurface,
         shadowElevation = theme.elevation.low,
-        border = BorderStroke(1.dp, theme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        border = BorderStroke(StrokeTokens.Hairline, theme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
     ) {
         Box(
             modifier = Modifier.padding(theme.spacing.medium),
