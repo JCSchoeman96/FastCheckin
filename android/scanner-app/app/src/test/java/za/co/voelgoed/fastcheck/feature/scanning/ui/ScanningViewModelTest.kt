@@ -2,9 +2,14 @@ package za.co.voelgoed.fastcheck.feature.scanning.ui
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason
+import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
+import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationDecision
+import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
 class ScanningViewModelTest {
     @Test
@@ -24,39 +29,62 @@ class ScanningViewModelTest {
     }
 
     @Test
-    fun scannerSourceLifecycleDrivesUiStateAndPreviewVisibility() {
+    fun armedDecisionOnlyBecomesActiveWhenSourceIsReady() {
         val viewModel = ScanningViewModel()
 
-        // Permission granted but source idle -> no preview
         viewModel.refreshPermissionState(true)
-        assertThat(viewModel.uiState.value.cameraPermissionState)
-            .isEqualTo(CameraPermissionState.GRANTED)
-        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
-        assertThat(viewModel.uiState.value.isSourceReady).isFalse()
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
 
-        // Source transitions to Ready -> preview visible
-        viewModel.onSourceStateChanged(ScannerSourceState.Ready)
-        assertThat(viewModel.uiState.value.sourceLifecycle)
-            .isEqualTo(ScannerSourceState.Ready)
-        assertThat(viewModel.uiState.value.isSourceReady).isTrue()
+        assertThat(viewModel.uiState.value.sessionState).isEqualTo(ScannerSessionState.Armed)
         assertThat(viewModel.uiState.value.isPreviewVisible).isTrue()
 
-        // Source error clears readiness and preview
-        viewModel.onSourceStateChanged(ScannerSourceState.Error("camera unavailable"))
-        assertThat(viewModel.uiState.value.isSourceReady).isFalse()
-        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
-        assertThat(viewModel.uiState.value.sourceErrorMessage).isEqualTo("camera unavailable")
+        viewModel.onSourceStateChanged(ScannerSourceState.Ready)
+
+        assertThat(viewModel.uiState.value.sessionState).isEqualTo(ScannerSessionState.Active)
+        assertThat(viewModel.uiState.value.isSourceReady).isTrue()
+        assertThat(viewModel.uiState.value.isPreviewVisible).isTrue()
     }
 
     @Test
-    fun stoppingStateShowsCalmRuntimeMessage() {
+    fun sourceErrorBlocksScannerWithTypedReason() {
         val viewModel = ScanningViewModel()
 
         viewModel.refreshPermissionState(true)
-        viewModel.onSourceStateChanged(ScannerSourceState.Stopping)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
 
-        assertThat(viewModel.uiState.value.scannerStatus).isEqualTo("Stopping scanner input source.")
+        viewModel.onSourceStateChanged(ScannerSourceState.Error("camera unavailable"))
+
+        assertThat(viewModel.uiState.value.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.SourceError))
+        assertThat(viewModel.uiState.value.sourceErrorMessage).isEqualTo("camera unavailable")
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+    }
+
+    @Test
+    fun captureResultsMapToSemanticTruth() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onCaptureHandoffResult(CaptureHandoffResult.Accepted)
+        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.QueuedLocally)
+
+        viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
+        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.Suppressed)
+
+        viewModel.onCaptureHandoffResult(CaptureHandoffResult.Failed("Queue failed"))
+        assertThat(viewModel.uiState.value.captureSemanticState)
+            .isEqualTo(ScanUiState.Failed("Queue failed"))
     }
 
     @Test
@@ -64,23 +92,19 @@ class ScanningViewModelTest {
         val viewModel = ScanningViewModel()
 
         viewModel.onActiveSourceTypeChanged(ScannerSourceType.BROADCAST_INTENT)
-        viewModel.refreshPermissionState(false)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
         viewModel.onSourceStateChanged(ScannerSourceState.Ready)
 
         assertThat(viewModel.uiState.value.isPermissionRequestVisible).isFalse()
         assertThat(viewModel.uiState.value.isPermissionRequestEnabled).isFalse()
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
         assertThat(viewModel.uiState.value.permissionSummary).contains("not required")
-        assertThat(viewModel.uiState.value.scannerStatus).contains("Zebra DataWedge scanner ready")
-    }
-
-    @Test
-    fun permissionRequestStartedRemainsTruthfulForDataWedgeMode() {
-        val viewModel = ScanningViewModel()
-
-        viewModel.onActiveSourceTypeChanged(ScannerSourceType.BROADCAST_INTENT)
-        viewModel.onPermissionRequestStarted()
-
-        assertThat(viewModel.uiState.value.scannerStatus).contains("not required")
+        assertThat(viewModel.uiState.value.sessionState).isEqualTo(ScannerSessionState.Active)
     }
 }

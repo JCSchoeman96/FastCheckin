@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.data.repository.SyncRateLimitedException
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
+import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 
 @HiltViewModel
 class SyncViewModel @Inject constructor(
@@ -21,27 +22,97 @@ class SyncViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(SyncScreenUiState())
     val uiState: StateFlow<SyncScreenUiState> = _uiState.asStateFlow()
 
+    private val _currentEventSyncStatus = MutableStateFlow<AttendeeSyncStatus?>(null)
+    val currentEventSyncStatus: StateFlow<AttendeeSyncStatus?> = _currentEventSyncStatus.asStateFlow()
+
+    private val bootstrapAttemptedEvents = mutableSetOf<Long>()
+
     fun syncAttendees() {
+        performSync(isBootstrap = false, bootstrapEventId = null)
+    }
+
+    fun refreshCurrentEventSyncStatus() {
+        viewModelScope.launch {
+            _currentEventSyncStatus.value = syncRepository.currentSyncStatus()
+        }
+    }
+
+    fun ensureBootstrapSyncForEvent(eventId: Long) {
+        if (_uiState.value.isSyncing) return
+
+        viewModelScope.launch {
+            val persistedStatus = syncRepository.currentSyncStatus()
+            val currentStatus = persistedStatus ?: _currentEventSyncStatus.value
+
+            if (persistedStatus != null) {
+                _currentEventSyncStatus.value = persistedStatus
+            }
+
+            if (currentStatus?.eventId == eventId) {
+                _uiState.update { current ->
+                    current.copy(
+                        bootstrapStatus = BootstrapSyncStatus.Succeeded,
+                        bootstrapEventId = eventId
+                    )
+                }
+                return@launch
+            }
+
+            if (!bootstrapAttemptedEvents.add(eventId)) {
+                return@launch
+            }
+
+            performSync(isBootstrap = true, bootstrapEventId = eventId)
+        }
+    }
+
+    fun resetBootstrapState() {
+        bootstrapAttemptedEvents.clear()
+        _currentEventSyncStatus.value = null
+        _uiState.update { current ->
+            current.copy(
+                bootstrapStatus = BootstrapSyncStatus.Idle,
+                bootstrapEventId = null
+            )
+        }
+    }
+
+    private fun performSync(
+        isBootstrap: Boolean,
+        bootstrapEventId: Long?
+    ) {
         val now = clock.millis()
         val current = _uiState.value
 
-        // Single-flight guard: if a sync is already in progress, ignore additional taps.
-        // Caveat: this is safe when syncAttendees() is called only from the main/UI path (true today).
-        // If it is later invoked from multiple dispatchers or non-UI collectors, a plain state check
-        // can race; use a Mutex or atomic compare-and-set style guard for that case.
         if (current.isSyncing) return
 
-        // If we know a concrete nextAllowedSyncAtMillis and haven't reached it yet, treat this
-        // tap as noise and just keep the calm rate-limit message.
         if (current.isRateLimited && current.nextAllowedSyncAtMillis?.let { now < it } == true) {
             return
         }
 
-        _uiState.update { it.copy(isSyncing = true, errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                isSyncing = true,
+                errorMessage = null,
+                bootstrapStatus =
+                    if (isBootstrap) {
+                        BootstrapSyncStatus.Syncing
+                    } else {
+                        it.bootstrapStatus
+                    },
+                bootstrapEventId =
+                    if (isBootstrap) {
+                        bootstrapEventId
+                    } else {
+                        it.bootstrapEventId
+                    }
+            )
+        }
 
         viewModelScope.launch {
             runCatching { syncRepository.syncAttendees() }
                 .onSuccess { status ->
+                    _currentEventSyncStatus.value = status
                     _uiState.update {
                         it.copy(
                             isSyncing = false,
@@ -56,7 +127,19 @@ class SyncViewModel @Inject constructor(
                                 } ?: "No active session. Login before syncing.",
                             errorMessage = null,
                             isRateLimited = false,
-                            nextAllowedSyncAtMillis = null
+                            nextAllowedSyncAtMillis = null,
+                            bootstrapStatus =
+                                if (isBootstrap) {
+                                    BootstrapSyncStatus.Succeeded
+                                } else {
+                                    it.bootstrapStatus
+                                },
+                            bootstrapEventId =
+                                if (isBootstrap) {
+                                    bootstrapEventId
+                                } else {
+                                    it.bootstrapEventId
+                                }
                         )
                     }
                 }
@@ -70,14 +153,39 @@ class SyncViewModel @Inject constructor(
                                     isRateLimited = true,
                                     nextAllowedSyncAtMillis =
                                         throwable.retryAfterMillis?.let { now + it },
+                                    bootstrapStatus =
+                                        if (isBootstrap) {
+                                            BootstrapSyncStatus.Failed
+                                        } else {
+                                            state.bootstrapStatus
+                                        },
+                                    bootstrapEventId =
+                                        if (isBootstrap) {
+                                            bootstrapEventId
+                                        } else {
+                                            state.bootstrapEventId
+                                        },
                                     errorMessage =
                                         rateLimitThrowable.message
                                             ?: "Sync is temporarily rate-limited. Please wait a moment before trying again."
                                 )
                             }
+
                             else ->
                                 state.copy(
                                     isSyncing = false,
+                                    bootstrapStatus =
+                                        if (isBootstrap) {
+                                            BootstrapSyncStatus.Failed
+                                        } else {
+                                            state.bootstrapStatus
+                                        },
+                                    bootstrapEventId =
+                                        if (isBootstrap) {
+                                            bootstrapEventId
+                                        } else {
+                                            state.bootstrapEventId
+                                        },
                                     errorMessage = throwable.message ?: "Attendee sync failed."
                                 )
                         }
