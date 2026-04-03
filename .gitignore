@@ -74,3 +74,6 @@ Thumbs.db
 .beads/dolt-config.log
 # bd worktree
 mobile-scan-ingestion-phase1/
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
