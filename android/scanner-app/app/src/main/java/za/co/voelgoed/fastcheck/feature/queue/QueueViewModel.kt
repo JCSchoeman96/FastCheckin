@@ -52,6 +52,7 @@ class QueueViewModel @Inject constructor(
                     current.copy(
                         isFlushing = syncUiState is SyncUiState.Syncing,
                         localQueueDepth = queueDepth,
+                        uploadSemanticState = syncUiState,
                         uploadStateLabel = syncUiState.defaultLabel,
                         serverResultHint =
                             queueUiStateFactory.serverResultHintForFlushReport(latestFlushReport)

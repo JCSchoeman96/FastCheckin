@@ -26,11 +26,13 @@ class RuntimeContractAuditTest {
 
         assertThat(sourceText).contains("feature.queue.QueueViewModel")
         assertThat(sourceText).contains("feature.scanning.ui.ScanningViewModel")
+        assertThat(sourceText).contains("feature.scanning.screen.ScanDestinationRoute")
         assertThat(sourceText).contains("ScanningUiState")
         assertThat(sourceText).doesNotContain("domain.model.FlushSummary")
         assertThat(sourceText).doesNotContain("class FlushSummary")
         assertThat(sourceText).doesNotContain("/api/v1/device_sessions")
         assertThat(sourceText).doesNotContain("/api/v1/check_ins")
+        assertThat(sourceText).doesNotContain("LegacyOperatorRuntime")
     }
 
     @Test

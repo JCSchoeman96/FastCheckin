@@ -18,10 +18,10 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.R
-import za.co.voelgoed.fastcheck.app.legacy.LegacyOperatorRuntimeController
-import za.co.voelgoed.fastcheck.app.legacy.LegacyOperatorRuntimeHost
 import za.co.voelgoed.fastcheck.app.navigation.AppShellDestination
 import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
+import za.co.voelgoed.fastcheck.app.scanning.ScanPreviewSurfaceHolder
+import za.co.voelgoed.fastcheck.app.scanning.ScannerActivationContext
 import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceSelectionResolver
@@ -35,13 +35,13 @@ import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
-import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.broadcast.DataWedgeScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerInputSource
+import za.co.voelgoed.fastcheck.feature.scanning.screen.ScanDestinationRoute
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
@@ -77,12 +77,12 @@ class MainActivity : ComponentActivity() {
     private val sessionGateViewModel: SessionGateViewModel by viewModels()
     private val appShellViewModel: AppShellViewModel by viewModels()
     private val syncViewModel: SyncViewModel by viewModels()
-    private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
     private val queueViewModel: QueueViewModel by viewModels()
     private val scanningViewModel: ScanningViewModel by viewModels()
 
     private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
     private val scannerSourceActivationPolicy = ScannerSourceActivationPolicy()
+    private val previewSurfaceHolder = ScanPreviewSurfaceHolder()
 
     private lateinit var selectedScannerSourceMode: ScannerShellSourceMode
     private lateinit var scannerInputSource: ScannerInputSource
@@ -90,35 +90,12 @@ class MainActivity : ComponentActivity() {
 
     private var isAuthenticatedRouteActive: Boolean = false
     private var isScanDestinationActive: Boolean = true
-    private var isLegacyScanSurfaceAttached: Boolean = false
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             scanningViewModel.refreshPermissionState(granted)
-            syncScannerBindingForPermission()
+            syncScannerBindingState()
         }
-
-    private val legacyOperatorRuntimeController: LegacyOperatorRuntimeController by lazy {
-        LegacyOperatorRuntimeController(
-            lifecycleOwner = this,
-            syncViewModel = syncViewModel,
-            diagnosticsViewModel = diagnosticsViewModel,
-            queueViewModel = queueViewModel,
-            scanningViewModel = scanningViewModel,
-            onRequestCameraPermission = {
-                cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-            },
-            onRefreshDiagnostics = diagnosticsViewModel::refresh,
-            onViewAttached = {
-                isLegacyScanSurfaceAttached = true
-                syncScannerBindingForPermission()
-            },
-            onViewDetached = {
-                isLegacyScanSurfaceAttached = false
-                syncScannerBindingForPermission()
-            }
-        )
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,15 +106,26 @@ class MainActivity : ComponentActivity() {
         )
         binding.authenticatedShellComposeView.setContent {
             val shellUiState by appShellViewModel.uiState.collectAsState()
+            val sessionRoute by sessionGateViewModel.route.collectAsState()
+            val authenticatedSession = (sessionRoute as? AppSessionRoute.Authenticated)?.session
+
             AuthenticatedShellScreen(
                 uiState = shellUiState,
                 onDestinationSelected = appShellViewModel::selectDestination,
                 onOverflowActionSelected = ::handleShellOverflowAction,
                 onNoticeDismissed = appShellViewModel::clearNotice,
                 scanContent = {
-                    LegacyOperatorRuntimeHost(
-                        controller = legacyOperatorRuntimeController
-                    )
+                    if (authenticatedSession != null) {
+                        ScanDestinationRoute(
+                            session = authenticatedSession,
+                            scanningViewModel = scanningViewModel,
+                            queueViewModel = queueViewModel,
+                            syncViewModel = syncViewModel,
+                            previewSurfaceHolder = previewSurfaceHolder,
+                            onPreviewSurfaceChanged = ::syncScannerBindingState,
+                            onRetryUpload = queueViewModel::flushQueuedScans
+                        )
+                    }
                 }
             )
         }
@@ -192,6 +180,7 @@ class MainActivity : ComponentActivity() {
                             AppSessionRoute.LoggedOut -> {
                                 val wasAuthenticated = isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = false
+                                syncViewModel.resetBootstrapState()
                                 appShellViewModel.reset()
                                 binding.loginGateContainer.visibility = android.view.View.VISIBLE
                                 binding.authenticatedShellComposeView.visibility =
@@ -206,17 +195,17 @@ class MainActivity : ComponentActivity() {
                                 isAuthenticatedRouteActive = true
                                 if (becameAuthenticated) {
                                     appShellViewModel.reset()
+                                    syncViewModel.resetBootstrapState()
                                 }
                                 binding.loginGateContainer.visibility = android.view.View.GONE
                                 binding.authenticatedShellComposeView.visibility =
                                     android.view.View.VISIBLE
                                 if (becameAuthenticated) {
-                                    diagnosticsViewModel.refresh()
                                     autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
                                 }
                             }
                         }
-                        syncScannerBindingForPermission()
+                        syncScannerBindingState()
                     }
                 }
 
@@ -224,7 +213,7 @@ class MainActivity : ComponentActivity() {
                     appShellViewModel.uiState.collectLatest { state ->
                         isScanDestinationActive =
                             state.selectedDestination == AppShellDestination.Scan
-                        syncScannerBindingForPermission()
+                        syncScannerBindingState()
                     }
                 }
 
@@ -236,7 +225,6 @@ class MainActivity : ComponentActivity() {
                         val succeededNow =
                             completedNow && lastError == null && state.errorMessage == null
                         if (succeededNow) {
-                            diagnosticsViewModel.refresh()
                             autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostSync)
                         }
 
@@ -262,19 +250,19 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        syncScannerBindingForPermission()
+        syncScannerBindingState()
         sessionGateViewModel.refreshSessionRoute()
     }
 
     override fun onStart() {
         super.onStart()
         autoFlushCoordinator.requestFlush(AutoFlushTrigger.ForegroundResume)
-        syncScannerBindingForPermission()
+        syncScannerBindingState()
     }
 
     override fun onResume() {
         super.onResume()
-        syncScannerBindingForPermission()
+        syncScannerBindingState()
     }
 
     override fun onStop() {
@@ -288,20 +276,24 @@ class MainActivity : ComponentActivity() {
             android.Manifest.permission.CAMERA
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
-    private fun syncScannerBindingForPermission() {
+    private fun syncScannerBindingState() {
         val hasPermission = hasCameraPermission()
         scanningViewModel.refreshPermissionState(hasPermission)
 
         val decision =
             scannerSourceActivationPolicy.evaluate(
-                sourceMode = selectedScannerSourceMode,
-                hasCameraPermission = hasPermission,
-                isShellStarted =
-                    lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
-                        isAuthenticatedRouteActive &&
-                        isScanDestinationActive &&
-                        isLegacyScanSurfaceAttached
+                ScannerActivationContext(
+                    sourceMode = selectedScannerSourceMode,
+                    isAuthenticated = isAuthenticatedRouteActive,
+                    isScanDestinationSelected = isScanDestinationActive,
+                    isForeground = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+                    hasCameraPermission = hasPermission,
+                    hasPreviewSurface = previewSurfaceHolder.hasPreviewSurface(),
+                    isPreviewVisible = previewSurfaceHolder.isPreviewVisible()
+                )
             )
+
+        scanningViewModel.onActivationDecision(decision)
 
         if (decision.shouldStartBinding) {
             scannerSourceBinding.start()
@@ -325,7 +317,7 @@ class MainActivity : ComponentActivity() {
                 CameraScannerInputSource(
                     scannerCameraBinder = scannerCameraBinder,
                     lifecycleOwnerProvider = { this },
-                    previewViewProvider = { legacyOperatorRuntimeController.requirePreviewView() },
+                    previewViewProvider = { previewSurfaceHolder.requirePreviewView() },
                     appDispatchers = appDispatchers,
                     clock = clock,
                     barcodeScannerEngine = barcodeScannerEngine

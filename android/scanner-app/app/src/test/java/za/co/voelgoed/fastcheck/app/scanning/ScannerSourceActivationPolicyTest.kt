@@ -10,50 +10,99 @@ class ScannerSourceActivationPolicyTest {
     fun cameraModeRequiresPermissionBeforeStartingBinding() {
         val decision =
             policy.evaluate(
-                sourceMode = ScannerShellSourceMode.CAMERA,
-                hasCameraPermission = false,
-                isShellStarted = true
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = false,
+                    hasPreviewSurface = true,
+                    isPreviewVisible = true
+                )
             )
 
         assertThat(decision.shouldStartBinding).isFalse()
         assertThat(decision.shouldShowCameraPermissionRequest).isTrue()
+        assertThat(decision.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.PermissionDenied))
     }
 
     @Test
-    fun dataWedgeModeDoesNotGateBindingOnCameraPermission() {
+    fun dataWedgeModeArmsWhenScanTabIsForegrounded() {
         val decision =
             policy.evaluate(
-                sourceMode = ScannerShellSourceMode.DATAWEDGE,
-                hasCameraPermission = false,
-                isShellStarted = true
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.DATAWEDGE,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = false,
+                    hasPreviewSurface = false,
+                    isPreviewVisible = false
+                )
             )
 
         assertThat(decision.shouldStartBinding).isTrue()
         assertThat(decision.shouldShowCameraPermissionRequest).isFalse()
+        assertThat(decision.sessionState).isEqualTo(ScannerSessionState.Armed)
     }
 
     @Test
-    fun dataWedgeModeDoesNotStartBeforeShellIsStarted() {
+    fun backgroundedScanBlocksBinding() {
         val decision =
             policy.evaluate(
-                sourceMode = ScannerShellSourceMode.DATAWEDGE,
-                hasCameraPermission = false,
-                isShellStarted = false
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = false,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = true,
+                    isPreviewVisible = true
+                )
             )
 
         assertThat(decision.shouldStartBinding).isFalse()
-        assertThat(decision.shouldShowCameraPermissionRequest).isFalse()
+        assertThat(decision.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.Backgrounded))
     }
 
     @Test
-    fun cameraModeDoesNotStartWhenScanSurfaceIsNotEligible() {
+    fun missingPreviewBlocksCameraBinding() {
         val decision =
             policy.evaluate(
-                sourceMode = ScannerShellSourceMode.CAMERA,
-                hasCameraPermission = true,
-                isShellStarted = false
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = false,
+                    isPreviewVisible = false
+                )
             )
 
         assertThat(decision.shouldStartBinding).isFalse()
+        assertThat(decision.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.PreviewUnavailable))
+    }
+
+    @Test
+    fun leavingScanTabReturnsIdle() {
+        val decision =
+            policy.evaluate(
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = false,
+                    isForeground = true,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = true,
+                    isPreviewVisible = true
+                )
+            )
+
+        assertThat(decision.shouldStartBinding).isFalse()
+        assertThat(decision.sessionState).isEqualTo(ScannerSessionState.Idle)
     }
 }
