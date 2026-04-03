@@ -37,6 +37,8 @@ fun AttendeeSearchRoute(
         onQueryChanged = attendeeSearchViewModel::updateQuery,
         onAttendeeSelected = attendeeSearchViewModel::selectAttendee,
         onBackToResults = attendeeSearchViewModel::clearSelection,
+        onDismissActionBanner = attendeeSearchViewModel::dismissActionBanner,
+        onQueueManualCheckIn = attendeeSearchViewModel::queueManualCheckIn,
         modifier = modifier
     )
 }
