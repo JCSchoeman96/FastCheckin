@@ -68,6 +68,7 @@ class SyncViewModel @Inject constructor(
 
     fun resetBootstrapState() {
         bootstrapAttemptedEvents.clear()
+        _currentEventSyncStatus.value = null
         _uiState.update { current ->
             current.copy(
                 bootstrapStatus = BootstrapSyncStatus.Idle,

@@ -185,4 +185,26 @@ class SyncViewModelTest {
         assertThat(repo.callCount).isEqualTo(1)
         assertThat(viewModel.currentEventSyncStatus.value).isEqualTo(targetStatus)
     }
+
+    @Test
+    fun resetBootstrapStateClearsCurrentEventSyncStatus() = runTest(dispatcher) {
+        val syncedStatus =
+            AttendeeSyncStatus(
+                eventId = 7,
+                lastServerTime = "2026-03-13T08:20:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:20:00Z",
+                syncType = "full",
+                attendeeCount = 42
+            )
+        val repo = RecordingSyncRepository(behavior = { syncedStatus })
+        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+
+        viewModel.ensureBootstrapSyncForEvent(7)
+        advanceUntilIdle()
+        viewModel.resetBootstrapState()
+
+        assertThat(viewModel.currentEventSyncStatus.value).isNull()
+        assertThat(viewModel.uiState.value.bootstrapStatus).isEqualTo(BootstrapSyncStatus.Idle)
+        assertThat(viewModel.uiState.value.bootstrapEventId).isNull()
+    }
 }

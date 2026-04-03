@@ -14,7 +14,6 @@ sealed interface ScannerSessionState {
 
 enum class ScannerBlockReason {
     NotAuthenticated,
-    NotOnScanTab,
     Backgrounded,
     PermissionDenied,
     PreviewUnavailable,

@@ -76,8 +76,7 @@ class ScanDestinationPresenter(
                     ScannerBlockReason.PreviewUnavailable ->
                         StatusChipUiModel(text = "Preparing preview", tone = StatusTone.Info)
 
-                    ScannerBlockReason.NotAuthenticated,
-                    ScannerBlockReason.NotOnScanTab ->
+                    ScannerBlockReason.NotAuthenticated ->
                         StatusChipUiModel(text = "Scanner idle", tone = StatusTone.Muted)
                 }
         }
