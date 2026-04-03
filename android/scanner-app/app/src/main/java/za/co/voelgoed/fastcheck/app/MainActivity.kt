@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
     private val syncViewModel: SyncViewModel by viewModels()
     private val queueViewModel: QueueViewModel by viewModels()
     private val scanningViewModel: ScanningViewModel by viewModels()
+
     private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
     private val scannerSourceActivationPolicy = ScannerSourceActivationPolicy()
     private val previewSurfaceHolder = ScanPreviewSurfaceHolder()

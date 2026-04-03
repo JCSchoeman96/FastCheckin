@@ -97,7 +97,7 @@ private fun ShellContent(
     uiState: AppShellUiState,
     contentPadding: PaddingValues,
     onNoticeDismissed: () -> Unit,
-    scanContent: @Composable () -> Unit,
+    scanContent: @Composable () -> Unit
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
 
