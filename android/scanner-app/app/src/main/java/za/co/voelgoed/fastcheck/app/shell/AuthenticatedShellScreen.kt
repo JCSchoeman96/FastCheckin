@@ -38,7 +38,6 @@ fun AuthenticatedShellScreen(
     onOverflowActionSelected: (AppShellOverflowAction) -> Unit,
     onNoticeDismissed: () -> Unit,
     scanContent: @Composable () -> Unit,
-    searchContent: @Composable () -> Unit,
     modifier: Modifier = Modifier
 ) {
     FastCheckTheme {
@@ -87,8 +86,7 @@ fun AuthenticatedShellScreen(
                 uiState = uiState,
                 contentPadding = innerPadding,
                 onNoticeDismissed = onNoticeDismissed,
-                scanContent = scanContent,
-                searchContent = searchContent
+                scanContent = scanContent
             )
         }
     }
@@ -100,7 +98,6 @@ private fun ShellContent(
     contentPadding: PaddingValues,
     onNoticeDismissed: () -> Unit,
     scanContent: @Composable () -> Unit,
-    searchContent: @Composable () -> Unit
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
 
@@ -126,7 +123,7 @@ private fun ShellContent(
 
         when (uiState.selectedDestination) {
             AppShellDestination.Scan -> scanContent()
-            AppShellDestination.Search -> searchContent()
+            AppShellDestination.Search -> SearchStubScreen(modifier = Modifier.fillMaxWidth())
             AppShellDestination.Event -> EventStubScreen(modifier = Modifier.fillMaxWidth())
         }
     }

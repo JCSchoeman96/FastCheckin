@@ -35,8 +35,6 @@ import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
-import za.co.voelgoed.fastcheck.feature.attendees.AttendeeSearchRoute
-import za.co.voelgoed.fastcheck.feature.attendees.AttendeeSearchViewModel
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.broadcast.DataWedgeScannerInputSource
@@ -81,8 +79,6 @@ class MainActivity : ComponentActivity() {
     private val syncViewModel: SyncViewModel by viewModels()
     private val queueViewModel: QueueViewModel by viewModels()
     private val scanningViewModel: ScanningViewModel by viewModels()
-    private val attendeeSearchViewModel: AttendeeSearchViewModel by viewModels()
-
     private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
     private val scannerSourceActivationPolicy = ScannerSourceActivationPolicy()
     private val previewSurfaceHolder = ScanPreviewSurfaceHolder()
@@ -127,15 +123,6 @@ class MainActivity : ComponentActivity() {
                             previewSurfaceHolder = previewSurfaceHolder,
                             onPreviewSurfaceChanged = ::syncScannerBindingState,
                             onRetryUpload = queueViewModel::flushQueuedScans
-                        )
-                    }
-                },
-                searchContent = {
-                    if (authenticatedSession != null) {
-                        AttendeeSearchRoute(
-                            session = authenticatedSession,
-                            attendeeSearchViewModel = attendeeSearchViewModel,
-                            syncViewModel = syncViewModel
                         )
                     }
                 }
