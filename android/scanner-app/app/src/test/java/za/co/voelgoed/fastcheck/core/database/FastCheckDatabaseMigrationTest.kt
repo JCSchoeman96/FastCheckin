@@ -63,7 +63,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_2_3,
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
-                    FastCheckDatabaseMigrations.MIGRATION_4_5
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -138,7 +139,8 @@ class FastCheckDatabaseMigrationTest {
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
-                    FastCheckDatabaseMigrations.MIGRATION_4_5
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -169,7 +171,10 @@ class FastCheckDatabaseMigrationTest {
 
         val database =
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
-                .addMigrations(FastCheckDatabaseMigrations.MIGRATION_4_5)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                )
                 .allowMainThreadQueries()
                 .build()
         val scannerDao = database.scannerDao()
@@ -216,7 +221,8 @@ class FastCheckDatabaseMigrationTest {
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
-                    FastCheckDatabaseMigrations.MIGRATION_4_5
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -238,7 +244,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_2_3,
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
-                    FastCheckDatabaseMigrations.MIGRATION_4_5
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -251,6 +258,29 @@ class FastCheckDatabaseMigrationTest {
         assertThat(scannerDao.findReplaySuppression("VG-V2-COLLAPSE")?.seenAtEpochMillis).isEqualTo(4_100L)
         assertThat(scannerDao.loadQueuedScans().single().ticketCode).isEqualTo("VG-V2-QUEUE")
         assertThat(scannerDao.loadRecentFlushOutcomes(limit = 5).map { it.ticketCode }).contains("VG-V2-OUTCOME")
+
+        database.close()
+    }
+
+    @Test
+    fun migratesVersion5AttendeesAddsAttendanceTimestampColumns() = runTest {
+        createVersion5Schema(databaseFile)
+
+        val database =
+            Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
+                .addMigrations(FastCheckDatabaseMigrations.MIGRATION_5_6)
+                .allowMainThreadQueries()
+                .build()
+        val scannerDao = database.scannerDao()
+        val sqliteDb = database.openHelper.writableDatabase
+
+        val attendee = scannerDao.findAttendee(5, "VG-V5-001")
+
+        assertThat(attendee).isNotNull()
+        assertThat(attendee?.checkedInAt).isNull()
+        assertThat(attendee?.checkedOutAt).isNull()
+        assertThat(hasColumn(sqliteDb, "attendees", "checkedInAt")).isTrue()
+        assertThat(hasColumn(sqliteDb, "attendees", "checkedOutAt")).isTrue()
 
         database.close()
     }
@@ -337,6 +367,18 @@ class FastCheckDatabaseMigrationTest {
         )
         database.execSQL(
             "CREATE UNIQUE INDEX IF NOT EXISTS index_queued_scans_idempotencyKey ON queued_scans(idempotencyKey)"
+        )
+        database.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS index_queued_scans_replayed_createdAt_id
+            ON queued_scans(replayed, createdAt, id)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS index_queued_scans_replayed_createdAt_id
+            ON queued_scans(replayed, createdAt, id)
+            """.trimIndent()
         )
 
         database.execSQL(
@@ -724,6 +766,139 @@ class FastCheckDatabaseMigrationTest {
         database.close()
     }
 
+    private fun createVersion5Schema(databaseFile: File) {
+        databaseFile.parentFile?.mkdirs()
+        val database = SQLiteDatabase.openOrCreateDatabase(databaseFile, null)
+
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS attendees (
+                id INTEGER NOT NULL,
+                eventId INTEGER NOT NULL,
+                ticketCode TEXT NOT NULL,
+                firstName TEXT,
+                lastName TEXT,
+                email TEXT,
+                ticketType TEXT,
+                allowedCheckins INTEGER NOT NULL,
+                checkinsRemaining INTEGER NOT NULL,
+                paymentStatus TEXT,
+                isCurrentlyInside INTEGER NOT NULL,
+                updatedAt TEXT,
+                PRIMARY KEY(id)
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_attendees_eventId_ticketCode ON attendees(eventId, ticketCode)"
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS queued_scans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                eventId INTEGER NOT NULL,
+                ticketCode TEXT NOT NULL,
+                idempotencyKey TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                scannedAt TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                entranceName TEXT NOT NULL,
+                operatorName TEXT NOT NULL,
+                replayed INTEGER NOT NULL,
+                lastAttemptAt TEXT
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_queued_scans_idempotencyKey ON queued_scans(idempotencyKey)"
+        )
+        database.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS index_queued_scans_replayed_createdAt_id
+            ON queued_scans(replayed, createdAt, id)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS scan_replay_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                idempotencyKey TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL,
+                storedAt TEXT NOT NULL,
+                terminal INTEGER NOT NULL,
+                reasonCode TEXT
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_scan_replay_cache_idempotencyKey ON scan_replay_cache(idempotencyKey)"
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS sync_metadata (
+                eventId INTEGER NOT NULL,
+                lastServerTime TEXT,
+                lastSuccessfulSyncAt TEXT,
+                lastSyncType TEXT,
+                attendeeCount INTEGER NOT NULL,
+                PRIMARY KEY(eventId)
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS local_replay_suppression (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                ticketCode TEXT NOT NULL,
+                seenAtEpochMillis INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_local_replay_suppression_ticketCode ON local_replay_suppression(ticketCode)"
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS latest_flush_snapshot (
+                snapshotId INTEGER NOT NULL,
+                executionStatus TEXT NOT NULL,
+                uploadedCount INTEGER NOT NULL,
+                retryableRemainingCount INTEGER NOT NULL,
+                authExpired INTEGER NOT NULL,
+                backlogRemaining INTEGER NOT NULL,
+                summaryMessage TEXT NOT NULL,
+                completedAt TEXT NOT NULL,
+                PRIMARY KEY(snapshotId)
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS recent_flush_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                outcomeOrder INTEGER NOT NULL,
+                idempotencyKey TEXT NOT NULL,
+                ticketCode TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                message TEXT NOT NULL,
+                reasonCode TEXT,
+                completedAt TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO attendees
+                (id, eventId, ticketCode, firstName, lastName, email, ticketType, allowedCheckins, checkinsRemaining, paymentStatus, isCurrentlyInside, updatedAt)
+            VALUES
+                (501, 5, 'VG-V5-001', 'Alex', 'Existing', 'alex@example.com', 'VIP', 2, 1, 'completed', 1, '2026-03-28T10:00:00Z')
+            """.trimIndent()
+        )
+        database.version = 5
+        database.close()
+    }
+
     private fun createVersion3SchemaWithNormalizationCollisions(databaseFile: File) {
         createVersion3Schema(databaseFile)
         val database = SQLiteDatabase.openOrCreateDatabase(databaseFile, null)
@@ -957,4 +1132,19 @@ class FastCheckDatabaseMigrationTest {
             )
         }
     }
+
+    private fun hasColumn(
+        database: SupportSQLiteDatabase,
+        tableName: String,
+        columnName: String
+    ): Boolean =
+        database.query("PRAGMA table_info($tableName)").use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == columnName) {
+                    return true
+                }
+            }
+            false
+        }
 }

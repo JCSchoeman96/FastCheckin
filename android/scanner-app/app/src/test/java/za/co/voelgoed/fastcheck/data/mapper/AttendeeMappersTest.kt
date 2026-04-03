@@ -20,19 +20,25 @@ class AttendeeMappersTest {
                 checkins_remaining = 1,
                 payment_status = "completed",
                 is_currently_inside = false,
-                checked_in_at = null,
+                checked_in_at = "2026-03-12T07:55:00Z",
                 checked_out_at = null,
                 updated_at = "2026-03-12T08:00:00Z"
             )
 
         val entity = dto.toEntity()
         val domain = entity.toDomain()
+        val searchRecord = entity.toSearchRecord()
+        val detailRecord = entity.toDetailRecord()
 
         assertThat(entity.eventId).isEqualTo(99)
         assertThat(entity.ticketCode).isEqualTo("VG-001")
         assertThat(entity.allowedCheckins).isEqualTo(1)
+        assertThat(entity.checkedInAt).isEqualTo("2026-03-12T07:55:00Z")
         assertThat(domain.fullName).isEqualTo("Jane Doe")
         assertThat(domain.ticketCode).isEqualTo("VG-001")
         assertThat(domain.paymentStatus).isEqualTo("completed")
+        assertThat(searchRecord.displayName).isEqualTo("Jane Doe")
+        assertThat(detailRecord.checkedInAt).isEqualTo("2026-03-12T07:55:00Z")
+        assertThat(detailRecord.checkedOutAt).isNull()
     }
 }

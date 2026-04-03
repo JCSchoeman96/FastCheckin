@@ -56,7 +56,9 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
             Room.databaseBuilder(context, FastCheckDatabase::class.java, DATABASE_NAME)
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_2_3,
-                    FastCheckDatabaseMigrations.MIGRATION_3_4
+                    FastCheckDatabaseMigrations.MIGRATION_3_4,
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6
                 )
                 .allowMainThreadQueries()
                 .build()

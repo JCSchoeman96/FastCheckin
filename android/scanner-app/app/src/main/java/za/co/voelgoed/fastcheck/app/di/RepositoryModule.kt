@@ -16,6 +16,8 @@ import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanReposito
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSessionRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
+import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
+import za.co.voelgoed.fastcheck.data.repository.CurrentAttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.DataStoreScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
@@ -47,6 +49,12 @@ abstract class RepositoryModule {
     abstract fun bindMobileScanRepository(
         repository: CurrentPhoenixMobileScanRepository
     ): MobileScanRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAttendeeLookupRepository(
+        repository: CurrentAttendeeLookupRepository
+    ): AttendeeLookupRepository
 
     @Binds
     @Singleton
