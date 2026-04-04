@@ -30,9 +30,28 @@ class AttendeeLookupDaoTest {
         runTest {
             database.scannerDao().upsertAttendees(
                 listOf(
-                    attendee(id = 1, ticketCode = "VG-100", firstName = "Jane", lastName = "Doe", email = "jane@example.com"),
-                    attendee(id = 2, ticketCode = "VG-101", firstName = "Janet", lastName = "Smith", email = "janet@example.com"),
-                    attendee(id = 3, eventId = 6, ticketCode = "VG-102", firstName = "Other", lastName = "Event", email = "other@example.com")
+                    attendee(
+                        id = 1,
+                        ticketCode = "VG-100",
+                        firstName = "Jane",
+                        lastName = "Doe",
+                        email = "jane@example.com"
+                    ),
+                    attendee(
+                        id = 2,
+                        ticketCode = "VG-101",
+                        firstName = "Janet",
+                        lastName = "Smith",
+                        email = "janet@example.com"
+                    ),
+                    attendee(
+                        id = 3,
+                        eventId = 6,
+                        ticketCode = "VG-102",
+                        firstName = "Other",
+                        lastName = "Event",
+                        email = "other@example.com"
+                    )
                 )
             )
         }
@@ -65,6 +84,43 @@ class AttendeeLookupDaoTest {
 
         assertThat(results.map { it.id }).containsExactly(1L, 2L)
         assertThat(results.map { it.eventId }.distinct()).containsExactly(5L)
+    }
+
+    @Test
+    fun searchCandidatesPrioritizeExactTicketMatchBeforeApplyingLimit() = runTest {
+        val fuzzyMatches =
+            (1L..160L).map { id ->
+                attendee(
+                    id = 1000 + id,
+                    ticketCode = "ZZZ-$id",
+                    firstName = "Jane$id",
+                    lastName = "Fuzzy$id",
+                    email = "jane$id@example.com"
+                )
+            }
+        val exactMatch =
+            attendee(
+                id = 9999,
+                ticketCode = "VG-999",
+                firstName = "Jane",
+                lastName = "Exact",
+                email = "exact@example.com"
+            )
+
+        database.scannerDao().upsertAttendees(fuzzyMatches + exactMatch)
+
+        val results =
+            attendeeLookupDao.observeSearchCandidates(
+                eventId = 5,
+                exactTicketCode = "VG-999",
+                prefixQuery = "VG-999%",
+                containsQuery = "%jane%",
+                limit = 150
+            ).first()
+
+        assertThat(results).hasSize(150)
+        assertThat(results.first().id).isEqualTo(9999L)
+        assertThat(results.map { it.id }).contains(9999L)
     }
 
     private fun attendee(

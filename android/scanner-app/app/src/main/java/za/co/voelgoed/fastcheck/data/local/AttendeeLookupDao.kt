@@ -25,6 +25,17 @@ interface AttendeeLookupDao {
                     )
                 )
             )
+        ORDER BY
+            CASE
+                WHEN :exactTicketCode != '' AND ticketCode = :exactTicketCode THEN 0
+                WHEN :prefixQuery != '' AND ticketCode LIKE :prefixQuery ESCAPE '\' THEN 1
+                ELSE 2
+            END,
+            lower(COALESCE(lastName, '')),
+            lower(COALESCE(firstName, '')),
+            lower(COALESCE(email, '')),
+            ticketCode,
+            id
         LIMIT :limit
         """
     )
