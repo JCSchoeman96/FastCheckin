@@ -20,5 +20,7 @@ data class AttendeeEntity(
     val checkinsRemaining: Int,
     val paymentStatus: String?,
     val isCurrentlyInside: Boolean,
+    val checkedInAt: String?,
+    val checkedOutAt: String?,
     val updatedAt: String?
 )

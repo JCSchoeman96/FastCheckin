@@ -17,11 +17,14 @@ import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
+import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.model.AttendeeDetailRecord
+import za.co.voelgoed.fastcheck.domain.model.AttendeeSearchRecord
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
@@ -98,6 +101,17 @@ object TestRepositoryModule {
             override fun observePendingQueueDepth(): Flow<Int> = flowOf(0)
 
             override fun observeLatestFlushReport(): Flow<FlushReport?> = flowOf(null)
+        }
+
+    @Provides
+    @Singleton
+    fun provideAttendeeLookupRepository(): AttendeeLookupRepository =
+        object : AttendeeLookupRepository {
+            override fun search(eventId: Long, query: String): Flow<List<AttendeeSearchRecord>> =
+                flowOf(emptyList())
+
+            override fun observeDetail(eventId: Long, attendeeId: Long): Flow<AttendeeDetailRecord?> =
+                flowOf(null)
         }
 
     @Provides

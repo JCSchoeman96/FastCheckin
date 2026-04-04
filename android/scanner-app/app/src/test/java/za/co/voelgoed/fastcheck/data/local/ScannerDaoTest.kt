@@ -49,6 +49,8 @@ class ScannerDaoTest {
                     checkinsRemaining = 1,
                     paymentStatus = "completed",
                     isCurrentlyInside = false,
+                    checkedInAt = null,
+                    checkedOutAt = null,
                     updatedAt = "2026-03-12T09:00:00Z"
                 )
             )
@@ -236,6 +238,8 @@ class ScannerDaoTest {
                         checkinsRemaining = 1,
                         paymentStatus = "completed",
                         isCurrentlyInside = false,
+                        checkedInAt = null,
+                        checkedOutAt = null,
                         updatedAt = "2026-03-13T10:00:00Z"
                     )
                 ),
@@ -281,6 +285,8 @@ class ScannerDaoTest {
                                 checkinsRemaining = 1,
                                 paymentStatus = "completed",
                                 isCurrentlyInside = false,
+                                checkedInAt = null,
+                                checkedOutAt = null,
                                 updatedAt = "2026-03-13T10:02:00Z"
                             )
                         ),
@@ -324,6 +330,8 @@ class ScannerDaoTest {
                                 checkinsRemaining = 1,
                                 paymentStatus = "completed",
                                 isCurrentlyInside = false,
+                                checkedInAt = null,
+                                checkedOutAt = null,
                                 updatedAt = "2026-03-13T10:04:00Z"
                             )
                         ),

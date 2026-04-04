@@ -10,6 +10,7 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabaseMigrations
+import za.co.voelgoed.fastcheck.data.local.AttendeeLookupDao
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 
 @Module
@@ -26,9 +27,13 @@ object DatabaseModule {
             .addMigrations(
                 FastCheckDatabaseMigrations.MIGRATION_2_3,
                 FastCheckDatabaseMigrations.MIGRATION_3_4,
-                FastCheckDatabaseMigrations.MIGRATION_4_5
+                FastCheckDatabaseMigrations.MIGRATION_4_5,
+                FastCheckDatabaseMigrations.MIGRATION_5_6
             )
             .build()
+
+    @Provides
+    fun provideAttendeeLookupDao(database: FastCheckDatabase): AttendeeLookupDao = database.attendeeLookupDao()
 
     @Provides
     fun provideScannerDao(database: FastCheckDatabase): ScannerDao = database.scannerDao()
