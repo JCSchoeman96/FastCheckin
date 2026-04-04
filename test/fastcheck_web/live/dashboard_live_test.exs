@@ -266,6 +266,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert html =~ "Starting full attendee sync"
       refute has_element?(view, "#create-event-form")
+
+      assert_sync_finishes(view)
     end
 
     test "create flow warns when another sync is already running", %{conn: conn} do
@@ -308,6 +310,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> render_submit()
 
       assert render(view) =~ "Auto full sync not started because another sync is already running."
+
+      assert_sync_finishes(view)
     end
   end
 
@@ -369,5 +373,29 @@ defmodule FastCheckWeb.DashboardLiveTest do
           {:ok, %Response{status: 404, body: %{"error" => "not-found"}}}
       end
     end)
+  end
+
+  defp assert_sync_finishes(view, timeout_ms \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_assert_sync_finishes(view, deadline)
+  end
+
+  defp do_assert_sync_finishes(view, deadline) do
+    html = render(view)
+
+    cond do
+      html =~ "Sync complete!" ->
+        :ok
+
+      html =~ "Sync failed:" ->
+        flunk("expected sync to complete cleanly, got: #{html}")
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("timed out waiting for dashboard sync to finish")
+
+      true ->
+        Process.sleep(50)
+        do_assert_sync_finishes(view, deadline)
+    end
   end
 end
