@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -24,6 +25,8 @@ fun AttendeeSearchScreen(
     onQueryChanged: (String) -> Unit,
     onAttendeeSelected: (Long) -> Unit,
     onBackToResults: () -> Unit,
+    onDismissActionBanner: () -> Unit,
+    onQueueManualCheckIn: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
@@ -36,7 +39,7 @@ fun AttendeeSearchScreen(
             Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
                 Text(text = "Search", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    text = "Look up attendees from the local cache. Detail and manual intervention land in the next slice.",
+                    text = "Look up attendees from the local cache and use manual check-in only when scanning is not practical.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -60,10 +63,15 @@ fun AttendeeSearchScreen(
             singleLine = true
         )
 
-        if (uiState.selectedResult != null) {
-            SelectionContent(
-                attendee = uiState.selectedResult,
-                onBackToResults = onBackToResults
+        if (uiState.isShowingSelection) {
+            DetailContent(
+                attendee = uiState.selectedAttendee,
+                actionBanner = uiState.actionBanner,
+                isSubmittingManualCheckIn = uiState.isSubmittingManualCheckIn,
+                onBackToResults = onBackToResults,
+                onDismissActionBanner = onDismissActionBanner,
+                onQueueManualCheckIn = onQueueManualCheckIn,
+                modifier = Modifier.weight(1f)
             )
         } else {
             ResultsContent(
@@ -121,28 +129,106 @@ private fun ResultsContent(
 }
 
 @Composable
-private fun SelectionContent(
-    attendee: AttendeeSearchResultUiModel,
-    onBackToResults: () -> Unit
+private fun DetailContent(
+    attendee: AttendeeDetailUiModel?,
+    actionBanner: AttendeeSearchBannerUiModel?,
+    isSubmittingManualCheckIn: Boolean,
+    onBackToResults: () -> Unit,
+    onDismissActionBanner: () -> Unit,
+    onQueueManualCheckIn: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
 
-    Column(
+    LazyColumn(
         verticalArrangement = Arrangement.spacedBy(spacing.medium),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
-        TextButton(onClick = onBackToResults) {
-            Text("Back to results")
+        item {
+            TextButton(onClick = onBackToResults) {
+                Text("Back to results")
+            }
         }
 
-        FcCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
-                Text(text = "Selected attendee", style = MaterialTheme.typography.titleMedium)
-                ResultCardContent(attendee = attendee)
-                Text(
-                    text = "Detail fields and manual check-in remain out of scope for this slice.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+        actionBanner?.let { banner ->
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                    FcBanner(
+                        title = banner.title,
+                        message = banner.message,
+                        tone = banner.tone,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    TextButton(onClick = onDismissActionBanner) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+        }
+
+        if (attendee == null) {
+            item {
+                FcCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Loading attendee detail from the local cache.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        } else {
+            item {
+                FcCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Text(text = attendee.displayName, style = MaterialTheme.typography.headlineSmall)
+                        Text(text = attendee.ticketCode, style = MaterialTheme.typography.bodyMedium)
+                        attendee.email?.let {
+                            Text(text = it, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        attendee.ticketType?.let {
+                            Text(text = "Ticket type: $it", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        FcStatusChip(text = attendee.paymentLabel, tone = attendee.paymentTone)
+                        FcStatusChip(text = attendee.attendanceLabel, tone = attendee.attendanceTone)
+                        Text(text = attendee.allowedCheckinsLabel, style = MaterialTheme.typography.bodyMedium)
+                        Text(text = attendee.remainingCheckinsLabel, style = MaterialTheme.typography.bodyMedium)
+                        attendee.checkedInAt?.let {
+                            Text(text = "Checked in at: $it", style = MaterialTheme.typography.bodySmall)
+                        }
+                        attendee.checkedOutAt?.let {
+                            Text(text = "Checked out at: $it", style = MaterialTheme.typography.bodySmall)
+                        }
+                        attendee.updatedAt?.let {
+                            Text(text = "Local snapshot updated: $it", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
+            item {
+                FcCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                        Text(
+                            text = "Manual check-in",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "This action queues a local IN scan and waits for upload. It does not imply immediate server confirmation.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Button(
+                            onClick = onQueueManualCheckIn,
+                            enabled = !isSubmittingManualCheckIn
+                        ) {
+                            Text(
+                                if (isSubmittingManualCheckIn) {
+                                    "Queueing..."
+                                } else {
+                                    "Queue manual check-in"
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
