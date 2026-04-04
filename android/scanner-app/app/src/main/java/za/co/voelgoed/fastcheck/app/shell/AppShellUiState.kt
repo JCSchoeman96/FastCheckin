@@ -7,5 +7,6 @@ data class AppShellUiState(
     val selectedDestination: AppShellDestination = AppShellDestination.Scan,
     val bottomDestinations: List<AppShellDestination> = AppShellDestination.bottomNavigationDestinations,
     val overflowActions: List<AppShellOverflowAction> = AppShellOverflowAction.overflowActions,
-    val noticeMessage: String? = null
+    val activeSupportRoute: AppShellSupportRoute? = null,
+    val logoutConfirmationQueueDepth: Int? = null
 )

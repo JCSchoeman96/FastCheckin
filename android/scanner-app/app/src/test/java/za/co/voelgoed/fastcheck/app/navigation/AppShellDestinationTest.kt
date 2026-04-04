@@ -26,17 +26,15 @@ class AppShellDestinationTest {
             .inOrder()
         assertThat(AppShellOverflowAction.overflowActions)
             .containsExactly(
-                AppShellOverflowAction.Preferences,
-                AppShellOverflowAction.Permissions,
-                AppShellOverflowAction.Diagnostics,
+                AppShellOverflowAction.Support,
                 AppShellOverflowAction.Logout
             )
             .inOrder()
     }
 
     @Test
-    fun diagnosticsNeverAppearsAsATabLabel() {
+    fun supportNeverAppearsAsATabLabel() {
         assertThat(AppShellDestination.bottomNavigationDestinations.map { it.label })
-            .doesNotContain("Diagnostics")
+            .doesNotContain("Support")
     }
 }

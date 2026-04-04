@@ -11,14 +11,17 @@ class AppShellViewModelTest {
         val viewModel = AppShellViewModel()
 
         assertThat(viewModel.uiState.value.selectedDestination).isEqualTo(AppShellDestination.Scan)
+        assertThat(viewModel.uiState.value.activeSupportRoute).isNull()
     }
 
     @Test
-    fun destinationSelectionIsDeterministic() {
+    fun destinationSelectionIsDeterministicAndClosesSupport() {
         val viewModel = AppShellViewModel()
 
+        viewModel.onOverflowActionSelected(AppShellOverflowAction.Support)
         viewModel.selectDestination(AppShellDestination.Search)
         assertThat(viewModel.uiState.value.selectedDestination).isEqualTo(AppShellDestination.Search)
+        assertThat(viewModel.uiState.value.activeSupportRoute).isNull()
 
         viewModel.selectDestination(AppShellDestination.Event)
         assertThat(viewModel.uiState.value.selectedDestination).isEqualTo(AppShellDestination.Event)
@@ -28,14 +31,39 @@ class AppShellViewModelTest {
     }
 
     @Test
-    fun diagnosticsRemainsOverflowOnly() {
+    fun supportRemainsOverflowOnly() {
         val viewModel = AppShellViewModel()
 
-        viewModel.onOverflowActionSelected(AppShellOverflowAction.Diagnostics)
+        viewModel.onOverflowActionSelected(AppShellOverflowAction.Support)
 
         assertThat(viewModel.uiState.value.bottomDestinations.map { it.label })
-            .doesNotContain("Diagnostics")
-        assertThat(viewModel.uiState.value.overflowActions).contains(AppShellOverflowAction.Diagnostics)
-        assertThat(viewModel.uiState.value.noticeMessage).contains("Diagnostics remains secondary")
+            .doesNotContain("Support")
+        assertThat(viewModel.uiState.value.overflowActions).contains(AppShellOverflowAction.Support)
+        assertThat(viewModel.uiState.value.activeSupportRoute)
+            .isEqualTo(AppShellSupportRoute.Overview)
+    }
+
+    @Test
+    fun navigatingBackFromDiagnosticsReturnsToSupportOverview() {
+        val viewModel = AppShellViewModel()
+
+        viewModel.onOverflowActionSelected(AppShellOverflowAction.Support)
+        viewModel.openDiagnostics()
+        viewModel.navigateBack()
+
+        assertThat(viewModel.uiState.value.activeSupportRoute)
+            .isEqualTo(AppShellSupportRoute.Overview)
+    }
+
+    @Test
+    fun logoutConfirmationShownOnlyWhenQueueDepthExists() {
+        val viewModel = AppShellViewModel()
+
+        val confirmedImmediately = viewModel.requestLogout(queueDepth = 0)
+        val requiresDialog = viewModel.requestLogout(queueDepth = 3)
+
+        assertThat(confirmedImmediately).isFalse()
+        assertThat(requiresDialog).isTrue()
+        assertThat(viewModel.uiState.value.logoutConfirmationQueueDepth).isEqualTo(3)
     }
 }

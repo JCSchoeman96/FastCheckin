@@ -19,18 +19,65 @@ class AppShellViewModel @Inject constructor() : ViewModel() {
         _uiState.update {
             it.copy(
                 selectedDestination = destination,
-                noticeMessage = null
+                activeSupportRoute = null,
+                logoutConfirmationQueueDepth = null
             )
         }
     }
 
     fun onOverflowActionSelected(action: AppShellOverflowAction) {
-        val placeholderMessage = action.placeholderMessage ?: return
-        _uiState.update { current -> current.copy(noticeMessage = placeholderMessage) }
+        when (action) {
+            AppShellOverflowAction.Support ->
+                _uiState.update { current ->
+                    current.copy(
+                        activeSupportRoute = AppShellSupportRoute.Overview,
+                        logoutConfirmationQueueDepth = null
+                    )
+                }
+
+            AppShellOverflowAction.Logout -> Unit
+        }
     }
 
-    fun clearNotice() {
-        _uiState.update { current -> current.copy(noticeMessage = null) }
+    fun openDiagnostics() {
+        _uiState.update { current ->
+            current.copy(
+                activeSupportRoute = AppShellSupportRoute.Diagnostics,
+                logoutConfirmationQueueDepth = null
+            )
+        }
+    }
+
+    fun navigateBack() {
+        _uiState.update { current ->
+            val nextSupportRoute =
+                when (current.activeSupportRoute) {
+                    AppShellSupportRoute.Diagnostics -> AppShellSupportRoute.Overview
+                    AppShellSupportRoute.Overview,
+                    null -> null
+                }
+
+            current.copy(
+                activeSupportRoute = nextSupportRoute,
+                logoutConfirmationQueueDepth = null
+            )
+        }
+    }
+
+    fun requestLogout(queueDepth: Int): Boolean {
+        if (queueDepth <= 0) {
+            _uiState.update { current -> current.copy(logoutConfirmationQueueDepth = null) }
+            return false
+        }
+
+        _uiState.update { current ->
+            current.copy(logoutConfirmationQueueDepth = queueDepth)
+        }
+        return true
+    }
+
+    fun dismissLogoutConfirmation() {
+        _uiState.update { current -> current.copy(logoutConfirmationQueueDepth = null) }
     }
 
     fun reset() {

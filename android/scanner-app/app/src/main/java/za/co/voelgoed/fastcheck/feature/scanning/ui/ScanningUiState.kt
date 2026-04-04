@@ -7,6 +7,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 
 data class ScanningUiState(
     val activeSourceType: ScannerSourceType = ScannerSourceType.CAMERA,
@@ -23,5 +24,6 @@ data class ScanningUiState(
     val captureSemanticState: ScanUiState? = null,
     val isSourceReady: Boolean = false,
     val sourceErrorMessage: String? = null,
-    val lastCaptureFeedback: CaptureFeedbackState? = null
+    val lastCaptureFeedback: CaptureFeedbackState? = null,
+    val scannerRecoveryState: ScannerRecoveryState = ScannerRecoveryState.RequestPermission(false)
 )

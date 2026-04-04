@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 
 class ScanningViewModelTest {
     @Test
@@ -20,12 +21,16 @@ class ScanningViewModelTest {
         assertThat(viewModel.uiState.value.cameraPermissionState)
             .isEqualTo(CameraPermissionState.DENIED)
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.RequestPermission(false))
 
         viewModel.refreshPermissionState(true)
         assertThat(viewModel.uiState.value.cameraPermissionState)
             .isEqualTo(CameraPermissionState.GRANTED)
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
         assertThat(viewModel.uiState.value.scannerStatus).contains("Scanner scaffold ready")
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Ready)
     }
 
     @Test
@@ -70,6 +75,8 @@ class ScanningViewModelTest {
             .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.SourceError))
         assertThat(viewModel.uiState.value.sourceErrorMessage).isEqualTo("camera unavailable")
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.SourceError("camera unavailable"))
     }
 
     @Test
@@ -106,5 +113,35 @@ class ScanningViewModelTest {
         assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
         assertThat(viewModel.uiState.value.permissionSummary).contains("not required")
         assertThat(viewModel.uiState.value.sessionState).isEqualTo(ScannerSessionState.Active)
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.CameraNotRequired)
+    }
+
+    @Test
+    fun permanentlyDeniedCameraPermissionMovesRecoveryToSettings() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onPermissionRequestStarted()
+        viewModel.refreshPermissionState(
+            isGranted = false,
+            shouldShowRationale = false
+        )
+
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.OpenSystemSettings)
+    }
+
+    @Test
+    fun deniedCameraPermissionWithRationaleRemainsRequestable() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onPermissionRequestStarted()
+        viewModel.refreshPermissionState(
+            isGranted = false,
+            shouldShowRationale = true
+        )
+
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.RequestPermission(true))
     }
 }
