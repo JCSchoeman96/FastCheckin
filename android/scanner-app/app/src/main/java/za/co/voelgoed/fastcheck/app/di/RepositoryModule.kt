@@ -18,7 +18,9 @@ import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentAttendeeLookupRepository
+import za.co.voelgoed.fastcheck.data.repository.CurrentEventAttendeeMetricsRepository
 import za.co.voelgoed.fastcheck.data.repository.DataStoreScannerPreferencesStore
+import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
@@ -61,6 +63,12 @@ abstract class RepositoryModule {
     abstract fun bindScannerPreferencesStore(
         store: DataStoreScannerPreferencesStore
     ): ScannerPreferencesStore
+
+    @Binds
+    @Singleton
+    abstract fun bindEventAttendeeMetricsRepository(
+        repository: CurrentEventAttendeeMetricsRepository
+    ): EventAttendeeMetricsRepository
 
     @Binds
     @Singleton

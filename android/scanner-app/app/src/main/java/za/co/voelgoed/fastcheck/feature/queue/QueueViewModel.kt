@@ -54,6 +54,7 @@ class QueueViewModel @Inject constructor(
                         localQueueDepth = queueDepth,
                         uploadSemanticState = syncUiState,
                         uploadStateLabel = syncUiState.defaultLabel,
+                        latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet.",
                         serverResultHint =
                             queueUiStateFactory.serverResultHintForFlushReport(latestFlushReport)
                     )

@@ -11,6 +11,7 @@ import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabaseMigrations
 import za.co.voelgoed.fastcheck.data.local.AttendeeLookupDao
+import za.co.voelgoed.fastcheck.data.local.EventAttendeeMetricsDao
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 
 @Module
@@ -34,6 +35,10 @@ object DatabaseModule {
 
     @Provides
     fun provideAttendeeLookupDao(database: FastCheckDatabase): AttendeeLookupDao = database.attendeeLookupDao()
+
+    @Provides
+    fun provideEventAttendeeMetricsDao(database: FastCheckDatabase): EventAttendeeMetricsDao =
+        database.eventAttendeeMetricsDao()
 
     @Provides
     fun provideScannerDao(database: FastCheckDatabase): ScannerDao = database.scannerDao()

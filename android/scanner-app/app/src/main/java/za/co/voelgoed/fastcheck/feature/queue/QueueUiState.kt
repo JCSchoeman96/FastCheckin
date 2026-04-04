@@ -11,6 +11,7 @@ data class QueueUiState(
     val localQueueDepth: Int = 0,
     val uploadSemanticState: SyncUiState = SyncUiState.Idle,
     val uploadStateLabel: String = "Idle",
+    val latestFlushSummary: String = "No flush has run yet.",
     val serverResultHint: String = "No server outcomes yet.",
     val directionLabel: String = "IN"
 )
