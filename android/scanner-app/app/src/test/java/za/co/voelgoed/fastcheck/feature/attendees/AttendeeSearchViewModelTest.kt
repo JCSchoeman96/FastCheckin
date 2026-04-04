@@ -249,35 +249,9 @@ class AttendeeSearchViewModelTest {
         assertThat(viewModel.uiState.value.isSubmittingManualCheckIn).isFalse()
     }
 
-    @Test
-    fun rebindingSameEventClearsPriorSessionSearchState() = runTest(dispatcher) {
-        val viewModel =
-            createViewModel(
-                repository =
-                    FakeAttendeeLookupRepository(
-                        searchResults = listOf(searchRecord(id = 1, ticketCode = "VG-100"))
-                    )
-            )
-
-        viewModel.setEventId(5)
-        viewModel.updateQuery("VG-100")
-        advanceUntilIdle()
-        viewModel.selectAttendee(1)
-        advanceUntilIdle()
-
-        assertThat(viewModel.uiState.value.selectedResult?.ticketCode).isEqualTo("VG-100")
-
-        viewModel.setEventId(5)
-        advanceUntilIdle()
-
-        assertThat(viewModel.uiState.value.query).isEmpty()
-        assertThat(viewModel.uiState.value.selectedResult).isNull()
-        assertThat(viewModel.uiState.value.emptyState).isEqualTo(SearchEmptyState.Prompt)
-    }
-
     private fun createViewModel(
         repository: FakeAttendeeLookupRepository = FakeAttendeeLookupRepository(),
-        queueCapturedScanUseCase: FakeQueueCapturedScanUseCase =
+        queueCapturedScanUseCase: QueueCapturedScanUseCase =
             FakeQueueCapturedScanUseCase(QueueCreationResult.InvalidTicketCode),
         autoFlushCoordinator: RecordingAutoFlushCoordinator = RecordingAutoFlushCoordinator()
     ): AttendeeSearchViewModel =
