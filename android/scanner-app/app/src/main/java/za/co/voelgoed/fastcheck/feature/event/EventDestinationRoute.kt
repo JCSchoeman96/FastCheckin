@@ -23,8 +23,11 @@ fun EventDestinationRoute(
     val syncUiState by syncViewModel.uiState.collectAsState()
     val currentEventSyncStatus by syncViewModel.currentEventSyncStatus.collectAsState()
 
-    LaunchedEffect(session.eventId) {
-        eventMetricsViewModel.observeEvent(session.eventId)
+    LaunchedEffect(session.eventId, session.authenticatedAtEpochMillis) {
+        eventMetricsViewModel.observeSession(
+            eventId = session.eventId,
+            authenticatedAtEpochMillis = session.authenticatedAtEpochMillis
+        )
         syncViewModel.refreshCurrentEventSyncStatus()
         syncViewModel.ensureBootstrapSyncForEvent(session.eventId)
     }
