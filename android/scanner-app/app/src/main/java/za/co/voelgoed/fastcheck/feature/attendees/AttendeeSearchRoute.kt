@@ -23,7 +23,7 @@ fun AttendeeSearchRoute(
     val syncUiState by syncViewModel.uiState.collectAsState()
     val currentEventSyncStatus by syncViewModel.currentEventSyncStatus.collectAsState()
 
-    LaunchedEffect(session.eventId) {
+    LaunchedEffect(session.eventId, session.authenticatedAtEpochMillis) {
         attendeeSearchViewModel.setEventId(session.eventId)
         syncViewModel.refreshCurrentEventSyncStatus()
         syncViewModel.ensureBootstrapSyncForEvent(session.eventId)

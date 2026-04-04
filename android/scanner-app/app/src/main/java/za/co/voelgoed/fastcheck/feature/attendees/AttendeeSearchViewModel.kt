@@ -65,12 +65,11 @@ class AttendeeSearchViewModel @Inject constructor(
         )
 
     fun setEventId(eventId: Long) {
+        resetSearchState()
         this.eventId.update { current ->
             if (current == eventId) {
                 current
             } else {
-                selectedAttendeeId.value = null
-                query.value = ""
                 eventId
             }
         }
@@ -89,6 +88,11 @@ class AttendeeSearchViewModel @Inject constructor(
 
     fun clearSelection() {
         selectedAttendeeId.value = null
+    }
+
+    private fun resetSearchState() {
+        selectedAttendeeId.value = null
+        query.value = ""
     }
 
     private fun AttendeeSearchRecord.toUiModel(): AttendeeSearchResultUiModel {
