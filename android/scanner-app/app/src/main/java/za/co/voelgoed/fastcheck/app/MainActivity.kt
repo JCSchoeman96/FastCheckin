@@ -44,6 +44,8 @@ import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.event.EventDestinationRoute
 import za.co.voelgoed.fastcheck.feature.event.EventMetricsViewModel
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
+import za.co.voelgoed.fastcheck.feature.search.SearchDestinationRoute
+import za.co.voelgoed.fastcheck.feature.search.SearchViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.BarcodeScannerEngine
 import za.co.voelgoed.fastcheck.feature.scanning.broadcast.DataWedgeScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
@@ -92,6 +94,7 @@ class MainActivity : ComponentActivity() {
     private val scanningViewModel: ScanningViewModel by viewModels()
     private val eventMetricsViewModel: EventMetricsViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
+    private val searchViewModel: SearchViewModel by viewModels()
 
     private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
     private val scannerSourceActivationPolicy = ScannerSourceActivationPolicy()
@@ -145,6 +148,15 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 },
+                searchContent = {
+                    if (authenticatedSession != null) {
+                        SearchDestinationRoute(
+                            session = authenticatedSession,
+                            searchViewModel = searchViewModel,
+                            syncViewModel = syncViewModel
+                        )
+                    }
+                },
                 eventContent = {
                     if (authenticatedSession != null) {
                         EventDestinationRoute(
@@ -157,6 +169,8 @@ class MainActivity : ComponentActivity() {
                 },
                 supportOverviewContent = {
                     SupportOverviewRoute(
+                        session = authenticatedSession,
+                        eventMetricsViewModel = eventMetricsViewModel,
                         scanningViewModel = scanningViewModel,
                         onViewDiagnostics = appShellViewModel::openDiagnostics,
                         onRecoveryActionSelected = ::handleSupportRecoveryAction,
@@ -196,6 +210,14 @@ class MainActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    sessionGateViewModel.blockingMessage.collectLatest { message ->
+                        if (message != null) {
+                            authViewModel.setExternalError(message)
+                        }
+                    }
+                }
+
                 launch {
                     authViewModel.uiState.collectLatest { state ->
                         binding.sessionSummaryValue.text =

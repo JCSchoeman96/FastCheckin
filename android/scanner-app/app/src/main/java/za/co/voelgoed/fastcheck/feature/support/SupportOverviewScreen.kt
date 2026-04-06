@@ -55,6 +55,23 @@ fun SupportOverviewScreen(
             }
         }
 
+        if (
+            uiState.reconciliationTitle != null &&
+            uiState.reconciliationMessage != null &&
+            uiState.reconciliationTone != null
+        ) {
+            FcCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                    FcBanner(
+                        title = uiState.reconciliationTitle,
+                        message = uiState.reconciliationMessage,
+                        tone = uiState.reconciliationTone,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
                 Text(
