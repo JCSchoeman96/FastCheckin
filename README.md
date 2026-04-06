@@ -107,6 +107,32 @@ Start here:
 
 Build/run via Android Studio or Gradle in `android/scanner-app/`.
 
+Cross-platform host setup:
+
+- Keep `android/scanner-app/local.properties` untracked and machine-local. Start from `android/scanner-app/local.properties.example`.
+- Set `JAVA_HOME` on each machine to a local JDK 25 install. The wrapper uses the host JDK instead of a committed Windows-only path.
+- Use `./gradlew` on Linux/macOS and `gradlew.bat` on Windows so each host resolves its own shell and Java path correctly.
+
+Example host setup:
+
+```bash
+# Linux
+cd android/scanner-app
+cp local.properties.example local.properties
+# then edit local.properties to point sdk.dir at /home/<you>/Android/Sdk
+export JAVA_HOME=/home/<you>/.jdks/jdk-25.0.2+10
+./gradlew :app:compileDebugKotlin :app:testDebugUnitTest
+```
+
+```powershell
+# Windows PowerShell
+cd android/scanner-app
+Copy-Item local.properties.example local.properties
+# then edit local.properties to point sdk.dir at C:\Users\<you>\AppData\Local\Android\Sdk
+$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-25.0.2.10-hotspot'
+.\gradlew.bat :app:compileDebugKotlin :app:testDebugUnitTest
+```
+
 ## Deployment notes (infra + pooling)
 
 - `docker-compose.yml` provides **Postgres 18**, **pgBouncer** (transaction pool mode), and **Redis**.

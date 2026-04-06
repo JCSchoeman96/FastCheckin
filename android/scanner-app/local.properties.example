@@ -1,0 +1,8 @@
+# Copy this file to local.properties and keep the real file untracked.
+# Uncomment the sdk.dir that matches the current host.
+
+# Linux
+# sdk.dir=/home/your-user/Android/Sdk
+
+# Windows
+# sdk.dir=C\:\\Users\\your-user\\AppData\\Local\\Android\\Sdk

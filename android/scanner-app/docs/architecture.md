@@ -111,9 +111,11 @@ The Android toolchain baseline for this project is:
 - Java/Kotlin bytecode target `17`
 
 AGP built-in Kotlin is enabled. KSP replaces kapt for Room and Hilt code
-generation. Host verification must use `./gradlew --version` or
-`.\gradlew.bat --version`, because `JAVA_HOME` alone can be misleading when the
-shell resolves a different Java binary via `PATH`.
+generation. The repo must not commit machine-specific `org.gradle.java.home`
+or `sdk.dir` paths. Keep `android/scanner-app/local.properties` machine-local,
+set `JAVA_HOME` per host, and verify the actual runtime with `./gradlew
+--version` or `.\gradlew.bat --version`, because `JAVA_HOME` alone can be
+misleading when the shell resolves a different Java binary via `PATH`.
 
 ## References
 
