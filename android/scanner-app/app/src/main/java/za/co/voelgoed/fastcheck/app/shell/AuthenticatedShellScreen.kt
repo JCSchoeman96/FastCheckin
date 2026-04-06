@@ -107,6 +107,7 @@ fun AuthenticatedShellScreen(
                 uiState = uiState,
                 contentPadding = innerPadding,
                 scanContent = scanContent,
+                searchContent = searchContent,
                 eventContent = eventContent,
                 supportOverviewContent = supportOverviewContent,
                 diagnosticsContent = diagnosticsContent
