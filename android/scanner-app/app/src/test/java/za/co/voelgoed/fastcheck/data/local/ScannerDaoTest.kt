@@ -354,6 +354,42 @@ class ScannerDaoTest {
     }
 
     @Test
+    fun loadActiveOverlaysForEventReturnsOnlyNonTerminalOverlayStates() = runTest {
+        dao.upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 1L,
+                ticketCode = "VG-A1",
+                idempotencyKey = "idem-a1",
+                state = LocalAdmissionOverlayState.PENDING_LOCAL.name,
+                createdAtEpochMillis = 100L,
+                overlayScannedAt = "2026-03-13T10:00:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main"
+            )
+        )
+        dao.upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 2L,
+                ticketCode = "VG-A2",
+                idempotencyKey = "idem-a2",
+                state = LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name,
+                createdAtEpochMillis = 200L,
+                overlayScannedAt = "2026-03-13T10:01:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main"
+            )
+        )
+
+        val active = dao.loadActiveOverlaysForEvent(5L)
+
+        assertThat(active.map { it.idempotencyKey }).containsExactly("idem-a1", "idem-a2").inOrder()
+    }
+
+    @Test
     fun unresolvedEventIdsIncludeQueuedScansAndActiveOverlays() = runTest {
         dao.insertQueuedScan(
             QueuedScanEntity(

@@ -22,6 +22,8 @@ import org.robolectric.RobolectricTestRunner
 import retrofit2.HttpException
 import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
+import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
@@ -678,6 +680,138 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(attendeeAfterFailure?.updatedAt).isEqualTo("2026-03-13T07:59:00Z")
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun confirmedOverlayRemovedAfterSyncWhenCatchUpPolicySatisfied() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 10,
+                    eventId = 5,
+                    ticketCode = "VG-CATCH-10",
+                    firstName = "Catch",
+                    updatedAt = "2026-03-13T09:00:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 10L,
+                ticketCode = "VG-CATCH-10",
+                idempotencyKey = "idem-catch-10",
+                state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name,
+                createdAtEpochMillis = 1_000L,
+                overlayScannedAt = "2026-03-13T10:00:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main"
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T10:30:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 10,
+                                    event_id = 5,
+                                    ticket_code = "VG-CATCH-10",
+                                    first_name = "Catch",
+                                    last_name = "Up",
+                                    email = "c@example.com",
+                                    ticket_type = "VIP",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 0,
+                                    payment_status = "completed",
+                                    is_currently_inside = true,
+                                    checked_in_at = "2026-03-13T10:00:30Z",
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T10:30:00Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "incremental",
+                        next_cursor = null
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees()
+
+        assertThat(database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-catch-10")).isNull()
+    }
+
+    @Test
+    fun confirmedOverlayRetainedWhenSyncedAttendeeHasNotCaughtUp() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 11,
+                    eventId = 5,
+                    ticketCode = "VG-NOCATCH-11",
+                    firstName = "No",
+                    updatedAt = "2026-03-13T09:00:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 11L,
+                ticketCode = "VG-NOCATCH-11",
+                idempotencyKey = "idem-nocatch-11",
+                state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name,
+                createdAtEpochMillis = 1_000L,
+                overlayScannedAt = "2026-03-13T10:00:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main"
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T10:30:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 11,
+                                    event_id = 5,
+                                    ticket_code = "VG-NOCATCH-11",
+                                    first_name = "No",
+                                    last_name = "Catch",
+                                    email = "n@example.com",
+                                    ticket_type = "VIP",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 1,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T10:30:00Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "incremental",
+                        next_cursor = null
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees()
+
+        val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-nocatch-11")
+        assertThat(overlay).isNotNull()
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name)
     }
 
     @Test
