@@ -22,13 +22,14 @@ import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
+import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 
 @Composable
 fun ScanDestinationScreen(
     uiState: ScanDestinationUiState,
     previewSurfaceHolder: ScanPreviewSurfaceHolder,
     onPreviewSurfaceChanged: () -> Unit,
-    onRetryUpload: () -> Unit,
+    onOperatorAction: (ScanOperatorAction) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
@@ -125,9 +126,19 @@ fun ScanDestinationScreen(
                     text = uiState.uploadStateLabel,
                     style = MaterialTheme.typography.bodyMedium
                 )
+                if (uiState.manualSyncVisible) {
+                    TextButton(onClick = { onOperatorAction(ScanOperatorAction.ManualSync) }) {
+                        Text(text = "Sync attendee list")
+                    }
+                }
                 if (uiState.retryUploadVisible) {
-                    TextButton(onClick = onRetryUpload) {
+                    TextButton(onClick = { onOperatorAction(ScanOperatorAction.RetryUpload) }) {
                         Text(text = "Retry upload")
+                    }
+                }
+                if (uiState.reloginVisible) {
+                    TextButton(onClick = { onOperatorAction(ScanOperatorAction.Relogin) }) {
+                        Text(text = "Re-login")
                     }
                 }
             }

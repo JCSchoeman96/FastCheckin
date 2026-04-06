@@ -1,12 +1,14 @@
 package za.co.voelgoed.fastcheck.feature.support
 
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
+import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalActionUiModel
 
 data class SupportOverviewUiState(
     val recoveryTitle: String,
     val recoveryMessage: String,
     val recoveryTone: StatusTone,
     val recoveryAction: SupportRecoveryAction?,
+    val operationalActions: List<SupportOperationalActionUiModel>,
     val reconciliationTitle: String?,
     val reconciliationMessage: String?,
     val reconciliationTone: StatusTone?,

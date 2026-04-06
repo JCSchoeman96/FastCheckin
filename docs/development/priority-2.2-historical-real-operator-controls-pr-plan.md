@@ -1,5 +1,11 @@
 # Priority 2 — Real Operator Controls
 
+## Authority and documents
+
+- **[priority-2.1-authority-current-baseline-and-regression-plan.md](priority-2.1-authority-current-baseline-and-regression-plan.md)** is the **active contract** for Priority 2 (post–Priority 1 baseline, gaps, PR split, file lists, tests).
+- **This document** is **derived execution detail and historical context** (corrections, recommended splits, copy-paste prompts). It is **not** a second source of truth over 2.1. If anything conflicts, **2.1 wins**.
+- The **v3 execution plan** in `.cursor/plans/priority-2.2-operator-controls.plan.md` states scope locks (e.g. no `Relogin` until PR 2C) and minimum tests for agents.
+
 ## Purpose
 
 Priority 2 hardens the Android scanner app's operator recovery surfaces so the app does not merely **describe** problems, but also gives gate staff and supervisors clean, truthful ways to recover during live operations.

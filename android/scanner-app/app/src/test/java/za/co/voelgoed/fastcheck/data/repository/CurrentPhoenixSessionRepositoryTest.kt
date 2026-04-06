@@ -19,6 +19,7 @@ import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.security.SessionVault
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
+import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginResponse
@@ -72,6 +73,88 @@ class CurrentPhoenixSessionRepositoryTest {
         assertThat(metadataStore.saved?.eventId).isEqualTo(77)
         assertThat(metadataStore.saved?.eventName).isEqualTo("FastCheck Event")
         assertThat(session.expiresAtEpochMillis).isEqualTo(1_773_396_000_000)
+    }
+
+    /**
+     * Auth-expired re-login calls [SessionRepository.logout] to return to the login gate.
+     * That path must not wipe local durable queue rows or admission overlays — only JWT + session metadata.
+     * (See MainActivity.handleReloginForAuthExpired: dismissLogoutConfirmation + sessionGateViewModel.logout.)
+     */
+    @Test
+    fun logoutClearsSessionCredentialsOnly_preservesQueuedScansAndLocalAdmissionOverlays() = runTest {
+        val vault = FakeSessionVault()
+        runBlocking {
+            vault.storeToken("jwt")
+        }
+        val metadataStore =
+            FakeSessionMetadataStore().apply {
+                saved =
+                    SessionMetadata(
+                        eventId = 5,
+                        eventName = "Test Event",
+                        expiresInSeconds = 3600,
+                        authenticatedAtEpochMillis = clock.millis(),
+                        expiresAtEpochMillis = clock.millis() + 3_600_000L
+                    )
+            }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val database =
+            Room.inMemoryDatabaseBuilder(context, FastCheckDatabase::class.java)
+                .allowMainThreadQueries()
+                .build()
+        openedDatabases += database
+        val dao = database.scannerDao()
+        runBlocking {
+            dao.insertQueuedScan(
+                QueuedScanEntity(
+                    eventId = 5,
+                    ticketCode = "VG-1",
+                    idempotencyKey = "idem-queue-relogin-contract",
+                    createdAt = clock.millis(),
+                    scannedAt = "2026-03-13T08:00:00Z",
+                    entranceName = "Main",
+                    operatorName = "Op"
+                )
+            )
+            dao.upsertLocalAdmissionOverlay(
+                LocalAdmissionOverlayEntity(
+                    eventId = 5,
+                    attendeeId = 99L,
+                    ticketCode = "VG-1",
+                    idempotencyKey = "idem-overlay-relogin-contract",
+                    state = "PENDING_LOCAL",
+                    createdAtEpochMillis = clock.millis(),
+                    overlayScannedAt = "2026-03-13T08:00:00Z",
+                    expectedRemainingAfterOverlay = 0,
+                    operatorName = "Op",
+                    entranceName = "Main"
+                )
+            )
+        }
+
+        val repository =
+            CurrentPhoenixSessionRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        FakePhoenixMobileApi(
+                            MobileLoginResponse(data = null, error = "unused", message = "unused")
+                        )
+                    ),
+                sessionVault = vault,
+                sessionMetadataStore = metadataStore,
+                unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate.fromLoader { emptyList() },
+                clock = clock
+            )
+
+        repository.logout()
+
+        assertThat(vault.token).isNull()
+        assertThat(metadataStore.saved).isNull()
+        runBlocking {
+            assertThat(dao.loadQueuedScans()).hasSize(1)
+            assertThat(dao.loadOverlaysByState("PENDING_LOCAL")).hasSize(1)
+        }
     }
 
     @Test

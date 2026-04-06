@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import za.co.voelgoed.fastcheck.app.scanning.ScanPreviewSurfaceHolder
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
+import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
 
@@ -20,7 +21,7 @@ fun ScanDestinationRoute(
     syncViewModel: SyncViewModel,
     previewSurfaceHolder: ScanPreviewSurfaceHolder,
     onPreviewSurfaceChanged: () -> Unit,
-    onRetryUpload: () -> Unit,
+    onOperatorAction: (ScanOperatorAction) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scanningUiState by scanningViewModel.uiState.collectAsState()
@@ -48,7 +49,7 @@ fun ScanDestinationRoute(
         uiState = uiState,
         previewSurfaceHolder = previewSurfaceHolder,
         onPreviewSurfaceChanged = onPreviewSurfaceChanged,
-        onRetryUpload = onRetryUpload,
+        onOperatorAction = onOperatorAction,
         modifier = modifier
     )
 }

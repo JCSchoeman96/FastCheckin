@@ -1,14 +1,22 @@
 package za.co.voelgoed.fastcheck.feature.support
 
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
+import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
+import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
+import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
+import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
+import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalActionUiModel
+import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
 
 class SupportOverviewPresenter {
     fun present(
         scanningUiState: ScanningUiState,
-        attendeeMetrics: EventAttendeeCacheMetrics?
+        attendeeMetrics: EventAttendeeCacheMetrics?,
+        queueUiState: QueueUiState,
+        syncUiState: SyncScreenUiState
     ): SupportOverviewUiState {
         val recovery =
             when (val state = scanningUiState.scannerRecoveryState) {
@@ -55,7 +63,7 @@ class SupportOverviewPresenter {
                         message = "The scanner could not start: ${state.message}. Return to Scan after the current issue is cleared.",
                         tone = StatusTone.Destructive,
                         action = SupportRecoveryAction.ReturnToScan
-                )
+                    )
             }
 
         val reconciliation =
@@ -81,13 +89,55 @@ class SupportOverviewPresenter {
             recoveryMessage = recovery.message,
             recoveryTone = recovery.tone,
             recoveryAction = recovery.action,
+            operationalActions = operationalActionsFor(queueUiState, syncUiState),
             reconciliationTitle = reconciliation?.first,
             reconciliationMessage = reconciliation?.second,
             reconciliationTone = reconciliation?.third,
-            diagnosticsMessage = "Diagnostics stays available here for support work. It does not appear in the main operator navigation.",
+            diagnosticsMessage = "Diagnostics summarizes session, sync, and queue state. Use recovery actions above or on Event/Scan — diagnostics does not run uploads.",
             sessionMessage = "Log out of the current event session when the operator is finished on this device."
         )
     }
+
+    private fun operationalActionsFor(
+        queueUiState: QueueUiState,
+        syncUiState: SyncScreenUiState
+    ): List<SupportOperationalActionUiModel> {
+        val actions = mutableListOf<SupportOperationalActionUiModel>()
+        if (!syncUiState.isSyncing) {
+            actions.add(
+                SupportOperationalActionUiModel(
+                    label = "Sync attendee list",
+                    action = SupportOperationalAction.ManualSync
+                )
+            )
+        }
+        if (
+            QueueUploadRecoveryVisibility.shouldShowRetryUpload(
+                queueUiState.localQueueDepth,
+                queueUiState.uploadSemanticState
+            )
+        ) {
+            actions.add(
+                SupportOperationalActionUiModel(
+                    label = "Retry upload",
+                    action = SupportOperationalAction.RetryUpload
+                )
+            )
+        }
+        if (requiresRelogin(queueUiState)) {
+            actions.add(
+                SupportOperationalActionUiModel(
+                    label = "Re-login",
+                    action = SupportOperationalAction.Relogin
+                )
+            )
+        }
+        return actions
+    }
+
+    private fun requiresRelogin(queueUiState: QueueUiState): Boolean =
+        queueUiState.localQueueDepth > 0 &&
+            (queueUiState.uploadSemanticState as? SyncUiState.Failed)?.reason == "Auth expired"
 
     private data class RecoveryCopy(
         val title: String,

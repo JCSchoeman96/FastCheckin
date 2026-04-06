@@ -11,11 +11,13 @@ import androidx.compose.ui.Modifier
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
+import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
 
 @Composable
 fun SupportOverviewScreen(
     uiState: SupportOverviewUiState,
     onRecoveryActionSelected: (SupportRecoveryAction) -> Unit,
+    onOperationalAction: (SupportOperationalAction) -> Unit,
     onViewDiagnostics: () -> Unit,
     onLogoutRequested: () -> Unit,
     modifier: Modifier = Modifier
@@ -50,6 +52,26 @@ fun SupportOverviewScreen(
                 uiState.recoveryAction?.let { action ->
                     TextButton(onClick = { onRecoveryActionSelected(action) }) {
                         Text(text = action.label)
+                    }
+                }
+            }
+        }
+
+        if (uiState.operationalActions.isNotEmpty()) {
+            FcCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                    Text(
+                        text = "Operations",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Sync and upload recovery for the current event session.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    uiState.operationalActions.forEach { row ->
+                        TextButton(onClick = { onOperationalAction(row.action) }) {
+                            Text(text = row.label)
+                        }
                     }
                 }
             }

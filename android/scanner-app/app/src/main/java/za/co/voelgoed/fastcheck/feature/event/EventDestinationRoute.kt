@@ -7,6 +7,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
+import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
 
@@ -16,6 +17,7 @@ fun EventDestinationRoute(
     eventMetricsViewModel: EventMetricsViewModel,
     queueViewModel: QueueViewModel,
     syncViewModel: SyncViewModel,
+    onOperatorAction: (EventOperatorAction) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val attendeeMetrics by eventMetricsViewModel.attendeeMetrics.collectAsStateWithLifecycle()
@@ -46,6 +48,7 @@ fun EventDestinationRoute(
 
     EventDestinationScreen(
         uiState = uiState,
+        onOperatorAction = onOperatorAction,
         modifier = modifier
     )
 }

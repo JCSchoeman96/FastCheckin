@@ -67,6 +67,8 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.healthBanner?.tone).isEqualTo(StatusTone.Offline)
         assertThat(uiState.retryUploadVisible).isFalse()
+        assertThat(uiState.manualSyncVisible).isTrue()
+        assertThat(uiState.reloginVisible).isFalse()
     }
 
     @Test
@@ -91,6 +93,28 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.healthBanner?.tone).isEqualTo(StatusTone.Destructive)
+        assertThat(uiState.reloginVisible).isTrue()
+        assertThat(uiState.retryUploadVisible).isFalse()
+    }
+
+    @Test
+    fun manualSyncHiddenWhileSyncRunning() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(isSyncing = true, bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 20
+                    )
+            )
+
+        assertThat(uiState.manualSyncVisible).isFalse()
     }
 
     @Test
