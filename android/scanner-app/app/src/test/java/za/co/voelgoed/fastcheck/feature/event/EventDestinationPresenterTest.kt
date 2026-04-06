@@ -269,6 +269,44 @@ class EventDestinationPresenterTest {
             .containsExactly("Unavailable")
     }
 
+    @Test
+    fun uploadQuarantineDoesNotReadAsOperationalSuccess() {
+        val uiState =
+            presenter.present(
+                session = session(),
+                queueUiState =
+                    QueueUiState(
+                        localQueueDepth = 0,
+                        quarantineCount = 2,
+                        quarantineLatestReasonLabel = "UNRECOVERABLE_API_CONTRACT_ERROR"
+                    ),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 120
+                    ),
+                attendeeMetrics =
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 120,
+                        currentlyInsideCount = 0,
+                        attendeesWithRemainingCheckinsCount = 120,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
+                    )
+            )
+
+        assertThat(uiState.statusChip.text).isEqualTo("Upload quarantine")
+        assertThat(uiState.statusChip.tone).isEqualTo(StatusTone.Warning)
+        assertThat(uiState.attentionBanner?.title).isEqualTo("Upload quarantine active")
+        assertThat(uiState.queueSection.supportingText).contains("not in that backlog")
+        assertThat(uiState.queueSection.metrics.map { it.label })
+            .contains("Upload quarantine rows")
+    }
+
     private fun session(): ScannerSession =
         ScannerSession(
             eventId = 5,

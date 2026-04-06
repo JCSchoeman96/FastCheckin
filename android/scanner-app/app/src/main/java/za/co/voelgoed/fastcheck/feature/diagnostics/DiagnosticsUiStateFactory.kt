@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.domain.model.SessionState
 
@@ -23,7 +24,9 @@ class DiagnosticsUiStateFactory @Inject constructor(
         syncStatus: AttendeeSyncStatus?,
         queueDepth: Int,
         latestFlushReport: FlushReport?,
-        syncUiState: SyncUiState
+        syncUiState: SyncUiState,
+        quarantineCount: Int,
+        latestQuarantineSummary: QuarantineSummary?
     ): DiagnosticsUiState {
         val nowEpochMillis = clock.millis()
         val sessionState =
@@ -45,6 +48,26 @@ class DiagnosticsUiStateFactory @Inject constructor(
 
         val serverResultSummary =
             buildServerResultSummary(latestFlushReport)
+
+        val quarantinedRowsLabel =
+            if (quarantineCount == 0) {
+                "Upload quarantine rows: 0"
+            } else {
+                "Upload quarantine rows: $quarantineCount"
+            }
+
+        val latestQuarantineLabel =
+            if (quarantineCount == 0) {
+                "Last upload quarantine event: —"
+            } else {
+                val reason = latestQuarantineSummary?.latestReason?.wireValue ?: "UNKNOWN"
+                val msg = latestQuarantineSummary?.latestMessage?.trim().orEmpty()
+                if (msg.isNotEmpty()) {
+                    "Last upload quarantine event: $reason — $msg"
+                } else {
+                    "Last upload quarantine event: $reason"
+                }
+            }
 
         return DiagnosticsUiState(
             currentEvent = session?.let { "${it.eventName} (#${it.eventId})" } ?: "No active event",
@@ -71,7 +94,9 @@ class DiagnosticsUiStateFactory @Inject constructor(
             localQueueDepthLabel = "Queued locally: $queueDepth",
             uploadStateLabel = syncUiState.defaultLabel,
             serverResultSummary = serverResultSummary,
-            latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet."
+            latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet.",
+            quarantinedRowsLabel = quarantinedRowsLabel,
+            latestQuarantineLabel = latestQuarantineLabel
         )
     }
 
@@ -100,7 +125,9 @@ class DiagnosticsUiStateFactory @Inject constructor(
                     isOnline = true,
                     latestFlushReport = latestFlushReport,
                     pendingQueueDepth = queueDepth
-                )
+                ),
+            quarantineCount = 0,
+            latestQuarantineSummary = null
         )
 
     private fun buildServerResultSummary(report: FlushReport?): String {

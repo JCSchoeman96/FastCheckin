@@ -84,6 +84,15 @@ class SupportOverviewPresenter {
                 null
             }
 
+        val uploadQuarantineNotice =
+            if (queueUiState.quarantineCount > 0) {
+                "${queueUiState.quarantineCount} scan row(s) are in upload quarantine " +
+                    "(removed from the retry backlog after unrecoverable upload errors). " +
+                    "Open Diagnostics for read-only details."
+            } else {
+                null
+            }
+
         return SupportOverviewUiState(
             recoveryTitle = recovery.title,
             recoveryMessage = recovery.message,
@@ -93,8 +102,12 @@ class SupportOverviewPresenter {
             reconciliationTitle = reconciliation?.first,
             reconciliationMessage = reconciliation?.second,
             reconciliationTone = reconciliation?.third,
-            diagnosticsMessage = "Diagnostics summarizes session, sync, and queue state. Use recovery actions above or on Event/Scan — diagnostics does not run uploads.",
-            sessionMessage = "Log out of the current event session when the operator is finished on this device."
+            diagnosticsMessage =
+                "Diagnostics is read-only: session, sync, queue depth, flush, and upload quarantine facts. " +
+                    "It does not run uploads or change server state.",
+            sessionMessage =
+                "End this event session on this device when the operator is finished. Logging out is not required to clear upload quarantine.",
+            uploadQuarantineNotice = uploadQuarantineNotice
         )
     }
 

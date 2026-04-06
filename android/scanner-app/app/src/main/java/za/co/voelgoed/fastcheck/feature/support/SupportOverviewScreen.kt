@@ -94,6 +94,21 @@ fun SupportOverviewScreen(
             }
         }
 
+        uiState.uploadQuarantineNotice?.let { notice ->
+            FcCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                    Text(
+                        text = "Upload quarantine",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = notice,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
                 Text(
