@@ -299,7 +299,10 @@ class FastCheckDatabaseMigrationTest {
 
         val database =
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
-                .addMigrations(FastCheckDatabaseMigrations.MIGRATION_6_7)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                )
                 .allowMainThreadQueries()
                 .build()
         val sqliteDb = database.openHelper.writableDatabase
@@ -509,6 +512,7 @@ class FastCheckDatabaseMigrationTest {
         val database = SQLiteDatabase.openDatabase(databaseFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
         database.execSQL("ALTER TABLE attendees ADD COLUMN checkedInAt TEXT")
         database.execSQL("ALTER TABLE attendees ADD COLUMN checkedOutAt TEXT")
+        database.version = 6
         database.close()
     }
 

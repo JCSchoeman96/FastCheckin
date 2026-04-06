@@ -300,17 +300,16 @@ interface ScannerDao {
             deleteReplaySuppression(scan.ticketCode)
         }
 
+        val insertedId = insertQueuedScan(scan)
+        if (insertedId == -1L) return -1L
+
+        upsertLocalAdmissionOverlay(overlay)
         upsertReplaySuppression(
             LocalReplaySuppressionEntity(
                 ticketCode = scan.ticketCode,
                 seenAtEpochMillis = scan.createdAt
             )
         )
-
-        val insertedId = insertQueuedScan(scan)
-        if (insertedId == -1L) return -1L
-
-        upsertLocalAdmissionOverlay(overlay)
         return insertedId
     }
 }

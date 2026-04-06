@@ -39,7 +39,9 @@ class EventDestinationPresenterTest {
                     EventAttendeeCacheMetrics(
                         cachedAttendeeCount = 120,
                         currentlyInsideCount = 34,
-                        attendeesWithRemainingCheckinsCount = 86
+                        attendeesWithRemainingCheckinsCount = 86,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
                     )
             )
 
@@ -65,7 +67,9 @@ class EventDestinationPresenterTest {
                     EventAttendeeCacheMetrics(
                         cachedAttendeeCount = 0,
                         currentlyInsideCount = 0,
-                        attendeesWithRemainingCheckinsCount = 0
+                        attendeesWithRemainingCheckinsCount = 0,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
                     )
             )
 
@@ -95,7 +99,9 @@ class EventDestinationPresenterTest {
                     EventAttendeeCacheMetrics(
                         cachedAttendeeCount = 220,
                         currentlyInsideCount = 55,
-                        attendeesWithRemainingCheckinsCount = 165
+                        attendeesWithRemainingCheckinsCount = 165,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
                     )
             )
 
@@ -128,7 +134,9 @@ class EventDestinationPresenterTest {
                     EventAttendeeCacheMetrics(
                         cachedAttendeeCount = 120,
                         currentlyInsideCount = 34,
-                        attendeesWithRemainingCheckinsCount = 86
+                        attendeesWithRemainingCheckinsCount = 86,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
                     )
             )
 
@@ -161,7 +169,9 @@ class EventDestinationPresenterTest {
                     EventAttendeeCacheMetrics(
                         cachedAttendeeCount = 120,
                         currentlyInsideCount = 34,
-                        attendeesWithRemainingCheckinsCount = 86
+                        attendeesWithRemainingCheckinsCount = 86,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
                     )
             )
 

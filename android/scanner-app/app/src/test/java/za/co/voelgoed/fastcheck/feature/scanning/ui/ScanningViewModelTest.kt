@@ -93,7 +93,13 @@ class ScanningViewModelTest {
             )
         )
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
-        assertThat(viewModel.uiState.value.lastCaptureFeedback?.message).isEqualTo("Welcome, Jane Doe")
+        val acceptedFeedback = viewModel.uiState.value.lastCaptureFeedback
+        assertThat(acceptedFeedback).isInstanceOf(
+            za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState.Success::class.java
+        )
+        assertThat(
+            (acceptedFeedback as za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState.Success).message
+        ).isEqualTo("Welcome, Jane Doe")
 
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.Suppressed)

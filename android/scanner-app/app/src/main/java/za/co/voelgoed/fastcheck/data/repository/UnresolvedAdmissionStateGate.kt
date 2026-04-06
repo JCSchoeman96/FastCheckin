@@ -5,11 +5,16 @@ import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 
 @Singleton
-class UnresolvedAdmissionStateGate @Inject constructor(
-    private val scannerDao: ScannerDao
+class UnresolvedAdmissionStateGate private constructor(
+    private val unresolvedEventIdsLoader: suspend (Long) -> List<Long>
 ) {
+    @Inject
+    constructor(
+        scannerDao: ScannerDao
+    ) : this(scannerDao::loadUnresolvedEventIdsExcluding)
+
     suspend fun unresolvedOtherEventIds(targetEventId: Long): List<Long> =
-        scannerDao.loadUnresolvedEventIdsExcluding(targetEventId)
+        unresolvedEventIdsLoader(targetEventId)
 
     suspend fun requireNoConflictingEvents(targetEventId: Long) {
         val unresolvedOtherEvents = unresolvedOtherEventIds(targetEventId)
@@ -19,6 +24,12 @@ class UnresolvedAdmissionStateGate @Inject constructor(
                 unresolvedEventIds = unresolvedOtherEvents
             )
         }
+    }
+
+    companion object {
+        fun fromLoader(
+            loader: suspend (Long) -> List<Long>
+        ): UnresolvedAdmissionStateGate = UnresolvedAdmissionStateGate(loader)
     }
 }
 

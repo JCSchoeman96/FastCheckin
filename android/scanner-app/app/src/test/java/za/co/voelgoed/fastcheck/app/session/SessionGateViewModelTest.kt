@@ -1,15 +1,11 @@
 package za.co.voelgoed.fastcheck.app.session
 
-import android.content.Context
-import androidx.room.Room
-import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -27,31 +23,23 @@ import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class SessionGateViewModelTest {
-    private val dispatcher = StandardTestDispatcher()
     private val clock = Clock.fixed(Instant.parse("2026-04-02T09:00:00Z"), ZoneOffset.UTC)
-    private lateinit var database: FastCheckDatabase
     private lateinit var unresolvedAdmissionStateGate: UnresolvedAdmissionStateGate
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(dispatcher)
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        database =
-            Room.inMemoryDatabaseBuilder(context, FastCheckDatabase::class.java)
-                .allowMainThreadQueries()
-                .build()
-        unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate(database.scannerDao())
+        Dispatchers.setMain(kotlinx.coroutines.test.StandardTestDispatcher())
+        unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate.fromLoader { emptyList() }
     }
 
     @After
     fun tearDown() {
-        database.close()
         Dispatchers.resetMain()
     }
 
     @Test
     fun initWithNoSessionRoutesToLoggedOut() =
-        runTest(dispatcher) {
+        runTest {
             val repository = FakeSessionRepository(currentSession = null)
 
             val viewModel =
@@ -64,7 +52,7 @@ class SessionGateViewModelTest {
 
     @Test
     fun expiredSessionTriggersCleanupAndRoutesToLoggedOut() =
-        runTest(dispatcher) {
+        runTest {
             val expiredSession = testSession(expiresAtEpochMillis = clock.millis())
             val repository = FakeSessionRepository(currentSession = expiredSession)
 
@@ -79,7 +67,7 @@ class SessionGateViewModelTest {
 
     @Test
     fun validSessionRoutesToAuthenticated() =
-        runTest(dispatcher) {
+        runTest {
             val session = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
             val repository = FakeSessionRepository(currentSession = session)
 
@@ -92,7 +80,7 @@ class SessionGateViewModelTest {
 
     @Test
     fun loginSuccessRoutesToAuthenticated() =
-        runTest(dispatcher) {
+        runTest {
             val repository = FakeSessionRepository(currentSession = null)
             val session = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
 
@@ -106,7 +94,7 @@ class SessionGateViewModelTest {
 
     @Test
     fun logoutClearsSessionAndRoutesToLoggedOut() =
-        runTest(dispatcher) {
+        runTest {
             val repository =
                 FakeSessionRepository(
                     currentSession = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
@@ -124,18 +112,8 @@ class SessionGateViewModelTest {
 
     @Test
     fun unresolvedOtherEventStateBlocksAuthenticatedRoute() =
-        runTest(dispatcher) {
-            database.scannerDao().insertQueuedScan(
-                za.co.voelgoed.fastcheck.data.local.QueuedScanEntity(
-                    eventId = 99L,
-                    ticketCode = "VG-099",
-                    idempotencyKey = "idem-99",
-                    createdAt = clock.millis(),
-                    scannedAt = "2026-04-02T09:00:00Z",
-                    entranceName = "Main",
-                    operatorName = "Op"
-                )
-            )
+        runTest {
+            unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate.fromLoader { listOf(99L) }
             val session = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
             val repository = FakeSessionRepository(currentSession = session)
 
