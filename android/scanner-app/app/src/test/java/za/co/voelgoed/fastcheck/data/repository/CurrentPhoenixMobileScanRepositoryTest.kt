@@ -29,7 +29,14 @@ import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
+import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
+import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.usecase.DefaultQueueCapturedScanUseCase
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody
+import retrofit2.HttpException
+import retrofit2.Response
 
 @RunWith(RobolectricTestRunner::class)
 class CurrentPhoenixMobileScanRepositoryTest {
@@ -241,6 +248,186 @@ class CurrentPhoenixMobileScanRepositoryTest {
         assertThat(database.scannerDao().countPendingScans()).isEqualTo(1)
     }
 
+    @Test
+    fun flushSuccessMovesOverlayToConfirmedLocalUnsynced() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-success")
+        api.uploadResponse =
+            UploadScansResponse(
+                data =
+                    UploadScansPayload(
+                        results =
+                            listOf(
+                                UploadedScanResult(
+                                    idempotency_key = "idem-overlay-success",
+                                    status = "success",
+                                    message = "Check-in successful"
+                                )
+                            ),
+                        processed = 1
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+
+        val overlay =
+            database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-overlay-success")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name)
+    }
+
+    @Test
+    fun flushDuplicateMovesOverlayToConflictDuplicate() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-dup")
+        api.uploadResponse =
+            UploadScansResponse(
+                data =
+                    UploadScansPayload(
+                        results =
+                            listOf(
+                                UploadedScanResult(
+                                    idempotency_key = "idem-overlay-dup",
+                                    status = "duplicate",
+                                    message = "Already checked in"
+                                )
+                            ),
+                        processed = 1
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+
+        val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-overlay-dup")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name)
+    }
+
+    @Test
+    fun flushTerminalErrorMovesOverlayToConflictRejected() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-term")
+        api.uploadResponse =
+            UploadScansResponse(
+                data =
+                    UploadScansPayload(
+                        results =
+                            listOf(
+                                UploadedScanResult(
+                                    idempotency_key = "idem-overlay-term",
+                                    status = "error",
+                                    message = "Payment invalid",
+                                    reason_code = "payment_invalid"
+                                )
+                            ),
+                        processed = 1
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+
+        val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-overlay-term")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.CONFLICT_REJECTED.name)
+    }
+
+    @Test
+    fun flushTerminalErrorWithBusinessDuplicateMovesOverlayToConflictDuplicate() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-biz-dup")
+        api.uploadResponse =
+            UploadScansResponse(
+                data =
+                    UploadScansPayload(
+                        results =
+                            listOf(
+                                UploadedScanResult(
+                                    idempotency_key = "idem-overlay-biz-dup",
+                                    status = "error",
+                                    message = "Duplicate",
+                                    reason_code = "business_duplicate"
+                                )
+                            ),
+                        processed = 1
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+
+        val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-overlay-biz-dup")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name)
+    }
+
+    @Test
+    fun flushRetryableServerErrorDoesNotTransitionOverlay() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-retry")
+        api.uploadException =
+            HttpException(
+                Response.error<UploadScansResponse>(
+                    500,
+                    ResponseBody.create(
+                        "application/json".toMediaType(),
+                        """{"error":"server_error"}"""
+                    )
+                )
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+
+        val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-overlay-retry")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.PENDING_LOCAL.name)
+    }
+
+    @Test
+    fun flushAuthExpiredDoesNotTransitionOverlay() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-auth")
+        val noTokenRepository =
+            CurrentPhoenixMobileScanRepository(
+                scannerDao = database.scannerDao(),
+                remoteDataSource = PhoenixMobileRemoteDataSource(api),
+                sessionProvider = object : SessionProvider {
+                    override suspend fun bearerToken(): String? = null
+                },
+                flushResultClassifier = FlushResultClassifier(),
+                clock = clock
+            )
+
+        noTokenRepository.flushQueuedScans(maxBatchSize = 50)
+
+        val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-overlay-auth")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.PENDING_LOCAL.name)
+    }
+
+    private suspend fun seedQueueAndPendingOverlay(idempotencyKey: String) {
+        val dao = database.scannerDao()
+        dao.insertQueuedScan(
+            QueuedScanEntity(
+                eventId = 5,
+                ticketCode = "VG-OVR",
+                idempotencyKey = idempotencyKey,
+                createdAt = 10_000L,
+                scannedAt = "2026-03-12T10:00:00Z",
+                entranceName = "Main Gate",
+                operatorName = "Scanner 1"
+            )
+        )
+        dao.upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 1L,
+                ticketCode = "VG-OVR",
+                idempotencyKey = idempotencyKey,
+                state = LocalAdmissionOverlayState.PENDING_LOCAL.name,
+                createdAtEpochMillis = 10_000L,
+                overlayScannedAt = "2026-03-12T10:00:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Scanner 1",
+                entranceName = "Main Gate"
+            )
+        )
+    }
+
     private fun sampleScan(
         idempotencyKey: String,
         ticketCode: String = "VG-001",
@@ -259,6 +446,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
     private class FakePhoenixMobileApi : PhoenixMobileApi {
         var lastUploadBody: UploadScansRequest? = null
+        var uploadException: HttpException? = null
         var uploadResponse: UploadScansResponse =
             UploadScansResponse(
                 data = UploadScansPayload(results = emptyList(), processed = 0),
@@ -276,6 +464,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
             lastUploadBody = body
+            uploadException?.let { throw it }
             return uploadResponse
         }
     }
