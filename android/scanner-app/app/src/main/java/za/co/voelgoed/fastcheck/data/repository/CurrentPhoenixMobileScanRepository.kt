@@ -14,6 +14,7 @@ import retrofit2.HttpException
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
 import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
+import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 import za.co.voelgoed.fastcheck.data.mapper.toDomain
@@ -81,7 +82,8 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
     }
 
     override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport {
-        val queued = scannerDao.loadQueuedScans(maxBatchSize).map { it.toDomain() }
+        val queuedEntities = scannerDao.loadQueuedScans(maxBatchSize)
+        val queued = queuedEntities.map { it.toDomain() }
         val token = sessionProvider.bearerToken()
 
         if (token.isNullOrBlank()) {
@@ -197,28 +199,20 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                 }
 
                 else -> {
-                    persistLatestFlushReport(
-                        FlushReport(
-                            executionStatus = FlushExecutionStatus.WORKER_FAILURE,
-                            uploadedCount = 0,
-                            retryableRemainingCount = queued.size,
-                            authExpired = false,
-                            backlogRemaining = queued.isNotEmpty(),
-                            summaryMessage = "Flush failed due to an unrecoverable API contract error."
-                        )
+                    quarantineAttemptedBatch(
+                        queuedEntities = queuedEntities,
+                        reason = QuarantineReason.UNRECOVERABLE_API_CONTRACT_ERROR,
+                        message = httpExceptionDetail(exception),
+                        batchAttributed = true
                     )
                 }
             }
         } catch (_exception: IllegalArgumentException) {
-            persistLatestFlushReport(
-                FlushReport(
-                    executionStatus = FlushExecutionStatus.WORKER_FAILURE,
-                    uploadedCount = 0,
-                    retryableRemainingCount = queued.size,
-                    authExpired = false,
-                    backlogRemaining = queued.isNotEmpty(),
-                    summaryMessage = "Flush failed because the server response was incomplete."
-                )
+            quarantineAttemptedBatch(
+                queuedEntities = queuedEntities,
+                reason = QuarantineReason.INCOMPLETE_SERVER_RESPONSE,
+                message = "Flush failed because the server response was incomplete.",
+                batchAttributed = true
             )
         } catch (_exception: IOException) {
             persistLatestFlushReport(
@@ -291,6 +285,81 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
             latestMessage = quarantineMessage,
             latestQuarantinedAt = quarantinedAt
         )
+
+    private suspend fun quarantineAttemptedBatch(
+        queuedEntities: List<QueuedScanEntity>,
+        reason: QuarantineReason,
+        message: String,
+        batchAttributed: Boolean
+    ): FlushReport {
+        if (queuedEntities.isEmpty()) {
+            return persistLatestFlushReport(
+                FlushReport(
+                    executionStatus = FlushExecutionStatus.COMPLETED,
+                    uploadedCount = 0,
+                    retryableRemainingCount = 0,
+                    authExpired = false,
+                    backlogRemaining = false,
+                    summaryMessage = "No queued scans to quarantine."
+                )
+            )
+        }
+
+        val quarantinedAt = Instant.ofEpochMilli(clock.millis()).toString()
+        val rows =
+            queuedEntities.map { row ->
+                val overlay =
+                    scannerDao.findLocalAdmissionOverlayByIdempotencyKey(row.idempotencyKey)
+                QuarantinedScanEntity(
+                    originalQueueId = row.id,
+                    eventId = row.eventId,
+                    ticketCode = row.ticketCode,
+                    idempotencyKey = row.idempotencyKey,
+                    createdAt = row.createdAt,
+                    scannedAt = row.scannedAt,
+                    direction = row.direction,
+                    entranceName = row.entranceName,
+                    operatorName = row.operatorName,
+                    lastAttemptAt = row.lastAttemptAt,
+                    quarantineReason = reason.wireValue,
+                    quarantineMessage = message,
+                    quarantinedAt = quarantinedAt,
+                    batchAttributed = batchAttributed,
+                    overlayStateAtQuarantine = overlay?.state
+                )
+            }
+
+        scannerDao.insertQuarantinedScansAndDeleteQueued(
+            entities = rows,
+            queueIds = queuedEntities.map { it.id }
+        )
+
+        val remaining = scannerDao.countPendingScans()
+        return persistLatestFlushReport(
+            FlushReport(
+                executionStatus = FlushExecutionStatus.COMPLETED,
+                itemOutcomes = emptyList(),
+                uploadedCount = 0,
+                retryableRemainingCount = remaining,
+                authExpired = false,
+                backlogRemaining = remaining > 0,
+                summaryMessage =
+                    "Quarantined ${queuedEntities.size} unrecoverable queued scan(s) " +
+                        "and removed them from the retry backlog."
+            )
+        )
+    }
+
+    private fun httpExceptionDetail(exception: HttpException): String {
+        val body =
+            try {
+                exception.response()?.errorBody()?.string()?.trim()?.takeIf { it.isNotEmpty() }
+            } catch (_ignored: Exception) {
+                null
+            }
+        val prefix = "HTTP ${exception.code()}"
+        return if (body != null) "$prefix: $body" else prefix
+    }
 
     private suspend fun persistLatestFlushReport(report: FlushReport): FlushReport {
         val completedAt = Instant.ofEpochMilli(clock.millis()).toString()

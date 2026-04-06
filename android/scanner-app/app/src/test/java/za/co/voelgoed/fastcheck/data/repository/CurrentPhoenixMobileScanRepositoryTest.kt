@@ -29,6 +29,7 @@ import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.QuarantineReason
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
@@ -381,7 +382,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
-    fun flushNon401ClientErrorReportsWorkerFailureAndKeepsQueueWithoutQuarantine() = runTest {
+    fun flushNon401ClientErrorQuarantinesBatchAndDoesNotTouchReplayCacheOrOverlaySuccess() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-q-400")
         api.uploadException =
             HttpException(
@@ -397,25 +398,30 @@ class CurrentPhoenixMobileScanRepositoryTest {
         val report = repository.flushQueuedScans(maxBatchSize = 50)
         val dao = database.scannerDao()
 
-        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.WORKER_FAILURE)
-        assertThat(dao.countPendingScans()).isEqualTo(1)
-        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
+        assertThat(dao.countPendingScans()).isEqualTo(0)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(1)
+        val q = dao.loadLatestQuarantinedScan()
+        assertThat(q?.quarantineReason).isEqualTo(QuarantineReason.UNRECOVERABLE_API_CONTRACT_ERROR.wireValue)
+        assertThat(q?.batchAttributed).isTrue()
         assertThat(dao.findReplayCache("idem-q-400")).isNull()
         val overlay = dao.findLocalAdmissionOverlayByIdempotencyKey("idem-q-400")
         assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.PENDING_LOCAL.name)
     }
 
     @Test
-    fun flushIncompleteResponseReportsWorkerFailureAndKeepsQueueWithoutQuarantine() = runTest {
+    fun flushIncompleteResponseQuarantinesBatch() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-null-data", createdAt = 10_000L))
         api.uploadResponse = UploadScansResponse(data = null, error = "missing", message = "no data")
 
         val report = repository.flushQueuedScans(maxBatchSize = 50)
         val dao = database.scannerDao()
 
-        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.WORKER_FAILURE)
-        assertThat(dao.countPendingScans()).isEqualTo(1)
-        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
+        assertThat(dao.countPendingScans()).isEqualTo(0)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(1)
+        assertThat(dao.loadLatestQuarantinedScan()?.quarantineReason)
+            .isEqualTo(QuarantineReason.INCOMPLETE_SERVER_RESPONSE.wireValue)
     }
 
     @Test
