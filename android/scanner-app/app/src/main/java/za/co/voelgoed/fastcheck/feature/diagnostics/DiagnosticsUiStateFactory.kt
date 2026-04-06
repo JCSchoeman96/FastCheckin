@@ -51,21 +51,21 @@ class DiagnosticsUiStateFactory @Inject constructor(
 
         val quarantinedRowsLabel =
             if (quarantineCount == 0) {
-                "Quarantined rows: None"
+                "Upload quarantine rows: 0"
             } else {
-                "Quarantined rows: $quarantineCount"
+                "Upload quarantine rows: $quarantineCount"
             }
 
         val latestQuarantineLabel =
             if (quarantineCount == 0) {
-                "Latest quarantine: —"
+                "Last upload quarantine event: —"
             } else {
                 val reason = latestQuarantineSummary?.latestReason?.wireValue ?: "UNKNOWN"
                 val msg = latestQuarantineSummary?.latestMessage?.trim().orEmpty()
                 if (msg.isNotEmpty()) {
-                    "Latest quarantine: $reason — $msg"
+                    "Last upload quarantine event: $reason — $msg"
                 } else {
-                    "Latest quarantine: $reason"
+                    "Last upload quarantine event: $reason"
                 }
             }
 

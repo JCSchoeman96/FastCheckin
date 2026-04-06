@@ -12,6 +12,6 @@ data class DiagnosticsUiState(
     val uploadStateLabel: String = "Idle",
     val serverResultSummary: String = "No server outcomes yet.",
     val latestFlushSummary: String = "No flush has run yet.",
-    val quarantinedRowsLabel: String = "Quarantined rows: None",
-    val latestQuarantineLabel: String = "Latest quarantine: —"
+    val quarantinedRowsLabel: String = "Upload quarantine rows: 0",
+    val latestQuarantineLabel: String = "Last upload quarantine event: —"
 )

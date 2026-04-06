@@ -34,8 +34,8 @@ class SupportDiagnosticsPresenter {
                                 SupportDiagnosticsItemUiState("Upload state", diagnosticsUiState.uploadStateLabel),
                                 SupportDiagnosticsItemUiState("Latest flush summary", diagnosticsUiState.latestFlushSummary),
                                 SupportDiagnosticsItemUiState("Server result summary", diagnosticsUiState.serverResultSummary),
-                                SupportDiagnosticsItemUiState("Quarantined rows", diagnosticsUiState.quarantinedRowsLabel),
-                                SupportDiagnosticsItemUiState("Latest quarantine", diagnosticsUiState.latestQuarantineLabel)
+                                SupportDiagnosticsItemUiState("Upload quarantine rows", diagnosticsUiState.quarantinedRowsLabel),
+                                SupportDiagnosticsItemUiState("Last upload quarantine", diagnosticsUiState.latestQuarantineLabel)
                             )
                     ),
                     SupportDiagnosticsSectionUiState(

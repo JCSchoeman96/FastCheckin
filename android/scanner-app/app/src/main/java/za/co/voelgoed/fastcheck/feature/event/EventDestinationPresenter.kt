@@ -66,6 +66,9 @@ class EventDestinationPresenter(
             requiresRelogin(queueUiState) ->
                 EventStatusChipUiModel("Re-login required", StatusTone.Destructive)
 
+            queueUiState.quarantineCount > 0 ->
+                EventStatusChipUiModel("Upload quarantine", StatusTone.Warning)
+
             uploadsPausedOffline(queueUiState) ->
                 EventStatusChipUiModel("Uploads paused", StatusTone.Offline)
 
@@ -99,6 +102,10 @@ class EventDestinationPresenter(
         when {
             requiresRelogin(queueUiState) ->
                 "${queueDepthLabel(queueUiState.localQueueDepth)} cannot upload until the operator signs in again."
+
+            queueUiState.quarantineCount > 0 ->
+                "Upload quarantine holds rows that are no longer in the retry backlog. " +
+                    "Queued locally counts only scans still waiting for upload; quarantine is separate."
 
             uploadsPausedOffline(queueUiState) ->
                 "${queueDepthLabel(queueUiState.localQueueDepth)} will upload automatically once the device reconnects."
@@ -149,6 +156,15 @@ class EventDestinationPresenter(
                     title = "Re-login required",
                     message = "${queueDepthLabel(queueUiState.localQueueDepth)} cannot upload until the operator signs in again.",
                     tone = StatusTone.Destructive
+                )
+
+            queueUiState.quarantineCount > 0 ->
+                EventBannerUiModel(
+                    title = "Upload quarantine active",
+                    message =
+                        "${queueUiState.quarantineCount} scan row(s) were set aside after unrecoverable upload errors. " +
+                            "They are not in the retry backlog and are not treated as a successful upload.",
+                    tone = StatusTone.Warning
                 )
 
             uploadsPausedOffline(queueUiState) ->
@@ -255,19 +271,22 @@ class EventDestinationPresenter(
     private fun queueSectionFor(queueUiState: QueueUiState): EventSectionUiModel {
         val quarantineMetrics =
             if (queueUiState.quarantineCount == 0) {
-                listOf(EventMetricUiModel("Quarantined rows", "None"))
+                listOf(EventMetricUiModel("Upload quarantine rows", "None"))
             } else {
                 listOf(
-                    EventMetricUiModel("Quarantined rows", queueUiState.quarantineCount.toString()),
+                    EventMetricUiModel("Upload quarantine rows", queueUiState.quarantineCount.toString()),
                     EventMetricUiModel(
-                        "Latest quarantine",
+                        "Last quarantine reason",
                         queueUiState.quarantineLatestReasonLabel ?: "Unknown"
                     )
                 )
             }
         return EventSectionUiModel(
             title = "Queue and upload health",
-            supportingText = "Upload state reflects current queue health. Queue depth remains local durable truth until the backend confirms uploads.",
+            supportingText =
+                "Queued locally is the retry backlog still waiting for upload. " +
+                    "Upload quarantine rows are not in that backlog — they were set aside after unrecoverable errors. " +
+                    "Upload state reflects the flush coordinator.",
             metrics =
                 buildList {
                     add(EventMetricUiModel("Queued locally", queueDepthValue(queueUiState.localQueueDepth)))

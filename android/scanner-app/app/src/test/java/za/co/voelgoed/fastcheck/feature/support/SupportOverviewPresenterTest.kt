@@ -131,4 +131,19 @@ class SupportOverviewPresenterTest {
         assertThat(uiState.operationalActions.map { it.action })
             .doesNotContain(SupportOperationalAction.ManualSync)
     }
+
+    @Test
+    fun uploadQuarantineSurfacesSeparateNoticeWithoutImplyingLogoutFixesIt() {
+        val uiState =
+            present(
+                scanningUiState = ScanningUiState(),
+                queueUiState = QueueUiState(quarantineCount = 3)
+            )
+
+        assertThat(uiState.uploadQuarantineNotice).isNotNull()
+        assertThat(uiState.uploadQuarantineNotice).contains("3")
+        assertThat(uiState.uploadQuarantineNotice).contains("upload quarantine")
+        assertThat(uiState.sessionMessage).doesNotContain("Diagnostics")
+        assertThat(uiState.sessionMessage).contains("not required to clear")
+    }
 }

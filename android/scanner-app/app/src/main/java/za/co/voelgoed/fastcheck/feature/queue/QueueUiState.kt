@@ -14,7 +14,8 @@ data class QueueUiState(
     val latestFlushSummary: String = "No flush has run yet.",
     val serverResultHint: String = "No server outcomes yet.",
     val directionLabel: String = "IN",
+    /** Rows in upload quarantine — not part of [localQueueDepth] / retry backlog. */
     val quarantineCount: Int = 0,
-    /** Present when [quarantineCount] &gt; 0: short reason label for operators. */
+    /** Present when [quarantineCount] &gt; 0: wire reason for the most recent quarantine event. */
     val quarantineLatestReasonLabel: String? = null
 )

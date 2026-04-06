@@ -13,7 +13,9 @@ data class SupportOverviewUiState(
     val reconciliationMessage: String?,
     val reconciliationTone: StatusTone?,
     val diagnosticsMessage: String,
-    val sessionMessage: String
+    val sessionMessage: String,
+    /** Factual upload-quarantine notice; null when there are no quarantined rows. */
+    val uploadQuarantineNotice: String? = null
 )
 
 enum class SupportRecoveryAction(
