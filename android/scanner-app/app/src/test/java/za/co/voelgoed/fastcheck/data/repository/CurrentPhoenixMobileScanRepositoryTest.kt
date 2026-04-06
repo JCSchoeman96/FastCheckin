@@ -24,6 +24,7 @@ import za.co.voelgoed.fastcheck.data.remote.UploadScansPayload
 import za.co.voelgoed.fastcheck.data.remote.UploadScansRequest
 import za.co.voelgoed.fastcheck.data.remote.UploadScansResponse
 import za.co.voelgoed.fastcheck.data.remote.UploadedScanResult
+import java.io.IOException
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
@@ -380,6 +381,98 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
+    fun flushNon401ClientErrorReportsWorkerFailureAndKeepsQueueWithoutQuarantine() = runTest {
+        seedQueueAndPendingOverlay(idempotencyKey = "idem-q-400")
+        api.uploadException =
+            HttpException(
+                Response.error<UploadScansResponse>(
+                    400,
+                    ResponseBody.create(
+                        "application/json".toMediaType(),
+                        """{"error":"bad_request"}"""
+                    )
+                )
+            )
+
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val dao = database.scannerDao()
+
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.WORKER_FAILURE)
+        assertThat(dao.countPendingScans()).isEqualTo(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+        assertThat(dao.findReplayCache("idem-q-400")).isNull()
+        val overlay = dao.findLocalAdmissionOverlayByIdempotencyKey("idem-q-400")
+        assertThat(overlay?.state).isEqualTo(LocalAdmissionOverlayState.PENDING_LOCAL.name)
+    }
+
+    @Test
+    fun flushIncompleteResponseReportsWorkerFailureAndKeepsQueueWithoutQuarantine() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-null-data", createdAt = 10_000L))
+        api.uploadResponse = UploadScansResponse(data = null, error = "missing", message = "no data")
+
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val dao = database.scannerDao()
+
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.WORKER_FAILURE)
+        assertThat(dao.countPendingScans()).isEqualTo(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+    }
+
+    @Test
+    fun flush401PreservesQueueAndLeavesQuarantineEmpty() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-401", createdAt = 10_000L))
+        api.uploadException =
+            HttpException(
+                Response.error<UploadScansResponse>(
+                    401,
+                    ResponseBody.create(
+                        "application/json".toMediaType(),
+                        """{"error":"unauthorized"}"""
+                    )
+                )
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+        val dao = database.scannerDao()
+
+        assertThat(dao.countPendingScans()).isEqualTo(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+    }
+
+    @Test
+    fun flush5xxPreservesQueueAndLeavesQuarantineEmpty() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-500", createdAt = 10_000L))
+        api.uploadException =
+            HttpException(
+                Response.error<UploadScansResponse>(
+                    503,
+                    ResponseBody.create(
+                        "application/json".toMediaType(),
+                        """{"error":"unavailable"}"""
+                    )
+                )
+            )
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+        val dao = database.scannerDao()
+
+        assertThat(dao.countPendingScans()).isEqualTo(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+    }
+
+    @Test
+    fun flushIOExceptionPreservesQueueAndLeavesQuarantineEmpty() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-io", createdAt = 10_000L))
+        api.uploadIoException = IOException("network down")
+
+        repository.flushQueuedScans(maxBatchSize = 50)
+        val dao = database.scannerDao()
+
+        assertThat(dao.countPendingScans()).isEqualTo(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+    }
+
+    @Test
     fun flushAuthExpiredDoesNotTransitionOverlay() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-auth")
         val noTokenRepository =
@@ -447,6 +540,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     private class FakePhoenixMobileApi : PhoenixMobileApi {
         var lastUploadBody: UploadScansRequest? = null
         var uploadException: HttpException? = null
+        var uploadIoException: IOException? = null
         var uploadResponse: UploadScansResponse =
             UploadScansResponse(
                 data = UploadScansPayload(results = emptyList(), processed = 0),
@@ -464,6 +558,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
             lastUploadBody = body
+            uploadIoException?.let { throw it }
             uploadException?.let { throw it }
             return uploadResponse
         }

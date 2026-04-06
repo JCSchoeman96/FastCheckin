@@ -195,6 +195,46 @@ interface ScannerDao {
     @Query("DELETE FROM queued_scans WHERE id IN (:ids)")
     suspend fun deleteQueuedScans(ids: List<Long>)
 
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertQuarantinedScans(entities: List<QuarantinedScanEntity>): List<Long>
+
+    @Query("SELECT COUNT(*) FROM quarantined_scans")
+    suspend fun countQuarantinedScans(): Int
+
+    @Query("SELECT COUNT(*) FROM quarantined_scans")
+    fun observeQuarantinedScanCount(): Flow<Int>
+
+    @Query(
+        """
+        SELECT * FROM quarantined_scans
+        ORDER BY quarantinedAt DESC, id DESC
+        LIMIT 1
+        """
+    )
+    suspend fun loadLatestQuarantinedScan(): QuarantinedScanEntity?
+
+    @Query(
+        """
+        SELECT * FROM quarantined_scans
+        ORDER BY quarantinedAt DESC, id DESC
+        LIMIT 1
+        """
+    )
+    fun observeLatestQuarantinedScan(): Flow<QuarantinedScanEntity?>
+
+    @Transaction
+    suspend fun insertQuarantinedScansAndDeleteQueued(
+        entities: List<QuarantinedScanEntity>,
+        queueIds: List<Long>
+    ) {
+        if (entities.isNotEmpty()) {
+            insertQuarantinedScans(entities)
+        }
+        if (queueIds.isNotEmpty()) {
+            deleteQueuedScans(queueIds)
+        }
+    }
+
     @Query("SELECT COUNT(*) FROM queued_scans WHERE replayed = 0")
     suspend fun countPendingScans(): Int
 

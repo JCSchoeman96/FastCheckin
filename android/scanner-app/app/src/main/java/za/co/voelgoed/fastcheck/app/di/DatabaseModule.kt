@@ -25,11 +25,16 @@ object DatabaseModule {
             FastCheckDatabase::class.java,
             FastCheckDatabase.DATABASE_NAME
         )
+            // Room only runs migrations registered here. If the on-disk DB is newer than the
+            // highest migration listed, upgrades can fail or skip schema steps — keep this list in
+            // lockstep with [FastCheckDatabase.VERSION] and the migration objects.
             .addMigrations(
                 FastCheckDatabaseMigrations.MIGRATION_2_3,
                 FastCheckDatabaseMigrations.MIGRATION_3_4,
                 FastCheckDatabaseMigrations.MIGRATION_4_5,
-                FastCheckDatabaseMigrations.MIGRATION_5_6
+                FastCheckDatabaseMigrations.MIGRATION_5_6,
+                FastCheckDatabaseMigrations.MIGRATION_6_7,
+                FastCheckDatabaseMigrations.MIGRATION_7_8
             )
             .build()
 

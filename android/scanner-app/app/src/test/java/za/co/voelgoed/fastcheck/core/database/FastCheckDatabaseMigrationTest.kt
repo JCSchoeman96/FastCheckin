@@ -65,7 +65,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -142,7 +143,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -176,7 +178,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -226,7 +229,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -250,7 +254,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -275,7 +280,8 @@ class FastCheckDatabaseMigrationTest {
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -301,7 +307,8 @@ class FastCheckDatabaseMigrationTest {
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -315,6 +322,27 @@ class FastCheckDatabaseMigrationTest {
             expectedColumns = listOf("eventId", "state"),
             tableName = "local_admission_overlays"
         )
+
+        database.close()
+    }
+
+    @Test
+    fun migratesVersion7To8AddsQuarantineTableEmpty() = runTest {
+        createVersion6Schema(databaseFile)
+
+        val database =
+            Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                )
+                .allowMainThreadQueries()
+                .build()
+        val sqliteDb = database.openHelper.writableDatabase
+
+        assertThat(hasTable(sqliteDb, "quarantined_scans")).isTrue()
+        assertThat(database.scannerDao().countQuarantinedScans()).isEqualTo(0)
 
         database.close()
     }
@@ -1191,4 +1219,10 @@ class FastCheckDatabaseMigrationTest {
             }
             false
         }
+
+    private fun hasTable(database: SupportSQLiteDatabase, tableName: String): Boolean =
+        database.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            arrayOf(tableName)
+        ).use { it.moveToFirst() }
 }

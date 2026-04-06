@@ -59,7 +59,8 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
-                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -71,6 +72,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
         assertThat(queuedBeforeFlush).hasSize(1)
         assertThat(queuedBeforeFlush.single().ticketCode).isEqualTo(QUEUED_TICKET_CODE)
         assertThat(scannerDao.countPendingScans()).isEqualTo(1)
+        assertThat(scannerDao.countQuarantinedScans()).isEqualTo(0)
 
         val migratedLegacyOutcomes = scannerDao.loadRecentFlushOutcomes(limit = 10)
         assertThat(migratedLegacyOutcomes).hasSize(1)
