@@ -9,9 +9,9 @@ import org.junit.Test
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
-import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionDecision
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
-import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
+import za.co.voelgoed.fastcheck.domain.usecase.AdmitScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
@@ -19,7 +19,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 class ScanCapturePipelineTest {
     @Test
     fun handsDecodedValueToLocalQueueWithScannerDefaults() = runTest {
-        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val fakeUseCase = RecordingAdmitScanUseCase()
         val pipeline = ScanCapturePipeline(fakeUseCase) { 0L }
 
         pipeline.onDecoded("  VG-101  ")
@@ -35,7 +35,7 @@ class ScanCapturePipelineTest {
         val constructorParameterTypes =
             ScanCapturePipeline::class.java.declaredConstructors.single().parameterTypes.toList()
 
-        assertThat(constructorParameterTypes).contains(QueueCapturedScanUseCase::class.java)
+        assertThat(constructorParameterTypes).contains(AdmitScanUseCase::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileApi::class.java)
         assertThat(constructorParameterTypes).doesNotContain(PhoenixMobileRemoteDataSource::class.java)
         assertThat(constructorParameterTypes).doesNotContain(MobileScanRepository::class.java)
@@ -43,7 +43,7 @@ class ScanCapturePipelineTest {
 
     @Test
     fun firstCaptureAccepted_secondSameCodeWithinWindowSuppressed() = runTest {
-        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val fakeUseCase = RecordingAdmitScanUseCase()
         var now = 1_000L
         val pipeline = ScanCapturePipeline(fakeUseCase) { now }
 
@@ -57,13 +57,22 @@ class ScanCapturePipelineTest {
         val second = secondResult.await()
 
         assertThat(fakeUseCase.enqueueCallCount).isEqualTo(1)
-        assertThat(first).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(first)
+            .isEqualTo(
+                CaptureHandoffResult.Accepted(
+                    attendeeId = 101L,
+                    displayName = "Jane Queue",
+                    ticketCode = "CODE-A",
+                    idempotencyKey = "idem-accepted",
+                    scannedAt = "2026-04-06T10:00:00Z"
+                )
+            )
         assertThat(second).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
     }
 
     @Test
     fun differentCodeWithinWindowIsAlsoSuppressed() = runTest {
-        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val fakeUseCase = RecordingAdmitScanUseCase()
         var now = 5_000L
         val pipeline = ScanCapturePipeline(fakeUseCase) { now }
 
@@ -77,13 +86,22 @@ class ScanCapturePipelineTest {
         val second = secondResult.await()
 
         assertThat(fakeUseCase.enqueueCallCount).isEqualTo(1)
-        assertThat(first).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(first)
+            .isEqualTo(
+                CaptureHandoffResult.Accepted(
+                    attendeeId = 101L,
+                    displayName = "Jane Queue",
+                    ticketCode = "CODE-A",
+                    idempotencyKey = "idem-accepted",
+                    scannedAt = "2026-04-06T10:00:00Z"
+                )
+            )
         assertThat(second).isEqualTo(CaptureHandoffResult.SuppressedByCooldown)
     }
 
     @Test
     fun captureAfterCooldownExpiryIsAcceptedAgain() = runTest {
-        val fakeUseCase = RecordingQueueCapturedScanUseCase()
+        val fakeUseCase = RecordingAdmitScanUseCase()
         var now = 10_000L
         val pipeline = ScanCapturePipeline(fakeUseCase) { now }
 
@@ -97,29 +115,54 @@ class ScanCapturePipelineTest {
         val second = secondResult.await()
 
         assertThat(fakeUseCase.enqueueCallCount).isEqualTo(2)
-        assertThat(first).isEqualTo(CaptureHandoffResult.Accepted)
-        assertThat(second).isEqualTo(CaptureHandoffResult.Accepted)
+        assertThat(first)
+            .isEqualTo(
+                CaptureHandoffResult.Accepted(
+                    attendeeId = 101L,
+                    displayName = "Jane Queue",
+                    ticketCode = "CODE-A",
+                    idempotencyKey = "idem-accepted",
+                    scannedAt = "2026-04-06T10:00:00Z"
+                )
+            )
+        assertThat(second)
+            .isEqualTo(
+                CaptureHandoffResult.Accepted(
+                    attendeeId = 101L,
+                    displayName = "Jane Queue",
+                    ticketCode = "CODE-B",
+                    idempotencyKey = "idem-accepted",
+                    scannedAt = "2026-04-06T10:00:00Z"
+                )
+            )
     }
 
-    private class RecordingQueueCapturedScanUseCase : QueueCapturedScanUseCase {
+    private class RecordingAdmitScanUseCase : AdmitScanUseCase {
         var enqueueCallCount: Int = 0
         var ticketCode: String? = null
         var direction: ScanDirection? = null
         var operatorName: String? = null
         var entranceName: String? = null
 
-        override suspend fun enqueue(
+        override suspend fun admit(
             ticketCode: String,
             direction: ScanDirection,
             operatorName: String,
             entranceName: String
-        ): QueueCreationResult {
+        ): LocalAdmissionDecision {
             enqueueCallCount += 1
             this.ticketCode = ticketCode
             this.direction = direction
             this.operatorName = operatorName
             this.entranceName = entranceName
-            return QueueCreationResult.ReplaySuppressed
+            return LocalAdmissionDecision.Accepted(
+                attendeeId = 101L,
+                displayName = "Jane Queue",
+                ticketCode = ticketCode.trim(),
+                idempotencyKey = "idem-accepted",
+                scannedAt = "2026-04-06T10:00:00Z",
+                localQueueId = 1L
+            )
         }
     }
 }

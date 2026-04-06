@@ -25,6 +25,7 @@ import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 
@@ -125,6 +126,10 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                         )
                     }
                 )
+
+                terminalOutcomes.forEach { outcome ->
+                    transitionOverlayForFlushOutcome(outcome)
+                }
             }
 
             if (matchedIds.isNotEmpty()) {
@@ -262,6 +267,56 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
         return report
     }
 
+    private suspend fun transitionOverlayForFlushOutcome(outcome: FlushItemResult) {
+        val overlay =
+            scannerDao.findLocalAdmissionOverlayByIdempotencyKey(outcome.idempotencyKey)
+                ?: return
+
+        val nextState =
+            when (outcome.outcome) {
+                FlushItemOutcome.SUCCESS ->
+                    OverlayTransition(
+                        state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED,
+                        conflictReasonCode = null,
+                        conflictMessage = null
+                    )
+
+                FlushItemOutcome.DUPLICATE ->
+                    OverlayTransition(
+                        state = LocalAdmissionOverlayState.CONFLICT_DUPLICATE,
+                        conflictReasonCode = outcome.reasonCode ?: "duplicate",
+                        conflictMessage = outcome.message
+                    )
+
+                FlushItemOutcome.TERMINAL_ERROR ->
+                    if (outcome.reasonCode == "business_duplicate") {
+                        OverlayTransition(
+                            state = LocalAdmissionOverlayState.CONFLICT_DUPLICATE,
+                            conflictReasonCode = outcome.reasonCode,
+                            conflictMessage = outcome.message
+                        )
+                    } else {
+                        OverlayTransition(
+                            state = LocalAdmissionOverlayState.CONFLICT_REJECTED,
+                            conflictReasonCode = outcome.reasonCode ?: "terminal_error",
+                            conflictMessage = outcome.message
+                        )
+                    }
+
+                FlushItemOutcome.RETRYABLE_FAILURE,
+                FlushItemOutcome.AUTH_EXPIRED -> null
+            }
+
+        if (nextState != null) {
+            scannerDao.updateLocalAdmissionOverlayState(
+                overlayId = overlay.id,
+                state = nextState.state.name,
+                conflictReasonCode = nextState.conflictReasonCode,
+                conflictMessage = nextState.conflictMessage
+            )
+        }
+    }
+
     private fun PendingScan.toAuthExpiredOutcome(): FlushItemResult =
         FlushItemResult(
             idempotencyKey = idempotencyKey,
@@ -281,4 +336,10 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
     private companion object {
         const val REPLAY_SUPPRESSION_WINDOW_MILLIS: Long = 3_000L
     }
+
+    private data class OverlayTransition(
+        val state: LocalAdmissionOverlayState,
+        val conflictReasonCode: String?,
+        val conflictMessage: String?
+    )
 }

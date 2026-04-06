@@ -15,5 +15,10 @@ data class AttendeeDetailRecord(
     val checkedOutAt: String?,
     val allowedCheckins: Int,
     val checkinsRemaining: Int,
-    val updatedAt: String?
+    val updatedAt: String?,
+    val localOverlayState: String?,
+    val localConflictReasonCode: String?,
+    val localConflictMessage: String?,
+    val localOverlayScannedAt: String?,
+    val expectedRemainingAfterOverlay: Int?
 )

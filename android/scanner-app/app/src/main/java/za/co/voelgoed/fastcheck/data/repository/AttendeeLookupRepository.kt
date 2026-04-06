@@ -8,4 +8,6 @@ interface AttendeeLookupRepository {
     fun search(eventId: Long, query: String): Flow<List<AttendeeSearchRecord>>
 
     fun observeDetail(eventId: Long, attendeeId: Long): Flow<AttendeeDetailRecord?>
+
+    suspend fun findByTicketCode(eventId: Long, ticketCode: String): AttendeeDetailRecord?
 }

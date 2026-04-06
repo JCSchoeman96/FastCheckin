@@ -83,8 +83,17 @@ class ScanningViewModelTest {
     fun captureResultsMapToSemanticTruth() {
         val viewModel = ScanningViewModel()
 
-        viewModel.onCaptureHandoffResult(CaptureHandoffResult.Accepted)
-        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.QueuedLocally)
+        viewModel.onCaptureHandoffResult(
+            CaptureHandoffResult.Accepted(
+                attendeeId = 7L,
+                displayName = "Jane Doe",
+                ticketCode = "VG-007",
+                idempotencyKey = "idem-7",
+                scannedAt = "2026-04-02T09:00:00Z"
+            )
+        )
+        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
+        assertThat(viewModel.uiState.value.lastCaptureFeedback?.message).isEqualTo("Welcome, Jane Doe")
 
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.Suppressed)

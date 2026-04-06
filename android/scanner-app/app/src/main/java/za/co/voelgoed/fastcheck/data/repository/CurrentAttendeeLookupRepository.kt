@@ -6,8 +6,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
-import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.AttendeeLookupDao
+import za.co.voelgoed.fastcheck.data.local.MergedAttendeeLookupProjection
 import za.co.voelgoed.fastcheck.data.mapper.toDetailRecord
 import za.co.voelgoed.fastcheck.data.mapper.toSearchRecord
 import za.co.voelgoed.fastcheck.domain.model.AttendeeDetailRecord
@@ -33,23 +33,29 @@ class CurrentAttendeeLookupRepository @Inject constructor(
             limit = SEARCH_CANDIDATE_LIMIT
         ).map { candidates ->
             candidates
-                .distinctBy(AttendeeEntity::id)
+                .distinctBy(MergedAttendeeLookupProjection::id)
                 .sortedWith(searchComparator(trimmedQuery, normalizedTicketCode))
                 .take(SEARCH_RESULT_LIMIT)
-                .map(AttendeeEntity::toSearchRecord)
+                .map(MergedAttendeeLookupProjection::toSearchRecord)
         }
     }
 
     override fun observeDetail(eventId: Long, attendeeId: Long): Flow<AttendeeDetailRecord?> =
         attendeeLookupDao.observeAttendeeById(eventId, attendeeId).map { it?.toDetailRecord() }
 
+    override suspend fun findByTicketCode(
+        eventId: Long,
+        ticketCode: String
+    ): AttendeeDetailRecord? =
+        attendeeLookupDao.findMergedAttendeeByTicketCode(eventId, ticketCode)?.toDetailRecord()
+
     private fun searchComparator(
         rawQuery: String,
         normalizedTicketCode: String
-    ): Comparator<AttendeeEntity> {
+    ): Comparator<MergedAttendeeLookupProjection> {
         val loweredQuery = rawQuery.lowercase()
 
-        return compareByDescending<AttendeeEntity> { it.ticketCode == normalizedTicketCode }
+        return compareByDescending<MergedAttendeeLookupProjection> { it.ticketCode == normalizedTicketCode }
             .thenByDescending { normalizedTicketCode.isNotEmpty() && it.ticketCode.startsWith(normalizedTicketCode) }
             .thenBy { entity ->
                 when {

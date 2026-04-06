@@ -62,6 +62,44 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_6_7: Migration =
+        object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_admission_overlays (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        eventId INTEGER NOT NULL,
+                        attendeeId INTEGER NOT NULL,
+                        ticketCode TEXT NOT NULL,
+                        idempotencyKey TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        createdAtEpochMillis INTEGER NOT NULL,
+                        overlayScannedAt TEXT NOT NULL,
+                        expectedRemainingAfterOverlay INTEGER NOT NULL,
+                        operatorName TEXT NOT NULL,
+                        entranceName TEXT NOT NULL,
+                        conflictReasonCode TEXT,
+                        conflictMessage TEXT
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_local_admission_overlays_idempotencyKey ON local_admission_overlays(idempotencyKey)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_admission_overlays_eventId_attendeeId ON local_admission_overlays(eventId, attendeeId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_admission_overlays_eventId_ticketCode ON local_admission_overlays(eventId, ticketCode)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_admission_overlays_eventId_state ON local_admission_overlays(eventId, state)"
+                )
+            }
+        }
+
     private fun rebuildAttendeesTable(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE attendees RENAME TO attendees_legacy")
         db.execSQL(

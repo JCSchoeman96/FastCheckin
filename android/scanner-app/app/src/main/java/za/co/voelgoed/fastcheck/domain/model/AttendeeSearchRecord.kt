@@ -10,5 +10,8 @@ data class AttendeeSearchRecord(
     val paymentStatus: String?,
     val isCurrentlyInside: Boolean,
     val allowedCheckins: Int,
-    val checkinsRemaining: Int
+    val checkinsRemaining: Int,
+    val localOverlayState: String?,
+    val localConflictReasonCode: String?,
+    val localConflictMessage: String?
 )

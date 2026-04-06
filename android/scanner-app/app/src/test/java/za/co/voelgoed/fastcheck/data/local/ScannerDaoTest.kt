@@ -12,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 
 @RunWith(RobolectricTestRunner::class)
 class ScannerDaoTest {
@@ -349,6 +350,38 @@ class ScannerDaoTest {
         assertThat(failure).isNotNull()
         assertThat(dao.findAttendee(5, "VG-TX-89")).isNull()
         assertThat(dao.loadSyncMetadata(5)).isNull()
+    }
+
+    @Test
+    fun unresolvedEventIdsIncludeQueuedScansAndActiveOverlays() = runTest {
+        dao.insertQueuedScan(
+            QueuedScanEntity(
+                eventId = 7,
+                ticketCode = "VG-700",
+                idempotencyKey = "idem-700",
+                createdAt = 700L,
+                scannedAt = "2026-03-13T10:06:00Z",
+                entranceName = "Main",
+                operatorName = "Op"
+            )
+        )
+        dao.upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 8,
+                attendeeId = 80L,
+                ticketCode = "VG-800",
+                idempotencyKey = "idem-800",
+                state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name,
+                createdAtEpochMillis = 800L,
+                overlayScannedAt = "2026-03-13T10:07:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Side"
+            )
+        )
+
+        assertThat(dao.loadUnresolvedEventIdsExcluding(9L)).containsExactly(7L, 8L).inOrder()
+        assertThat(dao.loadUnresolvedEventIdsExcluding(8L)).containsExactly(7L)
     }
 
     private fun createAbortInsertTrigger(tableName: String, triggerName: String) {

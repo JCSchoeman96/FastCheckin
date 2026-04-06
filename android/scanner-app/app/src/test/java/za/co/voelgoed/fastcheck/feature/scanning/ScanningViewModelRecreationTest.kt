@@ -11,6 +11,14 @@ import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
 class ScanningViewModelRecreationTest {
+    private val acceptedResult =
+        CaptureHandoffResult.Accepted(
+            attendeeId = 7L,
+            displayName = "Jane Doe",
+            ticketCode = "VG-007",
+            idempotencyKey = "idem-7",
+            scannedAt = "2026-04-06T10:00:00Z"
+        )
 
     private sealed class Event {
         data class SourceState(val phase: String, val state: ScannerSourceState) : Event()
@@ -34,13 +42,13 @@ class ScanningViewModelRecreationTest {
         }
 
         fun emitOldCapture() {
-            events += Event.Feedback("old", CaptureHandoffResult.Accepted)
-            viewModel.onCaptureHandoffResult(CaptureHandoffResult.Accepted)
+            events += Event.Feedback("old", acceptedResult)
+            viewModel.onCaptureHandoffResult(acceptedResult)
         }
 
         fun emitNewCapture() {
-            events += Event.Feedback("new", CaptureHandoffResult.Accepted)
-            viewModel.onCaptureHandoffResult(CaptureHandoffResult.Accepted)
+            events += Event.Feedback("new", acceptedResult)
+            viewModel.onCaptureHandoffResult(acceptedResult)
         }
 
         // Phase A: old binding produces state and one feedback.
@@ -113,4 +121,3 @@ class ScanningViewModelRecreationTest {
         newJob.cancel()
     }
 }
-

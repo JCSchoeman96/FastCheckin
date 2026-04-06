@@ -16,9 +16,11 @@ class CurrentPhoenixSessionRepository @Inject constructor(
     private val remoteDataSource: PhoenixMobileRemoteDataSource,
     private val sessionVault: SessionVault,
     private val sessionMetadataStore: SessionMetadataStore,
+    private val unresolvedAdmissionStateGate: UnresolvedAdmissionStateGate,
     private val clock: Clock
 ) : SessionRepository {
     override suspend fun login(eventId: Long, credential: String): ScannerSession {
+        unresolvedAdmissionStateGate.requireNoConflictingEvents(eventId)
         val response = remoteDataSource.login(MobileLoginRequest(event_id = eventId, credential = credential))
         val payload = requireNotNull(response.data) { response.message ?: response.error ?: "Login failed" }
         val session = payload.toDomain(clock)

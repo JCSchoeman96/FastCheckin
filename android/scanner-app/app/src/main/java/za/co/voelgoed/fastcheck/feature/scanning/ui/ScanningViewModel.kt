@@ -107,7 +107,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         "Preparing Zebra DataWedge scanner input source."
 
                     is ScannerSourceState.Ready ->
-                        "Zebra DataWedge scanner ready. Broadcast captures hand off to the existing local queue only."
+                        "Zebra DataWedge scanner ready. Broadcast captures use local gate rules first, then queue background reconciliation."
 
                     is ScannerSourceState.Stopping ->
                         "Stopping Zebra DataWedge scanner input source."
@@ -117,9 +117,9 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
 
                     else ->
                         if (sessionState == ScannerSessionState.Armed) {
-                            "Zebra DataWedge source armed. Broadcast captures will feed the existing local queue only."
+                            "Zebra DataWedge source armed. Broadcast captures will use local gate rules first, then queue background reconciliation."
                         } else {
-                            "Zebra DataWedge source selected. Broadcast captures will feed the existing local queue only."
+                            "Zebra DataWedge source selected. Broadcast captures will use local gate rules first, then queue background reconciliation."
                         }
                 }
 
@@ -130,7 +130,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 "Preparing scanner input source."
 
             lifecycle is ScannerSourceState.Ready ->
-                "Scanner ready. Decoded values hand off to the existing local queue only."
+                "Scanner ready. Decoded values use local gate rules first, then queue background reconciliation."
 
             lifecycle is ScannerSourceState.Stopping ->
                 "Stopping scanner input source."
@@ -142,7 +142,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 "Scanner armed. Camera scanning is ready to start."
 
             else ->
-                "Scanner scaffold ready. Decoded values will feed the existing local queue only."
+                "Scanner scaffold ready. Decoded values will use local gate rules first, then queue background reconciliation."
         }
 
     private fun scannerRecoveryStateFor(
@@ -176,15 +176,36 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
             val feedback =
                 when (result) {
                     is CaptureHandoffResult.Accepted ->
-                        CaptureFeedbackState.Success("Queued locally (pending upload)")
+                        CaptureFeedbackState.Success(
+                            title = "Accepted",
+                            message = "Welcome, ${result.displayName}"
+                        )
+
+                    is CaptureHandoffResult.Rejected ->
+                        CaptureFeedbackState.Warning(
+                            title = "Invalid scan",
+                            message = result.reason
+                        )
+
+                    is CaptureHandoffResult.ReviewRequired ->
+                        CaptureFeedbackState.Warning(
+                            title = "Manual review",
+                            message = result.reason
+                        )
 
                     is CaptureHandoffResult.SuppressedByCooldown ->
-                        CaptureFeedbackState.Warning("Capture ignored during active cooldown.")
+                        CaptureFeedbackState.Warning(
+                            title = "Repeated scan ignored",
+                            message = "Capture ignored during active cooldown."
+                        )
 
                     is CaptureHandoffResult.Failed -> {
                         val message =
                             result.reason.takeIf { it.isNotBlank() } ?: "Could not queue scan"
-                        CaptureFeedbackState.Error(message)
+                        CaptureFeedbackState.Error(
+                            title = "Scan failed",
+                            message = message
+                        )
                     }
                 }
 
@@ -192,7 +213,9 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 lastCaptureFeedback = feedback,
                 captureSemanticState =
                     when (result) {
-                        is CaptureHandoffResult.Accepted -> ScanUiState.QueuedLocally
+                        is CaptureHandoffResult.Accepted -> ScanUiState.AcceptedLocal
+                        is CaptureHandoffResult.Rejected -> ScanUiState.Invalid
+                        is CaptureHandoffResult.ReviewRequired -> ScanUiState.ManualReview(result.reason)
                         is CaptureHandoffResult.SuppressedByCooldown -> ScanUiState.Suppressed
                         is CaptureHandoffResult.Failed -> ScanUiState.Failed(result.reason)
                     }

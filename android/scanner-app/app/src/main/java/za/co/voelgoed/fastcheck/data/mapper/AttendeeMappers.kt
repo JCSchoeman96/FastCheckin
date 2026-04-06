@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.data.mapper
 
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
+import za.co.voelgoed.fastcheck.data.local.MergedAttendeeLookupProjection
 import za.co.voelgoed.fastcheck.data.remote.AttendeeDto
 import za.co.voelgoed.fastcheck.domain.model.AttendeeDetailRecord
 import za.co.voelgoed.fastcheck.domain.model.AttendeeRecord
@@ -47,7 +48,10 @@ fun AttendeeEntity.toSearchRecord(): AttendeeSearchRecord =
         paymentStatus = paymentStatus,
         isCurrentlyInside = isCurrentlyInside,
         allowedCheckins = allowedCheckins,
-        checkinsRemaining = checkinsRemaining
+        checkinsRemaining = checkinsRemaining,
+        localOverlayState = null,
+        localConflictReasonCode = null,
+        localConflictMessage = null
     )
 
 fun AttendeeEntity.toDetailRecord(): AttendeeDetailRecord =
@@ -66,10 +70,61 @@ fun AttendeeEntity.toDetailRecord(): AttendeeDetailRecord =
         checkedOutAt = checkedOutAt,
         allowedCheckins = allowedCheckins,
         checkinsRemaining = checkinsRemaining,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        localOverlayState = null,
+        localConflictReasonCode = null,
+        localConflictMessage = null,
+        localOverlayScannedAt = null,
+        expectedRemainingAfterOverlay = null
+    )
+
+fun MergedAttendeeLookupProjection.toSearchRecord(): AttendeeSearchRecord =
+    AttendeeSearchRecord(
+        id = id,
+        eventId = eventId,
+        ticketCode = ticketCode,
+        displayName = displayName(),
+        email = email,
+        ticketType = ticketType,
+        paymentStatus = paymentStatus,
+        isCurrentlyInside = mergedIsCurrentlyInside,
+        allowedCheckins = allowedCheckins,
+        checkinsRemaining = mergedCheckinsRemaining,
+        localOverlayState = activeOverlayState,
+        localConflictReasonCode = activeOverlayConflictReasonCode,
+        localConflictMessage = activeOverlayConflictMessage
+    )
+
+fun MergedAttendeeLookupProjection.toDetailRecord(): AttendeeDetailRecord =
+    AttendeeDetailRecord(
+        id = id,
+        eventId = eventId,
+        ticketCode = ticketCode,
+        firstName = firstName,
+        lastName = lastName,
+        displayName = displayName(),
+        email = email,
+        ticketType = ticketType,
+        paymentStatus = paymentStatus,
+        isCurrentlyInside = mergedIsCurrentlyInside,
+        checkedInAt = mergedCheckedInAt,
+        checkedOutAt = mergedCheckedOutAt,
+        allowedCheckins = allowedCheckins,
+        checkinsRemaining = mergedCheckinsRemaining,
+        updatedAt = updatedAt,
+        localOverlayState = activeOverlayState,
+        localConflictReasonCode = activeOverlayConflictReasonCode,
+        localConflictMessage = activeOverlayConflictMessage,
+        localOverlayScannedAt = activeOverlayScannedAt,
+        expectedRemainingAfterOverlay = expectedRemainingAfterOverlay
     )
 
 private fun AttendeeEntity.displayName(): String =
+    listOfNotNull(firstName?.trim().takeUnless { it.isNullOrEmpty() }, lastName?.trim().takeUnless { it.isNullOrEmpty() })
+        .joinToString(" ")
+        .ifBlank { ticketCode }
+
+private fun MergedAttendeeLookupProjection.displayName(): String =
     listOfNotNull(firstName?.trim().takeUnless { it.isNullOrEmpty() }, lastName?.trim().takeUnless { it.isNullOrEmpty() })
         .joinToString(" ")
         .ifBlank { ticketCode }

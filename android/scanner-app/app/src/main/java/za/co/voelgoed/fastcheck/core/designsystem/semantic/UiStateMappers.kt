@@ -16,11 +16,13 @@ import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
  * Immediate scanner-facing projection.
  *
  * This maps only what [CaptureHandoffResult] can currently express:
- * accepted, cooldown suppression, and failed(reason).
+ * accepted, rejected, manual-review, cooldown suppression, and failed(reason).
  */
 fun CaptureHandoffResult.toScanUiState(): ScanUiState =
     when (this) {
-        CaptureHandoffResult.Accepted -> ScanUiState.QueuedLocally
+        is CaptureHandoffResult.Accepted -> ScanUiState.AcceptedLocal
+        is CaptureHandoffResult.Rejected -> ScanUiState.Invalid
+        is CaptureHandoffResult.ReviewRequired -> ScanUiState.ManualReview(reason)
         CaptureHandoffResult.SuppressedByCooldown -> ScanUiState.Suppressed
         is CaptureHandoffResult.Failed -> classifyCaptureFailure(reason)
     }

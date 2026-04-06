@@ -26,6 +26,10 @@ class AuthViewModel @Inject constructor(
         _uiState.update { it.copy(credentialInput = value, errorMessage = null) }
     }
 
+    fun setExternalError(message: String?) {
+        _uiState.update { it.copy(errorMessage = message) }
+    }
+
     fun login() {
         val eventId = _uiState.value.eventIdInput.toLongOrNull()
         val credential = _uiState.value.credentialInput.trim()

@@ -42,6 +42,13 @@ sealed interface ScanUiState {
         override val defaultLabel: String = "Queued locally (pending upload)."
     }
 
+    data object AcceptedLocal : ScanUiState {
+        override val tone: StatusTone = StatusTone.Success
+        override val iconKey: String = "scan_accepted_local"
+        override val labelHook: String = "scan.accepted_local"
+        override val defaultLabel: String = "Accepted locally."
+    }
+
     data object Uploaded : ScanUiState {
         override val tone: StatusTone = StatusTone.Success
         override val iconKey: String = "scan_uploaded"
@@ -68,6 +75,16 @@ sealed interface ScanUiState {
         override val iconKey: String = "scan_invalid"
         override val labelHook: String = "scan.invalid"
         override val defaultLabel: String = "Invalid scan data."
+    }
+
+    data class ManualReview(
+        val reason: String? = null
+    ) : ScanUiState {
+        override val tone: StatusTone = StatusTone.Warning
+        override val iconKey: String = "scan_manual_review"
+        override val labelHook: String = "scan.manual_review"
+        override val defaultLabel: String =
+            reason?.takeIf { it.isNotBlank() } ?: "Manual review required."
     }
 
     data class OfflineRequired(
