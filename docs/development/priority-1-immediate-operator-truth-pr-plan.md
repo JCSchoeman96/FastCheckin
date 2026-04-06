@@ -1,5 +1,11 @@
 # Priority 1 — Immediate Operator Truth
 
+> **Superseded as an execution plan.** Do **not** treat this document as a live
+> implementation backlog. The authoritative Priority 1 contract for what shipped
+> on `main`, regression expectations, and allowed follow-up work is
+> [`priority-1-current-baseline-and-regression-plan.md`](priority-1-current-baseline-and-regression-plan.md).
+> The five-PR queue-first sequence below is **historical context** only.
+
 > Implementation note: the approved runtime direction has moved beyond the
 > earlier queue-first wording in this doc. The Android scanner now uses local
 > admission overlays as operational gate truth, keeps synced attendee rows as

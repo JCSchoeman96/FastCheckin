@@ -1,5 +1,14 @@
 # Phase 11 — Attendee Search and Manual Check-In Foundation
 
+> **Superseded / runtime shift.** This phase doc was written before the **local-first
+> admission runtime** landed on `main` (`AdmitScanUseCase`, local admission overlays,
+> merged attendee lookup, `feature/search/`). Manual admission from Search detail
+> goes through **`AdmitScanUseCase`** and the same queue + overlay persistence as
+> scans—not a standalone `feature/attendees/` package or queue-only `QueueCapturedScanUseCase`
+> as the only story. For current architecture and contracts, see
+> [`android/scanner-app/docs/architecture.md`](../../../android/scanner-app/docs/architecture.md)
+> and [`priority-1-current-baseline-and-regression-plan.md`](../priority-1-current-baseline-and-regression-plan.md).
+
 ## Phase / Plan Description
 
 Phase 11 turns attendee search and manual intervention into a first-class operator workflow **without inventing new backend APIs** and without violating the current Android architecture.
