@@ -35,6 +35,23 @@ set APP_HOME=%DIRNAME%
 @rem Resolve any "." and ".." in APP_HOME to make it shorter.
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 
+@rem Resolve the Android SDK per host so Windows validation does not depend on
+@rem a checked-in local.properties path.
+if not defined ANDROID_SDK_ROOT (
+  if defined ANDROID_HOME if exist "%ANDROID_HOME%" set "ANDROID_SDK_ROOT=%ANDROID_HOME%"
+)
+if not defined ANDROID_SDK_ROOT (
+  if exist "%LOCALAPPDATA%\Android\Sdk" set "ANDROID_SDK_ROOT=%LOCALAPPDATA%\Android\Sdk"
+)
+if not defined ANDROID_SDK_ROOT (
+  if exist "%USERPROFILE%\AppData\Local\Android\Sdk" set "ANDROID_SDK_ROOT=%USERPROFILE%\AppData\Local\Android\Sdk"
+)
+if not defined ANDROID_SDK_ROOT (
+  if exist "%ProgramFiles%\Android\Android Studio\Sdk" set "ANDROID_SDK_ROOT=%ProgramFiles%\Android\Android Studio\Sdk"
+)
+if not defined ANDROID_HOME if defined ANDROID_SDK_ROOT set "ANDROID_HOME=%ANDROID_SDK_ROOT%"
+if not defined ANDROID_SDK_ROOT if defined ANDROID_HOME set "ANDROID_SDK_ROOT=%ANDROID_HOME%"
+
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
 

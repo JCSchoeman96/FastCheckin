@@ -8,9 +8,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
-import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionDecision
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
-import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
+import za.co.voelgoed.fastcheck.domain.usecase.AdmitScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureEvent
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerInputSource
@@ -24,7 +24,7 @@ class ScannerEndToEndQueueTest {
     @Test
     fun singleCaptureResultsInSingleEnqueueEvenUnderStartChurn() = runTest {
         val fakeSource = FakeScannerInputSource()
-        val recordingUseCase = RecordingQueueCapturedScanUseCase()
+        val recordingUseCase = RecordingAdmitScanUseCase()
         var now = 1_000L
         val pipeline = ScanCapturePipeline(recordingUseCase) { now }
         val binding = ScannerSourceBinding(fakeSource, pipeline, this)
@@ -62,7 +62,7 @@ class ScannerEndToEndQueueTest {
     @Test
     fun broadcastCaptureUsesSameQueueAndCooldownSemantics() = runTest {
         val fakeSource = FakeScannerInputSource(type = ScannerSourceType.BROADCAST_INTENT)
-        val recordingUseCase = RecordingQueueCapturedScanUseCase()
+        val recordingUseCase = RecordingAdmitScanUseCase()
         var now = 10_000L
         val pipeline = ScanCapturePipeline(recordingUseCase) { now }
         val binding = ScannerSourceBinding(fakeSource, pipeline, this)
@@ -123,25 +123,32 @@ class ScannerEndToEndQueueTest {
         }
     }
 
-    private class RecordingQueueCapturedScanUseCase : QueueCapturedScanUseCase {
+    private class RecordingAdmitScanUseCase : AdmitScanUseCase {
         val enqueueCallCount = AtomicInteger(0)
         var ticketCode: String? = null
         var direction: ScanDirection? = null
         var operatorName: String? = null
         var entranceName: String? = null
 
-        override suspend fun enqueue(
+        override suspend fun admit(
             ticketCode: String,
             direction: ScanDirection,
             operatorName: String,
             entranceName: String
-        ): QueueCreationResult {
+        ): LocalAdmissionDecision {
             enqueueCallCount.incrementAndGet()
             this.ticketCode = ticketCode
             this.direction = direction
             this.operatorName = operatorName
             this.entranceName = entranceName
-            return QueueCreationResult.ReplaySuppressed
+            return LocalAdmissionDecision.Accepted(
+                attendeeId = 1L,
+                displayName = "Queue Test",
+                ticketCode = ticketCode,
+                idempotencyKey = "idem-$ticketCode",
+                scannedAt = "2026-04-06T10:00:00Z",
+                localQueueId = enqueueCallCount.get().toLong()
+            )
         }
     }
 }

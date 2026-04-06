@@ -12,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 
 @RunWith(RobolectricTestRunner::class)
 class AttendeeLookupDaoTest {
@@ -121,6 +122,33 @@ class AttendeeLookupDaoTest {
         assertThat(results).hasSize(150)
         assertThat(results.first().id).isEqualTo(9999L)
         assertThat(results.map { it.id }).contains(9999L)
+    }
+
+    @Test
+    fun mergedLookupAppliesActiveOverlayTruth() = runTest {
+        database.scannerDao().upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 1,
+                ticketCode = "VG-100",
+                idempotencyKey = "idem-100",
+                state = LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name,
+                createdAtEpochMillis = 1_000L,
+                overlayScannedAt = "2026-03-28T10:05:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main",
+                conflictReasonCode = "business_duplicate",
+                conflictMessage = "Already used on another device."
+            )
+        )
+
+        val attendee = attendeeLookupDao.observeAttendeeById(5, 1).first()
+
+        assertThat(attendee?.mergedIsCurrentlyInside).isTrue()
+        assertThat(attendee?.mergedCheckinsRemaining).isEqualTo(0)
+        assertThat(attendee?.activeOverlayState).isEqualTo(LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name)
+        assertThat(attendee?.activeOverlayConflictMessage).contains("another device")
     }
 
     private fun attendee(

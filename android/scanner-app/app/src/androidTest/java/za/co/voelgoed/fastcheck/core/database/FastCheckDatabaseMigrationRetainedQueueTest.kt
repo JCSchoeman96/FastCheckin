@@ -58,7 +58,8 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
                     FastCheckDatabaseMigrations.MIGRATION_2_3,
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
-                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
                 )
                 .allowMainThreadQueries()
                 .build()

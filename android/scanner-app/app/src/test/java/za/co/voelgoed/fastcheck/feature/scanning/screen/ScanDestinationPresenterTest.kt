@@ -124,7 +124,11 @@ class ScanDestinationPresenterTest {
                 scanningUiState =
                     ScanningUiState(
                         sessionState = ScannerSessionState.Active,
-                        lastCaptureFeedback = CaptureFeedbackState.Success("Queued locally (pending upload)")
+                        lastCaptureFeedback =
+                            CaptureFeedbackState.Success(
+                                title = "Queued locally",
+                                message = "Queued locally (pending upload)"
+                            )
                     ),
                 queueUiState = QueueUiState(),
                 syncUiState = SyncScreenUiState(),

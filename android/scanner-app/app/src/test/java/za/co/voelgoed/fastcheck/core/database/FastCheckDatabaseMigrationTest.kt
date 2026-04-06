@@ -64,7 +64,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_2_3,
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
-                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -140,7 +141,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
-                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -173,7 +175,8 @@ class FastCheckDatabaseMigrationTest {
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
-                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -222,7 +225,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
-                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -245,7 +249,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_2_3,
                     FastCheckDatabaseMigrations.MIGRATION_3_4,
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
-                    FastCheckDatabaseMigrations.MIGRATION_5_6
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -268,7 +273,10 @@ class FastCheckDatabaseMigrationTest {
 
         val database =
             Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
-                .addMigrations(FastCheckDatabaseMigrations.MIGRATION_5_6)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                )
                 .allowMainThreadQueries()
                 .build()
         val scannerDao = database.scannerDao()
@@ -281,6 +289,32 @@ class FastCheckDatabaseMigrationTest {
         assertThat(attendee?.checkedOutAt).isNull()
         assertThat(hasColumn(sqliteDb, "attendees", "checkedInAt")).isTrue()
         assertThat(hasColumn(sqliteDb, "attendees", "checkedOutAt")).isTrue()
+
+        database.close()
+    }
+
+    @Test
+    fun migratesVersion6AddsLocalAdmissionOverlayTableAndIndexes() = runTest {
+        createVersion6Schema(databaseFile)
+
+        val database =
+            Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7
+                )
+                .allowMainThreadQueries()
+                .build()
+        val sqliteDb = database.openHelper.writableDatabase
+
+        assertThat(hasColumn(sqliteDb, "local_admission_overlays", "overlayScannedAt")).isTrue()
+        assertThat(hasColumn(sqliteDb, "local_admission_overlays", "expectedRemainingAfterOverlay")).isTrue()
+        assertIndexColumns(
+            sqliteDb = sqliteDb,
+            indexName = "index_local_admission_overlays_eventId_state",
+            expectedColumns = listOf("eventId", "state"),
+            tableName = "local_admission_overlays"
+        )
 
         database.close()
     }
@@ -301,10 +335,11 @@ class FastCheckDatabaseMigrationTest {
     private fun assertIndexColumns(
         sqliteDb: SupportSQLiteDatabase,
         indexName: String,
-        expectedColumns: List<String>
+        expectedColumns: List<String>,
+        tableName: String = "queued_scans"
     ) {
         val indexNames = mutableListOf<String>()
-        sqliteDb.query("PRAGMA index_list(queued_scans)").use { cursor ->
+        sqliteDb.query("PRAGMA index_list($tableName)").use { cursor ->
             while (cursor.moveToNext()) {
                 indexNames += cursor.getString(cursor.getColumnIndexOrThrow("name"))
             }
@@ -469,6 +504,15 @@ class FastCheckDatabaseMigrationTest {
         )
 
         database.version = 2
+        database.close()
+    }
+
+    private fun createVersion6Schema(databaseFile: File) {
+        createVersion5Schema(databaseFile)
+        val database = SQLiteDatabase.openDatabase(databaseFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        database.execSQL("ALTER TABLE attendees ADD COLUMN checkedInAt TEXT")
+        database.execSQL("ALTER TABLE attendees ADD COLUMN checkedOutAt TEXT")
+        database.version = 6
         database.close()
     }
 

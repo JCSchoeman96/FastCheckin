@@ -7,9 +7,34 @@ package za.co.voelgoed.fastcheck.feature.scanning.usecase
  */
 sealed class CaptureHandoffResult {
     /**
-     * The capture was accepted by the local queue boundary.
+     * The capture was accepted by the local admission boundary.
      */
-    data object Accepted : CaptureHandoffResult()
+    data class Accepted(
+        val attendeeId: Long,
+        val displayName: String,
+        val ticketCode: String,
+        val idempotencyKey: String,
+        val scannedAt: String
+    ) : CaptureHandoffResult()
+
+    /**
+     * The capture was rejected by local gate rules.
+     */
+    data class Rejected(
+        val reason: String,
+        val ticketCode: String,
+        val displayName: String? = null
+    ) : CaptureHandoffResult()
+
+    /**
+     * The capture requires manual review because local gate confidence is
+     * degraded.
+     */
+    data class ReviewRequired(
+        val reason: String,
+        val ticketCode: String,
+        val displayName: String? = null
+    ) : CaptureHandoffResult()
 
     /**
      * The capture was intentionally ignored because a short global cooldown
@@ -22,4 +47,3 @@ sealed class CaptureHandoffResult {
      */
     data class Failed(val reason: String) : CaptureHandoffResult()
 }
-

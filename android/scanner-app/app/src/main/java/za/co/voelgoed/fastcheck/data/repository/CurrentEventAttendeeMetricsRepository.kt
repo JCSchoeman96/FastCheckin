@@ -16,7 +16,9 @@ class CurrentEventAttendeeMetricsRepository @Inject constructor(
             EventAttendeeCacheMetrics(
                 cachedAttendeeCount = projection.cachedAttendeeCount,
                 currentlyInsideCount = projection.currentlyInsideCount,
-                attendeesWithRemainingCheckinsCount = projection.attendeesWithRemainingCheckinsCount
+                attendeesWithRemainingCheckinsCount = projection.attendeesWithRemainingCheckinsCount,
+                activeOverlayCount = projection.activeOverlayCount,
+                unresolvedConflictCount = projection.unresolvedConflictCount
             )
         }
 }

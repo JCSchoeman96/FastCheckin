@@ -116,6 +116,12 @@ or `sdk.dir` paths. Keep `android/scanner-app/local.properties` machine-local,
 set `JAVA_HOME` per host, and verify the actual runtime with `./gradlew
 --version` or `.\gradlew.bat --version`, because `JAVA_HOME` alone can be
 misleading when the shell resolves a different Java binary via `PATH`.
+The Gradle wrappers also auto-resolve the Android SDK per host: the POSIX
+wrapper prefers `ANDROID_SDK_ROOT`, `ANDROID_HOME`, then common Linux paths
+such as `$HOME/Android/Sdk` and `/usr/lib/android-sdk`; the Windows wrapper
+prefers `ANDROID_SDK_ROOT`, `ANDROID_HOME`, then the standard `%LOCALAPPDATA%`
+and Android Studio SDK locations. This keeps validation portable across Linux,
+Windows, and multiple worktrees without committed machine-local SDK paths.
 
 ## References
 

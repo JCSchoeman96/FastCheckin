@@ -165,22 +165,22 @@ class ScanDestinationPresenter(
             is CaptureFeedbackState.Success ->
                 BannerUiModel(
                     message = feedback.message,
-                    tone = StatusTone.Brand,
-                    title = "Latest capture"
+                    tone = StatusTone.Success,
+                    title = feedback.title
                 )
 
             is CaptureFeedbackState.Warning ->
                 BannerUiModel(
                     message = feedback.message,
                     tone = StatusTone.Warning,
-                    title = "Latest capture"
+                    title = feedback.title
                 )
 
             is CaptureFeedbackState.Error ->
                 BannerUiModel(
                     message = feedback.message,
                     tone = StatusTone.Destructive,
-                    title = "Latest capture"
+                    title = feedback.title
                 )
 
             null -> null

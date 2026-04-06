@@ -155,6 +155,7 @@ defmodule FastCheck.MixProject do
 
       # Developer precommit - may mutate mix.lock via deps.unlock
       precommit: [
+        "deps.get",
         "compile --warnings-as-errors",
         "deps.unlock --unused",
         "format",

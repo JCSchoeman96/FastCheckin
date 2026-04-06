@@ -1,15 +1,24 @@
 package za.co.voelgoed.fastcheck.data.repository
 
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.datastore.SessionMetadata
 import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.security.SessionVault
+import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginResponse
@@ -18,8 +27,16 @@ import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.data.remote.UploadScansResponse
 import za.co.voelgoed.fastcheck.data.remote.UploadScansRequest
 
+@RunWith(RobolectricTestRunner::class)
 class CurrentPhoenixSessionRepositoryTest {
     private val clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC)
+    private val openedDatabases = mutableListOf<FastCheckDatabase>()
+
+    @After
+    fun tearDown() {
+        openedDatabases.forEach(FastCheckDatabase::close)
+        openedDatabases.clear()
+    }
 
     @Test
     fun persistsJwtSeparatelyFromSessionMetadata() = runTest {
@@ -45,6 +62,7 @@ class CurrentPhoenixSessionRepositoryTest {
                     ),
                 sessionVault = vault,
                 sessionMetadataStore = metadataStore,
+                unresolvedAdmissionStateGate = unresolvedGate(),
                 clock = clock
             )
 
@@ -80,6 +98,7 @@ class CurrentPhoenixSessionRepositoryTest {
                     ),
                 sessionVault = FakeSessionVault(),
                 sessionMetadataStore = metadataStore,
+                unresolvedAdmissionStateGate = unresolvedGate(),
                 clock = clock
             )
 
@@ -88,6 +107,30 @@ class CurrentPhoenixSessionRepositoryTest {
         assertThat(session?.eventId).isEqualTo(5)
         assertThat(session?.eventName).isEqualTo("Stored Event")
         assertThat(session?.authenticatedAtEpochMillis).isEqualTo(1_773_388_800_000)
+    }
+
+    @Test
+    fun loginBlocksWhenAnotherEventHasUnresolvedOverlayState() = runTest {
+        val repository =
+            CurrentPhoenixSessionRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        FakePhoenixMobileApi(
+                            MobileLoginResponse(data = null, error = "unused", message = "unused")
+                        )
+                    ),
+                sessionVault = FakeSessionVault(),
+                sessionMetadataStore = FakeSessionMetadataStore(),
+                unresolvedAdmissionStateGate = unresolvedGateWithOverlay(eventId = 55L),
+                clock = clock
+            )
+
+        val failure =
+            runCatching { repository.login(eventId = 77, credential = "scanner-secret") }
+                .exceptionOrNull()
+
+        assertThat(failure).isInstanceOf(CrossEventUnresolvedStateException::class.java)
+        assertThat(failure?.message).contains("event 55")
     }
 
     private class FakeSessionVault : SessionVault {
@@ -129,6 +172,49 @@ class CurrentPhoenixSessionRepositoryTest {
 
         override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
             error("Not used in this test")
+        }
+    }
+
+    private fun unresolvedGate(): UnresolvedAdmissionStateGate = buildGate()
+
+    private fun unresolvedGateWithOverlay(eventId: Long): UnresolvedAdmissionStateGate =
+        buildGate { database ->
+            database.scannerDao().upsertLocalAdmissionOverlay(
+                LocalAdmissionOverlayEntity(
+                    eventId = eventId,
+                    attendeeId = 12L,
+                    ticketCode = "VG-012",
+                    idempotencyKey = "idem-$eventId",
+                    state = "PENDING_LOCAL",
+                    createdAtEpochMillis = clock.millis(),
+                    overlayScannedAt = "2026-03-13T08:00:00Z",
+                    expectedRemainingAfterOverlay = 0,
+                    operatorName = "Op",
+                    entranceName = "Main"
+                )
+            )
+        }
+
+    private fun buildGate(
+        seed: (suspend (FastCheckDatabase) -> Unit)? = null
+    ): UnresolvedAdmissionStateGate {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val database =
+            Room.inMemoryDatabaseBuilder(context, FastCheckDatabase::class.java)
+                .allowMainThreadQueries()
+                .build()
+        openedDatabases += database
+        runBlockingTestSeed(database, seed)
+        return UnresolvedAdmissionStateGate(database.scannerDao())
+    }
+
+    private fun runBlockingTestSeed(
+        database: FastCheckDatabase,
+        seed: (suspend (FastCheckDatabase) -> Unit)?
+    ) {
+        if (seed == null) return
+        runBlocking {
+            seed(database)
         }
     }
 }

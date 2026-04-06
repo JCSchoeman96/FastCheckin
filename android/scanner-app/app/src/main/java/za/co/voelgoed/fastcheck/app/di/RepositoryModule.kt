@@ -27,7 +27,9 @@ import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.usecase.DefaultFlushQueuedScansUseCase
+import za.co.voelgoed.fastcheck.domain.usecase.DefaultAdmitScanUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.DefaultQueueCapturedScanUseCase
+import za.co.voelgoed.fastcheck.domain.usecase.AdmitScanUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 
@@ -80,6 +82,11 @@ abstract class RepositoryModule {
     abstract fun bindQueueCapturedScanUseCase(
         useCase: DefaultQueueCapturedScanUseCase
     ): QueueCapturedScanUseCase
+
+    @Binds
+    abstract fun bindAdmitScanUseCase(
+        useCase: DefaultAdmitScanUseCase
+    ): AdmitScanUseCase
 
     @Binds
     abstract fun bindFlushQueuedScansUseCase(

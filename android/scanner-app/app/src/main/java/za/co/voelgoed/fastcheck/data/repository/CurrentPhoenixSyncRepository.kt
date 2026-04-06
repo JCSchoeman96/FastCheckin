@@ -18,13 +18,15 @@ import za.co.voelgoed.fastcheck.data.mapper.toSyncMetadata
 import za.co.voelgoed.fastcheck.data.remote.MobileSyncPayload
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 
 @Singleton
 class CurrentPhoenixSyncRepository @Inject constructor(
     private val remoteDataSource: PhoenixMobileRemoteDataSource,
     private val scannerDao: ScannerDao,
     private val sessionRepository: SessionRepository,
-    private val clock: Clock
+    private val clock: Clock,
+    private val overlayCatchUpPolicy: OverlayCatchUpPolicy = OverlayCatchUpPolicy()
 ) : SyncRepository {
     companion object {
         private const val SYNC_PAGE_LIMIT = 500
@@ -92,6 +94,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             val metadata = finalPayload.toSyncMetadata(session.eventId).copy(attendeeCount = totalFetched)
 
             scannerDao.upsertSyncMetadata(metadata)
+            resolveConfirmedAdmissionOverlays(session.eventId)
 
             return metadata.toDomain()
         } catch (http: HttpException) {
@@ -114,6 +117,24 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
     override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> =
         scannerDao.observeLatestSyncMetadata().map { it?.toDomain() }
+
+    private suspend fun resolveConfirmedAdmissionOverlays(eventId: Long) {
+        val overlays =
+            scannerDao.loadOverlaysForEventByState(
+                eventId = eventId,
+                state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name
+            )
+
+        overlays.forEach { overlay ->
+            val attendee =
+                scannerDao.findAttendeeById(eventId, overlay.attendeeId)
+                    ?: scannerDao.findAttendee(eventId, overlay.ticketCode)
+
+            if (attendee != null && overlayCatchUpPolicy.hasSyncedBaseCaughtUp(attendee, overlay)) {
+                scannerDao.deleteLocalAdmissionOverlayById(overlay.id)
+            }
+        }
+    }
 }
 
 class SyncRateLimitedException(

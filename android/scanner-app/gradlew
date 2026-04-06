@@ -117,6 +117,40 @@ esac
 
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
+# Resolve the Android SDK per host so validation works across Linux machines
+# and worktrees without relying on a committed local.properties path.
+if [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ] ; then
+    :
+elif [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ] ; then
+    ANDROID_SDK_ROOT=$ANDROID_HOME
+    export ANDROID_SDK_ROOT
+else
+    for sdk_dir in \
+        "$HOME/Android/Sdk" \
+        "/usr/lib/android-sdk" \
+        "/opt/android-sdk" \
+        "/usr/local/android-sdk"
+    do
+        if [ -d "$sdk_dir" ] ; then
+            ANDROID_SDK_ROOT=$sdk_dir
+            export ANDROID_SDK_ROOT
+            break
+        fi
+    done
+fi
+
+if [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -z "${ANDROID_HOME:-}" ] ; then
+    ANDROID_HOME=$ANDROID_SDK_ROOT
+    export ANDROID_HOME
+elif [ -n "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ] ; then
+    ANDROID_SDK_ROOT=$ANDROID_HOME
+    export ANDROID_SDK_ROOT
+fi
+
+if [ -z "${ANDROID_SDK_ROOT:-}" ] ; then
+    warn "Android SDK not found in ANDROID_SDK_ROOT, ANDROID_HOME, or common Linux locations."
+fi
+
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then

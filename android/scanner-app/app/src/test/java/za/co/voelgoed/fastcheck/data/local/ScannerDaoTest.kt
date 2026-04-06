@@ -12,6 +12,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
+import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 
 @RunWith(RobolectricTestRunner::class)
 class ScannerDaoTest {
@@ -349,6 +351,87 @@ class ScannerDaoTest {
         assertThat(failure).isNotNull()
         assertThat(dao.findAttendee(5, "VG-TX-89")).isNull()
         assertThat(dao.loadSyncMetadata(5)).isNull()
+    }
+
+    @Test
+    fun unresolvedEventIdsIncludeQueuedScansAndActiveOverlays() = runTest {
+        dao.insertQueuedScan(
+            QueuedScanEntity(
+                eventId = 7,
+                ticketCode = "VG-700",
+                idempotencyKey = "idem-700",
+                createdAt = 700L,
+                scannedAt = "2026-03-13T10:06:00Z",
+                entranceName = "Main",
+                operatorName = "Op"
+            )
+        )
+        dao.upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 8,
+                attendeeId = 80L,
+                ticketCode = "VG-800",
+                idempotencyKey = "idem-800",
+                state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name,
+                createdAtEpochMillis = 800L,
+                overlayScannedAt = "2026-03-13T10:07:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Side"
+            )
+        )
+
+        assertThat(dao.loadUnresolvedEventIdsExcluding(9L)).containsExactly(7L, 8L).inOrder()
+        assertThat(dao.loadUnresolvedEventIdsExcluding(8L)).containsExactly(7L)
+    }
+
+    @Test
+    fun enqueueAcceptedAdmissionDoesNotPersistReplaySuppressionWhenQueueInsertIsIgnored() = runTest {
+        dao.insertQueuedScan(
+            QueuedScanEntity(
+                eventId = 5,
+                ticketCode = "VG-200",
+                idempotencyKey = "dup-idem",
+                createdAt = 100L,
+                scannedAt = "2026-03-12T09:00:01Z",
+                direction = ScanDirection.IN.name.lowercase(),
+                entranceName = "Main",
+                operatorName = "Scanner 1"
+            )
+        )
+
+        val insertedId =
+            dao.enqueueAcceptedAdmission(
+                scan =
+                    QueuedScanEntity(
+                        eventId = 5,
+                        ticketCode = "VG-200",
+                        idempotencyKey = "dup-idem",
+                        createdAt = 200L,
+                        scannedAt = "2026-03-12T09:00:02Z",
+                        direction = ScanDirection.IN.name.lowercase(),
+                        entranceName = "Main",
+                        operatorName = "Scanner 1"
+                    ),
+                overlay =
+                    LocalAdmissionOverlayEntity(
+                        eventId = 5,
+                        attendeeId = 42L,
+                        ticketCode = "VG-200",
+                        idempotencyKey = "dup-idem",
+                        direction = ScanDirection.IN.name.lowercase(),
+                        state = LocalAdmissionOverlayState.PENDING_LOCAL.name,
+                        createdAtEpochMillis = 200L,
+                        overlayScannedAt = "2026-03-12T09:00:02Z",
+                        expectedRemainingAfterOverlay = 0,
+                        operatorName = "Scanner 1",
+                        entranceName = "Main"
+                    )
+            )
+
+        assertThat(insertedId).isEqualTo(-1L)
+        assertThat(dao.findReplaySuppression("VG-200")).isNull()
+        assertThat(dao.findLocalAdmissionOverlayByIdempotencyKey("dup-idem")?.state).isNull()
     }
 
     private fun createAbortInsertTrigger(tableName: String, triggerName: String) {

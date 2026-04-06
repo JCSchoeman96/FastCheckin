@@ -5,16 +5,17 @@ import kotlinx.coroutines.channels.BufferOverflow
 import za.co.voelgoed.fastcheck.app.di.CurrentTimeProvider
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
-import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionDecision
+import za.co.voelgoed.fastcheck.domain.usecase.AdmitScanUseCase
 import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodedBarcodeHandler
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerCaptureDefaults
 
 /**
  * CameraX and ML Kit hand decoded values into this pipeline only.
- * Queueing remains local-first and upload/flush stays outside scanner code.
+ * Local gate decisions stay local-first and upload/flush stays outside scanner code.
  */
 class ScanCapturePipeline @Inject constructor(
-    private val queueCapturedScan: QueueCapturedScanUseCase,
+    private val admitScanUseCase: AdmitScanUseCase,
     @CurrentTimeProvider private val timeProvider: () -> Long
 ) : DecodedBarcodeHandler {
 
@@ -38,14 +39,49 @@ class ScanCapturePipeline @Inject constructor(
         }
 
         try {
-            queueCapturedScan.enqueue(
-                ticketCode = rawValue,
-                direction = ScannerCaptureDefaults.direction,
-                operatorName = ScannerCaptureDefaults.operatorName,
-                entranceName = ScannerCaptureDefaults.entranceName
-            )
-            lastAcceptedAtEpochMillis = now
-            _handoffResults.tryEmit(CaptureHandoffResult.Accepted)
+            when (
+                val decision =
+                    admitScanUseCase.admit(
+                        ticketCode = rawValue,
+                        direction = ScannerCaptureDefaults.direction,
+                        operatorName = ScannerCaptureDefaults.operatorName,
+                        entranceName = ScannerCaptureDefaults.entranceName
+                    )
+            ) {
+                is LocalAdmissionDecision.Accepted -> {
+                    lastAcceptedAtEpochMillis = now
+                    _handoffResults.tryEmit(
+                        CaptureHandoffResult.Accepted(
+                            attendeeId = decision.attendeeId,
+                            displayName = decision.displayName,
+                            ticketCode = decision.ticketCode,
+                            idempotencyKey = decision.idempotencyKey,
+                            scannedAt = decision.scannedAt
+                        )
+                    )
+                }
+
+                is LocalAdmissionDecision.Rejected ->
+                    _handoffResults.tryEmit(
+                        CaptureHandoffResult.Rejected(
+                            reason = decision.displayMessage,
+                            ticketCode = decision.ticketCode,
+                            displayName = decision.displayName
+                        )
+                    )
+
+                is LocalAdmissionDecision.ReviewRequired ->
+                    _handoffResults.tryEmit(
+                        CaptureHandoffResult.ReviewRequired(
+                            reason = decision.displayMessage,
+                            ticketCode = decision.ticketCode,
+                            displayName = decision.displayName
+                        )
+                    )
+
+                is LocalAdmissionDecision.OperationalFailure ->
+                    _handoffResults.tryEmit(CaptureHandoffResult.Failed(decision.displayMessage))
+            }
         } catch (t: Throwable) {
             val reason = t.message?.takeIf { it.isNotBlank() } ?: "Could not queue scan"
             _handoffResults.tryEmit(CaptureHandoffResult.Failed(reason))
@@ -56,4 +92,3 @@ class ScanCapturePipeline @Inject constructor(
         const val COOLDOWN_WINDOW_MILLIS: Long = 1_000L
     }
 }
-
