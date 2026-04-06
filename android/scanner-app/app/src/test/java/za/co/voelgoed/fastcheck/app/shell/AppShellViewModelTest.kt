@@ -66,4 +66,19 @@ class AppShellViewModelTest {
         assertThat(requiresDialog).isTrue()
         assertThat(viewModel.uiState.value.logoutConfirmationQueueDepth).isEqualTo(3)
     }
+
+    /**
+     * Auth-expired re-login dismisses the destructive logout dialog before session logout,
+     * so the operator is not asked to confirm as if shutdown were the goal.
+     */
+    @Test
+    fun dismissLogoutConfirmationClearsDestructiveLogoutPromptState() {
+        val viewModel = AppShellViewModel()
+        viewModel.requestLogout(queueDepth = 4)
+        assertThat(viewModel.uiState.value.logoutConfirmationQueueDepth).isEqualTo(4)
+
+        viewModel.dismissLogoutConfirmation()
+
+        assertThat(viewModel.uiState.value.logoutConfirmationQueueDepth).isNull()
+    }
 }
