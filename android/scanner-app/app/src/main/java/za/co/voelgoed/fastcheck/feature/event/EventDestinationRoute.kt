@@ -2,10 +2,10 @@ package za.co.voelgoed.fastcheck.feature.event
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
@@ -18,10 +18,10 @@ fun EventDestinationRoute(
     syncViewModel: SyncViewModel,
     modifier: Modifier = Modifier
 ) {
-    val attendeeMetrics by eventMetricsViewModel.attendeeMetrics.collectAsState()
-    val queueUiState by queueViewModel.uiState.collectAsState()
-    val syncUiState by syncViewModel.uiState.collectAsState()
-    val currentEventSyncStatus by syncViewModel.currentEventSyncStatus.collectAsState()
+    val attendeeMetrics by eventMetricsViewModel.attendeeMetrics.collectAsStateWithLifecycle()
+    val queueUiState by queueViewModel.uiState.collectAsStateWithLifecycle()
+    val syncUiState by syncViewModel.uiState.collectAsStateWithLifecycle()
+    val currentEventSyncStatus by syncViewModel.currentEventSyncStatus.collectAsStateWithLifecycle()
 
     LaunchedEffect(session.eventId, session.authenticatedAtEpochMillis) {
         eventMetricsViewModel.observeSession(

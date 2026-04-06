@@ -15,14 +15,18 @@ offline packages until the backend formally promotes a new contract.
 
 ## Authoritative Runtime Truth
 
-Android is local-first, but the backend is authoritative for scan admission.
+Android is local-first, and gate decisions use local operational truth.
 
-- Android queues scans locally before upload.
+- Android makes immediate gate decisions from the synced attendee cache plus
+  unresolved local admission overlays.
+- Accepted local admissions update only the overlay layer and queue an upload
+  for background reconciliation.
 - Auto-flush is the normal upload path; manual flush remains fallback/debug.
-- Backend admission happens synchronously in hot state during
-  `POST /api/v1/mobile/scans`.
-- Durability is queued before acknowledgement.
-- Durable Postgres projection happens asynchronously afterward.
+- The backend remains authoritative for audit, cross-device conflict
+  detection, reconciliation, and reporting.
+- Flush success does not remove local admission overlays. An overlay stays
+  active until a later attendee sync proves the server-synced base attendee row
+  has caught up.
 
 Repo/runtime mode truth must stay explicit:
 
@@ -43,26 +47,31 @@ Repo/runtime mode truth must stay explicit:
 - `data.mapper`: layer-to-layer mapping only
 - `data.repository`: runtime repositories behind app-facing interfaces
 - `domain.model`: runtime models
-- `domain.usecase`: local-first queue and flush orchestration
+- `domain.usecase`: local-first admission and queue/flush orchestration
 - `feature.queue`: temporary manual/debug queue UI only
 - `feature.scanning.camera`: CameraX preview and binding setup only
 - `feature.scanning.analysis`: ML Kit decode boundary only
 - `feature.scanning.domain`: scanner-local models and defaults
-- `feature.scanning.usecase`: decoded-value handoff into queueing only
+- `feature.scanning.usecase`: decoded-value handoff into local admission and
+  reconciliation queueing
 - `feature.scanning.ui`: scanner permission/status UI state only
 - `feature.*`: UI/ViewModel state boundaries
 - `worker`: WorkManager queue flush
 
 ## Runtime Boundaries
 
-- CameraX/ML Kit decode into local queueing only.
+- CameraX/ML Kit decode into local admission first, then queueing for
+  reconciliation.
 - The temporary manual/debug queue UI lives in `feature.queue` only.
 - `feature.scanning` owns real scanner preview, analyzer, permission, and
   decode handoff work.
 - Scanner analysis must never call network code directly.
-- Room is the structured local source for attendee cache, queued scans, replay
-  cache, and sync metadata.
-- The Phoenix backend remains the business-rule authority.
+- Room is the structured local source for attendee cache, local admission
+  overlays, queued scans, replay cache, and sync metadata.
+- Synced attendee rows remain server-synced base truth only.
+- Local admission overlays are the operational truth layer used for gate
+  decisions, Search/detail, and merged event metrics.
+- The Phoenix backend remains the reconciliation and audit authority.
 - Foreground/manual flush orchestration is owned by `core.autoflush`.
 - WorkManager remains the mechanism for retryable background flush when/if
   enqueued.
@@ -75,12 +84,17 @@ Repo/runtime mode truth must stay explicit:
 
 ## Truth Model
 
-- **Durable truth** lives in repositories/Room and is exposed as observable
-  `Flow`s such as queue depth and persisted flush outcomes.
+- **Server-synced base truth** lives in attendee rows updated only by attendee
+  sync.
+- **Operational gate truth** lives in unresolved local admission overlays and
+  merged DAO/repository projections.
+- **Durable reconciliation truth** lives in queued scans, persisted flush
+  outcomes, and overlay state transitions.
 - **Transient orchestration truth** lives in `AutoFlushCoordinator.state`
   (uploading, retry scheduled metadata, auth expired signal).
-- **UI/ViewModels** are projection-only and must not pretend that local queue
-  capture equals server-confirmed admission.
+- **UI/ViewModels** are projection-only and must consume merged repository
+  truth. They must not rebuild merged counts in presenters or treat local queue
+  capture as server-confirmed admission.
 
 ## Hilt Scope
 

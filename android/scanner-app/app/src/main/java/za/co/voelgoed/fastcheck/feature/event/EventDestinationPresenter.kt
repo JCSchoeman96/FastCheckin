@@ -29,7 +29,13 @@ class EventDestinationPresenter(
             headerSubtitle = "Event #${session.eventId}",
             statusChip = statusChipFor(queueUiState, syncUiState, currentCacheStatus),
             statusMessage = statusMessageFor(queueUiState, syncUiState, currentCacheStatus),
-            attentionBanner = attentionBannerFor(queueUiState, syncUiState, currentCacheStatus),
+            attentionBanner =
+                attentionBannerFor(
+                    queueUiState = queueUiState,
+                    syncUiState = syncUiState,
+                    currentCacheStatus = currentCacheStatus,
+                    attendeeMetrics = attendeeMetrics
+                ),
             attendeeSection =
                 attendeeSectionFor(
                     currentCacheStatus = currentCacheStatus,
@@ -121,9 +127,19 @@ class EventDestinationPresenter(
     private fun attentionBannerFor(
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
-        currentCacheStatus: CurrentCacheStatus
+        currentCacheStatus: CurrentCacheStatus,
+        attendeeMetrics: EventAttendeeCacheMetrics?
     ): EventBannerUiModel? =
         when {
+            attendeeMetrics != null && attendeeMetrics.unresolvedConflictCount > 0 ->
+                EventBannerUiModel(
+                    title = "Reconciliation conflicts need support review",
+                    message =
+                        "${attendeeMetrics.unresolvedConflictCount} local admission conflict(s) remain active. " +
+                            "Affected attendees stay non-admissible on this device until support resolves them.",
+                    tone = StatusTone.Warning
+                )
+
             requiresRelogin(queueUiState) ->
                 EventBannerUiModel(
                     title = "Re-login required",
@@ -181,7 +197,7 @@ class EventDestinationPresenter(
                     if (attendeeMetrics == null) {
                         "Using ${syncStatus.attendeeCount} attendees from the latest local sync. Derived counts are still loading from the local attendee cache."
                     } else {
-                        "Using ${syncStatus.attendeeCount} attendees from the latest local sync. Derived counts below come from the local attendee cache and are not live backend occupancy."
+                        "Using ${syncStatus.attendeeCount} attendees from the latest server sync. Derived counts below come from merged local gate truth, including unresolved admission overlays."
                     },
                 metrics =
                     listOf(
@@ -193,6 +209,14 @@ class EventDestinationPresenter(
                         EventMetricUiModel(
                             "With check-ins remaining",
                             attendeeMetrics?.attendeesWithRemainingCheckinsCount?.toString() ?: "Unavailable"
+                        ),
+                        EventMetricUiModel(
+                            "Active local overlays",
+                            attendeeMetrics?.activeOverlayCount?.toString() ?: "Unavailable"
+                        ),
+                        EventMetricUiModel(
+                            "Unresolved conflicts",
+                            attendeeMetrics?.unresolvedConflictCount?.toString() ?: "Unavailable"
                         )
                     )
             )
@@ -217,7 +241,9 @@ class EventDestinationPresenter(
                 listOf(
                     EventMetricUiModel("Total attendees", "Unavailable"),
                     EventMetricUiModel("Currently inside", "Unavailable"),
-                    EventMetricUiModel("With check-ins remaining", "Unavailable")
+                    EventMetricUiModel("With check-ins remaining", "Unavailable"),
+                    EventMetricUiModel("Active local overlays", "Unavailable"),
+                    EventMetricUiModel("Unresolved conflicts", "Unavailable")
                 )
         )
     }
