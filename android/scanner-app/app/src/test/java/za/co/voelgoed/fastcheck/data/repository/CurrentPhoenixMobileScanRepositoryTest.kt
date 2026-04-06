@@ -424,6 +424,10 @@ class CurrentPhoenixMobileScanRepositoryTest {
             .isEqualTo(QuarantineReason.INCOMPLETE_SERVER_RESPONSE.wireValue)
     }
 
+    /**
+     * Critical truth: auth expiry must not quarantine — queue stays live for retry after re-login,
+     * and quarantine count must remain zero (same contract as 5xx / IOException below).
+     */
     @Test
     fun flush401PreservesQueueAndLeavesQuarantineEmpty() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-401", createdAt = 10_000L))
@@ -443,8 +447,13 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+        assertThat(repository.quarantineCount()).isEqualTo(0)
     }
 
+    /**
+     * Critical truth: retryable server errors must not move rows into quarantine — backlog remains
+     * eligible for flush retries; quarantine count stays zero.
+     */
     @Test
     fun flush5xxPreservesQueueAndLeavesQuarantineEmpty() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-500", createdAt = 10_000L))
@@ -464,8 +473,13 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+        assertThat(repository.quarantineCount()).isEqualTo(0)
     }
 
+    /**
+     * Critical truth: transport failures must not quarantine — queue stays live for retry when
+     * connectivity returns; quarantine count stays zero.
+     */
     @Test
     fun flushIOExceptionPreservesQueueAndLeavesQuarantineEmpty() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-io", createdAt = 10_000L))
@@ -476,6 +490,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+        assertThat(repository.quarantineCount()).isEqualTo(0)
     }
 
     @Test
