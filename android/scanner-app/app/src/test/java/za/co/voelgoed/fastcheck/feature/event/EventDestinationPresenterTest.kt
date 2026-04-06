@@ -40,8 +40,8 @@ class EventDestinationPresenterTest {
                         cachedAttendeeCount = 120,
                         currentlyInsideCount = 34,
                         attendeesWithRemainingCheckinsCount = 86,
-                        activeOverlayCount = 0,
-                        unresolvedConflictCount = 0
+                        activeOverlayCount = 3,
+                        unresolvedConflictCount = 1
                     )
             )
 
@@ -49,10 +49,10 @@ class EventDestinationPresenterTest {
         assertThat(uiState.headerSubtitle).isEqualTo("Event #5")
         assertThat(uiState.statusChip.text).isEqualTo("Operational")
         assertThat(uiState.attendeeSection.metrics.map { it.value })
-            .containsExactly("120", "34", "86")
+            .containsExactly("120", "34", "86", "3", "1")
             .inOrder()
-        assertThat(uiState.attendeeSection.supportingText).contains("local attendee cache")
-        assertThat(uiState.attentionBanner).isNull()
+        assertThat(uiState.attendeeSection.supportingText).contains("merged local gate truth")
+        assertThat(uiState.attentionBanner?.title).isEqualTo("Reconciliation conflicts need support review")
     }
 
     @Test
@@ -75,7 +75,7 @@ class EventDestinationPresenterTest {
 
         assertThat(uiState.statusChip.text).isEqualTo("Attendee cache pending")
         assertThat(uiState.attendeeSection.metrics.map { it.value })
-            .containsExactly("Unavailable", "Unavailable", "Unavailable")
+            .containsExactly("Unavailable", "Unavailable", "Unavailable", "Unavailable", "Unavailable")
             .inOrder()
         assertThat(uiState.activitySection.metrics.first().value).isEqualTo("Unavailable")
     }
@@ -135,7 +135,7 @@ class EventDestinationPresenterTest {
                         cachedAttendeeCount = 120,
                         currentlyInsideCount = 34,
                         attendeesWithRemainingCheckinsCount = 86,
-                        activeOverlayCount = 0,
+                        activeOverlayCount = 2,
                         unresolvedConflictCount = 0
                     )
             )
@@ -170,7 +170,7 @@ class EventDestinationPresenterTest {
                         cachedAttendeeCount = 120,
                         currentlyInsideCount = 34,
                         attendeesWithRemainingCheckinsCount = 86,
-                        activeOverlayCount = 0,
+                        activeOverlayCount = 1,
                         unresolvedConflictCount = 0
                     )
             )

@@ -1,5 +1,12 @@
 # Priority 1 — Immediate Operator Truth
 
+> Implementation note: the approved runtime direction has moved beyond the
+> earlier queue-first wording in this doc. The Android scanner now uses local
+> admission overlays as operational gate truth, keeps synced attendee rows as
+> server-synced base truth, blocks cross-event session changes when unresolved
+> local state exists, and removes confirmed overlays only after a later
+> attendee sync satisfies the catch-up rule.
+
 **Status:** Refactored and expanded execution plan for Codex  
 **Scope:** `android/scanner-app/` only  
 **Purpose:** Replace the Search stub with a real operator workflow, add truthful attendee detail and manual intervention, then add scan-time local advisory without blurring queue truth and backend truth.
@@ -874,4 +881,3 @@ Priority 1 succeeds when:
   - server-confirmed truth
 
 That is the correct production-facing shape for this priority.
-
