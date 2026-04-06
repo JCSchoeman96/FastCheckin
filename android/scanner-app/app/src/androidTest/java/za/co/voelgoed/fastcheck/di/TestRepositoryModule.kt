@@ -29,6 +29,7 @@ import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
@@ -101,6 +102,14 @@ object TestRepositoryModule {
             override fun observePendingQueueDepth(): Flow<Int> = flowOf(0)
 
             override fun observeLatestFlushReport(): Flow<FlushReport?> = flowOf(null)
+
+            override suspend fun quarantineCount(): Int = 0
+
+            override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+
+            override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+
+            override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
         }
 
     @Provides

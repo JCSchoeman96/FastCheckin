@@ -5,6 +5,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -25,6 +26,7 @@ import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 
@@ -95,6 +97,14 @@ class QueueViewModelTest {
         override fun observePendingQueueDepth(): Flow<Int> = depthFlow
 
         override fun observeLatestFlushReport(): Flow<FlushReport?> = reportFlow
+
+        override suspend fun quarantineCount(): Int = 0
+
+        override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+
+        override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+
+        override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
     }
 
     @Test

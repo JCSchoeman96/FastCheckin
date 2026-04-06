@@ -9,6 +9,7 @@ import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
+import za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity
 import za.co.voelgoed.fastcheck.data.local.RecentFlushOutcomeEntity
 import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
@@ -23,9 +24,10 @@ import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
         LocalReplaySuppressionEntity::class,
         LocalAdmissionOverlayEntity::class,
         LatestFlushSnapshotEntity::class,
-        RecentFlushOutcomeEntity::class
+        RecentFlushOutcomeEntity::class,
+        QuarantinedScanEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class FastCheckDatabase : RoomDatabase() {

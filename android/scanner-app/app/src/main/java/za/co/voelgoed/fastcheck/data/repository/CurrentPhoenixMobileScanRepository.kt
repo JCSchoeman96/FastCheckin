@@ -7,12 +7,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
 import retrofit2.HttpException
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
 import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
+import za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 import za.co.voelgoed.fastcheck.data.mapper.toDomain
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
@@ -28,6 +30,8 @@ import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.QuarantineReason
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 
 @Singleton
 /**
@@ -255,6 +259,33 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                 }
             }
         }
+
+    override suspend fun quarantineCount(): Int = scannerDao.countQuarantinedScans()
+
+    override suspend fun latestQuarantineSummary(): QuarantineSummary? {
+        val count = scannerDao.countQuarantinedScans()
+        if (count == 0) return null
+        val latest = scannerDao.loadLatestQuarantinedScan() ?: return null
+        return latest.toQuarantineSummary(count)
+    }
+
+    override fun observeQuarantineCount(): Flow<Int> = scannerDao.observeQuarantinedScanCount()
+
+    override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> =
+        combine(
+            scannerDao.observeQuarantinedScanCount(),
+            scannerDao.observeLatestQuarantinedScan()
+        ) { count, latest ->
+            if (count == 0) null else latest?.toQuarantineSummary(count)
+        }
+
+    private fun QuarantinedScanEntity.toQuarantineSummary(totalCount: Int): QuarantineSummary =
+        QuarantineSummary(
+            totalCount = totalCount,
+            latestReason = QuarantineReason.fromWire(quarantineReason),
+            latestMessage = quarantineMessage,
+            latestQuarantinedAt = quarantinedAt
+        )
 
     private suspend fun persistLatestFlushReport(report: FlushReport): FlushReport {
         val completedAt = Instant.ofEpochMilli(clock.millis()).toString()

@@ -12,6 +12,7 @@ import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
+import za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.local.RecentFlushOutcomeEntity
 import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
@@ -394,6 +395,21 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun replaceLatestFlushState(
             snapshot: LatestFlushSnapshotEntity,
             outcomes: List<RecentFlushOutcomeEntity>
+        ) = unused()
+
+        override suspend fun insertQuarantinedScans(entities: List<QuarantinedScanEntity>): List<Long> = unused()
+
+        override suspend fun countQuarantinedScans(): Int = unused()
+
+        override fun observeQuarantinedScanCount(): Flow<Int> = unused()
+
+        override suspend fun loadLatestQuarantinedScan(): QuarantinedScanEntity? = unused()
+
+        override fun observeLatestQuarantinedScan(): Flow<QuarantinedScanEntity?> = unused()
+
+        override suspend fun insertQuarantinedScansAndDeleteQueued(
+            entities: List<QuarantinedScanEntity>,
+            queueIds: List<Long>
         ) = unused()
 
         private fun unused(): Nothing = error("FakeScannerDao: unexpected call")

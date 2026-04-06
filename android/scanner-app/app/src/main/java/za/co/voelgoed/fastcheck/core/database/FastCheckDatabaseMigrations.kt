@@ -100,6 +100,43 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_7_8: Migration =
+        object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS quarantined_scans (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        originalQueueId INTEGER,
+                        eventId INTEGER NOT NULL,
+                        ticketCode TEXT NOT NULL,
+                        idempotencyKey TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        scannedAt TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        entranceName TEXT NOT NULL,
+                        operatorName TEXT NOT NULL,
+                        lastAttemptAt TEXT,
+                        quarantineReason TEXT NOT NULL,
+                        quarantineMessage TEXT NOT NULL,
+                        quarantinedAt TEXT NOT NULL,
+                        batchAttributed INTEGER NOT NULL,
+                        overlayStateAtQuarantine TEXT
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_quarantined_scans_idempotencyKey ON quarantined_scans(idempotencyKey)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_quarantined_scans_eventId_quarantinedAt ON quarantined_scans(eventId, quarantinedAt)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_quarantined_scans_quarantinedAt ON quarantined_scans(quarantinedAt)"
+                )
+            }
+        }
+
     private fun rebuildAttendeesTable(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE attendees RENAME TO attendees_legacy")
         db.execSQL(

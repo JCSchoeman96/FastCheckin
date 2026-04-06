@@ -6,6 +6,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
@@ -13,6 +14,7 @@ import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 
 class DefaultQueueCapturedScanUseCaseTest {
@@ -128,6 +130,14 @@ class DefaultQueueCapturedScanUseCaseTest {
         override fun observePendingQueueDepth(): Flow<Int> = depthFlow
 
         override fun observeLatestFlushReport(): Flow<FlushReport?> = latestFlushFlow
+
+        override suspend fun quarantineCount(): Int = 0
+
+        override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+
+        override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+
+        override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
     }
 
     private data class FakeSessionAuthGateway(

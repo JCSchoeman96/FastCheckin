@@ -7,6 +7,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -20,6 +21,7 @@ import org.junit.Test
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultAutoFlushCoordinatorTest {
@@ -91,6 +93,14 @@ class DefaultAutoFlushCoordinatorTest {
         override fun observePendingQueueDepth(): Flow<Int> = depthFlow
 
         override fun observeLatestFlushReport(): Flow<FlushReport?> = latestFlushFlow
+
+        override suspend fun quarantineCount(): Int = 0
+
+        override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+
+        override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+
+        override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
     }
 
     private class FakeConnectivityMonitor(initialOnline: Boolean) : ConnectivityMonitor {
