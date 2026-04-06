@@ -22,6 +22,7 @@ import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 
 @HiltViewModel
 class DiagnosticsViewModel @Inject constructor(
@@ -42,20 +43,25 @@ class DiagnosticsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             combine(
-                sessionInput,
-                syncRepository.observeLastSyncedStatus(),
-                mobileScanRepository.observePendingQueueDepth(),
-                mobileScanRepository.observeLatestFlushReport(),
-                autoFlushCoordinator.state
-            ) { inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState ->
-                DiagnosticsProjection(
-                    inputs = inputs,
-                    lastSyncedStatus = lastSyncedStatus,
-                    queueDepth = queueDepth,
-                    latestFlushReport = latestFlushReport,
-                    coordinatorState = coordinatorState
-                )
-            }.combine(connectivityMonitor.isOnline) { projection, isOnline ->
+                combine(
+                    sessionInput,
+                    syncRepository.observeLastSyncedStatus(),
+                    mobileScanRepository.observePendingQueueDepth(),
+                    mobileScanRepository.observeLatestFlushReport(),
+                    autoFlushCoordinator.state
+                ) { inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState ->
+                    DiagnosticsProjection(
+                        inputs = inputs,
+                        lastSyncedStatus = lastSyncedStatus,
+                        queueDepth = queueDepth,
+                        latestFlushReport = latestFlushReport,
+                        coordinatorState = coordinatorState
+                    )
+                },
+                mobileScanRepository.observeQuarantineCount(),
+                mobileScanRepository.observeLatestQuarantineSummary(),
+                connectivityMonitor.isOnline
+            ) { projection, quarantineCount, quarantineSummary, isOnline ->
                 val syncUiState =
                     projection.coordinatorState.toSyncUiState(
                         isOnline = isOnline,
@@ -67,7 +73,9 @@ class DiagnosticsViewModel @Inject constructor(
                     lastSyncedStatus = projection.lastSyncedStatus,
                     queueDepth = projection.queueDepth,
                     latestFlushReport = projection.latestFlushReport,
-                    syncUiState = syncUiState
+                    syncUiState = syncUiState,
+                    quarantineCount = quarantineCount,
+                    quarantineSummary = quarantineSummary
                 )
             }.collect { diagnosticsInputs ->
                 _uiState.update {
@@ -78,7 +86,9 @@ class DiagnosticsViewModel @Inject constructor(
                         syncStatus = diagnosticsInputs.lastSyncedStatus,
                         queueDepth = diagnosticsInputs.queueDepth,
                         latestFlushReport = diagnosticsInputs.latestFlushReport,
-                        syncUiState = diagnosticsInputs.syncUiState
+                        syncUiState = diagnosticsInputs.syncUiState,
+                        quarantineCount = diagnosticsInputs.quarantineCount,
+                        latestQuarantineSummary = diagnosticsInputs.quarantineSummary
                     )
                 }
             }
@@ -110,7 +120,9 @@ class DiagnosticsViewModel @Inject constructor(
         val lastSyncedStatus: za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus?,
         val queueDepth: Int,
         val latestFlushReport: za.co.voelgoed.fastcheck.domain.model.FlushReport?,
-        val syncUiState: SyncUiState
+        val syncUiState: SyncUiState,
+        val quarantineCount: Int,
+        val quarantineSummary: QuarantineSummary?
     )
 
     private data class DiagnosticsProjection(

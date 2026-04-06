@@ -13,5 +13,8 @@ data class QueueUiState(
     val uploadStateLabel: String = "Idle",
     val latestFlushSummary: String = "No flush has run yet.",
     val serverResultHint: String = "No server outcomes yet.",
-    val directionLabel: String = "IN"
+    val directionLabel: String = "IN",
+    val quarantineCount: Int = 0,
+    /** Present when [quarantineCount] &gt; 0: short reason label for operators. */
+    val quarantineLatestReasonLabel: String? = null
 )

@@ -84,6 +84,13 @@ class SupportOverviewPresenter {
                 null
             }
 
+        val quarantineNote =
+            if (queueUiState.quarantineCount > 0) {
+                " Unrecoverable scan rows were contained and removed from the retry backlog. See Diagnostics for summary details."
+            } else {
+                ""
+            }
+
         return SupportOverviewUiState(
             recoveryTitle = recovery.title,
             recoveryMessage = recovery.message,
@@ -93,8 +100,11 @@ class SupportOverviewPresenter {
             reconciliationTitle = reconciliation?.first,
             reconciliationMessage = reconciliation?.second,
             reconciliationTone = reconciliation?.third,
-            diagnosticsMessage = "Diagnostics summarizes session, sync, and queue state. Use recovery actions above or on Event/Scan — diagnostics does not run uploads.",
-            sessionMessage = "Log out of the current event session when the operator is finished on this device."
+            diagnosticsMessage =
+                "Diagnostics summarizes session, sync, and queue state. Use recovery actions above or on Event/Scan — diagnostics does not run uploads.",
+            sessionMessage =
+                "Log out of the current event session when the operator is finished on this device." +
+                    quarantineNote
         )
     }
 

@@ -12,12 +12,15 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.toSyncUiState
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
+import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
+import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 
@@ -35,28 +38,52 @@ class QueueViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             combine(
-                autoFlushCoordinator.state,
-                mobileScanRepository.observePendingQueueDepth(),
-                mobileScanRepository.observeLatestFlushReport(),
-                connectivityMonitor.isOnline
-            ) { coordinatorState, queueDepth, latestFlushReport, isOnline ->
-                val syncUiState =
-                    coordinatorState.toSyncUiState(
-                        isOnline = isOnline,
+                combine(
+                    autoFlushCoordinator.state,
+                    mobileScanRepository.observePendingQueueDepth(),
+                    mobileScanRepository.observeLatestFlushReport(),
+                    connectivityMonitor.isOnline
+                ) { coordinatorState, queueDepth, latestFlushReport, isOnline ->
+                    QueueCoreObservation(
+                        coordinatorState = coordinatorState,
+                        queueDepth = queueDepth,
                         latestFlushReport = latestFlushReport,
-                        pendingQueueDepth = queueDepth
+                        isOnline = isOnline
                     )
-                Triple(queueDepth, latestFlushReport, syncUiState)
-            }.collectLatest { (queueDepth, latestFlushReport, syncUiState) ->
+                },
+                mobileScanRepository.observeQuarantineCount(),
+                mobileScanRepository.observeLatestQuarantineSummary()
+            ) { core, quarantineCount, quarantineSummary ->
+                val syncUiState =
+                    core.coordinatorState.toSyncUiState(
+                        isOnline = core.isOnline,
+                        latestFlushReport = core.latestFlushReport,
+                        pendingQueueDepth = core.queueDepth
+                    )
+                QueueObservation(
+                    syncUiState = syncUiState,
+                    queueDepth = core.queueDepth,
+                    latestFlushReport = core.latestFlushReport,
+                    quarantineCount = quarantineCount,
+                    quarantineSummary = quarantineSummary
+                )
+            }.collectLatest { observation ->
                 _uiState.update { current ->
                     current.copy(
-                        isFlushing = syncUiState is SyncUiState.Syncing,
-                        localQueueDepth = queueDepth,
-                        uploadSemanticState = syncUiState,
-                        uploadStateLabel = syncUiState.defaultLabel,
-                        latestFlushSummary = latestFlushReport?.summaryMessage ?: "No flush has run yet.",
+                        isFlushing = observation.syncUiState is SyncUiState.Syncing,
+                        localQueueDepth = observation.queueDepth,
+                        uploadSemanticState = observation.syncUiState,
+                        uploadStateLabel = observation.syncUiState.defaultLabel,
+                        latestFlushSummary =
+                            observation.latestFlushReport?.summaryMessage ?: "No flush has run yet.",
                         serverResultHint =
-                            queueUiStateFactory.serverResultHintForFlushReport(latestFlushReport)
+                            queueUiStateFactory.serverResultHintForFlushReport(observation.latestFlushReport),
+                        quarantineCount = observation.quarantineCount,
+                        quarantineLatestReasonLabel =
+                            quarantineReasonLabel(
+                                observation.quarantineCount,
+                                observation.quarantineSummary
+                            )
                     )
                 }
             }
@@ -115,6 +142,31 @@ class QueueViewModel @Inject constructor(
             autoFlushCoordinator.requestFlush(AutoFlushTrigger.Manual)
         }
     }
+
+    private fun quarantineReasonLabel(
+        count: Int,
+        summary: QuarantineSummary?
+    ): String? =
+        if (count <= 0) {
+            null
+        } else {
+            summary?.latestReason?.wireValue ?: "UNKNOWN"
+        }
+
+    private data class QueueCoreObservation(
+        val coordinatorState: AutoFlushCoordinatorState,
+        val queueDepth: Int,
+        val latestFlushReport: FlushReport?,
+        val isOnline: Boolean
+    )
+
+    private data class QueueObservation(
+        val syncUiState: SyncUiState,
+        val queueDepth: Int,
+        val latestFlushReport: FlushReport?,
+        val quarantineCount: Int,
+        val quarantineSummary: QuarantineSummary?
+    )
 
     private companion object {
         const val MANUAL_OPERATOR_NAME = "Manual Debug"

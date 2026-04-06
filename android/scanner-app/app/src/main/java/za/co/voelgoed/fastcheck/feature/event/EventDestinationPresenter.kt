@@ -252,17 +252,31 @@ class EventDestinationPresenter(
         )
     }
 
-    private fun queueSectionFor(queueUiState: QueueUiState): EventSectionUiModel =
-        EventSectionUiModel(
+    private fun queueSectionFor(queueUiState: QueueUiState): EventSectionUiModel {
+        val quarantineMetrics =
+            if (queueUiState.quarantineCount == 0) {
+                listOf(EventMetricUiModel("Quarantined rows", "None"))
+            } else {
+                listOf(
+                    EventMetricUiModel("Quarantined rows", queueUiState.quarantineCount.toString()),
+                    EventMetricUiModel(
+                        "Latest quarantine",
+                        queueUiState.quarantineLatestReasonLabel ?: "Unknown"
+                    )
+                )
+            }
+        return EventSectionUiModel(
             title = "Queue and upload health",
             supportingText = "Upload state reflects current queue health. Queue depth remains local durable truth until the backend confirms uploads.",
             metrics =
-                listOf(
-                    EventMetricUiModel("Queued locally", queueDepthValue(queueUiState.localQueueDepth)),
-                    EventMetricUiModel("Upload state", queueUiState.uploadStateLabel),
-                    EventMetricUiModel("Server outcomes", queueUiState.serverResultHint)
-                )
+                buildList {
+                    add(EventMetricUiModel("Queued locally", queueDepthValue(queueUiState.localQueueDepth)))
+                    add(EventMetricUiModel("Upload state", queueUiState.uploadStateLabel))
+                    add(EventMetricUiModel("Server outcomes", queueUiState.serverResultHint))
+                    addAll(quarantineMetrics)
+                }
         )
+    }
 
     private fun activitySectionFor(
         currentCacheStatus: CurrentCacheStatus,
