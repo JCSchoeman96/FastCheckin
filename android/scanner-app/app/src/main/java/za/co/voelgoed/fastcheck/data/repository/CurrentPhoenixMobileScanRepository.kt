@@ -37,6 +37,11 @@ import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 /**
  * Current implementation of [MobileScanRepository] for POST
  * /api/v1/mobile/scans with { "scans": [...] } payloads only.
+ *
+ * Flush classification for queued scans is unchanged from the pre-quarantine baseline: the same
+ * HTTP/IO branches and [FlushExecutionStatus] outcomes apply. This class adds read/observation APIs
+ * for the `quarantined_scans` table only; flush-time moves into quarantine are implemented in a
+ * follow-up change-set so that schema and repository contracts can ship independently.
  */
 class CurrentPhoenixMobileScanRepository @Inject constructor(
     private val scannerDao: ScannerDao,
