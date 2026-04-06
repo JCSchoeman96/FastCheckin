@@ -1,0 +1,167 @@
+---
+description: Keep one canonical active .plan.md per scope, update it in place after feedback, and bump the version on every substantive revision.
+alwaysApply: true
+---
+
+# Plan Governance Rule
+
+This rule applies to every planning document ending in `.plan.md`.
+
+## Core contract
+
+- There must be **one canonical active plan** for any given scope, priority, feature, migration, or workstream.
+- Do **not** create duplicate active plans for the same scope.
+- Do **not** create plan copies named like:
+  - `final.plan.md`
+  - `v2-copy.plan.md`
+  - `updated.plan.md`
+  - `new.plan.md`
+  - `fixed.plan.md`
+- Versioning belongs **inside the same plan file**, not in duplicate filenames.
+
+## Canonical-plan behavior
+
+Before creating or changing a plan:
+
+1. Search the repo for existing `.plan.md` files related to the same scope.
+2. Identify the current canonical plan.
+3. If a canonical plan exists, **update it in place**.
+4. If multiple overlapping plans exist, do not create another one. Resolve the overlap by:
+   - selecting one file as canonical
+   - marking any older overlapping plan as historical or superseded
+   - cross-linking clearly
+   - removing ambiguity
+
+## Feedback handling is mandatory
+
+When the user gives plan feedback, corrections, critique, or scope changes:
+
+- Update the **current canonical plan file**.
+- Do not leave the old version active and create a second plan.
+- Reflect the feedback directly in the plan structure, scope, tasks, files, risks, and tests.
+- Then **bump the plan version**.
+
+## Version bump requirements
+
+Every substantive plan revision must update the version in the plan file.
+
+Required versioning rules:
+
+- Keep a visible version field near the top of the file.
+- Use monotonic versions such as:
+  - `v1`
+  - `v2`
+  - `v3`
+- Never decrease or reuse a version number.
+- Every version bump must include a short change summary.
+
+Minimum header expectations:
+
+- Plan ID
+- Plan version
+- Status
+- Scope
+- Authority / source-of-truth section
+- Last updated date or timestamp
+- Change summary for the latest revision
+
+## Required change log section
+
+Every canonical plan must contain a short revision section near the top:
+
+### Revision log
+- `v1` — initial plan
+- `v2` — updated after user feedback on PR split and tests
+- `v3` — rebased to current repo code and removed stale assumptions
+
+This does not need to be long, but it must exist.
+
+## Authority rules
+
+If multiple planning documents exist for the same topic, the canonical plan must state:
+
+- which file is the **active contract**
+- which file(s) are **historical context**
+- which file wins on conflict
+
+Allowed pattern:
+- `priority-2.1-...plan.md` = active contract
+- `priority-2.2-...plan.md` = derived execution plan
+- contract wins on conflict
+
+Forbidden pattern:
+- two files that both read like active contracts for the same scope
+
+## Rebaseline rule
+
+If the repo code has changed materially since the plan was first written:
+
+- inspect current repo code first
+- rebaseline the current canonical plan
+- remove stale assumptions
+- update file paths, PR splits, and acceptance tests
+- then bump the version
+
+Do not continue implementing against a stale plan.
+
+## Implementation gate
+
+Before implementation starts from a plan, ensure the canonical plan clearly includes:
+
+- goal
+- current baseline / starting state
+- what is already shipped
+- what remains
+- file and folder targets
+- exact PR split or task split
+- regression tests
+- guardrails / non-negotiables
+- success criteria
+
+If those are missing, update the current plan first.
+
+## Version-controlled storage is mandatory
+
+All `.plan.md` files must live in a **tracked repository path**.
+
+Allowed:
+- `docs/development/`
+- `.cursor/plans/`
+- another project directory that is committed to git
+
+Forbidden:
+- temporary scratch files outside the repo
+- ephemeral local notes that are not committed
+- duplicate local plan files that never become tracked
+
+If a plan is active, it must be version-controlled.
+
+## Superseding old plans
+
+If an older plan must remain for context:
+
+- keep it only if it is still useful
+- add a clear superseded note at the top
+- link to the canonical plan
+- state that it is historical only
+
+Do not leave stale plans without a warning banner.
+
+## Hard prohibitions
+
+- Never maintain two active plans for the same scope.
+- Never respond to feedback by creating a second active plan instead of updating the current one.
+- Never use filename cloning as version control.
+- Never implement from a historical plan when a newer canonical plan exists.
+- Never leave stale authority language after a plan is superseded.
+
+## Expected workflow
+
+1. Find existing plan.
+2. Decide canonical plan.
+3. Update canonical plan in place.
+4. Apply user feedback.
+5. Bump version.
+6. Add revision summary.
+7. Mark any overlapping files as historical if needed.
+8. Only then proceed with implementation.

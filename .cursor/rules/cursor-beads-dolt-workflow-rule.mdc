@@ -1,0 +1,200 @@
+---
+description: Enforce Beads + Dolt workflow for all tasks, blockers, dependencies, and follow-ups; forbid TODO comments as task tracking.
+alwaysApply: true
+---
+
+# Beads + Dolt Workflow Rule
+
+This rule applies to all implementation, planning, debugging, review, migration, regression, and follow-up work.
+
+## Core contract
+
+- **Do not use TODO/FIXME/XXX/HACK comments as task tracking.**
+- Every blocker, dependency, follow-up, regression item, open question, missing test, deferred task, cleanup item, or scoped work item must be tracked in **Beads**.
+- Beads must be created with clear titles and detailed descriptions.
+- Beads must be updated as work progresses.
+- Completed Beads must be closed with a clear resolution summary.
+- Changes must be synced / pushed to the configured **Dolt** server after meaningful Beads changes.
+
+## Absolute prohibitions
+
+Forbidden:
+- `TODO`
+- `FIXME`
+- `XXX`
+- `HACK`
+- “do later”
+- “follow up later”
+- “temporary, come back later”
+- hidden blockers that are not tracked in Beads
+- duplicate Beads for the same task when an existing Bead already covers the work
+
+If such comments or notes are encountered:
+- convert them into Beads
+- remove or replace the comment when safe
+- keep the repo free of TODO-based task tracking
+
+## Discovery-first requirement
+
+Before starting work that involves Beads or Dolt:
+
+1. Verify the Beads CLI is available.
+2. Inspect the installed command surface instead of guessing:
+   - `bd --help`
+   - `bd create --help`
+   - `bd update --help`
+   - `bd close --help`
+   - any relevant list/search/show commands
+3. Verify Dolt connectivity and configured remote/server for this repo.
+4. Confirm the local Beads database is reachable and the intended Dolt remote is available.
+
+Do not invent command flags.
+Do not assume a specific Beads version.
+Do not proceed silently if Beads or Dolt is unavailable.
+
+## Start-of-work requirements
+
+Before implementation begins:
+
+- Search for an existing Bead covering the task.
+- If one exists, update and use it.
+- If none exists, create one.
+- If the work depends on another task, record that dependency in Beads.
+- If the work is blocked, create or update a blocker Bead before proceeding.
+
+## What must become a Bead
+
+Create or update a Bead for all of the following:
+
+- implementation tasks
+- bugs
+- regressions
+- blockers
+- missing tests
+- migration work
+- documentation work
+- review follow-ups
+- dependencies between tasks
+- deferred scope
+- cleanup work that is intentionally postponed
+- plan gaps that matter to execution
+
+## Required bead quality
+
+Every Bead must include enough information to be actionable.
+
+Minimum required content:
+
+- clear title
+- type / status / priority using the installed Beads CLI and correct flags for this environment
+- concise problem statement
+- why the work matters
+- files or directories involved
+- expected outcome
+- acceptance criteria
+- blockers / dependencies
+- validation or test expectations
+- any linked plan, PR, branch, or issue context if relevant
+
+Descriptions must be concrete, not vague.
+
+Bad:
+- “fix scan issue”
+- “do docs”
+- “handle auth”
+
+Good:
+- “Priority 2C: add re-login CTA visibility rules to Event/Scan/Support for auth-expired backlog states; preserve queue and overlay state; add presenter/session regression tests”
+
+## Bead lifecycle rules
+
+### Create
+Create a Bead before starting meaningful work if one does not already exist.
+
+### Update
+Update the Bead when:
+- scope changes
+- blockers appear
+- dependencies change
+- acceptance criteria change
+- implementation starts
+- implementation pauses
+- tests fail in a meaningful way
+- review feedback changes the required work
+
+### Close
+Close the Bead only when the work is genuinely complete.
+
+A closure update must include:
+- what was done
+- what files changed
+- what validation ran
+- any remaining follow-up that became a new Bead
+
+Do not close a Bead with vague text like:
+- “done”
+- “fixed”
+- “completed”
+
+## Dolt sync requirement
+
+After meaningful Beads operations such as create, update, or close:
+
+- sync the Beads state to the repo’s configured Dolt workflow
+- verify the sync/push succeeded
+- do not assume it worked without checking output
+
+If Dolt push/sync fails:
+- stop
+- report the exact failure
+- do not claim tracking is up to date
+
+## Duplicate-prevention rule
+
+Never create multiple active Beads for the same exact task unless the work is intentionally split.
+
+If splitting work:
+- create a parent/child or dependency relationship if supported
+- make the split explicit in descriptions
+- avoid stale parallel tracking
+
+## Planning integration
+
+When working from a `.plan.md` file:
+
+- map every actionable implementation slice, blocker, dependency, or deferred item to a Bead
+- if the plan changes after feedback, update the relevant Bead(s)
+- if scope is cut or deferred, update the Bead status and description accordingly
+- if a PR split is introduced, ensure the Bead descriptions reflect the exact slice
+
+## Review integration
+
+During code review or user review:
+
+- if feedback creates new required work, create or update the relevant Bead immediately
+- if feedback reveals a blocker, dependency, or regression gap, track it in Beads
+- never leave review follow-up as an untracked note
+
+## Required behavior when tooling is unavailable
+
+If Beads CLI, Dolt server, local database, or remote sync is unavailable:
+
+- say so clearly
+- report the exact failing command or missing prerequisite
+- do not continue as if tracking happened
+- do not replace Beads with TODO comments
+
+## Expected workflow
+
+1. Check `bd` availability and help.
+2. Check Dolt / Beads connectivity.
+3. Search for existing Bead.
+4. Create or update the Bead with correct flags and detailed description.
+5. Do the work.
+6. Update the Bead as scope changes or blockers appear.
+7. Close the Bead with a clear resolution summary.
+8. Sync/push the Beads state to Dolt and verify success.
+
+## Default rule
+
+If there is any doubt whether something should be a Bead, it should be a Bead.
