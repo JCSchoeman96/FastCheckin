@@ -8,9 +8,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import retrofit2.HttpException
 import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
+import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.mapper.toDomain
@@ -18,6 +18,7 @@ import za.co.voelgoed.fastcheck.data.mapper.toSyncMetadata
 import za.co.voelgoed.fastcheck.data.remote.MobileSyncPayload
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 
 @Singleton
 class CurrentPhoenixSyncRepository @Inject constructor(
