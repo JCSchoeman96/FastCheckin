@@ -1,12 +1,14 @@
 package za.co.voelgoed.fastcheck.feature.support
 
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
+import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 
 class SupportOverviewPresenter {
     fun present(
-        scanningUiState: ScanningUiState
+        scanningUiState: ScanningUiState,
+        attendeeMetrics: EventAttendeeCacheMetrics?
     ): SupportOverviewUiState {
         val recovery =
             when (val state = scanningUiState.scannerRecoveryState) {
@@ -53,7 +55,25 @@ class SupportOverviewPresenter {
                         message = "The scanner could not start: ${state.message}. Return to Scan after the current issue is cleared.",
                         tone = StatusTone.Destructive,
                         action = SupportRecoveryAction.ReturnToScan
-                    )
+                )
+            }
+
+        val reconciliation =
+            if (attendeeMetrics != null && attendeeMetrics.unresolvedConflictCount > 0) {
+                Triple(
+                    "Reconciliation conflicts active",
+                    "${attendeeMetrics.unresolvedConflictCount} attendee conflict(s) still block green admission on this device. " +
+                        "Use Event and Search to review affected records before admitting them again.",
+                    StatusTone.Warning
+                )
+            } else if (attendeeMetrics != null && attendeeMetrics.activeOverlayCount > 0) {
+                Triple(
+                    "Local admissions still awaiting server catch-up",
+                    "${attendeeMetrics.activeOverlayCount} local admission overlay(s) remain active until a later attendee sync reflects them.",
+                    StatusTone.Info
+                )
+            } else {
+                null
             }
 
         return SupportOverviewUiState(
@@ -61,6 +81,9 @@ class SupportOverviewPresenter {
             recoveryMessage = recovery.message,
             recoveryTone = recovery.tone,
             recoveryAction = recovery.action,
+            reconciliationTitle = reconciliation?.first,
+            reconciliationMessage = reconciliation?.second,
+            reconciliationTone = reconciliation?.third,
             diagnosticsMessage = "Diagnostics stays available here for support work. It does not appear in the main operator navigation.",
             sessionMessage = "Log out of the current event session when the operator is finished on this device."
         )

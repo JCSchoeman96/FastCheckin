@@ -7,6 +7,9 @@ data class SupportOverviewUiState(
     val recoveryMessage: String,
     val recoveryTone: StatusTone,
     val recoveryAction: SupportRecoveryAction?,
+    val reconciliationTitle: String?,
+    val reconciliationMessage: String?,
+    val reconciliationTone: StatusTone?,
     val diagnosticsMessage: String,
     val sessionMessage: String
 )
