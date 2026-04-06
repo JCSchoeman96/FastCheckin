@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
+import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.sync.BootstrapSyncStatus
 import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
@@ -146,6 +147,70 @@ class EventDestinationPresenterTest {
     }
 
     @Test
+    fun recoveryActionsIncludeManualSyncAndRetryWhenBacklogPartial() {
+        val uiState =
+            presenter.present(
+                session = session(),
+                queueUiState =
+                    QueueUiState(
+                        localQueueDepth = 3,
+                        uploadSemanticState = SyncUiState.Partial(backlogRemainingCount = 3),
+                        uploadStateLabel = "Partial"
+                    ),
+                syncUiState = SyncScreenUiState(isSyncing = false),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 120
+                    ),
+                attendeeMetrics =
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 120,
+                        currentlyInsideCount = 34,
+                        attendeesWithRemainingCheckinsCount = 86,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
+                    )
+            )
+
+        val actions = uiState.operatorActions.map { it.action }
+        assertThat(actions).contains(EventOperatorAction.ManualSync)
+        assertThat(actions).contains(EventOperatorAction.RetryUpload)
+        assertThat(actions).doesNotContain(EventOperatorAction.Relogin)
+    }
+
+    @Test
+    fun manualSyncHiddenWhileAttendeeSyncRunning() {
+        val uiState =
+            presenter.present(
+                session = session(),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(isSyncing = true),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 120
+                    ),
+                attendeeMetrics =
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 120,
+                        currentlyInsideCount = 34,
+                        attendeesWithRemainingCheckinsCount = 86,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
+                    )
+            )
+
+        assertThat(uiState.operatorActions.map { it.action }).doesNotContain(EventOperatorAction.ManualSync)
+    }
+
+    @Test
     fun authExpiredBacklogShowsReloginBanner() {
         val uiState =
             presenter.present(
@@ -178,6 +243,9 @@ class EventDestinationPresenterTest {
         assertThat(uiState.statusChip.text).isEqualTo("Re-login required")
         assertThat(uiState.attentionBanner?.title).isEqualTo("Re-login required")
         assertThat(uiState.attentionBanner?.tone).isEqualTo(StatusTone.Destructive)
+        val actions = uiState.operatorActions.map { it.action }
+        assertThat(actions).contains(EventOperatorAction.Relogin)
+        assertThat(actions).doesNotContain(EventOperatorAction.RetryUpload)
     }
 
     @Test

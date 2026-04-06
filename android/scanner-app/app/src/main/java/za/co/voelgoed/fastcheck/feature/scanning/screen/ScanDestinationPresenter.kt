@@ -9,6 +9,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
@@ -47,9 +48,19 @@ class ScanDestinationPresenter(
                 ),
             queueDepthLabel = queueDepthLabel(queueUiState.localQueueDepth),
             uploadStateLabel = uploadState.defaultLabel,
-            retryUploadVisible = shouldShowRetryUpload(queueUiState.localQueueDepth, uploadState)
+            manualSyncVisible = !syncUiState.isSyncing,
+            retryUploadVisible =
+                QueueUploadRecoveryVisibility.shouldShowRetryUpload(
+                    queueUiState.localQueueDepth,
+                    uploadState
+                ),
+            reloginVisible = requiresRelogin(queueUiState)
         )
     }
+
+    private fun requiresRelogin(queueUiState: QueueUiState): Boolean =
+        queueUiState.localQueueDepth > 0 &&
+            (queueUiState.uploadSemanticState as? SyncUiState.Failed)?.reason == "Auth expired"
 
     private fun scannerChipFor(uiState: ScanningUiState): StatusChipUiModel =
         when (val sessionState = uiState.sessionState) {
@@ -218,21 +229,6 @@ class ScanDestinationPresenter(
         }
 
         return null
-    }
-
-    private fun shouldShowRetryUpload(
-        queueDepth: Int,
-        uploadState: SyncUiState
-    ): Boolean {
-        if (queueDepth <= 0) return false
-
-        return when (uploadState) {
-            is SyncUiState.Partial -> true
-            is SyncUiState.RetryScheduled -> true
-            is SyncUiState.Failed -> uploadState.reason != "Auth expired"
-            is SyncUiState.Offline -> false
-            else -> false
-        }
     }
 
     private fun queueDepthLabel(queueDepth: Int): String =

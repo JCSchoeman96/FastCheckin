@@ -8,6 +8,9 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
+import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
+import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorActionUiModel
+import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.sync.BootstrapSyncStatus
 import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
@@ -36,6 +39,7 @@ class EventDestinationPresenter(
                     currentCacheStatus = currentCacheStatus,
                     attendeeMetrics = attendeeMetrics
                 ),
+            operatorActions = operatorActionsFor(queueUiState = queueUiState, syncUiState = syncUiState),
             attendeeSection =
                 attendeeSectionFor(
                     currentCacheStatus = currentCacheStatus,
@@ -298,6 +302,43 @@ class EventDestinationPresenter(
         queueUiState.localQueueDepth > 0 &&
             queueUiState.uploadSemanticState is SyncUiState.Failed &&
             !requiresRelogin(queueUiState)
+
+    private fun operatorActionsFor(
+        queueUiState: QueueUiState,
+        syncUiState: SyncScreenUiState
+    ): List<EventOperatorActionUiModel> {
+        val actions = mutableListOf<EventOperatorActionUiModel>()
+        if (!syncUiState.isSyncing) {
+            actions.add(
+                EventOperatorActionUiModel(
+                    label = "Sync attendee list",
+                    action = EventOperatorAction.ManualSync
+                )
+            )
+        }
+        if (
+            QueueUploadRecoveryVisibility.shouldShowRetryUpload(
+                queueUiState.localQueueDepth,
+                queueUiState.uploadSemanticState
+            )
+        ) {
+            actions.add(
+                EventOperatorActionUiModel(
+                    label = "Retry upload",
+                    action = EventOperatorAction.RetryUpload
+                )
+            )
+        }
+        if (requiresRelogin(queueUiState)) {
+            actions.add(
+                EventOperatorActionUiModel(
+                    label = "Re-login",
+                    action = EventOperatorAction.Relogin
+                )
+            )
+        }
+        return actions
+    }
 
     private fun currentCacheStatus(
         session: ScannerSession,

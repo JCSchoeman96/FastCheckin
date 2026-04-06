@@ -13,7 +13,9 @@ data class ScanDestinationUiState(
     val healthBanner: BannerUiModel? = null,
     val queueDepthLabel: String,
     val uploadStateLabel: String,
-    val retryUploadVisible: Boolean
+    val manualSyncVisible: Boolean,
+    val retryUploadVisible: Boolean,
+    val reloginVisible: Boolean
 )
 
 data class StatusChipUiModel(

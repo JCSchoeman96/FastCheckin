@@ -300,7 +300,7 @@ Add presenter-driven actions such as:
 Visibility rules must be deterministic:
 - `Manual sync` shown when sync is not already running
 - `Retry upload` shown when queue depth > 0 and upload state is retryable/partial/retry-scheduled
-- no `Re-login` action in this PR unless minimal enum plumbing is needed for PR 2C
+- **no `Re-login` in PR 2A** — no enum plumbing; `Relogin` is added only in PR 2C (per execution plan scope locks)
 
 ### Scan action model
 Do not rewrite Scan from scratch.
@@ -365,7 +365,7 @@ Do not use:
 | Task | Add explicit operator action models and action callbacks to the Event and Scan destinations using the existing sync and queue viewmodels. |
 | Objective | Finish the missing operator affordances on Event and Scan without redesigning the shell or building a new recovery subsystem. |
 | Output | Event/Scan action models, presenter updates, screen updates, route callback wiring in `MainActivity`, and focused presenter tests. |
-| Note | Event is currently read-only and must gain an action model. Scan already has retry-upload and must preserve that behavior while adding manual sync. Reuse `SyncViewModel.syncAttendees()` and `QueueViewModel.flushQueuedScans()`. Keep actions deterministic and presenter-driven. Do not add re-login behavior yet except minimal future-proof enum plumbing if required. No backend changes, no diagnostics expansion, no shell redesign. |
+| Note | Event is currently read-only and must gain an action model. Scan already has retry-upload and must preserve that behavior while adding manual sync. Reuse `SyncViewModel.syncAttendees()` and `QueueViewModel.flushQueuedScans()`. Keep actions deterministic and presenter-driven. **Do not add re-login or Relogin plumbing in PR 2A.** No backend changes, no diagnostics expansion, no shell redesign. |
 
 ---
 

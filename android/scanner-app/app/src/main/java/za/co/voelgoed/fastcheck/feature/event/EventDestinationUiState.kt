@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.event
 
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
+import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorActionUiModel
 
 data class EventDestinationUiState(
     val headerTitle: String,
@@ -8,6 +9,7 @@ data class EventDestinationUiState(
     val statusChip: EventStatusChipUiModel,
     val statusMessage: String,
     val attentionBanner: EventBannerUiModel? = null,
+    val operatorActions: List<EventOperatorActionUiModel> = emptyList(),
     val attendeeSection: EventSectionUiModel,
     val queueSection: EventSectionUiModel,
     val activitySection: EventSectionUiModel

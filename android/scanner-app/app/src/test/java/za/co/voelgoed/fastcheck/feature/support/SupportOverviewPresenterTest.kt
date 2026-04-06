@@ -3,21 +3,37 @@ package za.co.voelgoed.fastcheck.feature.support
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
+import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
+import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
+import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
+import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
 
 class SupportOverviewPresenterTest {
     private val presenter = SupportOverviewPresenter()
 
+    private fun present(
+        scanningUiState: ScanningUiState,
+        attendeeMetrics: EventAttendeeCacheMetrics? = null,
+        queueUiState: QueueUiState = QueueUiState(),
+        syncUiState: SyncScreenUiState = SyncScreenUiState()
+    ): SupportOverviewUiState =
+        presenter.present(
+            scanningUiState = scanningUiState,
+            attendeeMetrics = attendeeMetrics,
+            queueUiState = queueUiState,
+            syncUiState = syncUiState
+        )
+
     @Test
     fun permissionRequestStateMapsToCalmRecoveryAction() {
         val uiState =
-            presenter.present(
+            present(
                 ScanningUiState(
                     scannerRecoveryState = ScannerRecoveryState.RequestPermission(false)
-                ),
-                attendeeMetrics = null
+                )
             )
 
         assertThat(uiState.recoveryTitle).isEqualTo("Camera access needed")
@@ -28,11 +44,10 @@ class SupportOverviewPresenterTest {
     @Test
     fun settingsOnlyStateMapsToAppSettingsAction() {
         val uiState =
-            presenter.present(
+            present(
                 ScanningUiState(
                     scannerRecoveryState = ScannerRecoveryState.OpenSystemSettings
-                ),
-                attendeeMetrics = null
+                )
             )
 
         assertThat(uiState.recoveryAction).isEqualTo(SupportRecoveryAction.OpenAppSettings)
@@ -42,11 +57,10 @@ class SupportOverviewPresenterTest {
     @Test
     fun sourceErrorMapsToReturnToScanGuidance() {
         val uiState =
-            presenter.present(
+            present(
                 ScanningUiState(
                     scannerRecoveryState = ScannerRecoveryState.SourceError("camera unavailable")
-                ),
-                attendeeMetrics = null
+                )
             )
 
         assertThat(uiState.recoveryTone).isEqualTo(StatusTone.Destructive)
@@ -57,7 +71,7 @@ class SupportOverviewPresenterTest {
     @Test
     fun unresolvedConflictsSurfaceSupportWarning() {
         val uiState =
-            presenter.present(
+            present(
                 scanningUiState = ScanningUiState(),
                 attendeeMetrics =
                     EventAttendeeCacheMetrics(
@@ -72,5 +86,49 @@ class SupportOverviewPresenterTest {
         assertThat(uiState.reconciliationTitle).isEqualTo("Reconciliation conflicts active")
         assertThat(uiState.reconciliationTone).isEqualTo(StatusTone.Warning)
         assertThat(uiState.reconciliationMessage).contains("2 attendee conflict")
+    }
+
+    @Test
+    fun operationalRetryHiddenWhenQueueEmpty() {
+        val uiState =
+            present(
+                scanningUiState = ScanningUiState(),
+                queueUiState = QueueUiState(localQueueDepth = 0),
+                syncUiState = SyncScreenUiState()
+            )
+
+        assertThat(uiState.operationalActions.map { it.action })
+            .doesNotContain(SupportOperationalAction.RetryUpload)
+    }
+
+    @Test
+    fun operationalReloginWhenAuthExpiredWithBacklog() {
+        val uiState =
+            present(
+                scanningUiState = ScanningUiState(),
+                queueUiState =
+                    QueueUiState(
+                        localQueueDepth = 2,
+                        uploadSemanticState = SyncUiState.Failed(reason = "Auth expired")
+                    ),
+                syncUiState = SyncScreenUiState()
+            )
+
+        assertThat(uiState.operationalActions.map { it.action })
+            .contains(SupportOperationalAction.Relogin)
+        assertThat(uiState.operationalActions.map { it.action })
+            .doesNotContain(SupportOperationalAction.RetryUpload)
+    }
+
+    @Test
+    fun operationalManualSyncHiddenWhileSyncing() {
+        val uiState =
+            present(
+                scanningUiState = ScanningUiState(),
+                syncUiState = SyncScreenUiState(isSyncing = true)
+            )
+
+        assertThat(uiState.operationalActions.map { it.action })
+            .doesNotContain(SupportOperationalAction.ManualSync)
     }
 }

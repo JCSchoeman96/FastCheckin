@@ -43,6 +43,7 @@ import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.event.EventDestinationRoute
 import za.co.voelgoed.fastcheck.feature.event.EventMetricsViewModel
+import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 import za.co.voelgoed.fastcheck.feature.search.SearchDestinationRoute
 import za.co.voelgoed.fastcheck.feature.search.SearchViewModel
@@ -52,6 +53,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.camera.CameraScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.camera.ScannerCameraBinder
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.screen.ScanDestinationRoute
+import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
@@ -59,6 +61,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerSourceBinding
 import za.co.voelgoed.fastcheck.feature.support.SupportDiagnosticsRoute
 import za.co.voelgoed.fastcheck.feature.support.SupportOverviewRoute
 import za.co.voelgoed.fastcheck.feature.support.SupportRecoveryAction
+import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
 
 @AndroidEntryPoint
@@ -144,7 +147,7 @@ class MainActivity : ComponentActivity() {
                             syncViewModel = syncViewModel,
                             previewSurfaceHolder = previewSurfaceHolder,
                             onPreviewSurfaceChanged = ::syncScannerBindingState,
-                            onRetryUpload = queueViewModel::flushQueuedScans
+                            onOperatorAction = ::handleScanOperatorAction
                         )
                     }
                 },
@@ -163,7 +166,8 @@ class MainActivity : ComponentActivity() {
                             session = authenticatedSession,
                             eventMetricsViewModel = eventMetricsViewModel,
                             queueViewModel = queueViewModel,
-                            syncViewModel = syncViewModel
+                            syncViewModel = syncViewModel,
+                            onOperatorAction = ::handleEventOperatorAction
                         )
                     }
                 },
@@ -172,8 +176,11 @@ class MainActivity : ComponentActivity() {
                         session = authenticatedSession,
                         eventMetricsViewModel = eventMetricsViewModel,
                         scanningViewModel = scanningViewModel,
+                        queueViewModel = queueViewModel,
+                        syncViewModel = syncViewModel,
                         onViewDiagnostics = appShellViewModel::openDiagnostics,
                         onRecoveryActionSelected = ::handleSupportRecoveryAction,
+                        onOperationalAction = ::handleSupportOperationalAction,
                         onLogoutRequested = ::handleLogoutRequest
                     )
                 },
@@ -418,6 +425,40 @@ class MainActivity : ComponentActivity() {
             SupportRecoveryAction.ReturnToScan ->
                 appShellViewModel.selectDestination(AppShellDestination.Scan)
         }
+    }
+
+    private fun handleEventOperatorAction(action: EventOperatorAction) {
+        when (action) {
+            EventOperatorAction.ManualSync -> syncViewModel.syncAttendees()
+            EventOperatorAction.RetryUpload -> queueViewModel.flushQueuedScans()
+            EventOperatorAction.Relogin -> handleReloginForAuthExpired()
+        }
+    }
+
+    private fun handleScanOperatorAction(action: ScanOperatorAction) {
+        when (action) {
+            ScanOperatorAction.ManualSync -> syncViewModel.syncAttendees()
+            ScanOperatorAction.RetryUpload -> queueViewModel.flushQueuedScans()
+            ScanOperatorAction.Relogin -> handleReloginForAuthExpired()
+        }
+    }
+
+    private fun handleSupportOperationalAction(action: SupportOperationalAction) {
+        when (action) {
+            SupportOperationalAction.ManualSync -> syncViewModel.syncAttendees()
+            SupportOperationalAction.RetryUpload -> queueViewModel.flushQueuedScans()
+            SupportOperationalAction.Relogin -> handleReloginForAuthExpired()
+        }
+    }
+
+    /**
+     * Auth-expired re-login: route through session logout without the generic
+     * "queued scans" logout confirmation dialog (that reads as destructive shutdown).
+     * Queued scans remain in local storage; operator signs in again to resume uploads.
+     */
+    private fun handleReloginForAuthExpired() {
+        appShellViewModel.dismissLogoutConfirmation()
+        sessionGateViewModel.logout()
     }
 
     private fun createScannerInputSource(sourceMode: ScannerShellSourceMode): ScannerInputSource =
