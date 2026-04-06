@@ -228,4 +228,23 @@ class SearchViewModelTest {
 
         assertThat(flush.lastTrigger).isNull()
     }
+
+    @Test
+    fun manualAdmitOperationalFailureDoesNotRequestAutoflush() = runTest {
+        val flush = FakeAutoFlushCoordinator()
+        val admit =
+            FakeAdmitScanUseCase(
+                decision = LocalAdmissionDecision.OperationalFailure(displayMessage = "Database unavailable")
+            )
+        val vm = SearchViewModel(FakeAttendeeLookupRepository(sampleDetail), admit, flush)
+        vm.observeSession(5L, 1000L)
+        advanceUntilIdle()
+        vm.selectAttendee(1L)
+        advanceUntilIdle()
+
+        vm.admitSelectedAttendee()
+        advanceUntilIdle()
+
+        assertThat(flush.lastTrigger).isNull()
+    }
 }
