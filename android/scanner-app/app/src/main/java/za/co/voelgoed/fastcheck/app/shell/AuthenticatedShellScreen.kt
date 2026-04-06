@@ -39,6 +39,7 @@ fun AuthenticatedShellScreen(
     onLogoutConfirmationDismissed: () -> Unit,
     onLogoutConfirmed: () -> Unit,
     scanContent: @Composable () -> Unit,
+    searchContent: @Composable () -> Unit,
     eventContent: @Composable () -> Unit,
     supportOverviewContent: @Composable () -> Unit,
     diagnosticsContent: @Composable () -> Unit,
@@ -145,6 +146,7 @@ private fun ShellContent(
     uiState: AppShellUiState,
     contentPadding: PaddingValues,
     scanContent: @Composable () -> Unit,
+    searchContent: @Composable () -> Unit,
     eventContent: @Composable () -> Unit,
     supportOverviewContent: @Composable () -> Unit,
     diagnosticsContent: @Composable () -> Unit
@@ -165,7 +167,7 @@ private fun ShellContent(
             null ->
                 when (uiState.selectedDestination) {
                     AppShellDestination.Scan -> scanContent()
-                    AppShellDestination.Search -> SearchStubScreen(modifier = Modifier.fillMaxWidth())
+                    AppShellDestination.Search -> searchContent()
                     AppShellDestination.Event -> eventContent()
                 }
         }
