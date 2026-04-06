@@ -15,12 +15,15 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
 @HiltViewModel
 class ScanningViewModel @Inject constructor() : ViewModel() {
     private val _uiState = MutableStateFlow(ScanningUiState())
     val uiState: StateFlow<ScanningUiState> = _uiState.asStateFlow()
+    private var hasAttemptedCameraPermissionRequest: Boolean = false
+    private var shouldShowCameraPermissionRationale: Boolean = false
 
     private fun isCameraSource(sourceType: ScannerSourceType): Boolean =
         sourceType == ScannerSourceType.CAMERA
@@ -142,6 +145,32 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 "Scanner scaffold ready. Decoded values will feed the existing local queue only."
         }
 
+    private fun scannerRecoveryStateFor(
+        sourceType: ScannerSourceType,
+        permission: CameraPermissionState,
+        lifecycle: ScannerSourceState
+    ): ScannerRecoveryState =
+        when {
+            lifecycle is ScannerSourceState.Error ->
+                ScannerRecoveryState.SourceError(lifecycle.reason)
+
+            !isCameraSource(sourceType) ->
+                ScannerRecoveryState.CameraNotRequired
+
+            permission == CameraPermissionState.GRANTED ->
+                ScannerRecoveryState.Ready
+
+            permission == CameraPermissionState.DENIED &&
+                hasAttemptedCameraPermissionRequest &&
+                !shouldShowCameraPermissionRationale ->
+                ScannerRecoveryState.OpenSystemSettings
+
+            else ->
+                ScannerRecoveryState.RequestPermission(
+                    shouldShowRationale = shouldShowCameraPermissionRationale
+                )
+        }
+
     fun onCaptureHandoffResult(result: CaptureHandoffResult) {
         _uiState.update { current ->
             val feedback =
@@ -207,12 +236,22 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         state,
                         current.cameraPermissionState,
                         sessionState
+                    ),
+                scannerRecoveryState =
+                    scannerRecoveryStateFor(
+                        sourceType = current.activeSourceType,
+                        permission = current.cameraPermissionState,
+                        lifecycle = state
                     )
             )
         }
     }
 
-    fun refreshPermissionState(isGranted: Boolean) {
+    fun refreshPermissionState(
+        isGranted: Boolean,
+        shouldShowRationale: Boolean = false
+    ) {
+        shouldShowCameraPermissionRationale = shouldShowRationale
         _uiState.update { current ->
             val newPermission =
                 if (isGranted) {
@@ -242,6 +281,12 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         current.sourceLifecycle,
                         newPermission,
                         current.sessionState
+                    ),
+                scannerRecoveryState =
+                    scannerRecoveryStateFor(
+                        sourceType = current.activeSourceType,
+                        permission = newPermission,
+                        lifecycle = current.sourceLifecycle
                     )
             )
         }
@@ -273,12 +318,19 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         current.sourceLifecycle,
                         current.cameraPermissionState,
                         sessionState
+                    ),
+                scannerRecoveryState =
+                    scannerRecoveryStateFor(
+                        sourceType = current.activeSourceType,
+                        permission = current.cameraPermissionState,
+                        lifecycle = current.sourceLifecycle
                     )
             )
         }
     }
 
     fun onPermissionRequestStarted() {
+        hasAttemptedCameraPermissionRequest = true
         _uiState.update {
             val status =
                 if (isCameraSource(it.activeSourceType)) {
@@ -286,7 +338,15 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 } else {
                     "Camera permission is not required for the active Zebra DataWedge source."
                 }
-            it.copy(scannerStatus = status)
+            it.copy(
+                scannerStatus = status,
+                scannerRecoveryState =
+                    scannerRecoveryStateFor(
+                        sourceType = it.activeSourceType,
+                        permission = it.cameraPermissionState,
+                        lifecycle = it.sourceLifecycle
+                    )
+            )
         }
     }
 
@@ -307,6 +367,12 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         current.sourceLifecycle,
                         current.cameraPermissionState,
                         current.sessionState
+                    ),
+                scannerRecoveryState =
+                    scannerRecoveryStateFor(
+                        sourceType = sourceType,
+                        permission = current.cameraPermissionState,
+                        lifecycle = current.sourceLifecycle
                     )
             )
         }

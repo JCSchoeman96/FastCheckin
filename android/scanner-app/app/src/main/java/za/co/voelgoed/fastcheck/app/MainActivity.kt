@@ -1,6 +1,9 @@
 package za.co.voelgoed.fastcheck.app
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -8,6 +11,7 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -27,6 +31,7 @@ import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceSelectionResolver
 import za.co.voelgoed.fastcheck.app.session.AppSessionRoute
 import za.co.voelgoed.fastcheck.app.session.SessionGateViewModel
+import za.co.voelgoed.fastcheck.app.shell.AppShellSupportRoute
 import za.co.voelgoed.fastcheck.app.shell.AppShellViewModel
 import za.co.voelgoed.fastcheck.app.shell.AuthenticatedShellScreen
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
@@ -35,6 +40,7 @@ import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
+import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.event.EventDestinationRoute
 import za.co.voelgoed.fastcheck.feature.event.EventMetricsViewModel
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
@@ -48,6 +54,9 @@ import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerSourceBinding
+import za.co.voelgoed.fastcheck.feature.support.SupportDiagnosticsRoute
+import za.co.voelgoed.fastcheck.feature.support.SupportOverviewRoute
+import za.co.voelgoed.fastcheck.feature.support.SupportRecoveryAction
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
 
 @AndroidEntryPoint
@@ -82,6 +91,7 @@ class MainActivity : ComponentActivity() {
     private val queueViewModel: QueueViewModel by viewModels()
     private val scanningViewModel: ScanningViewModel by viewModels()
     private val eventMetricsViewModel: EventMetricsViewModel by viewModels()
+    private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
 
     private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
     private val scannerSourceActivationPolicy = ScannerSourceActivationPolicy()
@@ -96,7 +106,10 @@ class MainActivity : ComponentActivity() {
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            scanningViewModel.refreshPermissionState(granted)
+            scanningViewModel.refreshPermissionState(
+                isGranted = granted,
+                shouldShowRationale = shouldShowCameraPermissionRationale()
+            )
             syncScannerBindingState()
         }
 
@@ -116,7 +129,9 @@ class MainActivity : ComponentActivity() {
                 uiState = shellUiState,
                 onDestinationSelected = appShellViewModel::selectDestination,
                 onOverflowActionSelected = ::handleShellOverflowAction,
-                onNoticeDismissed = appShellViewModel::clearNotice,
+                onNavigateBack = appShellViewModel::navigateBack,
+                onLogoutConfirmationDismissed = appShellViewModel::dismissLogoutConfirmation,
+                onLogoutConfirmed = ::confirmLogout,
                 scanContent = {
                     if (authenticatedSession != null) {
                         ScanDestinationRoute(
@@ -139,6 +154,19 @@ class MainActivity : ComponentActivity() {
                             syncViewModel = syncViewModel
                         )
                     }
+                },
+                supportOverviewContent = {
+                    SupportOverviewRoute(
+                        scanningViewModel = scanningViewModel,
+                        onViewDiagnostics = appShellViewModel::openDiagnostics,
+                        onRecoveryActionSelected = ::handleSupportRecoveryAction,
+                        onLogoutRequested = ::handleLogoutRequest
+                    )
+                },
+                diagnosticsContent = {
+                    SupportDiagnosticsRoute(
+                        diagnosticsViewModel = diagnosticsViewModel
+                    )
                 }
             )
         }
@@ -276,6 +304,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         syncScannerBindingState()
+        if (appShellViewModel.uiState.value.activeSupportRoute == AppShellSupportRoute.Diagnostics) {
+            diagnosticsViewModel.refresh()
+        }
     }
 
     override fun onStop() {
@@ -289,9 +320,18 @@ class MainActivity : ComponentActivity() {
             android.Manifest.permission.CAMERA
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
+    private fun shouldShowCameraPermissionRationale(): Boolean =
+        ActivityCompat.shouldShowRequestPermissionRationale(
+            this,
+            android.Manifest.permission.CAMERA
+        )
+
     private fun syncScannerBindingState() {
         val hasPermission = hasCameraPermission()
-        scanningViewModel.refreshPermissionState(hasPermission)
+        scanningViewModel.refreshPermissionState(
+            isGranted = hasPermission,
+            shouldShowRationale = shouldShowCameraPermissionRationale()
+        )
 
         val decision =
             scannerSourceActivationPolicy.evaluate(
@@ -316,12 +356,46 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleShellOverflowAction(action: AppShellOverflowAction) {
-        if (action == AppShellOverflowAction.Logout) {
-            sessionGateViewModel.logout()
-            return
-        }
+        when (action) {
+            AppShellOverflowAction.Support ->
+                appShellViewModel.onOverflowActionSelected(action)
 
-        appShellViewModel.onOverflowActionSelected(action)
+            AppShellOverflowAction.Logout ->
+                handleLogoutRequest()
+        }
+    }
+
+    private fun handleLogoutRequest() {
+        val queueDepth = queueViewModel.uiState.value.localQueueDepth
+        val needsConfirmation = appShellViewModel.requestLogout(queueDepth)
+        if (!needsConfirmation) {
+            sessionGateViewModel.logout()
+        }
+    }
+
+    private fun confirmLogout() {
+        appShellViewModel.dismissLogoutConfirmation()
+        sessionGateViewModel.logout()
+    }
+
+    private fun handleSupportRecoveryAction(action: SupportRecoveryAction) {
+        when (action) {
+            SupportRecoveryAction.RequestCameraAccess -> {
+                scanningViewModel.onPermissionRequestStarted()
+                cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+            }
+
+            SupportRecoveryAction.OpenAppSettings ->
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", packageName, null)
+                    )
+                )
+
+            SupportRecoveryAction.ReturnToScan ->
+                appShellViewModel.selectDestination(AppShellDestination.Scan)
+        }
     }
 
     private fun createScannerInputSource(sourceMode: ScannerShellSourceMode): ScannerInputSource =
