@@ -561,6 +561,137 @@ class ScannerDaoTest {
     }
 
     @Test
+    fun runtimeCleanupHelpersClearNonDurableTablesAndPreserveQueueOverlayAndQuarantine() = runTest {
+        dao.upsertAttendees(
+            listOf(
+                AttendeeEntity(
+                    id = 1,
+                    eventId = 5,
+                    ticketCode = "VG-001",
+                    firstName = "Jane",
+                    lastName = "Doe",
+                    email = "jane@example.com",
+                    ticketType = "VIP",
+                    allowedCheckins = 1,
+                    checkinsRemaining = 1,
+                    paymentStatus = "completed",
+                    isCurrentlyInside = false,
+                    checkedInAt = null,
+                    checkedOutAt = null,
+                    updatedAt = "2026-03-12T09:00:00Z"
+                )
+            )
+        )
+        dao.upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+        dao.insertQueuedScan(
+            QueuedScanEntity(
+                eventId = 5,
+                ticketCode = "VG-Q",
+                idempotencyKey = "idem-queue",
+                createdAt = 10L,
+                scannedAt = "2026-03-13T08:00:00Z",
+                entranceName = "Main",
+                operatorName = "Op"
+            )
+        )
+        dao.upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 5L,
+                ticketCode = "VG-Q",
+                idempotencyKey = "idem-overlay",
+                state = LocalAdmissionOverlayState.PENDING_LOCAL.name,
+                createdAtEpochMillis = 10L,
+                overlayScannedAt = "2026-03-13T08:00:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main"
+            )
+        )
+        dao.insertQuarantinedScans(
+            listOf(
+                QuarantinedScanEntity(
+                    originalQueueId = null,
+                    createdAt = 10L,
+                    scannedAt = "2026-03-13T08:00:00Z",
+                    direction = "in",
+                    entranceName = "Main",
+                    operatorName = "Op",
+                    lastAttemptAt = null,
+                    quarantineReason = "duplicate_capture",
+                    quarantineMessage = "duplicate_capture",
+                    batchAttributed = false,
+                    overlayStateAtQuarantine = "PENDING_LOCAL",
+                    idempotencyKey = "idem-quarantine",
+                    eventId = 5,
+                    ticketCode = "VG-Q",
+                    quarantinedAt = "2026-03-13T08:00:00Z",
+                )
+            )
+        )
+        dao.upsertReplaySuppression(LocalReplaySuppressionEntity(id = 0, ticketCode = "VG-Q", seenAtEpochMillis = 10L))
+        dao.upsertReplayCache(
+            ReplayCacheEntity(
+                idempotencyKey = "idem-queue",
+                status = "success",
+                message = "ok",
+                reasonCode = null,
+                storedAt = "2026-03-13T08:00:00Z",
+                terminal = true
+            )
+        )
+        dao.upsertLatestFlushSnapshot(
+            LatestFlushSnapshotEntity(
+                executionStatus = "COMPLETED",
+                uploadedCount = 1,
+                retryableRemainingCount = 0,
+                authExpired = false,
+                backlogRemaining = false,
+                summaryMessage = "done",
+                completedAt = "2026-03-13T08:00:00Z"
+            )
+        )
+        dao.insertRecentFlushOutcomes(
+            listOf(
+                RecentFlushOutcomeEntity(
+                    outcomeOrder = 0,
+                    idempotencyKey = "idem-queue",
+                    ticketCode = "VG-Q",
+                    outcome = "SUCCESS",
+                    message = "ok",
+                    reasonCode = null,
+                    completedAt = "2026-03-13T08:00:00Z"
+                )
+            )
+        )
+
+        dao.deleteAllAttendees()
+        dao.deleteAllSyncMetadata()
+        dao.clearReplaySuppression()
+        dao.clearReplayCache()
+        dao.clearLatestFlushSnapshot()
+        dao.clearRecentFlushOutcomes()
+
+        assertThat(dao.findAttendee(5, "VG-001")).isNull()
+        assertThat(dao.loadSyncMetadata(5)).isNull()
+        assertThat(dao.findReplaySuppression("VG-Q")).isNull()
+        assertThat(dao.findReplayCache("idem-queue")).isNull()
+        assertThat(dao.loadLatestFlushSnapshot()).isNull()
+        assertThat(dao.loadRecentFlushOutcomes()).isEmpty()
+        assertThat(dao.loadQueuedScans()).hasSize(1)
+        assertThat(dao.loadActiveOverlaysForEvent(5)).hasSize(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(1)
+    }
+
+    @Test
     fun enqueueAcceptedAdmissionDoesNotPersistReplaySuppressionWhenQueueInsertIsIgnored() = runTest {
         dao.insertQueuedScan(
             QueuedScanEntity(

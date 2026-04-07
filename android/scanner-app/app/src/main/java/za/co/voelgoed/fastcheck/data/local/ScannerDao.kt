@@ -23,6 +23,12 @@ interface ScannerDao {
         attendeeId: Long
     ): AttendeeEntity?
 
+    @Query("DELETE FROM attendees")
+    suspend fun deleteAllAttendees()
+
+    @Query("DELETE FROM attendees WHERE eventId = :eventId")
+    suspend fun deleteAttendeesForEvent(eventId: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLocalAdmissionOverlay(overlay: LocalAdmissionOverlayEntity): Long
 
@@ -245,6 +251,9 @@ interface ScannerDao {
     @Query("SELECT * FROM scan_replay_cache WHERE idempotencyKey = :idempotencyKey LIMIT 1")
     suspend fun findReplayCache(idempotencyKey: String): ReplayCacheEntity?
 
+    @Query("DELETE FROM scan_replay_cache")
+    suspend fun clearReplayCache()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertReplayCache(entry: ReplayCacheEntity)
 
@@ -257,6 +266,9 @@ interface ScannerDao {
     @Query("DELETE FROM local_replay_suppression WHERE ticketCode = :ticketCode")
     suspend fun deleteReplaySuppression(ticketCode: String)
 
+    @Query("DELETE FROM local_replay_suppression")
+    suspend fun clearReplaySuppression()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertReplaySuppression(entry: LocalReplaySuppressionEntity)
 
@@ -268,6 +280,9 @@ interface ScannerDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLatestFlushSnapshot(snapshot: LatestFlushSnapshotEntity)
+
+    @Query("DELETE FROM latest_flush_snapshot")
+    suspend fun clearLatestFlushSnapshot()
 
     @Query("DELETE FROM recent_flush_outcomes")
     suspend fun clearRecentFlushOutcomes()
@@ -283,6 +298,12 @@ interface ScannerDao {
 
     @Query("SELECT * FROM sync_metadata WHERE eventId = :eventId LIMIT 1")
     suspend fun loadSyncMetadata(eventId: Long): SyncMetadataEntity?
+
+    @Query("DELETE FROM sync_metadata")
+    suspend fun deleteAllSyncMetadata()
+
+    @Query("DELETE FROM sync_metadata WHERE eventId = :eventId")
+    suspend fun deleteSyncMetadataForEvent(eventId: Long)
 
     @Query(
         """
