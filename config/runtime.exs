@@ -236,22 +236,22 @@ if config_env() == :prod do
       Provide the full Ecto URL (ecto://USER:PASS@HOST:PORT/DB) for releases.
       """
 
-    allow_local_db_in_prod? =
-      case System.get_env("ALLOW_LOCAL_DB_IN_PROD", "false") |> String.trim() |> String.downcase() do
-        value when value in ["1", "true", "yes", "on"] -> true
-        _ -> false
-      end
-
-    database_host = URI.parse(database_url).host
-
-    if database_host in ["localhost", "127.0.0.1", "::1"] and not allow_local_db_in_prod? do
-      raise """
-      DATABASE_URL points to #{database_host}, which is blocked by default in production.
-
-      Set ALLOW_LOCAL_DB_IN_PROD=true for single-VPS deployments that intentionally use
-      local Postgres/PgBouncer.
-      """
+  allow_local_db_in_prod? =
+    case System.get_env("ALLOW_LOCAL_DB_IN_PROD", "false") |> String.trim() |> String.downcase() do
+      value when value in ["1", "true", "yes", "on"] -> true
+      _ -> false
     end
+
+  database_host = URI.parse(database_url).host
+
+  if database_host in ["localhost", "127.0.0.1", "::1"] and not allow_local_db_in_prod? do
+    raise """
+    DATABASE_URL points to #{database_host}, which is blocked by default in production.
+
+    Set ALLOW_LOCAL_DB_IN_PROD=true for single-VPS deployments that intentionally use
+    local Postgres/PgBouncer.
+    """
+  end
 
   # Railway (and many managed Postgres hosts) require SSL. Default to true but
   # allow operators to opt out via DATABASE_SSL=false when the host doesn't
