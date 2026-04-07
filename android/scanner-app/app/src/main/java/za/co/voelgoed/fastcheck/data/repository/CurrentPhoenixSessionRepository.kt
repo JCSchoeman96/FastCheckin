@@ -23,16 +23,17 @@ class CurrentPhoenixSessionRepository @Inject constructor(
     override suspend fun login(eventId: Long, credential: String): ScannerSession {
         val priorSession = currentSession()
         unresolvedAdmissionStateGate.requireNoConflictingEvents(eventId)
+
+        val response = remoteDataSource.login(MobileLoginRequest(event_id = eventId, credential = credential))
+        val payload = requireNotNull(response.data) { response.message ?: response.error ?: "Login failed" }
+        val session = payload.toDomain(clock)
+
         if (priorSession != null && priorSession.eventId != eventId) {
             localRuntimeDataCleaner.handleCleanEventTransition(
                 fromEventId = priorSession.eventId,
                 toEventId = eventId
             )
         }
-
-        val response = remoteDataSource.login(MobileLoginRequest(event_id = eventId, credential = credential))
-        val payload = requireNotNull(response.data) { response.message ?: response.error ?: "Login failed" }
-        val session = payload.toDomain(clock)
 
         sessionVault.storeToken(payload.token)
         sessionMetadataStore.save(session.toMetadata())

@@ -327,6 +327,44 @@ class CurrentPhoenixSessionRepositoryTest {
         assertThat(session.eventId).isEqualTo(7)
     }
 
+    @Test
+    fun failedLoginToDifferentEventDoesNotRunCleanEventTransition() = runTest {
+        val metadataStore =
+            FakeSessionMetadataStore().apply {
+                saved =
+                    SessionMetadata(
+                        eventId = 5,
+                        eventName = "Old Event",
+                        expiresInSeconds = 3600,
+                        authenticatedAtEpochMillis = clock.millis(),
+                        expiresAtEpochMillis = clock.millis() + 3_600_000L
+                    )
+            }
+        val cleaner = FakeLocalRuntimeDataCleaner()
+        val repository =
+            CurrentPhoenixSessionRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        FakePhoenixMobileApi(
+                            MobileLoginResponse(data = null, error = "bad credential", message = "Login failed")
+                        )
+                    ),
+                sessionVault = FakeSessionVault(),
+                sessionMetadataStore = metadataStore,
+                unresolvedAdmissionStateGate = unresolvedGate(),
+                localRuntimeDataCleaner = cleaner,
+                clock = clock
+            )
+
+        val failure =
+            runCatching { repository.login(eventId = 7, credential = "wrong") }
+                .exceptionOrNull()
+
+        assertThat(failure).isNotNull()
+        assertThat(cleaner.cleanTransitionCalls).isEqualTo(0)
+        assertThat(metadataStore.saved?.eventId).isEqualTo(5)
+    }
+
     private class FakeSessionVault : SessionVault {
         var token: String? = null
 
