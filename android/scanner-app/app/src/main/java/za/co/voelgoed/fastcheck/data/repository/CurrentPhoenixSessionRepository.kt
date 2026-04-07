@@ -17,10 +17,19 @@ class CurrentPhoenixSessionRepository @Inject constructor(
     private val sessionVault: SessionVault,
     private val sessionMetadataStore: SessionMetadataStore,
     private val unresolvedAdmissionStateGate: UnresolvedAdmissionStateGate,
+    private val localRuntimeDataCleaner: LocalRuntimeDataCleaner,
     private val clock: Clock
 ) : SessionRepository {
     override suspend fun login(eventId: Long, credential: String): ScannerSession {
+        val priorSession = currentSession()
         unresolvedAdmissionStateGate.requireNoConflictingEvents(eventId)
+        if (priorSession != null && priorSession.eventId != eventId) {
+            localRuntimeDataCleaner.handleCleanEventTransition(
+                fromEventId = priorSession.eventId,
+                toEventId = eventId
+            )
+        }
+
         val response = remoteDataSource.login(MobileLoginRequest(event_id = eventId, credential = credential))
         val payload = requireNotNull(response.data) { response.message ?: response.error ?: "Login failed" }
         val session = payload.toDomain(clock)
@@ -35,6 +44,20 @@ class CurrentPhoenixSessionRepository @Inject constructor(
         sessionMetadataStore.load()?.toDomain()
 
     override suspend fun logout() {
+        val eventId = currentSession()?.eventId
+        sessionVault.clearToken()
+        sessionMetadataStore.clear()
+        localRuntimeDataCleaner.handleExplicitLogout(eventId)
+    }
+
+    override suspend fun onAuthExpired() {
+        val eventId = currentSession()?.eventId
+        sessionVault.clearToken()
+        sessionMetadataStore.clear()
+        localRuntimeDataCleaner.handleAuthExpired(eventId)
+    }
+
+    override suspend fun clearBlockedRestoredSession() {
         sessionVault.clearToken()
         sessionMetadataStore.clear()
     }

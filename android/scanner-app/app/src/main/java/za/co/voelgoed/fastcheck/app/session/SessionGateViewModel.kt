@@ -37,7 +37,7 @@ class SessionGateViewModel @Inject constructor(
                     unresolvedAdmissionStateGate.unresolvedOtherEventIds(session.eventId)
 
                 if (unresolvedOtherEvents.isNotEmpty()) {
-                    sessionRepository.logout()
+                    sessionRepository.clearBlockedRestoredSession()
                     _blockingMessage.value =
                         CrossEventBlockingMessageFormatter.format(
                             targetEventId = session.eventId,
@@ -52,7 +52,7 @@ class SessionGateViewModel @Inject constructor(
             when (route) {
                 AppSessionRoute.LoggedOut -> {
                     if (session != null) {
-                        sessionRepository.logout()
+                        sessionRepository.onAuthExpired()
                     }
                     _blockingMessage.value = null
                     _route.value = AppSessionRoute.LoggedOut

@@ -19,6 +19,7 @@ import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.security.SessionVault
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
+import za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
@@ -64,6 +65,7 @@ class CurrentPhoenixSessionRepositoryTest {
                 sessionVault = vault,
                 sessionMetadataStore = metadataStore,
                 unresolvedAdmissionStateGate = unresolvedGate(),
+                localRuntimeDataCleaner = FakeLocalRuntimeDataCleaner(),
                 clock = clock
             )
 
@@ -81,7 +83,7 @@ class CurrentPhoenixSessionRepositoryTest {
      * (See MainActivity.handleReloginForAuthExpired: dismissLogoutConfirmation + sessionGateViewModel.logout.)
      */
     @Test
-    fun logoutClearsSessionCredentialsOnly_preservesQueuedScansAndLocalAdmissionOverlays() = runTest {
+    fun logoutClearsSessionAndRunsExplicitLogoutCleaner_preservesDurableRuntimeRows() = runTest {
         val vault = FakeSessionVault()
         runBlocking {
             vault.storeToken("jwt")
@@ -131,7 +133,29 @@ class CurrentPhoenixSessionRepositoryTest {
                     entranceName = "Main"
                 )
             )
+            dao.insertQuarantinedScans(
+                listOf(
+                    QuarantinedScanEntity(
+                        originalQueueId = null,
+                        createdAt = clock.millis(),
+                        scannedAt = "2026-03-13T08:00:00Z",
+                        direction = "in",
+                        entranceName = "Main",
+                        operatorName = "Op",
+                        lastAttemptAt = null,
+                        quarantineReason = "duplicate_capture",
+                        quarantineMessage = "duplicate_capture",
+                        batchAttributed = false,
+                        overlayStateAtQuarantine = "PENDING_LOCAL",
+                        idempotencyKey = "idem-quarantine-relogin-contract",
+                        eventId = 5,
+                        ticketCode = "VG-1",
+                        quarantinedAt = "2026-03-13T08:00:00Z",
+                    )
+                )
+            )
         }
+        val cleaner = FakeLocalRuntimeDataCleaner()
 
         val repository =
             CurrentPhoenixSessionRepository(
@@ -144,6 +168,7 @@ class CurrentPhoenixSessionRepositoryTest {
                 sessionVault = vault,
                 sessionMetadataStore = metadataStore,
                 unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate.fromLoader { emptyList() },
+                localRuntimeDataCleaner = cleaner,
                 clock = clock
             )
 
@@ -154,7 +179,46 @@ class CurrentPhoenixSessionRepositoryTest {
         runBlocking {
             assertThat(dao.loadQueuedScans()).hasSize(1)
             assertThat(dao.loadOverlaysByState("PENDING_LOCAL")).hasSize(1)
+            assertThat(dao.countQuarantinedScans()).isEqualTo(1)
         }
+        assertThat(cleaner.explicitLogoutCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun onAuthExpiredClearsSessionAndRunsAuthExpiredCleaner() = runTest {
+        val vault = FakeSessionVault().apply { runBlocking { storeToken("jwt") } }
+        val metadataStore =
+            FakeSessionMetadataStore().apply {
+                saved =
+                    SessionMetadata(
+                        eventId = 5,
+                        eventName = "Test Event",
+                        expiresInSeconds = 3600,
+                        authenticatedAtEpochMillis = clock.millis(),
+                        expiresAtEpochMillis = clock.millis() + 3_600_000L
+                    )
+            }
+        val cleaner = FakeLocalRuntimeDataCleaner()
+        val repository =
+            CurrentPhoenixSessionRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        FakePhoenixMobileApi(
+                            MobileLoginResponse(data = null, error = "unused", message = "unused")
+                        )
+                    ),
+                sessionVault = vault,
+                sessionMetadataStore = metadataStore,
+                unresolvedAdmissionStateGate = unresolvedGate(),
+                localRuntimeDataCleaner = cleaner,
+                clock = clock
+            )
+
+        repository.onAuthExpired()
+
+        assertThat(vault.token).isNull()
+        assertThat(metadataStore.saved).isNull()
+        assertThat(cleaner.authExpiredCalls).isEqualTo(1)
     }
 
     @Test
@@ -182,6 +246,7 @@ class CurrentPhoenixSessionRepositoryTest {
                 sessionVault = FakeSessionVault(),
                 sessionMetadataStore = metadataStore,
                 unresolvedAdmissionStateGate = unresolvedGate(),
+                localRuntimeDataCleaner = FakeLocalRuntimeDataCleaner(),
                 clock = clock
             )
 
@@ -205,6 +270,7 @@ class CurrentPhoenixSessionRepositoryTest {
                 sessionVault = FakeSessionVault(),
                 sessionMetadataStore = FakeSessionMetadataStore(),
                 unresolvedAdmissionStateGate = unresolvedGateWithOverlay(eventId = 55L),
+                localRuntimeDataCleaner = FakeLocalRuntimeDataCleaner(),
                 clock = clock
             )
 
@@ -214,6 +280,51 @@ class CurrentPhoenixSessionRepositoryTest {
 
         assertThat(failure).isInstanceOf(CrossEventUnresolvedStateException::class.java)
         assertThat(failure?.message).contains("event 55")
+    }
+
+    @Test
+    fun loginToDifferentEventRunsCleanEventTransitionBeforePersistingNewSession() = runTest {
+        val metadataStore =
+            FakeSessionMetadataStore().apply {
+                saved =
+                    SessionMetadata(
+                        eventId = 5,
+                        eventName = "Old Event",
+                        expiresInSeconds = 3600,
+                        authenticatedAtEpochMillis = clock.millis(),
+                        expiresAtEpochMillis = clock.millis() + 3_600_000L
+                    )
+            }
+        val cleaner = FakeLocalRuntimeDataCleaner()
+        val repository =
+            CurrentPhoenixSessionRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        FakePhoenixMobileApi(
+                            MobileLoginResponse(
+                                data =
+                                    MobileLoginPayload(
+                                        token = "jwt-new",
+                                        event_id = 7,
+                                        event_name = "New Event",
+                                        expires_in = 3600
+                                    ),
+                                error = null,
+                                message = null
+                            )
+                        )
+                    ),
+                sessionVault = FakeSessionVault(),
+                sessionMetadataStore = metadataStore,
+                unresolvedAdmissionStateGate = unresolvedGate(),
+                localRuntimeDataCleaner = cleaner,
+                clock = clock
+            )
+
+        val session = repository.login(eventId = 7, credential = "credential")
+
+        assertThat(cleaner.cleanTransitionCalls).isEqualTo(1)
+        assertThat(session.eventId).isEqualTo(7)
     }
 
     private class FakeSessionVault : SessionVault {
@@ -241,6 +352,24 @@ class CurrentPhoenixSessionRepositoryTest {
 
         override suspend fun clear() {
             saved = null
+        }
+    }
+
+    private class FakeLocalRuntimeDataCleaner : LocalRuntimeDataCleaner {
+        var explicitLogoutCalls: Int = 0
+        var authExpiredCalls: Int = 0
+        var cleanTransitionCalls: Int = 0
+
+        override suspend fun handleExplicitLogout(currentEventId: Long?) {
+            explicitLogoutCalls += 1
+        }
+
+        override suspend fun handleAuthExpired(currentEventId: Long?) {
+            authExpiredCalls += 1
+        }
+
+        override suspend fun handleCleanEventTransition(fromEventId: Long?, toEventId: Long) {
+            cleanTransitionCalls += 1
         }
     }
 
