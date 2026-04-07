@@ -299,7 +299,7 @@ interface ScannerDao {
     // timestamp (e.g. syncedAtEpochMs) and order by that instead.
     fun observeLatestSyncMetadata(): Flow<SyncMetadataEntity?>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertSyncMetadata(metadata: SyncMetadataEntity)
 
     @Transaction
