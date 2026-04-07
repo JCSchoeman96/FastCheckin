@@ -237,7 +237,9 @@ if config_env() == :prod do
       """
 
   allow_local_db_in_prod? =
-    case System.get_env("ALLOW_LOCAL_DB_IN_PROD", "false") |> String.trim() |> String.downcase() do
+    case System.get_env("ALLOW_LOCAL_DB_IN_PROD", "false")
+         |> String.trim()
+         |> String.downcase() do
       value when value in ["1", "true", "yes", "on"] -> true
       _ -> false
     end
