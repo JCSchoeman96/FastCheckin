@@ -8,6 +8,7 @@ defmodule FastCheck.AttendeesTest do
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheck.TickeraClient
   alias Phoenix.PubSub
 
   setup :disable_occupancy_tasks
@@ -57,18 +58,22 @@ defmodule FastCheck.AttendeesTest do
       payload_500 = attendee_payloads(500)
       payload_501 = attendee_payloads(501)
 
-      assert {:ok, 500} = Attendees.create_bulk(event.id, payload_500, incremental: false)
-      assert {:ok, 501} = Attendees.create_bulk(event.id, payload_501, incremental: false)
+      expected_500 = legacy_insert_all_count_for_payload(event.id, payload_500)
+      expected_501 = legacy_insert_all_count_for_payload(event.id, payload_501)
+
+      assert {:ok, ^expected_500} = Attendees.create_bulk(event.id, payload_500, incremental: false)
+      assert {:ok, ^expected_501} = Attendees.create_bulk(event.id, payload_501, incremental: false)
 
       count = Repo.aggregate(from(a in Attendee, where: a.event_id == ^event.id), :count, :id)
       assert count == 1_001
     end
 
-    test "handles multi-chunk inserts and returns accumulated count for 1001 rows" do
+    test "handles multi-chunk inserts and preserves legacy insert_all count semantics" do
       event = insert_event!("Multi Chunk Event")
       payload = attendee_payloads(1_001)
+      expected_count = legacy_insert_all_count_for_payload(event.id, payload)
 
-      assert {:ok, 1_001} = Attendees.create_bulk(event.id, payload, incremental: false)
+      assert {:ok, ^expected_count} = Attendees.create_bulk(event.id, payload, incremental: false)
 
       count = Repo.aggregate(from(a in Attendee, where: a.event_id == ^event.id), :count, :id)
       assert count == 1_001
@@ -542,6 +547,49 @@ defmodule FastCheck.AttendeesTest do
         ]
       }
     end)
+  end
+
+  defp legacy_insert_all_count_for_payload(event_id, payload) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    entries =
+      payload
+      |> Enum.map(fn ticket ->
+        parsed = TickeraClient.parse_attendee(ticket)
+        allowed = Attendees.normalize_allowed_checkins(Map.get(parsed, :allowed_checkins))
+
+        parsed
+        |> Map.put(:event_id, event_id)
+        |> Map.put_new(:checkins_remaining, allowed)
+        |> Map.put(:allowed_checkins, allowed)
+        |> Map.put_new(:daily_scan_count, 0)
+        |> Map.put_new(:weekly_scan_count, 0)
+        |> Map.put_new(:monthly_scan_count, 0)
+        |> Map.put_new(:is_currently_inside, false)
+        |> Map.put(:inserted_at, now)
+        |> Map.put(:updated_at, now)
+      end)
+      |> Enum.reject(fn row -> is_nil(Map.get(row, :ticket_code)) end)
+
+    {count, _} =
+      Repo.insert_all(
+        Attendee,
+        entries,
+        on_conflict:
+          {:replace_all_except,
+           [
+             :id,
+             :checked_in_at,
+             :last_checked_in_at,
+             :checkins_remaining,
+             :is_currently_inside,
+             :inserted_at
+           ]},
+        conflict_target: [:event_id, :ticket_code]
+      )
+
+    Repo.delete_all(from(a in Attendee, where: a.event_id == ^event_id))
+    count
   end
 
   defp disable_occupancy_tasks(_) do
