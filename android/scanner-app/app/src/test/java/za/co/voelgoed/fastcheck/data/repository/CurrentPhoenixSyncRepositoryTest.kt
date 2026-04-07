@@ -200,6 +200,92 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
+    fun incrementalSyncUpdatesAttendeeRowWhenSameServerIdReturnsUpdatedFields() = runTest {
+        database.scannerDao().upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 0
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:35:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 500,
+                                    event_id = 5,
+                                    ticket_code = "VG-SAME-500",
+                                    first_name = "Original",
+                                    last_name = "Name",
+                                    email = "same@example.com",
+                                    ticket_type = "General",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 1,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T08:34:00Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "incremental",
+                        next_cursor = null
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees()
+        assertThat(database.scannerDao().findAttendee(5, "VG-SAME-500")?.firstName).isEqualTo("Original")
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:36:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 500,
+                                    event_id = 5,
+                                    ticket_code = "VG-SAME-500",
+                                    first_name = "Updated",
+                                    last_name = "Name",
+                                    email = "same@example.com",
+                                    ticket_type = "General",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 1,
+                                    payment_status = "completed",
+                                    is_currently_inside = true,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T08:35:00Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "incremental",
+                        next_cursor = null
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees()
+
+        val row = database.scannerDao().findAttendee(5, "VG-SAME-500")
+        assertThat(row?.firstName).isEqualTo("Updated")
+        assertThat(row?.isCurrentlyInside).isTrue()
+    }
+
+    @Test
     fun syncCanonicalizesTicketCodeBeforePersistingLocalLookupKey() = runTest {
         api.syncResponse =
             MobileSyncResponse(
