@@ -5,12 +5,13 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 
 @Dao
 interface ScannerDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertAttendees(attendees: List<AttendeeEntity>)
 
     @Query("SELECT * FROM attendees WHERE eventId = :eventId AND ticketCode = :ticketCode LIMIT 1")
