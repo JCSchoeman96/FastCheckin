@@ -28,8 +28,21 @@ UI and scanner features must not depend on JWT parsing or storage mechanics.
 
 - background flush treats HTTP `401` as auth-expired
 - queued scans remain in Room
+- local admission overlays remain in Room
+- quarantined scans remain in Room
 - no credential is persisted for silent re-login
 - operator must re-authenticate manually
+
+Auth expiry and explicit logout are different transitions:
+
+- explicit logout clears credential + metadata and applies explicit logout
+  retention cleanup
+- auth expiry clears credential + metadata but preserves same-event recovery
+  surfaces (attendee/sync context) per runtime retention policy
+
+Restored-session blocking for unresolved local gate state is separate from
+explicit logout semantics: it clears credential + metadata and must not run the
+explicit-logout cleaner path unless policy explicitly requires it.
 
 ## Future Scope
 

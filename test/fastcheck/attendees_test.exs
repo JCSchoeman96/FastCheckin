@@ -61,8 +61,11 @@ defmodule FastCheck.AttendeesTest do
       expected_500 = legacy_insert_all_count_for_payload(event.id, payload_500)
       expected_501 = legacy_insert_all_count_for_payload(event.id, payload_501)
 
-      assert {:ok, ^expected_500} = Attendees.create_bulk(event.id, payload_500, incremental: false)
-      assert {:ok, ^expected_501} = Attendees.create_bulk(event.id, payload_501, incremental: false)
+      assert {:ok, ^expected_500} =
+               Attendees.create_bulk(event.id, payload_500, incremental: false)
+
+      assert {:ok, ^expected_501} =
+               Attendees.create_bulk(event.id, payload_501, incremental: false)
 
       count = Repo.aggregate(from(a in Attendee, where: a.event_id == ^event.id), :count, :id)
       assert count == 1_001
