@@ -869,9 +869,9 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        createAbortInsertTrigger(
+        createAbortInsertOrUpdateTrigger(
             tableName = "sync_metadata",
-            triggerName = "abort_sync_metadata_insert"
+            triggerName = "abort_sync_metadata_write"
         )
 
         val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
@@ -1054,6 +1054,34 @@ class CurrentPhoenixSyncRepositoryTest {
             """
             CREATE TRIGGER $triggerName
             BEFORE INSERT ON $tableName
+            BEGIN
+                SELECT RAISE(ABORT, '$triggerName');
+            END
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * Room upsert on `sync_metadata` may take INSERT (no row yet) or UPDATE (row exists). Tests that
+     * simulate write failure must abort both paths.
+     */
+    private fun createAbortInsertOrUpdateTrigger(tableName: String, triggerName: String) {
+        val db = writableDatabase()
+        db.execSQL("DROP TRIGGER IF EXISTS ${triggerName}_insert")
+        db.execSQL("DROP TRIGGER IF EXISTS ${triggerName}_update")
+        db.execSQL(
+            """
+            CREATE TRIGGER ${triggerName}_insert
+            BEFORE INSERT ON $tableName
+            BEGIN
+                SELECT RAISE(ABORT, '$triggerName');
+            END
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER ${triggerName}_update
+            BEFORE UPDATE ON $tableName
             BEGIN
                 SELECT RAISE(ABORT, '$triggerName');
             END

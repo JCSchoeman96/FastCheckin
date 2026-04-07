@@ -176,6 +176,34 @@ class ScannerDaoTest {
             }
 
     @Test
+    fun upsertSyncMetadataTwiceUpdatesExistingRowInPlace() = runTest {
+        dao.upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+        dao.upsertSyncMetadata(
+            SyncMetadataEntity(
+                eventId = 5,
+                lastServerTime = "2026-03-13T09:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T09:00:00Z",
+                lastSyncType = "incremental",
+                attendeeCount = 10
+            )
+        )
+
+        val row = dao.loadSyncMetadata(5)
+        assertThat(row?.lastServerTime).isEqualTo("2026-03-13T09:00:00Z")
+        assertThat(row?.lastSuccessfulSyncAt).isEqualTo("2026-03-13T09:00:00Z")
+        assertThat(row?.lastSyncType).isEqualTo("incremental")
+        assertThat(row?.attendeeCount).isEqualTo(10)
+    }
+
+    @Test
     fun enforcesQueuedScanIdempotencyAndOrdersByCreatedAtThenId() = runTest {
         dao.insertQueuedScan(
             QueuedScanEntity(
