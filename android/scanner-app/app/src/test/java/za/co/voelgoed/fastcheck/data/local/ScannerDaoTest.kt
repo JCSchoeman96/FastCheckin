@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.data.local
 
 import android.content.Context
 import androidx.room.Room
+import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
@@ -63,6 +64,116 @@ class ScannerDaoTest {
         assertThat(attendee).isNotNull()
         assertThat(attendee?.email).isEqualTo("jane@example.com")
     }
+
+    @Test
+    fun upsertAttendeeWithSameIdUpdatesFieldsInPlace() = runTest {
+        val first =
+            AttendeeEntity(
+                id = 42,
+                eventId = 5,
+                ticketCode = "VG-042",
+                firstName = "First",
+                lastName = "Name",
+                email = "first@example.com",
+                ticketType = "VIP",
+                allowedCheckins = 1,
+                checkinsRemaining = 1,
+                paymentStatus = "completed",
+                isCurrentlyInside = false,
+                checkedInAt = null,
+                checkedOutAt = null,
+                updatedAt = "2026-03-12T09:00:00Z"
+            )
+        dao.upsertAttendees(listOf(first))
+
+        dao.upsertAttendees(
+            listOf(
+                first.copy(
+                    firstName = "Updated",
+                    email = "updated@example.com",
+                    isCurrentlyInside = true,
+                    updatedAt = "2026-03-12T10:00:00Z"
+                )
+            )
+        )
+
+        val row = dao.findAttendee(5, "VG-042")
+        assertThat(row?.firstName).isEqualTo("Updated")
+        assertThat(row?.email).isEqualTo("updated@example.com")
+        assertThat(row?.isCurrentlyInside).isTrue()
+        assertThat(row?.updatedAt).isEqualTo("2026-03-12T10:00:00Z")
+    }
+
+    /**
+     * Duplicate `(eventId, ticketCode)` with a different server [AttendeeEntity.id] cannot occur under
+     * the Phoenix / mobile sync contract: attendee id is stable for that ticket within an event. The
+     * Room unique index enforces at most one row per `(eventId, ticketCode)`.
+     *
+     * `@Upsert` resolves on primary key only; a second row with a new `id` but the same ticket code
+     * is not a PK upsert of the first row. After attempting that write, the first row must still be
+     * the only stored row for that ticket (no second logical attendee for the same code).
+     */
+    @Test
+    fun duplicateEventIdAndTicketCode_secondUpsertDoesNotReplaceFirstAttendeeRow() = runTest {
+        dao.upsertAttendees(
+            listOf(
+                AttendeeEntity(
+                    id = 1,
+                    eventId = 5,
+                    ticketCode = "VG-DUP",
+                    firstName = "A",
+                    lastName = "One",
+                    email = "a@example.com",
+                    ticketType = "General",
+                    allowedCheckins = 1,
+                    checkinsRemaining = 1,
+                    paymentStatus = "completed",
+                    isCurrentlyInside = false,
+                    checkedInAt = null,
+                    checkedOutAt = null,
+                    updatedAt = "2026-03-12T09:00:00Z"
+                )
+            )
+        )
+
+        dao.upsertAttendees(
+            listOf(
+                AttendeeEntity(
+                    id = 2,
+                    eventId = 5,
+                    ticketCode = "VG-DUP",
+                    firstName = "B",
+                    lastName = "Two",
+                    email = "b@example.com",
+                    ticketType = "General",
+                    allowedCheckins = 1,
+                    checkinsRemaining = 1,
+                    paymentStatus = "completed",
+                    isCurrentlyInside = false,
+                    checkedInAt = null,
+                    checkedOutAt = null,
+                    updatedAt = "2026-03-12T09:01:00Z"
+                )
+            )
+        )
+
+        val row = dao.findAttendee(5, "VG-DUP")
+        assertThat(row?.id).isEqualTo(1)
+        assertThat(row?.firstName).isEqualTo("A")
+        assertThat(countAttendeesForEvent(5)).isEqualTo(1)
+    }
+
+    private fun countAttendeesForEvent(eventId: Long): Int =
+        database.openHelper.writableDatabase
+            .query(
+                SimpleSQLiteQuery(
+                    "SELECT COUNT(*) FROM attendees WHERE eventId = ?",
+                    arrayOf(eventId)
+                )
+            ).use { cursor ->
+                cursor.moveToFirst()
+                cursor.getInt(0)
+            }
 
     @Test
     fun enforcesQueuedScanIdempotencyAndOrdersByCreatedAtThenId() = runTest {
