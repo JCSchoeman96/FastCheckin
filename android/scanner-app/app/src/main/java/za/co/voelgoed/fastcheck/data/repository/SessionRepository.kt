@@ -11,4 +11,6 @@ interface SessionRepository {
     suspend fun login(eventId: Long, credential: String): ScannerSession
     suspend fun currentSession(): ScannerSession?
     suspend fun logout()
+    suspend fun onAuthExpired()
+    suspend fun clearBlockedRestoredSession()
 }

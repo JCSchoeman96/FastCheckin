@@ -67,6 +67,10 @@ object TestRepositoryModule {
                 )
 
             override suspend fun logout() = Unit
+
+            override suspend fun onAuthExpired() = Unit
+
+            override suspend fun clearBlockedRestoredSession() = Unit
         }
 
     @Provides

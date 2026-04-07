@@ -1023,6 +1023,10 @@ class CurrentPhoenixSyncRepositoryTest {
             override suspend fun currentSession(): ScannerSession = sampleSession()
 
             override suspend fun logout() = Unit
+
+            override suspend fun onAuthExpired() = Unit
+
+            override suspend fun clearBlockedRestoredSession() = Unit
         }
 
     private fun noSessionRepository(): SessionRepository =
@@ -1032,6 +1036,10 @@ class CurrentPhoenixSyncRepositoryTest {
             override suspend fun currentSession(): ScannerSession? = null
 
             override suspend fun logout() = Unit
+
+            override suspend fun onAuthExpired() = Unit
+
+            override suspend fun clearBlockedRestoredSession() = Unit
         }
 
     private fun sampleSession(): ScannerSession =

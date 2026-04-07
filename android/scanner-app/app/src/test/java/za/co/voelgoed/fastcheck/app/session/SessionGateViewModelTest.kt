@@ -61,7 +61,8 @@ class SessionGateViewModelTest {
             advanceUntilIdle()
 
             assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.LoggedOut)
-            assertThat(repository.logoutCallCount).isEqualTo(1)
+            assertThat(repository.logoutCallCount).isEqualTo(0)
+            assertThat(repository.authExpiredCallCount).isEqualTo(1)
             assertThat(repository.currentSession).isNull()
         }
 
@@ -123,13 +124,15 @@ class SessionGateViewModelTest {
 
             assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.LoggedOut)
             assertThat(viewModel.blockingMessage.value).contains("event 99")
-            assertThat(repository.logoutCallCount).isEqualTo(1)
+            assertThat(repository.blockedRestoreClearCallCount).isEqualTo(1)
         }
 
     private class FakeSessionRepository(
         var currentSession: ScannerSession?
     ) : SessionRepository {
         var logoutCallCount: Int = 0
+        var authExpiredCallCount: Int = 0
+        var blockedRestoreClearCallCount: Int = 0
 
         override suspend fun login(eventId: Long, credential: String): ScannerSession {
             error("Not used in this test")
@@ -139,6 +142,16 @@ class SessionGateViewModelTest {
 
         override suspend fun logout() {
             logoutCallCount += 1
+            currentSession = null
+        }
+
+        override suspend fun onAuthExpired() {
+            authExpiredCallCount += 1
+            currentSession = null
+        }
+
+        override suspend fun clearBlockedRestoredSession() {
+            blockedRestoreClearCallCount += 1
             currentSession = null
         }
     }
