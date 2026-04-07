@@ -46,6 +46,7 @@ npm-debug.log
 # Android scanner app local configuration and build artifacts
 android/scanner-app/local.properties
 android/scanner-app/.gradle/
+android/scanner-app/.kotlin/
 android/scanner-app/app/build/
 
 # IDE/project files
