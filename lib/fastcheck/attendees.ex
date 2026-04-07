@@ -16,6 +16,8 @@ defmodule FastCheck.Attendees do
   alias FastCheck.Repo
   alias FastCheck.TickeraClient
 
+  @bulk_insert_chunk_size 500
+
   # Orchestration Functions (true implementation)
 
   @doc """
@@ -36,6 +38,7 @@ defmodule FastCheck.Attendees do
   def create_bulk(event_id, attendees_data, opts)
       when is_integer(event_id) and is_list(attendees_data) do
     incremental = Keyword.get(opts, :incremental, false)
+    insert_batch_fun = Keyword.get(opts, :insert_batch_fun, &default_insert_batch/2)
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     entries =
@@ -69,25 +72,57 @@ defmodule FastCheck.Attendees do
 
         _ ->
           conflict_target = [:event_id, :ticket_code]
+          chunks = Enum.chunk_every(entries, @bulk_insert_chunk_size)
+          total_chunks = length(chunks)
 
           # Always upsert so syncs can correct stale fields (for example payment_status)
           # while preserving scan-state fields managed locally during check-in flow.
-          {count, _} =
-            Repo.insert_all(
-              Attendee,
-              entries,
-              on_conflict:
-                {:replace_all_except,
-                 [
-                   :id,
-                   :checked_in_at,
-                   :last_checked_in_at,
-                   :checkins_remaining,
-                   :is_currently_inside,
-                   :inserted_at
-                 ]},
-              conflict_target: conflict_target
-            )
+          transaction_result =
+            Repo.transaction(fn ->
+              chunks
+              |> Enum.with_index(1)
+              |> Enum.reduce(0, fn {chunk, chunk_index}, processed_count ->
+                try do
+                  # Keep sync count semantics tied to actual DB response.
+                  {chunk_count, _} =
+                    insert_batch_fun.(
+                      chunk,
+                      on_conflict:
+                        {:replace_all_except,
+                         [
+                           :id,
+                           :checked_in_at,
+                           :last_checked_in_at,
+                           :checkins_remaining,
+                           :is_currently_inside,
+                           :inserted_at
+                         ]},
+                      conflict_target: conflict_target
+                    )
+
+                  processed_count + chunk_count
+                rescue
+                  exception ->
+                    Logger.error(
+                      "Attendee chunk insert failed for event #{event_id}: " <>
+                        "chunk_index=#{chunk_index} chunk_size=#{length(chunk)} " <>
+                        "total_chunks=#{total_chunks} error=#{Exception.message(exception)}"
+                    )
+
+                    Repo.rollback("Failed to store attendees")
+                end
+              end)
+            end)
+
+          count =
+            case transaction_result do
+              {:ok, processed_count} ->
+                processed_count
+
+              {:error, rollback_reason} ->
+                raise RuntimeError,
+                      "Bulk attendee insert failed for event #{event_id}: #{rollback_reason}"
+            end
 
           action = if incremental, do: "Upserted", else: "Synced"
           Logger.info("#{action} #{count} attendees for event #{event_id}")
@@ -320,6 +355,10 @@ defmodule FastCheck.Attendees do
   @spec normalize_allowed_checkins(term()) :: non_neg_integer()
   def normalize_allowed_checkins(value) when is_integer(value) and value >= 0, do: value
   def normalize_allowed_checkins(_), do: 1
+
+  defp default_insert_batch(entries, opts) do
+    Repo.insert_all(Attendee, entries, opts)
+  end
 
   defp fetch_from_cachex(cache_key) do
     if cachex_available?() do

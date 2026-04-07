@@ -1,6 +1,7 @@
 defmodule FastCheck.AttendeesTest do
   use FastCheck.DataCase, async: true
 
+  import Ecto.Query
   alias Cachex
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees
@@ -15,6 +16,7 @@ defmodule FastCheck.AttendeesTest do
     test "full sync upserts existing attendees and refreshes sync fields" do
       event = insert_event!("Bulk Sync")
       now = DateTime.utc_now() |> DateTime.truncate(:second)
+      last_checked = DateTime.add(now, -600, :second)
 
       existing =
         create_attendee_record(event, %{
@@ -22,7 +24,9 @@ defmodule FastCheck.AttendeesTest do
           payment_status: nil,
           allowed_checkins: 1,
           checkins_remaining: 0,
-          checked_in_at: now
+          checked_in_at: now,
+          last_checked_in_at: last_checked,
+          is_currently_inside: true
         })
 
       payload = [
@@ -43,6 +47,72 @@ defmodule FastCheck.AttendeesTest do
       # Local scan-state fields are preserved across sync updates.
       assert refreshed.checkins_remaining == 0
       assert refreshed.checked_in_at == existing.checked_in_at
+      assert refreshed.last_checked_in_at == existing.last_checked_in_at
+      assert refreshed.is_currently_inside == existing.is_currently_inside
+      assert refreshed.inserted_at == existing.inserted_at
+    end
+
+    test "handles boundary at 500 and 501 rows" do
+      event = insert_event!("Boundary Event")
+      payload_500 = attendee_payloads(500)
+      payload_501 = attendee_payloads(501)
+
+      assert {:ok, 500} = Attendees.create_bulk(event.id, payload_500, incremental: false)
+      assert {:ok, 501} = Attendees.create_bulk(event.id, payload_501, incremental: false)
+
+      count = Repo.aggregate(from(a in Attendee, where: a.event_id == ^event.id), :count, :id)
+      assert count == 1_001
+    end
+
+    test "handles multi-chunk inserts and returns accumulated count for 1001 rows" do
+      event = insert_event!("Multi Chunk Event")
+      payload = attendee_payloads(1_001)
+
+      assert {:ok, 1_001} = Attendees.create_bulk(event.id, payload, incremental: false)
+
+      count = Repo.aggregate(from(a in Attendee, where: a.event_id == ^event.id), :count, :id)
+      assert count == 1_001
+    end
+
+    test "rolls back all chunks when a later chunk fails" do
+      event = insert_event!("Rollback Event")
+      payload = attendee_payloads(501)
+
+      insert_batch_fun = fn entries, opts ->
+        chunk_number = Process.get(:chunk_number, 0) + 1
+        Process.put(:chunk_number, chunk_number)
+
+        if chunk_number == 2 do
+          raise RuntimeError, "forced chunk failure for rollback test"
+        else
+          Repo.insert_all(Attendee, entries, opts)
+        end
+      end
+
+      assert {:error, "Failed to store attendees"} =
+               Attendees.create_bulk(event.id, payload,
+                 incremental: false,
+                 insert_batch_fun: insert_batch_fun
+               )
+
+      count = Repo.aggregate(from(a in Attendee, where: a.event_id == ^event.id), :count, :id)
+      assert count == 0
+    end
+
+    test "processed_count is summed from per-chunk insert_all return values" do
+      event = insert_event!("Processed Count Contract")
+      payload = attendee_payloads(1_001)
+
+      insert_batch_fun = fn entries, opts ->
+        {_real_count, result_rows} = Repo.insert_all(Attendee, entries, opts)
+        {1, result_rows}
+      end
+
+      assert {:ok, 3} =
+               Attendees.create_bulk(event.id, payload,
+                 incremental: false,
+                 insert_batch_fun: insert_batch_fun
+               )
     end
   end
 
@@ -456,6 +526,22 @@ defmodule FastCheck.AttendeesTest do
 
   defp unique_ticket_code do
     "CODE-#{System.unique_integer([:positive])}"
+  end
+
+  defp attendee_payloads(count) do
+    seed = System.unique_integer([:positive])
+
+    Enum.map(1..count, fn index ->
+      %{
+        "checksum" => "SYNC-#{seed}-#{index}",
+        "allowed_checkins" => "1",
+        "payment_date" => "Februarie 19 2026 - 8:14 vm",
+        "custom_fields" => [
+          ["Buyer Name", "User #{index}"],
+          ["Buyer E-mail", "sync#{seed}-#{index}@example.com"]
+        ]
+      }
+    end)
   end
 
   defp disable_occupancy_tasks(_) do
