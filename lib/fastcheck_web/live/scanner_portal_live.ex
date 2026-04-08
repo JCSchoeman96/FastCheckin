@@ -11,6 +11,12 @@ defmodule FastCheckWeb.ScannerPortalLive do
   require Logger
 
   @default_camera_permission %{status: :unknown, remembered: false, message: nil}
+  @default_camera_runtime %{
+    state: :idle,
+    recoverable: true,
+    desired_active: false,
+    message: "Camera is idle. Start scanning when ready."
+  }
   @valid_tabs ~w(overview camera attendees)
   @default_stats_reconcile_ms 30_000
   @default_force_refresh_every_n_scans 20
@@ -69,6 +75,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           search_loading: false,
           search_error: nil,
           camera_permission: default_camera_permission(),
+          camera_runtime: default_camera_runtime(),
           syncing: false,
           sync_progress: nil,
           sync_status: nil,
@@ -257,6 +264,30 @@ defmodule FastCheckWeb.ScannerPortalLive do
      assign(socket, :camera_permission, %{
        status: status,
        remembered: remembered,
+       message: message
+     })}
+  end
+
+  @impl true
+  def handle_event("camera_runtime_sync", params, socket) when is_map(params) do
+    state = normalize_camera_runtime_state(Map.get(params, "state"))
+    recoverable = truthy?(Map.get(params, "recoverable"))
+    desired_active = truthy?(Map.get(params, "desired_active"))
+
+    message =
+      params
+      |> Map.get("message")
+      |> normalize_camera_runtime_message()
+      |> case do
+        nil -> camera_runtime_default_message(state)
+        value -> value
+      end
+
+    {:noreply,
+     assign(socket, :camera_runtime, %{
+       state: state,
+       recoverable: recoverable,
+       desired_active: desired_active,
        message: message
      })}
   end
@@ -747,6 +778,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 id="scanner-portal-camera-permission-hook"
                 phx-hook="CameraPermission"
                 data-storage-key={"fastcheck:camera-permission:event-#{@event_id}:portal"}
+                class="space-y-2"
               >
                 <.alert
                   kind={camera_permission_alert_kind(@camera_permission.status)}
@@ -761,24 +793,44 @@ defmodule FastCheckWeb.ScannerPortalLive do
                   </p>
                 </.alert>
 
-                <.button
-                  :if={@camera_permission.status != :granted}
-                  id="scanner-portal-camera-enable-button"
-                  type="button"
-                  data-camera-request
-                  color="success"
-                  class="mt-2"
-                  disabled={@camera_permission.status == :unsupported}
-                >
-                  Enable camera
-                </.button>
+                <div class="flex flex-wrap gap-2">
+                  <.button
+                    :if={@camera_permission.status != :granted}
+                    id="scanner-portal-camera-enable-button"
+                    type="button"
+                    data-camera-request
+                    color="success"
+                    disabled={@camera_permission.status == :unsupported}
+                  >
+                    Enable camera
+                  </.button>
+
+                  <.button
+                    id="scanner-portal-camera-recheck-button"
+                    type="button"
+                    data-camera-recheck
+                    variant="bordered"
+                    color="natural"
+                    disabled={@camera_permission.status == :unsupported}
+                  >
+                    Re-check permission
+                  </.button>
+                </div>
+
+                <p class="text-xs text-fc-text-muted">
+                  {if @camera_permission.remembered do
+                    "Last camera check is saved as a browser hint, but permission is verified live whenever recovery runs."
+                  else
+                    "Permission is verified live whenever the scanner reconnects."
+                  end}
+                </p>
               </div>
 
               <.card
                 id="scanner-portal-qr-camera"
                 phx-hook="QrCameraScanner"
-                phx-update="ignore"
                 data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
+                data-resume-key={"fastcheck:camera-runtime:event-#{@event_id}:portal"}
                 variant="outline"
                 color="natural"
                 rounded="large"
@@ -786,7 +838,27 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 class="glass-card glass-sheen"
               >
                 <.card_content>
-                  <div class="overflow-hidden rounded-2xl border border-fc-border bg-black">
+                  <.alert
+                    id="scanner-portal-camera-runtime-status"
+                    kind={camera_runtime_alert_kind(@camera_runtime.state)}
+                    variant="bordered"
+                    rounded="large"
+                    data-test="camera-runtime-status"
+                  >
+                    <p class="font-semibold">
+                      {camera_runtime_status_label(@camera_runtime.state)}
+                    </p>
+                    <p class="mt-1 text-xs">
+                      {@camera_runtime.message ||
+                        camera_runtime_default_message(@camera_runtime.state)}
+                    </p>
+                  </.alert>
+
+                  <div
+                    id="scanner-portal-camera-preview-shell"
+                    phx-update="ignore"
+                    class="mt-3 overflow-hidden rounded-2xl border border-fc-border bg-black"
+                  >
                     <video
                       id="scanner-portal-camera-preview"
                       data-qr-video
@@ -819,16 +891,39 @@ defmodule FastCheckWeb.ScannerPortalLive do
                     />
                   </.form>
 
-                  <div class="mt-4 grid grid-cols-2 gap-2">
+                  <div class="mt-4 grid grid-cols-3 gap-2">
                     <.button
                       id="scanner-portal-start-camera-button"
                       type="button"
                       data-qr-start
-                      color="success"
+                      color={
+                        if(camera_runtime_needs_reconnect?(@camera_runtime.state),
+                          do: "natural",
+                          else: "success"
+                        )
+                      }
+                      variant={
+                        if(camera_runtime_needs_reconnect?(@camera_runtime.state),
+                          do: "bordered",
+                          else: "shadow"
+                        )
+                      }
                       full_width
                       disabled={@scans_disabled?}
                     >
                       Start
+                    </.button>
+
+                    <.button
+                      id="scanner-portal-reconnect-camera-button"
+                      type="button"
+                      data-qr-reconnect
+                      color={camera_reconnect_button_color(@camera_runtime.state)}
+                      variant={camera_reconnect_button_variant(@camera_runtime.state)}
+                      full_width
+                      disabled={!@camera_runtime.recoverable or @scans_disabled?}
+                    >
+                      Reconnect
                     </.button>
 
                     <.button
@@ -842,6 +937,24 @@ defmodule FastCheckWeb.ScannerPortalLive do
                     >
                       Stop
                     </.button>
+                  </div>
+
+                  <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <.button
+                      id="scanner-portal-camera-sync-button"
+                      type="button"
+                      phx-click="start_incremental_sync"
+                      color="secondary"
+                      variant="bordered"
+                      full_width
+                      disabled={@syncing}
+                    >
+                      {if @syncing, do: "Syncing attendees...", else: "Run incremental sync"}
+                    </.button>
+
+                    <p class="rounded-xl border border-fc-border-default px-3 py-2 text-xs text-fc-text-muted">
+                      {camera_runtime_support_copy(@camera_runtime)}
+                    </p>
                   </div>
                 </.card_content>
               </.card>
@@ -1482,6 +1595,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp entrance_label(""), do: "Main Entrance"
   defp entrance_label(value), do: value
 
+  defp default_camera_runtime, do: @default_camera_runtime
+
   defp camera_permission_alert_kind(:granted), do: :success
   defp camera_permission_alert_kind(:denied), do: :danger
   defp camera_permission_alert_kind(:error), do: :danger
@@ -1523,8 +1638,87 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp normalize_camera_permission_message(_), do: nil
 
+  defp normalize_camera_runtime_state("starting"), do: :starting
+  defp normalize_camera_runtime_state("running"), do: :running
+  defp normalize_camera_runtime_state("paused"), do: :paused
+  defp normalize_camera_runtime_state("recovering"), do: :recovering
+  defp normalize_camera_runtime_state("error"), do: :error
+  defp normalize_camera_runtime_state(value) when is_atom(value), do: value
+  defp normalize_camera_runtime_state(_), do: :idle
+
+  defp normalize_camera_runtime_message(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_camera_runtime_message(_), do: nil
+
   defp truthy?(value) when value in [true, "true", "1", 1, "yes", "on"], do: true
   defp truthy?(_), do: false
+
+  defp camera_runtime_default_message(:starting),
+    do: "Starting the camera for this scanner tab."
+
+  defp camera_runtime_default_message(:running),
+    do: "Camera is live and ready to decode QR codes."
+
+  defp camera_runtime_default_message(:paused),
+    do: "Camera is paused. Return to this page or reconnect to continue scanning."
+
+  defp camera_runtime_default_message(:recovering),
+    do: "Camera is reconnecting after the browser changed state."
+
+  defp camera_runtime_default_message(:error),
+    do: "Camera recovery failed. Reconnect the camera or re-check permission."
+
+  defp camera_runtime_default_message(_),
+    do: "Camera is idle. Start scanning when ready."
+
+  defp camera_runtime_status_label(:starting), do: "Camera starting"
+  defp camera_runtime_status_label(:running), do: "Camera running"
+  defp camera_runtime_status_label(:paused), do: "Camera paused"
+  defp camera_runtime_status_label(:recovering), do: "Camera reconnecting"
+  defp camera_runtime_status_label(:error), do: "Camera needs attention"
+  defp camera_runtime_status_label(_), do: "Camera idle"
+
+  defp camera_runtime_alert_kind(:running), do: :success
+  defp camera_runtime_alert_kind(:paused), do: :warning
+  defp camera_runtime_alert_kind(:recovering), do: :info
+  defp camera_runtime_alert_kind(:error), do: :danger
+  defp camera_runtime_alert_kind(:starting), do: :info
+  defp camera_runtime_alert_kind(_), do: :info
+
+  defp camera_runtime_needs_reconnect?(state) when state in [:paused, :recovering, :error],
+    do: true
+
+  defp camera_runtime_needs_reconnect?(_), do: false
+
+  defp camera_reconnect_button_color(state) when state in [:paused, :recovering, :error],
+    do: "success"
+
+  defp camera_reconnect_button_color(_), do: "natural"
+
+  defp camera_reconnect_button_variant(state) when state in [:paused, :recovering, :error],
+    do: "shadow"
+
+  defp camera_reconnect_button_variant(_), do: "bordered"
+
+  defp camera_runtime_support_copy(%{state: state, desired_active: true})
+       when state in [:paused, :recovering] do
+    "The scanner will try to restore this camera session automatically when the page becomes active again."
+  end
+
+  defp camera_runtime_support_copy(%{state: :error}) do
+    "If the preview goes black or freezes, reconnect the camera first. Re-check permission if the browser blocked access."
+  end
+
+  defp camera_runtime_support_copy(%{desired_active: true}) do
+    "This tab will keep trying to restore the camera while the scanner session stays active."
+  end
+
+  defp camera_runtime_support_copy(_runtime) do
+    "Start scanning when you need the camera. Stop or leave the page to release it cleanly."
+  end
 
   defp apply_optimistic_scan_metrics(socket, mode) do
     current_stats = socket.assigns.stats || %{total: 0, checked_in: 0, pending: 0}
