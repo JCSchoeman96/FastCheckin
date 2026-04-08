@@ -178,15 +178,6 @@ function buildConstantArrivalScenario(prefix, exec, fallbacks = {}) {
   };
 }
 
-function buildConstantVusScenario(prefix, exec, fallbacks = {}) {
-  return {
-    executor: "constant-vus",
-    vus: envInt(`${prefix}_VUS`, envInt(fallbacks.vus, 20)),
-    duration: envString(`${prefix}_DURATION`, envString(fallbacks.duration, "5m")),
-    exec,
-  };
-}
-
 function buildRampingArrivalScenario(prefix, exec, defaults, fallbacks = {}) {
   return {
     executor: "ramping-arrival-rate",
@@ -321,9 +312,11 @@ function buildScenarioCatalog() {
       ],
       scenarios: {
         perf_auth_churn: {
-          definition: buildConstantVusScenario("PERF_AUTH_CHURN", "perfAuthChurn", {
-            vus: "SOAK_PREALLOCATED_VUS",
-            duration: "SOAK_DURATION",
+          definition: buildConstantArrivalScenario("PERF_AUTH_CHURN", "perfAuthChurn", {
+            rate: "PERF_SOAK_ENDURANCE_RATE",
+            duration: "PERF_SOAK_ENDURANCE_DURATION",
+            preAllocatedVUs: "PERF_SOAK_ENDURANCE_PREALLOCATED_VUS",
+            maxVUs: "PERF_SOAK_ENDURANCE_MAX_VUS",
           }),
           requestType: "scan",
           slice: "baseline_valid",
@@ -647,8 +640,6 @@ function buildMixProfile(prefix, defaults) {
     attendee_sync: envInt(`${prefix}_ATTENDEE_SYNC_WEIGHT`, defaults.attendee_sync || 0) || 0,
     business_duplicate:
       envInt(`${prefix}_BUSINESS_DUPLICATE_WEIGHT`, defaults.business_duplicate || 0) || 0,
-    force_refresh_success:
-      envInt(`${prefix}_FORCE_REFRESH_SUCCESS_WEIGHT`, defaults.force_refresh_success || 0) || 0,
     invalid: envInt(`${prefix}_INVALID_WEIGHT`, defaults.invalid || 0) || 0,
     replay_duplicate:
       envInt(`${prefix}_REPLAY_DUPLICATE_WEIGHT`, defaults.replay_duplicate || 0) || 0,
@@ -677,11 +668,10 @@ function buildMixProfiles() {
       invalid: 2,
     }),
     perf_auth_churn: buildMixProfile("PERF_AUTH_CHURN_MIX", {
-      success: 82,
+      success: 90,
       replay_duplicate: 5,
       business_duplicate: 3,
       invalid: 2,
-      force_refresh_success: 8,
     }),
     perf_duplicate_heavy: buildMixProfile("PERF_DUPLICATE_HEAVY_MIX", {
       success: 45,
@@ -697,11 +687,9 @@ function buildMixProfiles() {
     }),
     perf_soak_endurance: buildMixProfile("PERF_SOAK_ENDURANCE_MIX", {
       success: 90,
-      replay_duplicate: 3,
-      business_duplicate: 3,
+      replay_duplicate: 4,
+      business_duplicate: 4,
       invalid: 2,
-      force_refresh_success: 1,
-      attendee_sync: 1,
     }),
     perf_sync_scan_mixed: buildMixProfile("PERF_SYNC_SCAN_MIXED_MIX", {
       success: 90,
@@ -796,27 +784,11 @@ function requiresDeviceBootstrap(selectedSuites) {
   return selectedSuites.some((selection) => selection.requiresDeviceBootstrap);
 }
 
-function requiredDeviceCount(selectedSuites, scenarios) {
-  const required = selectedSuites.reduce((maxCount, selection) => {
-    if (!selection.requiresDeviceBootstrap) {
-      return maxCount;
-    }
-
-    return selection.concreteScenarioKeys.reduce((suiteMax, scenarioKey) => {
-      return Math.max(suiteMax, scenarioMaxVus(scenarios[scenarioKey]));
-    }, maxCount);
-  }, 1);
-
-  const configured = envInt("PERF_DEVICE_COUNT", required);
+function requiredDeviceCount(_selectedSuites, _scenarios) {
+  const configured = envInt("PERF_DEVICE_COUNT", 1);
 
   if (!Number.isInteger(configured) || configured <= 0) {
     throw new Error("PERF_DEVICE_COUNT must be a positive integer");
-  }
-
-  if (requiresDeviceBootstrap(selectedSuites) && configured < required) {
-    throw new Error(
-      `PERF_DEVICE_COUNT (${configured}) must be at least the maximum selected scenario VUs (${required})`
-    );
   }
 
   return configured;
@@ -838,14 +810,21 @@ const deviceCount = requiresDeviceBootstrap(selectedSuites)
   ? requiredDeviceCount(selectedSuites, scenarios)
   : 1;
 const mixProfiles = buildMixProfiles();
+const authChurnForceRefreshIntervalSeconds = Math.max(
+  envInt("PERF_AUTH_CHURN_FORCE_REFRESH_INTERVAL_SECONDS", 60) || 60,
+  1
+);
+const authChurnRate = Number(scenarios.perf_auth_churn?.rate || 0);
+const authChurnRequestsPerForcedRefresh = Math.max(
+  1,
+  Math.round((authChurnRate * authChurnForceRefreshIntervalSeconds) / Math.max(deviceCount, 1))
+);
 const thresholdPackageConfig = {
   authChurn: {
-    clientTtlSeconds: envInt("PERF_AUTH_CHURN_CLIENT_TTL_SECONDS", 45),
-    minRefreshParticipationRatio: envFloat(
-      "PERF_AUTH_CHURN_MIN_REFRESH_PARTICIPATION_RATIO",
-      0.25
-    ),
+    forceRefreshIntervalSeconds: authChurnForceRefreshIntervalSeconds,
+    requestsPerForcedRefresh: authChurnRequestsPerForcedRefresh,
   },
+  deviceCount,
   selectedSuites,
   scenarios,
 };
@@ -861,6 +840,7 @@ export const config = {
   },
   credential: requireString("CREDENTIAL", rawManifest?.credential),
   deprecatedAliases,
+  authChurn: thresholdPackageConfig.authChurn,
   deviceCount,
   deviceHeader: envString("PERF_DEVICE_HEADER", "x-perf-device-id"),
   deviceIpPrefix: envString("PERF_DEVICE_IP_PREFIX", "10.250"),
@@ -871,6 +851,9 @@ export const config = {
   manifest: rawManifest,
   mixProfiles,
   networkProfile: resolveNetworkProfile(envString("NETWORK_PROFILE", "normal")),
+  requireProxyIdentityGate: selectedSuites.some((selection) =>
+    ["performance", "network", "abuse"].includes(selection.family)
+  ),
   recoveryBaseUrl: envString("RECOVERY_BASE_URL", null),
   replay: rawManifest?.idempotency_replay || {
     reserve_count: Math.min(5, fallbackSlices.baseline_valid.count),

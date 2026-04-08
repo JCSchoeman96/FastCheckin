@@ -38,6 +38,35 @@ function buildMetricTags(authContext = {}, reason = "bootstrap") {
   };
 }
 
+export function responseHeaderValue(response, headerName) {
+  const headers = response?.headers;
+
+  if (!headers || !headerName) {
+    return null;
+  }
+
+  const directMatch = headers[headerName] ?? headers[String(headerName).toLowerCase()];
+  let rawValue = directMatch;
+
+  if (rawValue === undefined) {
+    const matchedKey = Object.keys(headers).find(
+      (key) => String(key).toLowerCase() === String(headerName).toLowerCase()
+    );
+
+    rawValue = matchedKey ? headers[matchedKey] : null;
+  }
+
+  if (Array.isArray(rawValue)) {
+    return rawValue.length > 0 ? rawValue[0] : null;
+  }
+
+  if (typeof rawValue === "string") {
+    return rawValue;
+  }
+
+  return rawValue === undefined || rawValue === null ? null : String(rawValue);
+}
+
 function computeRefreshAt(expiresAt, now = Date.now()) {
   const ttlMs = Math.max(expiresAt - now, 1_000);
   const maxLeadMs = Math.min(300_000, Math.max(30_000, Math.floor(ttlMs * 0.05)));
@@ -56,16 +85,7 @@ function buildHeaders(deviceId, extraHeaders = {}) {
   };
 }
 
-function effectiveRefreshExpiry(expiresAt, authContext = {}, now = Date.now()) {
-  if (authContext.canonical_scenario !== "perf_auth_churn") {
-    return expiresAt;
-  }
-
-  const clientTtlMs = Math.max(config.thresholdPackageConfig.authChurn.clientTtlSeconds, 1) * 1000;
-  return Math.min(expiresAt, now + clientTtlMs);
-}
-
-function applySession(deviceBootstrap, token, expiresInSeconds, authContext = {}) {
+function applySession(deviceBootstrap, token, expiresInSeconds) {
   const now = Date.now();
   const expiresAt = now + Math.max(Number(expiresInSeconds || 0), 1) * 1000;
   const claims = decodeJwtPayload(token);
@@ -75,7 +95,7 @@ function applySession(deviceBootstrap, token, expiresInSeconds, authContext = {}
     device_index: deviceBootstrap.device_index,
     expires_at: expiresAt,
     jti: claims.jti || deviceBootstrap.jti || null,
-    refresh_at: computeRefreshAt(effectiveRefreshExpiry(expiresAt, authContext, now), now),
+    refresh_at: computeRefreshAt(expiresAt, now),
     synthetic_ip: deviceBootstrap.synthetic_ip || null,
     token,
   };
@@ -103,20 +123,16 @@ function importBootstrapSession(deviceBootstrap) {
   deviceSessions.set(deviceBootstrap.device_id, session);
 }
 
-function maybeTightenRefreshWindow(session, authContext = {}) {
-  if (authContext.canonical_scenario !== "perf_auth_churn") {
-    return session;
+function poisonBearerToken(token) {
+  return `poisoned-${String(token || "token")}`;
+}
+
+function initialAuthorizationToken(session, authOptions = {}) {
+  if (authOptions.poisonToken) {
+    return poisonBearerToken(session.token);
   }
 
-  const now = Date.now();
-  const desiredRefreshAt = computeRefreshAt(effectiveRefreshExpiry(session.expires_at, authContext, now), now);
-
-  if (desiredRefreshAt < session.refresh_at) {
-    session.refresh_at = desiredRefreshAt;
-    deviceSessions.set(session.device_id, session);
-  }
-
-  return session;
+  return session.token;
 }
 
 function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap", authContext = {}) {
@@ -167,8 +183,9 @@ function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap", authContext
     return { response, session: null };
   }
 
-  const syntheticIp = response.headers?.["X-Perf-Client-Ip"]?.[0] || deviceBootstrap.synthetic_ip;
-  const session = applySession({ ...deviceBootstrap, synthetic_ip: syntheticIp }, token, expiresIn, authContext);
+  const syntheticIp =
+    responseHeaderValue(response, "X-Perf-Client-Ip") || deviceBootstrap.synthetic_ip;
+  const session = applySession({ ...deviceBootstrap, synthetic_ip: syntheticIp }, token, expiresIn);
 
   return { response, session };
 }
@@ -176,10 +193,7 @@ function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap", authContext
 function ensureDeviceSession(baseUrl, deviceBootstrap, authContext = {}) {
   importBootstrapSession(deviceBootstrap);
 
-  const current = maybeTightenRefreshWindow(
-    deviceSessions.get(deviceBootstrap.device_id) || null,
-    authContext
-  );
+  const current = deviceSessions.get(deviceBootstrap.device_id) || null;
 
   if (!current?.token) {
     const { session } = loginDevice(baseUrl, deviceBootstrap, "bootstrap", authContext);
@@ -199,17 +213,6 @@ function ensureDeviceSession(baseUrl, deviceBootstrap, authContext = {}) {
   }
 
   return session;
-}
-
-export function forceRefreshDevice(deviceBootstrap) {
-  const current = deviceSessions.get(deviceBootstrap.device_id);
-
-  if (!current) {
-    return;
-  }
-
-  current.refresh_at = 0;
-  deviceSessions.set(deviceBootstrap.device_id, current);
 }
 
 export function resetAuthState() {
@@ -265,6 +268,7 @@ export function requestWithDeviceAuth(
   deviceBootstrap
 ) {
   const authContext = params.tags || {};
+  const authOptions = params.auth || {};
   const session = ensureDeviceSession(baseUrl, deviceBootstrap, authContext);
 
   if (!session?.token) {
@@ -274,7 +278,7 @@ export function requestWithDeviceAuth(
   const requestParams = {
     ...params,
     headers: {
-      Authorization: `Bearer ${session.token}`,
+      Authorization: `Bearer ${initialAuthorizationToken(session, authOptions)}`,
       ...buildHeaders(deviceBootstrap.device_id, params.headers || {}),
     },
   };
@@ -315,26 +319,35 @@ export function requestWithDeviceAuth(
   return response;
 }
 
-export function getAttendees(baseUrl, deviceBootstrap, requestTags = {}) {
+export function getAttendees(baseUrl, deviceBootstrap, requestTags = {}, requestOptions = {}) {
   return requestWithDeviceAuth(
     "GET",
     baseUrl,
     "/api/v1/mobile/attendees",
     null,
     {
+      ...requestOptions,
       tags: { endpoint: "mobile_attendees", ...requestTags },
     },
     deviceBootstrap
   );
 }
 
-export function postScans(baseUrl, scans, requestTags = {}, deviceBootstrap, extraHeaders = {}) {
+export function postScans(
+  baseUrl,
+  scans,
+  requestTags = {},
+  deviceBootstrap,
+  extraHeaders = {},
+  requestOptions = {}
+) {
   return requestWithDeviceAuth(
     "POST",
     baseUrl,
     "/api/v1/mobile/scans",
     { scans },
     {
+      ...requestOptions,
       headers: extraHeaders,
       tags: { endpoint: "mobile_scans", ...requestTags },
     },
