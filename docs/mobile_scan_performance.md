@@ -22,6 +22,13 @@ The harness is event-readiness focused. It now supports explicit suite families 
 - diagnostics
 - degraded-network runs tagged through an external transport-shaping layer
 
+The harness now treats logical device count separately from executor headroom:
+
+- `PERF_DEVICE_COUNT` controls logical scanner identities
+- `preAllocatedVUs` and `maxVUs` control k6 worker slack
+
+That means endurance and auth-churn runs can keep `20` logical scanners while allocating more than `20` VUs to avoid dropped iterations from executor starvation.
+
 The primary runtime target is still `POST /api/v1/mobile/scans` in `redis_authoritative` mode.
 
 Current recorded local baselines:
@@ -208,13 +215,17 @@ Auth churn:
 k6 run performance/k6/mobile_scans.js ^
   -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
   -e PERF_BASE_URL=http://127.0.0.1:4100 ^
-  -e PERF_DEVICE_COUNT=64 ^
-  -e PERF_AUTH_CHURN_CLIENT_TTL_SECONDS=45 ^
+  -e PERF_DEVICE_COUNT=20 ^
+  -e PERF_AUTH_CHURN_RATE=20 ^
+  -e PERF_AUTH_CHURN_DURATION=15m ^
+  -e PERF_AUTH_CHURN_PREALLOCATED_VUS=40 ^
+  -e PERF_AUTH_CHURN_MAX_VUS=60 ^
+  -e PERF_AUTH_CHURN_FORCE_REFRESH_INTERVAL_SECONDS=60 ^
   -e K6_ENFORCE_THRESHOLDS=true ^
   -e SCENARIOS=perf_auth_churn
 ```
 
-This suite is only meaningful if refresh activity is real. The acceptance report must show non-trivial `auth refreshes` and must pass the deterministic minimum-refresh gate.
+`perf_auth_churn` deliberately induces one forced `401 -> login -> retry` recovery per device per minute by default. Use this suite to isolate login throttling and protected-route auth recovery from the normal scan-endurance path.
 
 Mixed attendee sync plus scan load:
 
@@ -254,12 +265,16 @@ Endurance soak:
 k6 run performance/k6/mobile_scans.js ^
   -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
   -e PERF_BASE_URL=http://127.0.0.1:4100 ^
-  -e PERF_DEVICE_COUNT=64 ^
-  -e PERF_SOAK_ENDURANCE_RATE=800 ^
-  -e PERF_SOAK_ENDURANCE_DURATION=2h ^
+  -e PERF_DEVICE_COUNT=20 ^
+  -e PERF_SOAK_ENDURANCE_RATE=20 ^
+  -e PERF_SOAK_ENDURANCE_DURATION=1h ^
+  -e PERF_SOAK_ENDURANCE_PREALLOCATED_VUS=40 ^
+  -e PERF_SOAK_ENDURANCE_MAX_VUS=60 ^
   -e K6_ENFORCE_THRESHOLDS=true ^
   -e SCENARIOS=perf_soak_endurance
 ```
+
+`perf_soak_endurance` is scan-oriented. It keeps success, replay-duplicate, business-duplicate, and invalid outcomes in the mix, but it does not deliberately induce refresh churn or attendee-sync traffic.
 
 Abuse-control:
 
@@ -360,6 +375,20 @@ Do not start long soak until shorter runs meet both conditions:
 
 The acceptance report includes blocked counts, blocked rate, and the top offending device ids.
 
+## Recommended Run Order
+
+Use this sequence for the next local validation pass:
+
+1. Smoke and proxy-identity gate using a short `perf_fresh_steady` run through `http://127.0.0.1:4100`
+2. Clean `perf_soak_endurance`
+3. Isolated `perf_auth_churn`
+
+Do not evaluate login throttling from the endurance soak. Treat login throttling as meaningful only after:
+
+- the proxy identity gate confirms distinct synthetic IPs across logical devices
+- the clean endurance soak stays scan-oriented
+- the auth path is exercised in `perf_auth_churn` on its own
+
 ## Duration Guidance
 
 - local shakeout soak: `30` to `60` minutes, only after the distortion gate passes
@@ -400,9 +429,15 @@ For `perf_sync_scan_mixed`, the report must show:
 
 For `perf_auth_churn`, the report must show:
 
-- real refresh activity
+- controlled forced-refresh activity
 - deterministic refresh-gate pass or fail
 - refresh failure count and rate
+
+For `perf_soak_endurance`, the report should show:
+
+- `auth refreshes` near zero
+- no deliberate auth-churn pressure
+- scan-path stability interpreted separately from auth-path stability
 
 ## Observability
 
@@ -414,6 +449,7 @@ For the capped Docker path, validate:
 - all k6 traffic goes through the proxy base URL
 - proxy response headers expose `X-Perf-Device-Id` and `X-Perf-Client-Ip`
 - application logs show distributed `10.250.x.y` forwarded IPs
+- bootstrapped devices in `setup_data.devices[*].synthetic_ip` are distinct across the configured logical device pool
 
 Supporting infrastructure data during runs:
 

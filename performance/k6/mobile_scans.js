@@ -3,11 +3,11 @@ import { check } from "k6";
 
 import {
   bootstrapDevicePool,
-  forceRefreshDevice,
   getAttendees,
   postScans,
   rawLogin,
   resetAuthState,
+  responseHeaderValue,
 } from "./lib/auth.js";
 import { recordResponse } from "./lib/classify.js";
 import { buildOptions, config } from "./lib/config.js";
@@ -47,7 +47,7 @@ function currentScenarioContext() {
 }
 
 function currentCapacityDevice(setupData) {
-  const deviceIndex = (exec.vu.idInTest - 1) % setupData.devices.length;
+  const deviceIndex = exec.scenario.iterationInTest % setupData.devices.length;
   return setupData.devices[deviceIndex];
 }
 
@@ -63,6 +63,39 @@ function requireNonAuthStatus(response, description) {
   return check(response, {
     [`${description} returned a non-auth response`]: (res) => res.status !== 401,
   });
+}
+
+function assertTrustedProxyHeaders(response, device, description) {
+  const proxiedDeviceId = responseHeaderValue(response, "X-Perf-Device-Id");
+  const proxiedIp = responseHeaderValue(response, "X-Perf-Client-Ip");
+
+  return check(response, {
+    [`${description} preserved device identity via proxy`]: () => proxiedDeviceId === device.device_id,
+    [`${description} used synthetic ${config.deviceIpPrefix}.x.y client IP`]: () =>
+      typeof proxiedIp === "string" &&
+      proxiedIp.startsWith(`${config.deviceIpPrefix}.`) &&
+      proxiedIp === device.synthetic_ip,
+  });
+}
+
+function validateBootstrappedDevices(devices) {
+  const distinctIps = new Set();
+
+  for (const device of devices) {
+    if (typeof device.synthetic_ip !== "string" || !device.synthetic_ip.startsWith(`${config.deviceIpPrefix}.`)) {
+      throw new Error(
+        `Perf proxy identity bootstrap failed for ${device.device_id}: synthetic IP '${device.synthetic_ip}' is invalid`
+      );
+    }
+
+    distinctIps.add(device.synthetic_ip);
+  }
+
+  if (distinctIps.size !== config.deviceCount) {
+    throw new Error(
+      `Perf proxy identity bootstrap failed: expected ${config.deviceCount} distinct synthetic IPs, got ${distinctIps.size}`
+    );
+  }
 }
 
 function requestTags(context, overrides = {}) {
@@ -89,17 +122,22 @@ function recordContext(context, device, requestType) {
   };
 }
 
-function postSingleScan(baseUrl, scan, context, device, extraHeaders = {}) {
+function postSingleScan(baseUrl, scan, context, device, extraHeaders = {}, requestOptions = {}) {
   const response = postScans(
     baseUrl,
     [scan],
     requestTags(context, { request_type: "scan" }),
     device,
-    extraHeaders
+    extraHeaders,
+    requestOptions
   );
   const payload = recordResponse(response, recordContext(context, device, "scan"));
 
   requireNonAuthStatus(response, context.scenario_key);
+
+  if (config.requireProxyIdentityGate && exec.scenario.iterationInTest === 0) {
+    assertTrustedProxyHeaders(response, device, context.scenario_key);
+  }
 
   return { payload, response };
 }
@@ -109,7 +147,26 @@ function requestAttendees(baseUrl, context, device) {
   recordResponse(response, recordContext(context, device, "attendees"));
   requireNonAuthStatus(response, context.scenario_key);
 
+  if (config.requireProxyIdentityGate && exec.scenario.iterationInTest === 0) {
+    assertTrustedProxyHeaders(response, device, context.scenario_key);
+  }
+
   return response;
+}
+
+function shouldForceUnauthorized(context, iteration) {
+  if (context.canonical_scenario !== "perf_auth_churn") {
+    return false;
+  }
+
+  const cadence = Math.max(config.authChurn.requestsPerForcedRefresh || 0, 0);
+
+  if (cadence < 1) {
+    return false;
+  }
+
+  const deviceIteration = Math.floor(iteration / config.deviceCount);
+  return (deviceIteration + 1) % cadence === 0;
 }
 
 function primeDuplicateDatasets(baseUrl, setupData) {
@@ -150,16 +207,23 @@ function runProfiledScenario(setupData) {
   const iteration = exec.scenario.iterationInTest;
   const operation = resolveScenarioOperation(context.canonical_scenario, iteration);
 
-  if (operation.forceRefresh) {
-    forceRefreshDevice(device);
-  }
-
   if (operation.kind === "attendee_sync") {
     requestAttendees(config.baseUrl, context, device);
     return;
   }
 
-  postSingleScan(config.baseUrl, buildOperationScan(context, iteration, operation), context, device);
+  postSingleScan(
+    config.baseUrl,
+    buildOperationScan(context, iteration, operation),
+    context,
+    device,
+    {},
+    {
+      auth: {
+        poisonToken: shouldForceUnauthorized(context, iteration),
+      },
+    }
+  );
 }
 
 export function setup() {
@@ -171,6 +235,10 @@ export function setup() {
 
   const devices = bootstrapDevicePool(config.baseUrl);
   const setupData = { devices };
+
+  if (config.requireProxyIdentityGate) {
+    validateBootstrappedDevices(devices);
+  }
 
   if (config.shouldPrimeDuplicateDatasets) {
     primeDuplicateDatasets(config.baseUrl, setupData);

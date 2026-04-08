@@ -1,17 +1,7 @@
 import { config } from "./config.js";
 
 function normalizeOperation(operation) {
-  if (operation === "force_refresh_success") {
-    return {
-      forceRefresh: true,
-      kind: "success",
-    };
-  }
-
-  return {
-    forceRefresh: false,
-    kind: operation,
-  };
+  return { kind: operation };
 }
 
 function operationEntries(profile) {
@@ -26,7 +16,7 @@ export function resolveScenarioOperation(canonicalScenario, iteration) {
   const totalWeight = entries.reduce((sum, [_operation, weight]) => sum + Number(weight), 0);
 
   if (totalWeight <= 0) {
-    return { forceRefresh: false, kind: "success" };
+    return { kind: "success" };
   }
 
   let cursor = iteration % totalWeight;
@@ -39,5 +29,5 @@ export function resolveScenarioOperation(canonicalScenario, iteration) {
     }
   }
 
-  return { forceRefresh: false, kind: "success" };
+  return { kind: "success" };
 }

@@ -211,16 +211,35 @@ function authChurnMinimumRefreshes(config) {
     return 1;
   }
 
-  const vus = scenario.vus || scenario.preAllocatedVUs || 1;
   const duration = durationSeconds(scenario.duration);
-  const ttlSeconds = Math.max(config.authChurn.clientTtlSeconds || 45, 1);
-  const cyclesPerVu = Math.max(1, Math.floor(duration / ttlSeconds));
-  const ratio = Math.min(
-    1,
-    Math.max(config.authChurn.minRefreshParticipationRatio || 0.25, 0.05)
-  );
+  const requestsPerDevice = (Number(scenario.rate || 0) * duration) / Math.max(config.deviceCount, 1);
+  const cadence = Math.max(config.authChurn.requestsPerForcedRefresh || 1, 1);
+  const expectedRefreshes = Math.floor(requestsPerDevice / cadence) * Math.max(config.deviceCount, 1);
 
-  return Math.max(1, Math.floor(vus * cyclesPerVu * ratio));
+  if (expectedRefreshes <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.floor(expectedRefreshes * 0.8));
+}
+
+function authChurnMaximumRefreshes(config) {
+  const scenario = config.scenarios.perf_auth_churn;
+
+  if (!scenario) {
+    return 1;
+  }
+
+  const duration = durationSeconds(scenario.duration);
+  const requestsPerDevice = (Number(scenario.rate || 0) * duration) / Math.max(config.deviceCount, 1);
+  const cadence = Math.max(config.authChurn.requestsPerForcedRefresh || 1, 1);
+  const expectedRefreshes = Math.floor(requestsPerDevice / cadence) * Math.max(config.deviceCount, 1);
+
+  if (expectedRefreshes <= 0) {
+    return Math.max(config.deviceCount, 1);
+  }
+
+  return Math.ceil(expectedRefreshes * 1.25) + Math.max(config.deviceCount, 1);
 }
 
 function suiteSections(selection) {
@@ -313,6 +332,14 @@ function suiteRules(selection, sections, family, config) {
           "count",
           ">=",
           authChurnMinimumRefreshes(config),
+          "count>=0"
+        ),
+        rule(
+          "maximum refresh activity",
+          family.authRefreshes.key,
+          "count",
+          "<=",
+          authChurnMaximumRefreshes(config),
           "count>=0"
         )
       );
