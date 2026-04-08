@@ -284,6 +284,18 @@ export function diagnosticLegacySmoke(setupData) {
   });
 }
 
+export function networkLatencyDegraded(setupData) {
+  runProfiledScenario(setupData);
+}
+
+export function networkJitterDegraded(setupData) {
+  runProfiledScenario(setupData);
+}
+
+export function networkLossRecovery(setupData) {
+  runProfiledScenario(setupData);
+}
+
 export function handleSummary(data) {
   return buildSummary(data);
 }

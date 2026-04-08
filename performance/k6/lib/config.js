@@ -1,3 +1,4 @@
+import { resolveNetworkProfile } from "./network_profile.js";
 import { buildThresholdPackage } from "./thresholds.js";
 
 function resolveManifestPath(path) {
@@ -255,7 +256,7 @@ function buildScenarioCatalog() {
       suite: "fresh_steady",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: true,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -282,7 +283,7 @@ function buildScenarioCatalog() {
       suite: "duplicate_heavy",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: true,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -309,7 +310,7 @@ function buildScenarioCatalog() {
       suite: "auth_churn",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: true,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -334,7 +335,7 @@ function buildScenarioCatalog() {
       suite: "sync_scan_mixed",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: true,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -381,7 +382,7 @@ function buildScenarioCatalog() {
       suite: "spike_batch",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: false,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -403,7 +404,7 @@ function buildScenarioCatalog() {
       suite: "soak_endurance",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: true,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -430,7 +431,7 @@ function buildScenarioCatalog() {
       suite: "login",
       requiresDeviceBootstrap: false,
       shouldPrimeDuplicates: false,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "login",
@@ -457,7 +458,7 @@ function buildScenarioCatalog() {
       suite: "single_device",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: false,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -484,7 +485,7 @@ function buildScenarioCatalog() {
       suite: "enqueue_failure",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: false,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -511,7 +512,7 @@ function buildScenarioCatalog() {
       suite: "legacy_smoke",
       requiresDeviceBootstrap: true,
       shouldPrimeDuplicates: false,
-      networkProfile: { name: "normal" },
+      networkProfile: resolveNetworkProfile("normal"),
       sections: [
         {
           key: "scan",
@@ -528,6 +529,99 @@ function buildScenarioCatalog() {
             iterations: 1,
             exec: "diagnosticLegacySmoke",
           },
+          requestType: "scan",
+          slice: "baseline_valid",
+        },
+      },
+    },
+    network_latency_degraded: {
+      family: "network",
+      suite: "latency_degraded",
+      requiresDeviceBootstrap: true,
+      shouldPrimeDuplicates: true,
+      networkProfile: resolveNetworkProfile("latency"),
+      sections: [
+        {
+          key: "scan",
+          label: "Scan Executor",
+          requestType: "scan",
+          scenarioKey: "network_latency_degraded",
+        },
+      ],
+      scenarios: {
+        network_latency_degraded: {
+          definition: buildConstantArrivalScenario(
+            "NETWORK_LATENCY_DEGRADED",
+            "networkLatencyDegraded",
+            {
+              rate: "BASELINE_RATE",
+              duration: "BASELINE_DURATION",
+              preAllocatedVUs: "BASELINE_PREALLOCATED_VUS",
+              maxVUs: "BASELINE_MAX_VUS",
+            }
+          ),
+          requestType: "scan",
+          slice: "baseline_valid",
+        },
+      },
+    },
+    network_jitter_degraded: {
+      family: "network",
+      suite: "jitter_degraded",
+      requiresDeviceBootstrap: true,
+      shouldPrimeDuplicates: true,
+      networkProfile: resolveNetworkProfile("jitter"),
+      sections: [
+        {
+          key: "scan",
+          label: "Scan Executor",
+          requestType: "scan",
+          scenarioKey: "network_jitter_degraded",
+        },
+      ],
+      scenarios: {
+        network_jitter_degraded: {
+          definition: buildConstantArrivalScenario(
+            "NETWORK_JITTER_DEGRADED",
+            "networkJitterDegraded",
+            {
+              rate: "BASELINE_RATE",
+              duration: "BASELINE_DURATION",
+              preAllocatedVUs: "BASELINE_PREALLOCATED_VUS",
+              maxVUs: "BASELINE_MAX_VUS",
+            }
+          ),
+          requestType: "scan",
+          slice: "baseline_valid",
+        },
+      },
+    },
+    network_loss_recovery: {
+      family: "network",
+      suite: "loss_recovery",
+      requiresDeviceBootstrap: true,
+      shouldPrimeDuplicates: true,
+      networkProfile: resolveNetworkProfile("loss_recovery"),
+      sections: [
+        {
+          key: "scan",
+          label: "Scan Executor",
+          requestType: "scan",
+          scenarioKey: "network_loss_recovery",
+        },
+      ],
+      scenarios: {
+        network_loss_recovery: {
+          definition: buildConstantArrivalScenario(
+            "NETWORK_LOSS_RECOVERY",
+            "networkLossRecovery",
+            {
+              rate: "BASELINE_RATE",
+              duration: "BASELINE_DURATION",
+              preAllocatedVUs: "BASELINE_PREALLOCATED_VUS",
+              maxVUs: "BASELINE_MAX_VUS",
+            }
+          ),
           requestType: "scan",
           slice: "baseline_valid",
         },
@@ -564,6 +658,24 @@ function buildMixProfile(prefix, defaults) {
 
 function buildMixProfiles() {
   return {
+    network_jitter_degraded: buildMixProfile("NETWORK_JITTER_DEGRADED_MIX", {
+      success: 95,
+      replay_duplicate: 2,
+      business_duplicate: 2,
+      invalid: 1,
+    }),
+    network_latency_degraded: buildMixProfile("NETWORK_LATENCY_DEGRADED_MIX", {
+      success: 95,
+      replay_duplicate: 2,
+      business_duplicate: 2,
+      invalid: 1,
+    }),
+    network_loss_recovery: buildMixProfile("NETWORK_LOSS_RECOVERY_MIX", {
+      success: 92,
+      replay_duplicate: 3,
+      business_duplicate: 3,
+      invalid: 2,
+    }),
     perf_auth_churn: buildMixProfile("PERF_AUTH_CHURN_MIX", {
       success: 82,
       replay_duplicate: 5,
@@ -758,6 +870,7 @@ export const config = {
   invalidPrefix: requireString("INVALID_PREFIX", rawManifest?.invalid_prefix || `INVALID-${ticketPrefix}`),
   manifest: rawManifest,
   mixProfiles,
+  networkProfile: resolveNetworkProfile(envString("NETWORK_PROFILE", "normal")),
   recoveryBaseUrl: envString("RECOVERY_BASE_URL", null),
   replay: rawManifest?.idempotency_replay || {
     reserve_count: Math.min(5, fallbackSlices.baseline_valid.count),

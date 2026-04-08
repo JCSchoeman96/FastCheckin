@@ -403,6 +403,31 @@ function suiteRules(selection, sections, family, config) {
         rule("auth failures", family.authFailures.key, "count", "<", 1, "count>=0")
       );
       break;
+    case "network_latency_degraded":
+    case "network_jitter_degraded":
+    case "network_loss_recovery":
+      suiteRuleset.push(
+        rule("scan p95 latency", scan.selectors.httpReqDuration.key, "p(95)", "<", 2500, "max>=0", ["max"]),
+        rule(
+          "scan p99 latency",
+          scan.selectors.httpReqDuration.key,
+          "p(99)",
+          "<",
+          5000,
+          "max>=0",
+          ["max", "p(95)"]
+        ),
+        rule(
+          "retryable failure rate",
+          family.retryableFailureRate.key,
+          "rate",
+          "<",
+          0.05,
+          "rate>=0"
+        ),
+        rule("auth failures", family.authFailures.key, "count", "<", 1, "count>=0")
+      );
+      break;
     default:
       break;
   }
