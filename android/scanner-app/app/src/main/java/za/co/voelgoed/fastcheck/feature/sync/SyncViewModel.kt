@@ -31,6 +31,29 @@ class SyncViewModel @Inject constructor(
         performSync(isBootstrap = false, bootstrapEventId = null)
     }
 
+    fun beginAuthenticatedEventBootstrap(eventId: Long) {
+        if (_uiState.value.isSyncing) return
+
+        viewModelScope.launch {
+            val persistedStatus = syncRepository.currentSyncStatus()
+            if (persistedStatus != null) {
+                _currentEventSyncStatus.value = persistedStatus
+            }
+
+            if (persistedStatus?.eventId == eventId) {
+                _uiState.update { current ->
+                    current.copy(
+                        bootstrapStatus = BootstrapSyncStatus.Succeeded,
+                        bootstrapEventId = eventId
+                    )
+                }
+                return@launch
+            }
+
+            ensureBootstrapSyncForEvent(eventId, persistedStatus)
+        }
+    }
+
     fun refreshCurrentEventSyncStatus() {
         viewModelScope.launch {
             _currentEventSyncStatus.value = syncRepository.currentSyncStatus()
@@ -38,14 +61,21 @@ class SyncViewModel @Inject constructor(
     }
 
     fun ensureBootstrapSyncForEvent(eventId: Long) {
+        ensureBootstrapSyncForEvent(eventId, persistedStatus = null)
+    }
+
+    private fun ensureBootstrapSyncForEvent(
+        eventId: Long,
+        persistedStatus: AttendeeSyncStatus?
+    ) {
         if (_uiState.value.isSyncing) return
 
         viewModelScope.launch {
-            val persistedStatus = syncRepository.currentSyncStatus()
-            val currentStatus = persistedStatus ?: _currentEventSyncStatus.value
+            val resolvedPersistedStatus = persistedStatus ?: syncRepository.currentSyncStatus()
+            val currentStatus = resolvedPersistedStatus ?: _currentEventSyncStatus.value
 
-            if (persistedStatus != null) {
-                _currentEventSyncStatus.value = persistedStatus
+            if (resolvedPersistedStatus != null) {
+                _currentEventSyncStatus.value = resolvedPersistedStatus
             }
 
             if (currentStatus?.eventId == eventId) {

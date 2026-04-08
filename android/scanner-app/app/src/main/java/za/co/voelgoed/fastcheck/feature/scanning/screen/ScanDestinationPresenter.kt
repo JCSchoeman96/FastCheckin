@@ -113,22 +113,22 @@ class ScanDestinationPresenter(
         return when (syncUiState.bootstrapStatus) {
             BootstrapSyncStatus.Syncing ->
                 StatusChipUiModel(
-                    text = "Preparing attendee list",
+                    text = "Syncing attendee list",
                     tone = StatusTone.Info
-                ) to "Loading attendees for this event before scan confidence improves."
+                ) to "Preparing the attendee list for this event. This device is not ready for trusted green admission until sync completes."
 
             BootstrapSyncStatus.Failed ->
                 StatusChipUiModel(
-                    text = "Attendee list unavailable",
-                    tone = StatusTone.Warning
-                ) to "Scanning can continue, but attendee readiness is degraded until attendee data loads."
+                    text = "Sync failed - retry required",
+                    tone = StatusTone.Destructive
+                ) to "Attendee sync failed for this event. Retry sync before trusting green admission on this device."
 
             BootstrapSyncStatus.Succeeded,
             BootstrapSyncStatus.Idle ->
                 StatusChipUiModel(
-                    text = "Attendee list unavailable",
+                    text = "Attendee list not ready",
                     tone = StatusTone.Warning
-                ) to "No attendee cache is available for this event yet."
+                ) to "A trusted attendee cache is not available for this event yet. This device is not ready for trusted green admission."
         }
     }
 
@@ -204,12 +204,34 @@ class ScanDestinationPresenter(
     ): BannerUiModel? {
         val uploadState = queueUiState.uploadSemanticState
 
-        if (currentEventSyncStatus == null && syncUiState.bootstrapStatus == BootstrapSyncStatus.Failed) {
-            return BannerUiModel(
-                title = "Attendee list still unavailable",
-                message = "No attendee cache is available for this event yet. Scanner readiness and attendee readiness are separate until sync completes.",
-                tone = StatusTone.Warning
-            )
+        if (currentEventSyncStatus == null) {
+            return when (syncUiState.bootstrapStatus) {
+                BootstrapSyncStatus.Syncing ->
+                    BannerUiModel(
+                        title = "Syncing attendee list",
+                        message = "Preparing the attendee cache for this event. The device is not ready for trusted green admission until sync completes.",
+                        tone = StatusTone.Info
+                    )
+
+                BootstrapSyncStatus.Failed ->
+                    BannerUiModel(
+                        title = "Sync failed - retry required",
+                        message =
+                            syncUiState.errorMessage
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { "$it Retry attendee sync before using this device for trusted green admission." }
+                                ?: "Attendee sync failed for this event. Retry attendee sync before using this device for trusted green admission.",
+                        tone = StatusTone.Destructive
+                    )
+
+                BootstrapSyncStatus.Idle,
+                BootstrapSyncStatus.Succeeded ->
+                    BannerUiModel(
+                        title = "Attendee sync required",
+                        message = "This event does not have a trusted attendee cache yet. Complete attendee sync before relying on green admission on this device.",
+                        tone = StatusTone.Warning
+                    )
+            }
         }
 
         if (uploadState is SyncUiState.Offline && queueUiState.localQueueDepth > 0) {
