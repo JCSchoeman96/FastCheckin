@@ -29,6 +29,23 @@ edits are required to change environments.
 .\gradlew.bat :app:assembleRelease -PFASTCHECK_API_TARGET=release
 ```
 
+## Release Signing
+
+Release builds now bind signing from configured properties instead of hardcoded
+secrets in source control.
+
+- Supported key names include:
+  - `FASTCHECK_UPLOAD_STORE_FILE`
+  - `FASTCHECK_UPLOAD_STORE_PASSWORD`
+  - `FASTCHECK_UPLOAD_KEY_ALIAS`
+  - `FASTCHECK_UPLOAD_KEY_PASSWORD`
+- The Android build also accepts the older `FASTCHECK_SIGNING_*`,
+  `SIGNING_*`, and `RELEASE_*` variants for the same values.
+- Gradle command-line properties and environment variables are checked first.
+- As a local fallback, the app intentionally reads
+  `android/scanner-app/.gradle/gradle.properties` so machine-local signing
+  secrets can stay out of tracked files.
+
 ## Operational Notes
 
 - Release tasks must use `FASTCHECK_API_TARGET=release`.

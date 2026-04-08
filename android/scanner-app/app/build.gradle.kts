@@ -1,5 +1,7 @@
 import com.android.build.api.dsl.ApplicationExtension
+import java.io.File
 import java.net.URI
+import java.util.Properties
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -67,10 +69,118 @@ fun Project.requiredValidatedUrlProperty(name: String, allowedSchemes: Set<Strin
     optionalValidatedUrlProperty(name, allowedSchemes)
         ?: error("$name is required when FASTCHECK_API_TARGET selects this target.")
 
+val localGradleProperties =
+    Properties().apply {
+        val localGradlePropertiesFile = File(rootProject.projectDir, ".gradle/gradle.properties")
+
+        if (localGradlePropertiesFile.isFile) {
+            localGradlePropertiesFile.inputStream().use(::load)
+        }
+    }
+
+fun Project.optionalStringProperty(name: String): String? =
+    (findProperty(name) as String?)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+fun Project.optionalEnvProperty(name: String): String? =
+    System.getenv(name)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+fun Project.optionalLocalGradleProperty(name: String): String? =
+    localGradleProperties.getProperty(name)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+fun Project.optionalConfiguredString(vararg names: String): String? =
+    names.asSequence()
+        .mapNotNull { name ->
+            optionalStringProperty(name)
+                ?: optionalEnvProperty(name)
+                ?: optionalLocalGradleProperty(name)
+        }
+        .firstOrNull()
+
+fun normalizeSigningFilePath(rawPath: String): File {
+    val expandedHomePath =
+        if (rawPath.startsWith("~/")) {
+            "${System.getProperty("user.home")}/${rawPath.removePrefix("~/")}"
+        } else {
+            rawPath
+        }
+
+    return File(expandedHomePath).absoluteFile
+}
+
+data class ReleaseSigningConfig(
+    val storeFile: File,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String
+)
+
+val acceptedSigningStoreFileKeys =
+    listOf(
+        "FASTCHECK_UPLOAD_STORE_FILE",
+        "FASTCHECK_SIGNING_STORE_FILE",
+        "SIGNING_STORE_FILE",
+        "RELEASE_STORE_FILE"
+    )
+val acceptedSigningStorePasswordKeys =
+    listOf(
+        "FASTCHECK_UPLOAD_STORE_PASSWORD",
+        "FASTCHECK_SIGNING_STORE_PASSWORD",
+        "SIGNING_STORE_PASSWORD",
+        "RELEASE_STORE_PASSWORD"
+    )
+val acceptedSigningKeyAliasKeys =
+    listOf(
+        "FASTCHECK_UPLOAD_KEY_ALIAS",
+        "FASTCHECK_SIGNING_KEY_ALIAS",
+        "SIGNING_KEY_ALIAS",
+        "RELEASE_KEY_ALIAS"
+    )
+val acceptedSigningKeyPasswordKeys =
+    listOf(
+        "FASTCHECK_UPLOAD_KEY_PASSWORD",
+        "FASTCHECK_SIGNING_KEY_PASSWORD",
+        "SIGNING_KEY_PASSWORD",
+        "RELEASE_KEY_PASSWORD"
+    )
+
+val releaseSigningConfig =
+    project.optionalConfiguredString(*acceptedSigningStoreFileKeys.toTypedArray())?.let { rawStoreFile ->
+        val storeFile = normalizeSigningFilePath(rawStoreFile)
+        require(storeFile.isFile) {
+            "Release signing store file does not exist: ${storeFile.path}"
+        }
+
+        ReleaseSigningConfig(
+            storeFile = storeFile,
+            storePassword =
+                project.optionalConfiguredString(*acceptedSigningStorePasswordKeys.toTypedArray())
+                    ?: error(
+                        "Release signing requires one of ${acceptedSigningStorePasswordKeys.joinToString()}."
+                    ),
+            keyAlias =
+                project.optionalConfiguredString(*acceptedSigningKeyAliasKeys.toTypedArray())
+                    ?: error("Release signing requires one of ${acceptedSigningKeyAliasKeys.joinToString()}."),
+            keyPassword =
+                project.optionalConfiguredString(*acceptedSigningKeyPasswordKeys.toTypedArray())
+                    ?: error(
+                        "Release signing requires one of ${acceptedSigningKeyPasswordKeys.joinToString()}."
+                    )
+        )
+    }
+
 val requestedTasks = gradle.startParameter.taskNames.map { it.lowercase() }
 val isReleaseTaskRequested = requestedTasks.any { it.contains("release") }
 require(!isReleaseTaskRequested || fastcheckApiTarget == "release") {
     "Release tasks must use FASTCHECK_API_TARGET=release."
+}
+require(!isReleaseTaskRequested || releaseSigningConfig != null) {
+    "Release tasks require signing properties. Set one of ${acceptedSigningStoreFileKeys.joinToString()} plus the matching password and alias properties."
 }
 
 val releaseApiBaseUrl =
@@ -118,12 +228,24 @@ extensions.configure<ApplicationExtension>("android") {
         testInstrumentationRunner = "za.co.voelgoed.fastcheck.app.HiltTestRunner"
     }
 
+    signingConfigs {
+        releaseSigningConfig?.let { config ->
+            create("release") {
+                storeFile = config.storeFile
+                storePassword = config.storePassword
+                keyAlias = config.keyAlias
+                keyPassword = config.keyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("boolean", "ENABLE_HTTP_BASIC_LOGGING", "true")
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
             buildConfigField("boolean", "ENABLE_HTTP_BASIC_LOGGING", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
