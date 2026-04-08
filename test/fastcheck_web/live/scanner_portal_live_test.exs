@@ -153,6 +153,48 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
     end
   end
 
+  describe "camera recovery UI" do
+    test "shows recovery actions on the camera tab", %{conn: conn, event: event} do
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      assert has_element?(view, "#scanner-portal-reconnect-camera-button")
+      assert has_element?(view, "#scanner-portal-camera-recheck-button")
+      assert has_element?(view, "#scanner-portal-camera-sync-button")
+    end
+
+    test "updates camera runtime and permission state from hook payloads", %{
+      conn: conn,
+      event: event
+    } do
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view
+      |> element("#scanner-portal-camera-permission-hook")
+      |> render_hook("camera_permission_sync", %{
+        status: "denied",
+        message: "Camera access was denied. Enable it in your browser settings.",
+        remembered: true
+      })
+
+      assert render(view) =~ "Camera blocked"
+      assert render(view) =~ "Camera access was denied. Enable it in your browser settings."
+
+      view
+      |> element("#scanner-portal-qr-camera")
+      |> render_hook("camera_runtime_sync", %{
+        state: "error",
+        message: "Camera recovery failed. Reconnect the camera or re-check permission.",
+        recoverable: true,
+        desired_active: false
+      })
+
+      html = render(view)
+      assert html =~ "Camera needs attention"
+      assert html =~ "Reconnect the camera or re-check permission."
+      assert html =~ "Run incremental sync"
+    end
+  end
+
   defp insert_event(attrs \\ %{}) do
     api_key = "api-key-#{System.unique_integer([:positive])}"
     {:ok, encrypted_key} = Crypto.encrypt(api_key)

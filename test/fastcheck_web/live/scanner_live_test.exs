@@ -109,6 +109,47 @@ defmodule FastCheckWeb.ScannerLiveTest do
     end
   end
 
+  describe "camera recovery UI" do
+    test "renders reconnect and permission re-check actions", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      assert has_element?(view, "#reconnect-camera-scan")
+      assert has_element?(view, "#camera-recheck-button")
+      assert has_element?(view, "#camera-runtime-status")
+    end
+
+    test "updates permission and runtime state from hook payloads", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("#camera-permission-hook")
+      |> render_hook("camera_permission_sync", %{
+        status: "denied",
+        message: "Camera access is blocked in the browser.",
+        remembered: true
+      })
+
+      assert render(view) =~ "Camera access denied"
+      assert render(view) =~ "Camera access is blocked in the browser."
+
+      view
+      |> element("#qr-camera-scanner")
+      |> render_hook("camera_runtime_sync", %{
+        state: "recovering",
+        message: "Restoring camera after returning to the scanner...",
+        recoverable: true,
+        desired_active: true
+      })
+
+      html = render(view)
+      assert html =~ "Camera reconnecting"
+      assert html =~ "Restoring camera after returning to the scanner..."
+      assert html =~ "The scanner will try to restore this camera session automatically"
+    end
+  end
+
   defp insert_event(attrs \\ %{}) do
     attrs = Map.merge(@valid_event_attrs, attrs)
     api_key = Map.get(attrs, :tickera_api_key, @api_key)

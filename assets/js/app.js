@@ -142,38 +142,48 @@ const ScannerKeyboardShortcuts = {
 const CameraPermission = {
   mounted() {
     this.storageKey = this.el.dataset.storageKey || "fastcheck:camera-permission";
+    this.permissionStatus = null;
     this.handleCameraRequest = this.handleCameraRequest.bind(this);
+    this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
+    this.handlePageShow = this.handlePageShow.bind(this);
+    this.handlePermissionRefresh = this.handlePermissionRefresh.bind(this);
+
     this.el.addEventListener("click", this.handleCameraRequest);
-    this.syncStoredPreference();
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    window.addEventListener("pageshow", this.handlePageShow);
+    window.addEventListener("fastcheck:camera-permission-refresh", this.handlePermissionRefresh);
+
+    this.syncPermissionState();
   },
 
   destroyed() {
     this.el.removeEventListener("click", this.handleCameraRequest);
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    window.removeEventListener("pageshow", this.handlePageShow);
+    window.removeEventListener("fastcheck:camera-permission-refresh", this.handlePermissionRefresh);
+    this.detachPermissionWatcher();
   },
 
-  syncStoredPreference() {
-    const storedStatus = this.readStoredStatus();
-
-    if (storedStatus) {
-      this.pushStatus(storedStatus, this.defaultMessage(storedStatus), true);
-    } else {
-      this.pushStatus("unknown", null, false);
+  handleVisibilityChange() {
+    if (!document.hidden) {
+      this.syncPermissionState();
     }
   },
 
-  handleCameraRequest(event) {
-    const trigger = event.target.closest("[data-camera-request]");
-
-    if (!trigger) {
-      return;
-    }
-
-    event.preventDefault();
-    this.requestCameraPermission();
+  handlePageShow() {
+    this.syncPermissionState();
   },
 
-  requestCameraPermission() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  handlePermissionRefresh() {
+    this.syncPermissionState();
+  },
+
+  cameraSupported() {
+    return !!navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function";
+  },
+
+  async syncPermissionState() {
+    if (!this.cameraSupported()) {
       this.reportStatus(
         "unsupported",
         "This browser doesn't support the camera features required for scanning.",
@@ -181,23 +191,158 @@ const CameraPermission = {
       return;
     }
 
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "environment" } })
-      .then((stream) => {
-        stream.getTracks().forEach((track) => track.stop());
-        this.reportStatus("granted", "Camera access granted. You can start scanning.");
-        window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-granted"));
-      })
-      .catch((error) => {
-        const deniedErrors = ["NotAllowedError", "PermissionDeniedError"];
-        const status = deniedErrors.includes(error?.name) ? "denied" : "error";
-        const fallback =
-          status === "denied"
-            ? "Camera access was denied. Enable it in your browser settings."
-            : "Something went wrong while attempting to access the camera.";
+    const state = await this.queryPermissionState();
 
-        this.reportStatus(status, error?.message || fallback);
+    switch (state) {
+      case "granted":
+        this.reportStatus("granted", "Camera access is available for this scanner tab.");
+        return;
+      case "denied":
+        this.reportStatus(
+          "denied",
+          "Camera access is blocked in the browser. Update the site permission and try again.",
+        );
+        return;
+      case "prompt":
+        this.pushPromptStatus();
+        return;
+      default:
+        this.pushFallbackStatus();
+    }
+  },
+
+  async queryPermissionState() {
+    if (!navigator.permissions || typeof navigator.permissions.query !== "function") {
+      this.detachPermissionWatcher();
+      return null;
+    }
+
+    try {
+      const permissionStatus = await navigator.permissions.query({ name: "camera" });
+      this.attachPermissionWatcher(permissionStatus);
+      return permissionStatus.state;
+    } catch (_error) {
+      this.detachPermissionWatcher();
+      return null;
+    }
+  },
+
+  attachPermissionWatcher(permissionStatus) {
+    if (this.permissionStatus === permissionStatus) {
+      return;
+    }
+
+    this.detachPermissionWatcher();
+    this.permissionStatus = permissionStatus;
+    this.permissionStatusHandler = () => this.syncPermissionState();
+
+    if (typeof permissionStatus.addEventListener === "function") {
+      permissionStatus.addEventListener("change", this.permissionStatusHandler);
+    } else {
+      permissionStatus.onchange = this.permissionStatusHandler;
+    }
+  },
+
+  detachPermissionWatcher() {
+    if (!this.permissionStatus || !this.permissionStatusHandler) {
+      this.permissionStatus = null;
+      this.permissionStatusHandler = null;
+      return;
+    }
+
+    if (typeof this.permissionStatus.removeEventListener === "function") {
+      this.permissionStatus.removeEventListener("change", this.permissionStatusHandler);
+    } else if (this.permissionStatus.onchange === this.permissionStatusHandler) {
+      this.permissionStatus.onchange = null;
+    }
+
+    this.permissionStatus = null;
+    this.permissionStatusHandler = null;
+  },
+
+  pushPromptStatus() {
+    const hint = this.readStoredStatus();
+
+    if (hint?.status === "granted") {
+      this.pushStatus(
+        "unknown",
+        "Camera was previously enabled on this browser tab. Re-check permission if scanning does not start.",
+        true,
+      );
+    } else if (hint?.status === "denied") {
+      this.pushStatus(
+        "unknown",
+        "Camera access was previously blocked here. Re-check permission after updating browser settings.",
+        true,
+      );
+    } else {
+      this.pushStatus("unknown", null, false);
+    }
+  },
+
+  pushFallbackStatus() {
+    const hint = this.readStoredStatus();
+
+    if (!hint) {
+      this.pushStatus("unknown", null, false);
+      return;
+    }
+
+    const fallbackMessage =
+      hint.status === "granted"
+        ? "Camera was previously enabled on this browser. Re-check permission before scanning."
+        : hint.status === "denied"
+          ? "Camera was previously blocked on this browser. Re-check permission after updating browser settings."
+          : this.defaultMessage(hint.status);
+
+    this.pushStatus(hint.status === "unsupported" ? "unsupported" : "unknown", fallbackMessage, true);
+  },
+
+  handleCameraRequest(event) {
+    const trigger = event.target.closest("[data-camera-request], [data-camera-recheck]");
+
+    if (!trigger) {
+      return;
+    }
+
+    event.preventDefault();
+    this.requestCameraPermission(trigger.hasAttribute("data-camera-recheck"));
+  },
+
+  async requestCameraPermission(syncFirst = false) {
+    if (!this.cameraSupported()) {
+      this.reportStatus(
+        "unsupported",
+        "This browser doesn't support the camera features required for scanning.",
+      );
+      return;
+    }
+
+    if (syncFirst) {
+      await this.syncPermissionState();
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
       });
+
+      stream.getTracks().forEach((track) => track.stop());
+      this.reportStatus("granted", "Camera access granted. You can start scanning.");
+      window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-granted"));
+      window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-refresh"));
+    } catch (error) {
+      const deniedErrors = ["NotAllowedError", "PermissionDeniedError"];
+      const status = deniedErrors.includes(error?.name) ? "denied" : "error";
+      const fallback =
+        status === "denied"
+          ? "Camera access was denied. Enable it in your browser settings."
+          : "Something went wrong while attempting to access the camera.";
+
+      this.reportStatus(status, error?.message || fallback);
+      window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-refresh"));
+    }
   },
 
   reportStatus(status, message) {
@@ -215,15 +360,42 @@ const CameraPermission = {
 
   readStoredStatus() {
     try {
-      return window.localStorage?.getItem(this.storageKey);
-    } catch (_error) {
+      const stored = window.localStorage?.getItem(this.storageKey);
+
+      if (!stored) {
+        return null;
+      }
+
+      const parsed = JSON.parse(stored);
+
+      if (parsed && typeof parsed.status === "string") {
+        return parsed;
+      }
+
+      if (typeof parsed === "string") {
+        return { status: parsed };
+      }
+
       return null;
+    } catch (_error) {
+      try {
+        const legacyValue = window.localStorage?.getItem(this.storageKey);
+        return legacyValue ? { status: legacyValue } : null;
+      } catch (_fallbackError) {
+        return null;
+      }
     }
   },
 
   writeStoredStatus(status) {
     try {
-      window.localStorage?.setItem(this.storageKey, status);
+      window.localStorage?.setItem(
+        this.storageKey,
+        JSON.stringify({
+          status,
+          checked_at: new Date().toISOString(),
+        }),
+      );
       return true;
     } catch (_error) {
       return false;
@@ -233,15 +405,15 @@ const CameraPermission = {
   defaultMessage(status) {
     switch (status) {
       case "granted":
-        return "Camera access granted. You can start scanning.";
+        return "Camera access is available for this scanner tab.";
       case "denied":
-        return "Camera access was denied. Enable it in your browser settings.";
+        return "Camera access is blocked in the browser. Update the site permission and try again.";
       case "error":
         return "Something went wrong while attempting to access the camera.";
       case "unsupported":
         return "This browser doesn't support the camera features required for scanning.";
       default:
-        return "Enable your device camera to speed up QR scanning.";
+        return "Re-check camera permission before scanning if the preview does not recover.";
     }
   },
 };
@@ -462,4 +634,3 @@ if (process.env.NODE_ENV === "development") {
     },
   );
 }
-
