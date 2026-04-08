@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
 
     private var isAuthenticatedRouteActive: Boolean = false
     private var isScanDestinationActive: Boolean = true
+    private var lastBootstrappedSessionKey: AuthenticatedSessionKey? = null
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -141,7 +142,6 @@ class MainActivity : ComponentActivity() {
                 scanContent = {
                     if (authenticatedSession != null) {
                         ScanDestinationRoute(
-                            session = authenticatedSession,
                             scanningViewModel = scanningViewModel,
                             queueViewModel = queueViewModel,
                             syncViewModel = syncViewModel,
@@ -250,6 +250,7 @@ class MainActivity : ComponentActivity() {
                             AppSessionRoute.LoggedOut -> {
                                 val wasAuthenticated = isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = false
+                                lastBootstrappedSessionKey = null
                                 syncViewModel.resetBootstrapState()
                                 appShellViewModel.reset()
                                 binding.loginGateContainer.visibility = android.view.View.VISIBLE
@@ -262,10 +263,16 @@ class MainActivity : ComponentActivity() {
 
                             is AppSessionRoute.Authenticated -> {
                                 val becameAuthenticated = !isAuthenticatedRouteActive
+                                val sessionKey = AuthenticatedSessionKey.from(route.session)
+                                val sessionChanged = lastBootstrappedSessionKey != sessionKey
                                 isAuthenticatedRouteActive = true
                                 if (becameAuthenticated) {
                                     appShellViewModel.reset()
+                                }
+                                if (sessionChanged) {
                                     syncViewModel.resetBootstrapState()
+                                    syncViewModel.beginAuthenticatedEventBootstrap(route.session.eventId)
+                                    lastBootstrappedSessionKey = sessionKey
                                 }
                                 binding.loginGateContainer.visibility = android.view.View.GONE
                                 binding.authenticatedShellComposeView.visibility =
@@ -483,5 +490,18 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val LOG_TAG: String = "FastCheckMainActivity"
+    }
+}
+
+internal data class AuthenticatedSessionKey(
+    val eventId: Long,
+    val authenticatedAtEpochMillis: Long
+) {
+    companion object {
+        fun from(session: za.co.voelgoed.fastcheck.domain.model.ScannerSession): AuthenticatedSessionKey =
+            AuthenticatedSessionKey(
+                eventId = session.eventId,
+                authenticatedAtEpochMillis = session.authenticatedAtEpochMillis
+            )
     }
 }

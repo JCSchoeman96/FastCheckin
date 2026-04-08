@@ -10,6 +10,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -107,7 +108,7 @@ class SyncViewModelTest {
     }
 
     @Test
-    fun bootstrapSyncRunsOnceWhenCurrentEventHasNoCache() = runTest(dispatcher) {
+    fun authenticatedBootstrapStartsWhenCurrentEventHasNoCache() = runTest(dispatcher) {
         val syncedStatus =
             AttendeeSyncStatus(
                 eventId = 7,
@@ -119,9 +120,9 @@ class SyncViewModelTest {
         val repo = RecordingSyncRepository(behavior = { syncedStatus })
         val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
 
-        viewModel.ensureBootstrapSyncForEvent(7)
-        advanceUntilIdle()
-        viewModel.ensureBootstrapSyncForEvent(7)
+        viewModel.beginAuthenticatedEventBootstrap(7)
+        runCurrent()
+        assertThat(repo.callCount).isEqualTo(1)
         advanceUntilIdle()
 
         assertThat(repo.callCount).isEqualTo(1)
@@ -130,7 +131,7 @@ class SyncViewModelTest {
     }
 
     @Test
-    fun bootstrapSyncSkipsWhenCurrentEventMetadataAlreadyExists() = runTest(dispatcher) {
+    fun authenticatedBootstrapSkipsWhenCurrentEventMetadataAlreadyExists() = runTest(dispatcher) {
         val existingStatus =
             AttendeeSyncStatus(
                 eventId = 9,
@@ -146,7 +147,7 @@ class SyncViewModelTest {
             )
         val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
 
-        viewModel.ensureBootstrapSyncForEvent(9)
+        viewModel.beginAuthenticatedEventBootstrap(9)
         advanceUntilIdle()
 
         assertThat(repo.callCount).isEqualTo(0)
@@ -179,11 +180,51 @@ class SyncViewModelTest {
             )
         val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
 
-        viewModel.ensureBootstrapSyncForEvent(8)
+        viewModel.beginAuthenticatedEventBootstrap(8)
         advanceUntilIdle()
 
         assertThat(repo.callCount).isEqualTo(1)
         assertThat(viewModel.currentEventSyncStatus.value).isEqualTo(targetStatus)
+    }
+
+    @Test
+    fun bootstrapFailureLeavesFailedStateForRetry() = runTest(dispatcher) {
+        val repo =
+            RecordingSyncRepository(
+                behavior = { throw IllegalStateException("Backend timeout") }
+            )
+        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+
+        viewModel.beginAuthenticatedEventBootstrap(7)
+        advanceUntilIdle()
+
+        assertThat(repo.callCount).isEqualTo(1)
+        assertThat(viewModel.currentEventSyncStatus.value).isNull()
+        assertThat(viewModel.uiState.value.bootstrapStatus).isEqualTo(BootstrapSyncStatus.Failed)
+        assertThat(viewModel.uiState.value.bootstrapEventId).isEqualTo(7)
+        assertThat(viewModel.uiState.value.errorMessage).isEqualTo("Backend timeout")
+    }
+
+    @Test
+    fun bootstrapDoesNotRerunUnnecessarilyForSameEventAfterSuccess() = runTest(dispatcher) {
+        val syncedStatus =
+            AttendeeSyncStatus(
+                eventId = 7,
+                lastServerTime = "2026-03-13T08:20:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:20:00Z",
+                syncType = "full",
+                attendeeCount = 42
+            )
+        val repo = RecordingSyncRepository(behavior = { syncedStatus })
+        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+
+        viewModel.beginAuthenticatedEventBootstrap(7)
+        advanceUntilIdle()
+        viewModel.beginAuthenticatedEventBootstrap(7)
+        advanceUntilIdle()
+
+        assertThat(repo.callCount).isEqualTo(1)
+        assertThat(viewModel.uiState.value.bootstrapStatus).isEqualTo(BootstrapSyncStatus.Succeeded)
     }
 
     @Test
@@ -199,7 +240,7 @@ class SyncViewModelTest {
         val repo = RecordingSyncRepository(behavior = { syncedStatus })
         val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
 
-        viewModel.ensureBootstrapSyncForEvent(7)
+        viewModel.beginAuthenticatedEventBootstrap(7)
         advanceUntilIdle()
         viewModel.resetBootstrapState()
 

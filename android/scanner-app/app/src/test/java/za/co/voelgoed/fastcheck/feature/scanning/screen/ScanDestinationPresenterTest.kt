@@ -41,7 +41,48 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.scannerStatusChip.text).isEqualTo("Scanner active")
-        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Attendee list unavailable")
+        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Sync failed - retry required")
+        assertThat(uiState.attendeeStatusMessage).contains("Retry sync before trusting green admission")
+        assertThat(uiState.healthBanner?.title).isEqualTo("Sync failed - retry required")
+        assertThat(uiState.healthBanner?.message).contains("trusted green admission")
+    }
+
+    @Test
+    fun bootstrapSyncingShowsNotReadyMessaging() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Syncing),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Syncing attendee list")
+        assertThat(uiState.attendeeStatusMessage).contains("not ready for trusted green admission")
+        assertThat(uiState.healthBanner?.title).isEqualTo("Syncing attendee list")
+        assertThat(uiState.healthBanner?.message).contains("not ready for trusted green admission")
+    }
+
+    @Test
+    fun trustedSyncedEventShowsReadyState() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 20
+                    )
+            )
+
+        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Attendee list ready")
+        assertThat(uiState.attendeeStatusMessage).contains("latest local sync")
+        assertThat(uiState.healthBanner).isNull()
     }
 
     @Test

@@ -22,8 +22,6 @@ fun SearchDestinationRoute(
 
     LaunchedEffect(session.eventId, session.authenticatedAtEpochMillis) {
         searchViewModel.observeSession(session.eventId, session.authenticatedAtEpochMillis)
-        syncViewModel.refreshCurrentEventSyncStatus()
-        syncViewModel.ensureBootstrapSyncForEvent(session.eventId)
     }
 
     val presenter = remember { SearchDestinationPresenter() }

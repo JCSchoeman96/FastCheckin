@@ -30,8 +30,6 @@ fun EventDestinationRoute(
             eventId = session.eventId,
             authenticatedAtEpochMillis = session.authenticatedAtEpochMillis
         )
-        syncViewModel.refreshCurrentEventSyncStatus()
-        syncViewModel.ensureBootstrapSyncForEvent(session.eventId)
     }
 
     val presenter = remember { EventDestinationPresenter() }
