@@ -1,131 +1,86 @@
-import { config } from "./config.js";
+import { buildAcceptanceManifest, renderAcceptanceMarkdown } from "./result_manifest.js";
 
-function metricValue(data, metricName, statName) {
-  return data.metrics?.[metricName]?.values?.[statName];
-}
-
-function formatNumber(value, fallback = "n/a") {
+function formatNumber(value, digits = 2, fallback = "n/a") {
   if (value === undefined || value === null || Number.isNaN(value)) {
     return fallback;
   }
 
-  return value;
+  return Number(value).toFixed(digits);
 }
 
-function collectBlockedDevices(data) {
-  return Object.entries(data.metrics || {})
-    .filter(([metricName]) => metricName.startsWith("capacity_blocked_device_"))
-    .map(([metricName, metric]) => {
-      const suffix = metricName.replace("capacity_blocked_device_", "");
-      const count = Number(metric?.values?.count || 0);
-
-      return {
-        count,
-        deviceId: `device-${suffix}`,
-      };
-    })
-    .filter(({ count }) => count > 0)
-    .sort((left, right) => right.count - left.count);
-}
-
-function capacitySection(data) {
-  const blockedCount = Number(metricValue(data, "capacity_scan_response_blocked", "count") || 0);
-  const blockedRate = Number(metricValue(data, "capacity_scan_blocked_rate", "rate") || 0);
-  const requestCount = Number(metricValue(data, "capacity_scan_requests", "count") || 0);
-  const blockedDevices = collectBlockedDevices(data);
-  const topDevice = blockedDevices[0];
-  const dominantBlockedShare =
-    blockedCount > 0 && topDevice ? Number(topDevice.count) / blockedCount : 0;
-  const gatePass =
-    blockedRate <= config.capacityBlockedThreshold &&
-    dominantBlockedShare <= config.dominantBlockedShareThreshold;
-
+function renderSuite(result) {
   const lines = [
-    "**Capacity Findings**",
-    `capacity scan requests: ${requestCount}`,
-    `blocked/429 responses: ${blockedCount}`,
-    `blocked rate: ${formatNumber(blockedRate)}`,
-    `distortion gate (< ${(config.capacityBlockedThreshold * 100).toFixed(0)}% blocked): ${
-      gatePass ? "PASS" : "FAIL"
-    }`,
-    `http_req_duration p(95): ${formatNumber(metricValue(data, "http_req_duration", "p(95)"))}`,
-    `http_req_duration p(99): ${formatNumber(metricValue(data, "http_req_duration", "p(99)"))}`,
-    `http_req_failed rate: ${formatNumber(metricValue(data, "http_req_failed", "rate"))}`,
-    `auth bootstrap logins: ${formatNumber(metricValue(data, "auth_bootstrap_logins", "count"), 0)}`,
-    `auth refreshes: ${formatNumber(metricValue(data, "auth_refreshes", "count"), 0)}`,
-    `auth failures: ${formatNumber(metricValue(data, "auth_failures", "count"), 0)}`,
-    `success results: ${formatNumber(metricValue(data, "scan_result_success", "count"), 0)}`,
-    `replay duplicates: ${formatNumber(
-      metricValue(data, "scan_result_idempotency_replay_duplicate", "count"),
-      0
-    )}`,
-    `business duplicates: ${formatNumber(
-      metricValue(data, "scan_result_business_duplicate", "count"),
-      0
-    )}`,
-    `invalid results: ${formatNumber(metricValue(data, "scan_result_invalid", "count"), 0)}`,
-    `retryable failures: ${formatNumber(
-      metricValue(data, "scan_result_retryable_failure", "count"),
-      0
-    )}`,
+    `**${result.canonicalScenarioKey}**`,
+    `invoked scenario: ${result.invokedScenarioKey}`,
+    `canonical scenario: ${result.canonicalScenarioKey}`,
+    `alias warning: ${result.aliasWarning ? "yes" : "no"}`,
+    `family verdict: ${result.familyVerdict}`,
+    `auth bootstrap logins: ${result.familyMetrics.authBootstrapLogins}`,
+    `auth refreshes: ${result.familyMetrics.authRefreshes}`,
+    `auth failures: ${result.familyMetrics.authFailures}`,
+    `auth refresh failure rate: ${formatNumber(result.familyMetrics.authRefreshFailureRate, 4)}`,
+    `retryable failures: ${result.familyMetrics.retryableFailures}`,
+    `retryable failure rate: ${formatNumber(result.familyMetrics.retryableFailureRate, 4)}`,
+    `success results: ${result.familyMetrics.successResults}`,
+    `replay duplicates: ${result.familyMetrics.replayDuplicateResults}`,
+    `business duplicates: ${result.familyMetrics.businessDuplicateResults}`,
+    `invalid results: ${result.familyMetrics.invalidResults}`,
   ];
 
-  if (topDevice) {
-    lines.push(
-      `top blocked device: ${topDevice.deviceId} (${topDevice.count} blocked, ${(dominantBlockedShare * 100).toFixed(1)}% of blocked traffic)`
-    );
-  } else {
-    lines.push("top blocked device: none");
+  if (result.aliasWarningMessage) {
+    lines.push(`deprecation: ${result.aliasWarningMessage}`);
   }
 
-  if (blockedDevices.length > 0) {
-    lines.push(
-      `blocked devices: ${blockedDevices
-        .slice(0, 5)
-        .map(({ count, deviceId }) => `${deviceId}=${count}`)
-        .join(", ")}`
-    );
+  for (const section of result.sections) {
+    lines.push(`${section.label}: ${section.verdict}`);
+    lines.push(`  scenario key: ${section.scenarioKey}`);
+    lines.push(`  request type: ${section.requestType}`);
+    lines.push(`  executor: ${section.metrics.executor.executor}`);
+    lines.push(`  configured VUs: ${section.metrics.executor.configuredVus}`);
+    lines.push(`  configured max VUs: ${section.metrics.executor.maxVUs}`);
+    lines.push(`  requests: ${section.metrics.requestCount}`);
+    lines.push(`  p95 latency: ${formatNumber(section.metrics.p95)}`);
+    lines.push(`  p99 latency: ${formatNumber(section.metrics.p99)}`);
+    lines.push(`  http failure rate: ${formatNumber(section.metrics.httpFailedRate, 4)}`);
+    lines.push(`  dropped iterations: ${section.metrics.droppedIterations}`);
+
+    if (section.metrics.blockedCount !== undefined) {
+      lines.push(`  blocked responses: ${section.metrics.blockedCount}`);
+      lines.push(`  blocked rate: ${formatNumber(section.metrics.blockedRate, 4)}`);
+    }
   }
 
   return lines.join("\n");
 }
 
-function abuseSection(data) {
-  return [
-    "**Abuse-Control Findings**",
-    `login blocked responses: ${formatNumber(metricValue(data, "login_response_blocked", "count"), 0)}`,
-    `scan blocked responses: ${formatNumber(metricValue(data, "abuse_scan_response_blocked", "count"), 0)}`,
-    `auth failures: ${formatNumber(metricValue(data, "auth_failures", "count"), 0)}`,
-  ].join("\n");
-}
-
-function diagnosticSection(data) {
-  return [
-    "**Diagnostics**",
-    `auth bootstrap logins: ${formatNumber(metricValue(data, "auth_bootstrap_logins", "count"), 0)}`,
-    `auth refreshes: ${formatNumber(metricValue(data, "auth_refreshes", "count"), 0)}`,
-    `http_req_failed rate: ${formatNumber(metricValue(data, "http_req_failed", "rate"))}`,
-  ].join("\n");
-}
-
-function renderSummary(data) {
+function renderSummary(manifest) {
   const sections = [
-    `Target mode: ${config.targetMode}`,
-    `Scenarios: ${config.selectedScenarios.join(", ")}`,
+    `Target mode: ${manifest.targetMode}`,
+    `Scenarios: ${manifest.selectedSuites.map((suite) => suite.canonicalScenarioKey).join(", ")}`,
+    `Peak VUs: ${manifest.vus.peak}`,
+    `Max VUs: ${manifest.vus.max}`,
   ];
 
-  if (config.selectedScenarios.some((name) => name.startsWith("capacity_"))) {
-    sections.push(capacitySection(data));
+  if (manifest.aliasWarnings.length > 0) {
+    sections.push(
+      [
+        "**Deprecated Aliases**",
+        ...manifest.aliasWarnings.map((warning) => warning.message),
+      ].join("\n")
+    );
   }
 
-  if (config.selectedScenarios.some((name) => name.startsWith("abuse_"))) {
-    sections.push(abuseSection(data));
+  for (const suite of manifest.selectedSuites) {
+    sections.push(renderSuite(suite));
   }
 
-  if (
-    config.selectedScenarios.some((name) => ["enqueue_failure", "legacy_smoke"].includes(name))
-  ) {
-    sections.push(diagnosticSection(data));
+  if (manifest.blockedDevices.length > 0) {
+    sections.push(
+      [
+        "**Top Blocked Devices**",
+        ...manifest.blockedDevices.map((blockedDevice) => `${blockedDevice.deviceId}: ${blockedDevice.count}`),
+      ].join("\n")
+    );
   }
 
   return `${sections.join("\n\n")}\n`;
@@ -134,9 +89,16 @@ function renderSummary(data) {
 export function buildSummary(data) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const summaryPath = __ENV.K6_SUMMARY_PATH || `performance/results/k6-summary-${timestamp}.json`;
+  const acceptanceJsonPath =
+    __ENV.K6_ACCEPTANCE_PATH || `performance/results/k6-acceptance-${timestamp}.json`;
+  const acceptanceMarkdownPath =
+    __ENV.K6_ACCEPTANCE_MARKDOWN_PATH || `performance/results/k6-acceptance-${timestamp}.md`;
+  const manifest = buildAcceptanceManifest(data);
 
   return {
-    stdout: renderSummary(data),
+    stdout: renderSummary(manifest),
+    [acceptanceJsonPath]: JSON.stringify(manifest, null, 2),
+    [acceptanceMarkdownPath]: renderAcceptanceMarkdown(manifest),
     [summaryPath]: JSON.stringify(data, null, 2),
   };
 }
