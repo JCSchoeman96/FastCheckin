@@ -64,6 +64,12 @@ fun ScanDestinationScreen(
             )
         }
 
+        if (uiState.primaryRecoveryAction != null && uiState.primaryRecoveryActionLabel != null) {
+            TextButton(onClick = { onOperatorAction(uiState.primaryRecoveryAction) }) {
+                Text(text = uiState.primaryRecoveryActionLabel)
+            }
+        }
+
         if (uiState.showCameraPreview) {
             FcCard(modifier = Modifier.fillMaxWidth()) {
                 PreviewSurface(

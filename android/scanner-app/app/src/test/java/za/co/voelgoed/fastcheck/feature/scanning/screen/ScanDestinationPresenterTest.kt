@@ -10,8 +10,11 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
+import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.sync.BootstrapSyncStatus
 import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
 
@@ -209,5 +212,92 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.captureBanner?.message).contains("Queued locally")
         assertThat(uiState.captureBanner?.message).doesNotContain("Accepted by server")
+    }
+
+    @Test
+    fun requestPermissionShowsAllowCameraAccessAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        scannerRecoveryState = ScannerRecoveryState.RequestPermission(false)
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.primaryRecoveryAction).isEqualTo(ScanOperatorAction.RequestCameraAccess)
+        assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Allow camera access")
+    }
+
+    @Test
+    fun openSystemSettingsShowsSettingsAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        scannerRecoveryState = ScannerRecoveryState.OpenSystemSettings
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.primaryRecoveryAction).isEqualTo(ScanOperatorAction.OpenAppSettings)
+        assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Open app settings")
+    }
+
+    @Test
+    fun cameraSourceErrorShowsReconnectAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        scannerRecoveryState = ScannerRecoveryState.SourceError("camera unavailable")
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.primaryRecoveryAction).isEqualTo(ScanOperatorAction.ReconnectCamera)
+        assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Reconnect camera")
+    }
+
+    @Test
+    fun cameraNotRequiredShowsNoCameraRecoveryAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.BROADCAST_INTENT,
+                        scannerRecoveryState = ScannerRecoveryState.CameraNotRequired
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.primaryRecoveryAction).isNull()
+        assertThat(uiState.primaryRecoveryActionLabel).isNull()
+    }
+
+    @Test
+    fun readyRecoveryShowsNoAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        scannerRecoveryState = ScannerRecoveryState.Ready
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.primaryRecoveryAction).isNull()
+        assertThat(uiState.primaryRecoveryActionLabel).isNull()
     }
 }
