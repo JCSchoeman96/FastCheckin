@@ -1,19 +1,28 @@
 # Mobile Scan Performance Runbook
 
-This runbook is for protocol-level load testing of the active mobile API contract:
+This runbook covers the protocol-level k6 harness for the active mobile API contract:
 
 - `POST /api/v1/mobile/login`
 - `GET /api/v1/mobile/attendees`
 - `POST /api/v1/mobile/scans`
 
-The primary performance target is `POST /api/v1/mobile/scans` running with `MOBILE_SCAN_INGESTION_MODE=redis_authoritative`.
+The main entrypoint remains:
 
-This performance target assumes the current authoritative runtime path:
+- `performance/k6/mobile_scans.js`
 
-`validate -> hot-state decision -> enqueue durability -> promote results -> respond`
+The harness is event-readiness focused. It now supports explicit suite families for:
 
-Admission remains synchronous through acknowledgement. Durable Postgres
-projection happens asynchronously afterward through `scan_persistence`.
+- fresh-event steady state
+- duplicate-heavy traffic
+- auth churn
+- mixed attendee sync plus scan load
+- offline spike batches
+- endurance soak
+- abuse controls
+- diagnostics
+- degraded-network runs tagged through an external transport-shaping layer
+
+The primary runtime target is still `POST /api/v1/mobile/scans` in `redis_authoritative` mode.
 
 Current recorded local baselines:
 
@@ -22,16 +31,14 @@ Current recorded local baselines:
 
 ## App-Capped Local Docker Path
 
-Use the `perf-small` profile when you want an app-tier ceiling estimate for a 2 vCPU / 2 GB app container without also capping Postgres or Redis.
+Use the `perf-small` profile when you want an app-tier ceiling estimate for a `2 vCPU / 2 GB` app container without also capping Postgres or Redis.
 
-The `perf-small` stack now has two services:
+The `perf-small` stack has two services:
 
 - `app-perf` runs the Phoenix release in `redis_authoritative`, capped at `cpus: 2.0` and `mem_limit: 2g`
-- `perf-proxy` is the only host-exposed entrypoint for capacity and abuse-control runs
+- `perf-proxy` is the only host-exposed entrypoint for capacity, mixed-load, abuse, and degraded-network runs
 
-For PgBouncer verification, `app-perf` talks to the `pgbouncer` service in transaction mode while `MIGRATION_DATABASE_URL` stays pointed at direct Postgres for release migrations.
-
-`app-perf` stays internal on the Docker network for capacity measurements. The proxy strips inbound `X-Forwarded-For`, maps one logical device id to one deterministic synthetic IP in `10.250.0.0/16`, and forwards the trusted client identity to Phoenix.
+`app-perf` stays internal on the Docker network for measurements. The proxy strips inbound `X-Forwarded-For`, maps one logical device id to one deterministic synthetic IP in `10.250.0.0/16`, and forwards trusted client identity to Phoenix.
 
 Start the capped stack:
 
@@ -40,16 +47,12 @@ docker compose up -d postgres pgbouncer redis
 docker compose --profile perf-small up --build -d app-perf perf-proxy
 ```
 
-The trusted perf path exposes:
+Trusted perf path:
 
 - proxy/API: `http://127.0.0.1:4100`
 - health via proxy: `http://127.0.0.1:4100/api/v1/health`
 
-This is an app-tier measurement only. It does not represent a full small-stack ceiling because Postgres and Redis remain unconstrained.
-
-The current repo wiring does not expose a separate Prometheus scrape HTTP endpoint from `app-perf`, so there is no extra metrics port to publish or validate in this pass.
-
-On Docker Desktop and WSL, make sure the Docker VM itself has more than 2 GB RAM and enough CPU headroom. Otherwise the host VM becomes the bottleneck and the `app-perf` container cap stops being meaningful.
+This is an app-tier measurement only. It is not a full small-stack ceiling because Postgres and Redis remain unconstrained.
 
 ## Seed Deterministic Load Data
 
@@ -63,7 +66,7 @@ mix fastcheck.load.seed_mobile_event \
   --output performance/manifests/mobile-load-event.json
 ```
 
-When seeding against the local Docker stack from the host shell, point your local Mix environment at the Compose Postgres port:
+When seeding from the host shell against the local Docker stack:
 
 ```bash
 set MIX_ENV=dev
@@ -75,7 +78,7 @@ mix ecto.migrate
 mix fastcheck.load.seed_mobile_event --attendees 50000 --credential scanner-secret --ticket-prefix PERF --output performance/manifests/mobile-load-event.json
 ```
 
-If the app under test is `app-perf`, the seed must use the same `ENCRYPTION_KEY` as the container runtime. If the host seed uses the dev fallback key instead, `POST /api/v1/mobile/login` will fail with `403 invalid_credential` because Phoenix cannot decrypt `mobile_access_secret_encrypted`.
+If the app under test is `app-perf`, the seed must use the same `ENCRYPTION_KEY` as the runtime under test. Otherwise `POST /api/v1/mobile/login` will fail with `403 invalid_credential`.
 
 The manifest includes:
 
@@ -87,11 +90,9 @@ The manifest includes:
 
 ## Cleanup Seeded Perf Data
 
-Keep the `performance/results/` JSON artifacts if you want to preserve run evidence. The cleanup task removes only the seeded mobile perf data from Postgres and Redis.
+Cleanup is manual. k6 runs do not remove seeded events, scan attempts, check-ins, Oban jobs, or Redis hot-state keys.
 
-Cleanup is manual. k6 runs do not automatically delete seeded events, scan attempts, check-ins, Oban jobs, or Redis hot-state keys after a smoke, stress, or soak run.
-
-Cleanup all marker-matched perf events plus their related rows:
+Cleanup all seeded perf events:
 
 ```bash
 mix fastcheck.load.cleanup_mobile_event
@@ -109,23 +110,7 @@ Cleanup one seeded event and flush the current Redis DB for the local perf stack
 mix fastcheck.load.cleanup_mobile_event --event-id 123 --flush-redis
 ```
 
-The cleanup task deletes, in order:
-
-- `scan_persistence` Oban jobs tied to the seeded event
-- `mobile_idempotency_log`
-- `scan_attempts`
-- `check_ins`
-- `attendees`
-- the seeded `events` row
-- Redis hot-state keys for the event across namespaces, or the full current Redis DB when `--flush-redis` is used
-
-For a clean rerun after knee-finding or soak work, use:
-
-```bash
-mix fastcheck.load.cleanup_mobile_event --event-id 123 --flush-redis
-```
-
-Then reseed a fresh event before the next run.
+For a clean rerun after knee-finding or soak work, use a fresh cleanup and reseed before the next pass.
 
 ## Runtime Configuration
 
@@ -150,7 +135,7 @@ The `perf-small` Docker path already bakes in:
 - `DATABASE_SSL=false`
 - trusted forwarded-identity modeling through `perf-proxy`
 
-For capacity runs, do not target `app-perf` directly. Use the proxy path only.
+For capacity and endurance runs, use the proxy path only. Do not target `app-perf` directly.
 
 Optional rollback-confidence run:
 
@@ -167,38 +152,113 @@ set MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true
 mix phx.server
 ```
 
-For a full enqueue-failure recovery check, run two app instances against the same Postgres and Redis:
+For a dedicated enqueue-failure recovery check, run one forced-failure instance and one normal `redis_authoritative` instance against the same Postgres and Redis.
 
-- one instance with `MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true`
-- one normal `redis_authoritative` instance on a different port
+## Canonical k6 Suites
 
-## k6 Runs
+Canonical scenario keys:
 
-Capacity smoke:
+- `perf_fresh_steady`
+- `perf_duplicate_heavy`
+- `perf_auth_churn`
+- `perf_sync_scan_mixed`
+- `perf_spike_batch`
+- `perf_soak_endurance`
+- `abuse_login`
+- `abuse_scans_single_device`
+- `diagnostic_enqueue_failure`
+- `diagnostic_legacy_smoke`
+- `network_latency_degraded`
+- `network_jitter_degraded`
+- `network_loss_recovery`
+
+Deprecated aliases still resolve temporarily, but they are intentionally undocumented and emit warnings in the summary output and acceptance artifacts.
+
+## Example Runs
+
+Use the same entrypoint for every suite:
 
 ```bash
-k6 run performance/k6/mobile_scans.js ^
-  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
-  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
-  -e PERF_DEVICE_COUNT=32 ^
-  -e SCENARIOS=capacity_smoke
+k6 run performance/k6/mobile_scans.js ...
 ```
 
-Capacity baseline:
+Fresh-event steady state:
 
 ```bash
 k6 run performance/k6/mobile_scans.js ^
   -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
   -e PERF_BASE_URL=http://127.0.0.1:4100 ^
   -e PERF_DEVICE_COUNT=64 ^
-  -e SCENARIOS=capacity_baseline
+  -e SCENARIOS=perf_fresh_steady
 ```
 
-Capacity stress and spike:
+Duplicate-heavy steady state:
 
 ```bash
-k6 run performance/k6/mobile_scans.js -e MANIFEST_PATH=performance/manifests/mobile-load-event.json -e PERF_BASE_URL=http://127.0.0.1:4100 -e PERF_DEVICE_COUNT=64 -e SCENARIOS=capacity_stress
-k6 run performance/k6/mobile_scans.js -e MANIFEST_PATH=performance/manifests/mobile-load-event.json -e PERF_BASE_URL=http://127.0.0.1:4100 -e PERF_DEVICE_COUNT=64 -e SCENARIOS=capacity_spike -e SCAN_BATCH_SIZE=25
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e SCENARIOS=perf_duplicate_heavy
+```
+
+Auth churn:
+
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e PERF_AUTH_CHURN_CLIENT_TTL_SECONDS=45 ^
+  -e K6_ENFORCE_THRESHOLDS=true ^
+  -e SCENARIOS=perf_auth_churn
+```
+
+This suite is only meaningful if refresh activity is real. The acceptance report must show non-trivial `auth refreshes` and must pass the deterministic minimum-refresh gate.
+
+Mixed attendee sync plus scan load:
+
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e SCENARIOS=perf_sync_scan_mixed
+```
+
+The suite expands into two executors:
+
+- `perf_sync_scan_mixed_scan`
+- `perf_sync_scan_mixed_attendees`
+
+Acceptance output reports:
+
+- scan executor metrics
+- attendee executor metrics
+- one combined family verdict
+
+Offline spike batches:
+
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e SCAN_BATCH_SIZE=25 ^
+  -e SCENARIOS=perf_spike_batch
+```
+
+Endurance soak:
+
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e PERF_SOAK_ENDURANCE_RATE=800 ^
+  -e PERF_SOAK_ENDURANCE_DURATION=2h ^
+  -e K6_ENFORCE_THRESHOLDS=true ^
+  -e SCENARIOS=perf_soak_endurance
 ```
 
 Abuse-control:
@@ -217,118 +277,145 @@ k6 run performance/k6/mobile_scans.js ^
   -e SCENARIOS=abuse_scans_single_device
 ```
 
-Optional diagnostics:
+Diagnostics:
 
 ```bash
 k6 run performance/k6/mobile_scans.js ^
   -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
   -e PERF_BASE_URL=http://127.0.0.1:4100 ^
   -e PERF_DEVICE_COUNT=1 ^
-  -e SCENARIOS=legacy_smoke
+  -e SCENARIOS=diagnostic_legacy_smoke
 
 k6 run performance/k6/mobile_scans.js ^
   -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
   -e PERF_BASE_URL=http://127.0.0.1:4101 ^
   -e PERF_DEVICE_COUNT=1 ^
   -e RECOVERY_BASE_URL=http://127.0.0.1:4000 ^
-  -e SCENARIOS=enqueue_failure
+  -e SCENARIOS=diagnostic_enqueue_failure
 ```
 
-## Expected Scenario Mix
+## Degraded-Network Runs
 
-Capacity suite:
+`network_profile.js` is metadata only. It does not simulate latency, jitter, loss, or outage behavior inside the script.
 
-- `capacity_smoke`
-- `capacity_baseline`
-- `capacity_stress`
-- `capacity_spike`
-- `capacity_soak` after the distortion gate passes
+Run degraded-network suites through an external shaping layer such as:
 
-Abuse-control suite:
+- `perf-proxy` behind `tc netem`
+- a dedicated degradation proxy
+- environment-specific transport shaping in staging or Kubernetes
 
-- `abuse_login`
-- `abuse_scans_single_device`
+Canonical degraded-network suites:
 
-Online scenarios classify results into:
+- `network_latency_degraded`
+- `network_jitter_degraded`
+- `network_loss_recovery`
 
-- success
-- idempotency replay duplicate
-- business duplicate
-- invalid
-- retryable failure
-- auth failure
+Latency example:
 
-These categories describe authoritative request-path outcomes. They do not mean
-durable projection has already completed at acknowledgement time.
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e NETWORK_PROFILE=latency ^
+  -e SCENARIOS=network_latency_degraded
+```
 
-Capacity runs use a deterministic device pool:
+Jitter example:
 
-- one logical device id per VU for the run
-- one device-local token per logical device
-- one stable proxy-assigned synthetic IP per logical device
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e NETWORK_PROFILE=jitter ^
+  -e SCENARIOS=network_jitter_degraded
+```
 
-Shared-token behavior is no longer the capacity default.
+Loss and recovery example:
 
-Offline spike scenarios send deterministic batches from the offline-burst slice.
+```bash
+k6 run performance/k6/mobile_scans.js ^
+  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
+  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
+  -e PERF_DEVICE_COUNT=64 ^
+  -e NETWORK_PROFILE=loss_recovery ^
+  -e SCENARIOS=network_loss_recovery
+```
+
+Interpret degraded-network acceptance with extra attention to:
+
+- auth bootstrap collapse
+- refresh failure drift
+- retryable failure drift
+- blocked-rate distortion
+- post-recovery duplicate spikes
 
 ## Distortion Gate
 
-Do not start soak until short `capacity_stress` meets both of these conditions:
+Do not start long soak until shorter runs meet both conditions:
 
-- blocked or `429` scan responses stay under `2%` of total capacity scan requests
-- blocked traffic is not dominated by one device/source
+- blocked or `429` scan responses stay under `2%` of total scan requests
+- blocked traffic is not dominated by one logical device/source
 
-The k6 capacity summary reports total blocked counts plus the top offending device ids so the gate is measurable without relying on manual log inspection.
+The acceptance report includes blocked counts, blocked rate, and the top offending device ids.
 
 ## Duration Guidance
 
-- Local shakeout soak: 30 to 60 minutes, only after the distortion gate passes
-- Perf/staging soak: minimum 120 minutes, extend to 180 minutes if the environment remains stable
+- local shakeout soak: `30` to `60` minutes, only after the distortion gate passes
+- perf or staging soak: minimum `120` minutes
+- event-readiness endurance soak: `2` to `4` hours at a rate below the measured knee
 
-## Current Local Envelope
+For the current local `perf-small` baseline, the latest note still says:
 
-The latest clean local app-tier measurements are recorded in:
+- `800 req/s` is the conservative fresh-event soak target
+- `1000` to `1200 req/s` should be treated as aggressive follow-up only after a fresh-event pass stays clean
 
-- `docs/mobile_scan_performance_baseline_2026-03-27.md`
+## Reporting and Evidence
 
-Current interpretation for the `perf-small` path:
+Each run writes these artifacts to `performance/results/` by default:
 
-- `800 req/s` for `45s` stayed clean with `0` blocked responses, `0` auth failures, `0` HTTP failures, and `p95` about `96.7 ms`
-- `1200 req/s` transport stayed clean in the bracket run, but that run followed a heavier duplicate-primed run and is best treated as transport confirmation rather than a pristine fresh-event business-mix sample
-- `1600 req/s` is the first measured degradation point
-  - `p95` about `2208.9 ms`
-  - non-zero HTTP failure rate
-  - repeated transport-level `EOF` request failures
-  - k6 VU pressure warnings
+- `k6-summary-<timestamp>.json`
+- `k6-acceptance-<timestamp>.json`
+- `k6-acceptance-<timestamp>.md`
 
-Use that as the current local knee estimate until a newer clean baseline replaces it.
+Acceptance artifacts include, per selected suite:
+
+- invoked scenario key
+- canonical scenario key
+- alias warning flag
+- suite verdict
+- per-section metrics
+- auth bootstrap and refresh counts
+- auth refresh failure rate
+- retryable failures
+- dropped iterations
+- VU pressure context
+
+For `perf_sync_scan_mixed`, the report must show:
+
+- a scan executor section
+- an attendee executor section
+- one combined family verdict
+
+For `perf_auth_churn`, the report must show:
+
+- real refresh activity
+- deterministic refresh-gate pass or fail
+- refresh failure count and rate
 
 ## Observability
 
 Enable Phoenix metrics with `ENABLE_METRICS=true`.
 
-For the capped Docker path, verify these before treating a run as valid:
+For the capped Docker path, validate:
 
 - `GET http://127.0.0.1:4100/api/v1/health`
-- `POST /api/v1/mobile/scans` through the same proxy base URL used by k6
-- proxy response headers show `X-Perf-Device-Id` and `X-Perf-Client-Ip`
-- app logs show distributed `10.250.x.y` forwarded IPs during `capacity_smoke`
+- all k6 traffic goes through the proxy base URL
+- proxy response headers expose `X-Perf-Device-Id` and `X-Perf-Client-Ip`
+- application logs show distributed `10.250.x.y` forwarded IPs
 
-The current `app-perf` runtime does not expose a separate scrape endpoint, so observability for this local pass comes from:
-
-- k6 summaries in `performance/results/`
-- application logs
-- Postgres `pg_stat_*` and Oban queue queries
-- Redis `INFO`
-
-Primary application metrics already exposed by the repo:
-
-- Phoenix request latency and request counts
-- `fastcheck.mobile_sync.batch.duration.duration_ms`
-- repo query time and queue time
-- VM memory and run queue metrics
-
-Collect supporting infrastructure data during runs:
+Supporting infrastructure data during runs:
 
 Postgres:
 
@@ -356,34 +443,3 @@ Redis:
 redis-cli -u redis://localhost:6380 INFO memory
 redis-cli -u redis://localhost:6380 INFO stats
 ```
-
-## Reporting
-
-Each k6 run writes a JSON summary to `performance/results/` by default.
-
-The acceptance report for `redis_authoritative` should include:
-
-- separate capacity and abuse-control sections
-- sustainable request rate
-- p95 and p99 latency
-- HTTP failure rate
-- categorized result mix
-- blocked/`429` counts and blocked-rate distortion status
-- top offending device ids when blocked traffic occurs
-- Oban `scan_persistence` queue depth and lag
-- PgBouncer `SHOW POOLS` and `SHOW STATS` output when the perf slice is routed through the pooler
-- Redis memory and error signals
-- Postgres queue time, connections, and lock pressure
-- auth-refresh behavior
-- offline burst behavior
-- enqueue-failure recovery behavior, when the dedicated failure-injection run is performed
-
-For PgBouncer rollout validation, re-run the same authoritative harness through the pooler and compare:
-
-- same-ticket burst validation slice
-- duplicate-heavy slice
-- short steady-state or stability slice
-- Repo queue time
-- PgBouncer pool stats
-- upstream Postgres connection counts
-- Oban `scan_persistence` backlog and drain behavior
