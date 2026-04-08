@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.screen
 
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
+import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 
 data class ScanDestinationUiState(
     val scannerStatusChip: StatusChipUiModel,
@@ -8,6 +9,8 @@ data class ScanDestinationUiState(
     val attendeeStatusChip: StatusChipUiModel,
     val attendeeStatusMessage: String,
     val showCameraPreview: Boolean,
+    val primaryRecoveryAction: ScanOperatorAction? = null,
+    val primaryRecoveryActionLabel: String? = null,
     val previewBanner: BannerUiModel? = null,
     val captureBanner: BannerUiModel? = null,
     val healthBanner: BannerUiModel? = null,

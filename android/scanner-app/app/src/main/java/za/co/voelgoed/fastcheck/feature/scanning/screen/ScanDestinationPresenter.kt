@@ -12,8 +12,10 @@ import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
+import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.sync.BootstrapSyncStatus
 import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
 
@@ -29,6 +31,7 @@ class ScanDestinationPresenter(
         val scannerStatusChip = scannerChipFor(scanningUiState)
         val attendeeStatus = attendeeStatusFor(syncUiState, currentEventSyncStatus)
         val uploadState = queueUiState.uploadSemanticState
+        val primaryRecoveryAction = primaryRecoveryActionFor(scanningUiState)
 
         return ScanDestinationUiState(
             scannerStatusChip = scannerStatusChip,
@@ -38,6 +41,8 @@ class ScanDestinationPresenter(
             showCameraPreview =
                 scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
                     scanningUiState.isPreviewVisible,
+            primaryRecoveryAction = primaryRecoveryAction?.first,
+            primaryRecoveryActionLabel = primaryRecoveryAction?.second,
             previewBanner = previewBannerFor(scanningUiState),
             captureBanner = captureBannerFor(scanningUiState.lastCaptureFeedback),
             healthBanner =
@@ -57,6 +62,28 @@ class ScanDestinationPresenter(
             reloginVisible = requiresRelogin(queueUiState)
         )
     }
+
+    private fun primaryRecoveryActionFor(
+        uiState: ScanningUiState
+    ): Pair<ScanOperatorAction, String>? =
+        when (uiState.scannerRecoveryState) {
+            is ScannerRecoveryState.RequestPermission ->
+                ScanOperatorAction.RequestCameraAccess to "Allow camera access"
+
+            ScannerRecoveryState.OpenSystemSettings ->
+                ScanOperatorAction.OpenAppSettings to "Open app settings"
+
+            is ScannerRecoveryState.SourceError ->
+                if (uiState.activeSourceType == ScannerSourceType.CAMERA) {
+                    ScanOperatorAction.ReconnectCamera to "Reconnect camera"
+                } else {
+                    null
+                }
+
+            ScannerRecoveryState.Ready,
+            ScannerRecoveryState.CameraNotRequired ->
+                null
+        }
 
     private fun requiresRelogin(queueUiState: QueueUiState): Boolean =
         queueUiState.localQueueDepth > 0 &&

@@ -27,6 +27,7 @@ import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
 import za.co.voelgoed.fastcheck.app.scanning.ScanPreviewSurfaceHolder
 import za.co.voelgoed.fastcheck.app.scanning.ScannerActivationContext
 import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
+import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationDecision
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceSelectionResolver
 import za.co.voelgoed.fastcheck.app.session.AppSessionRoute
@@ -55,6 +56,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerInputSource
 import za.co.voelgoed.fastcheck.feature.scanning.screen.ScanDestinationRoute
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScanCapturePipeline
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.ScannerSourceBinding
@@ -110,6 +112,7 @@ class MainActivity : ComponentActivity() {
     private var isAuthenticatedRouteActive: Boolean = false
     private var isScanDestinationActive: Boolean = true
     private var lastBootstrappedSessionKey: AuthenticatedSessionKey? = null
+    private var hasAutoRequestedCameraPermissionThisScanEntry: Boolean = false
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -245,12 +248,14 @@ class MainActivity : ComponentActivity() {
 
                 launch {
                     sessionGateViewModel.route.collectLatest { route ->
+                        var shouldEvaluateAutoRequestOnScanEntry = false
                         when (route) {
                             AppSessionRoute.RestoringSession,
                             AppSessionRoute.LoggedOut -> {
                                 val wasAuthenticated = isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = false
                                 lastBootstrappedSessionKey = null
+                                hasAutoRequestedCameraPermissionThisScanEntry = false
                                 syncViewModel.resetBootstrapState()
                                 appShellViewModel.reset()
                                 binding.loginGateContainer.visibility = android.view.View.VISIBLE
@@ -270,6 +275,7 @@ class MainActivity : ComponentActivity() {
                                     appShellViewModel.reset()
                                 }
                                 if (sessionChanged) {
+                                    hasAutoRequestedCameraPermissionThisScanEntry = false
                                     syncViewModel.resetBootstrapState()
                                     syncViewModel.beginAuthenticatedEventBootstrap(route.session.eventId)
                                     lastBootstrappedSessionKey = sessionKey
@@ -280,17 +286,30 @@ class MainActivity : ComponentActivity() {
                                 if (becameAuthenticated) {
                                     autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
                                 }
+                                shouldEvaluateAutoRequestOnScanEntry =
+                                    isScanDestinationActive && (becameAuthenticated || sessionChanged)
                             }
                         }
-                        syncScannerBindingState()
+                        val decision = syncScannerBindingState()
+                        if (shouldEvaluateAutoRequestOnScanEntry) {
+                            maybeAutoRequestCameraPermissionOnScanEntry(decision)
+                        }
                     }
                 }
 
                 launch {
                     appShellViewModel.uiState.collectLatest { state ->
+                        val wasScanDestinationActive = isScanDestinationActive
                         isScanDestinationActive =
                             state.selectedDestination == AppShellDestination.Scan
-                        syncScannerBindingState()
+                        val enteredScan = !wasScanDestinationActive && isScanDestinationActive
+                        if (enteredScan) {
+                            hasAutoRequestedCameraPermissionThisScanEntry = false
+                        }
+                        val decision = syncScannerBindingState()
+                        if (enteredScan) {
+                            maybeAutoRequestCameraPermissionOnScanEntry(decision)
+                        }
                     }
                 }
 
@@ -362,7 +381,7 @@ class MainActivity : ComponentActivity() {
             android.Manifest.permission.CAMERA
         )
 
-    private fun syncScannerBindingState() {
+    private fun syncScannerBindingState(): ScannerSourceActivationDecision {
         val hasPermission = hasCameraPermission()
         scanningViewModel.refreshPermissionState(
             isGranted = hasPermission,
@@ -389,6 +408,8 @@ class MainActivity : ComponentActivity() {
         } else {
             scannerSourceBinding.stop()
         }
+
+        return decision
     }
 
     private fun handleShellOverflowAction(action: AppShellOverflowAction) {
@@ -411,23 +432,18 @@ class MainActivity : ComponentActivity() {
 
     private fun confirmLogout() {
         appShellViewModel.dismissLogoutConfirmation()
+        hasAutoRequestedCameraPermissionThisScanEntry = false
         sessionGateViewModel.logout()
     }
 
     private fun handleSupportRecoveryAction(action: SupportRecoveryAction) {
         when (action) {
             SupportRecoveryAction.RequestCameraAccess -> {
-                scanningViewModel.onPermissionRequestStarted()
-                cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                launchCameraPermissionRequest()
             }
 
             SupportRecoveryAction.OpenAppSettings ->
-                startActivity(
-                    Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.fromParts("package", packageName, null)
-                    )
-                )
+                openAppSettings()
 
             SupportRecoveryAction.ReturnToScan ->
                 appShellViewModel.selectDestination(AppShellDestination.Scan)
@@ -444,6 +460,12 @@ class MainActivity : ComponentActivity() {
 
     private fun handleScanOperatorAction(action: ScanOperatorAction) {
         when (action) {
+            ScanOperatorAction.RequestCameraAccess -> launchCameraPermissionRequest()
+            ScanOperatorAction.OpenAppSettings -> openAppSettings()
+            ScanOperatorAction.ReconnectCamera -> {
+                scannerSourceBinding.stop()
+                syncScannerBindingState()
+            }
             ScanOperatorAction.ManualSync -> syncViewModel.syncAttendees()
             ScanOperatorAction.RetryUpload -> queueViewModel.flushQueuedScans()
             ScanOperatorAction.Relogin -> handleReloginForAuthExpired()
@@ -465,7 +487,40 @@ class MainActivity : ComponentActivity() {
      */
     private fun handleReloginForAuthExpired() {
         appShellViewModel.dismissLogoutConfirmation()
+        hasAutoRequestedCameraPermissionThisScanEntry = false
         sessionGateViewModel.logout()
+    }
+
+    private fun launchCameraPermissionRequest() {
+        scanningViewModel.onPermissionRequestStarted()
+        cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+    }
+
+    private fun openAppSettings() {
+        startActivity(appSettingsIntent(packageName))
+    }
+
+    private fun maybeAutoRequestCameraPermissionOnScanEntry(
+        decision: ScannerSourceActivationDecision
+    ) {
+        if (
+            !shouldAutoRequestCameraPermissionOnScanEntry(
+                sourceMode = selectedScannerSourceMode,
+                isAuthenticated = isAuthenticatedRouteActive,
+                isScanDestinationSelected = isScanDestinationActive,
+                isForeground = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+                hasCameraPermission = hasCameraPermission(),
+                shouldShowCameraPermissionRequest = decision.shouldShowCameraPermissionRequest,
+                recoveryState = scanningViewModel.uiState.value.scannerRecoveryState,
+                hasAutoRequestedCameraPermissionThisScanEntry =
+                    hasAutoRequestedCameraPermissionThisScanEntry
+            )
+        ) {
+            return
+        }
+
+        hasAutoRequestedCameraPermissionThisScanEntry = true
+        launchCameraPermissionRequest()
     }
 
     private fun createScannerInputSource(sourceMode: ScannerShellSourceMode): ScannerInputSource =
@@ -492,6 +547,31 @@ class MainActivity : ComponentActivity() {
         const val LOG_TAG: String = "FastCheckMainActivity"
     }
 }
+
+internal fun shouldAutoRequestCameraPermissionOnScanEntry(
+    sourceMode: ScannerShellSourceMode,
+    isAuthenticated: Boolean,
+    isScanDestinationSelected: Boolean,
+    isForeground: Boolean,
+    hasCameraPermission: Boolean,
+    shouldShowCameraPermissionRequest: Boolean,
+    recoveryState: ScannerRecoveryState,
+    hasAutoRequestedCameraPermissionThisScanEntry: Boolean
+): Boolean =
+    sourceMode.requiresCameraPermission &&
+        isAuthenticated &&
+        isScanDestinationSelected &&
+        isForeground &&
+        !hasCameraPermission &&
+        shouldShowCameraPermissionRequest &&
+        !hasAutoRequestedCameraPermissionThisScanEntry &&
+        recoveryState is ScannerRecoveryState.RequestPermission
+
+internal fun appSettingsIntent(packageName: String): Intent =
+    Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", packageName, null)
+    )
 
 internal data class AuthenticatedSessionKey(
     val eventId: Long,
