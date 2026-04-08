@@ -3,7 +3,6 @@ import http from "k6/http";
 import { Counter } from "k6/metrics";
 
 import { config } from "./config.js";
-import { deviceIdFromIndex } from "./devices.js";
 
 export const authFailures = new Counter("auth_failures");
 export const authBootstrapLogins = new Counter("auth_bootstrap_logins");
@@ -27,6 +26,18 @@ function decodeJwtPayload(token) {
   }
 }
 
+function buildMetricTags(authContext = {}, reason = "bootstrap") {
+  return {
+    auth_reason: reason,
+    canonical_scenario: authContext.canonical_scenario || "setup",
+    family: authContext.family || "setup",
+    network_profile: authContext.network_profile || "normal",
+    request_type: "login",
+    scenario_key: authContext.scenario_key || "setup",
+    suite: authContext.suite || "setup",
+  };
+}
+
 function computeRefreshAt(expiresAt, now = Date.now()) {
   const ttlMs = Math.max(expiresAt - now, 1_000);
   const maxLeadMs = Math.min(300_000, Math.max(30_000, Math.floor(ttlMs * 0.05)));
@@ -45,7 +56,16 @@ function buildHeaders(deviceId, extraHeaders = {}) {
   };
 }
 
-function applySession(deviceBootstrap, token, expiresInSeconds) {
+function effectiveRefreshExpiry(expiresAt, authContext = {}, now = Date.now()) {
+  if (authContext.canonical_scenario !== "perf_auth_churn") {
+    return expiresAt;
+  }
+
+  const clientTtlMs = Math.max(config.thresholdPackageConfig.authChurn.clientTtlSeconds, 1) * 1000;
+  return Math.min(expiresAt, now + clientTtlMs);
+}
+
+function applySession(deviceBootstrap, token, expiresInSeconds, authContext = {}) {
   const now = Date.now();
   const expiresAt = now + Math.max(Number(expiresInSeconds || 0), 1) * 1000;
   const claims = decodeJwtPayload(token);
@@ -55,7 +75,7 @@ function applySession(deviceBootstrap, token, expiresInSeconds) {
     device_index: deviceBootstrap.device_index,
     expires_at: expiresAt,
     jti: claims.jti || deviceBootstrap.jti || null,
-    refresh_at: computeRefreshAt(expiresAt, now),
+    refresh_at: computeRefreshAt(effectiveRefreshExpiry(expiresAt, authContext, now), now),
     synthetic_ip: deviceBootstrap.synthetic_ip || null,
     token,
   };
@@ -83,11 +103,29 @@ function importBootstrapSession(deviceBootstrap) {
   deviceSessions.set(deviceBootstrap.device_id, session);
 }
 
-function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap") {
+function maybeTightenRefreshWindow(session, authContext = {}) {
+  if (authContext.canonical_scenario !== "perf_auth_churn") {
+    return session;
+  }
+
+  const now = Date.now();
+  const desiredRefreshAt = computeRefreshAt(effectiveRefreshExpiry(session.expires_at, authContext, now), now);
+
+  if (desiredRefreshAt < session.refresh_at) {
+    session.refresh_at = desiredRefreshAt;
+    deviceSessions.set(session.device_id, session);
+  }
+
+  return session;
+}
+
+function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap", authContext = {}) {
+  const metricTags = buildMetricTags(authContext, reason);
+
   if (reason === "bootstrap") {
-    authBootstrapLogins.add(1);
+    authBootstrapLogins.add(1, metricTags);
   } else {
-    authRefreshes.add(1);
+    authRefreshes.add(1, metricTags);
   }
 
   const response = http.post(
@@ -98,16 +136,25 @@ function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap") {
     }),
     {
       headers: buildHeaders(deviceBootstrap.device_id),
-      tags: { endpoint: "mobile_login", reason },
+      tags: {
+        canonical_scenario: authContext.canonical_scenario || "setup",
+        endpoint: "mobile_login",
+        family: authContext.family || "setup",
+        network_profile: authContext.network_profile || "normal",
+        reason,
+        request_type: "login",
+        scenario_key: authContext.scenario_key || "setup",
+        suite: authContext.suite || "setup",
+      },
     }
   );
 
   if (response.status === 429) {
-    loginBlockedResponses.add(1);
+    loginBlockedResponses.add(1, metricTags);
   }
 
   if (response.status !== 200) {
-    authFailures.add(1);
+    authFailures.add(1, metricTags);
     return { response, session: null };
   }
 
@@ -116,23 +163,26 @@ function loginDevice(baseUrl, deviceBootstrap, reason = "bootstrap") {
   const expiresIn = Number(payload?.data?.expires_in || 3600);
 
   if (!token) {
-    authFailures.add(1);
+    authFailures.add(1, metricTags);
     return { response, session: null };
   }
 
   const syntheticIp = response.headers?.["X-Perf-Client-Ip"]?.[0] || deviceBootstrap.synthetic_ip;
-  const session = applySession({ ...deviceBootstrap, synthetic_ip: syntheticIp }, token, expiresIn);
+  const session = applySession({ ...deviceBootstrap, synthetic_ip: syntheticIp }, token, expiresIn, authContext);
 
   return { response, session };
 }
 
-function ensureDeviceSession(baseUrl, deviceBootstrap) {
+function ensureDeviceSession(baseUrl, deviceBootstrap, authContext = {}) {
   importBootstrapSession(deviceBootstrap);
 
-  const current = deviceSessions.get(deviceBootstrap.device_id);
+  const current = maybeTightenRefreshWindow(
+    deviceSessions.get(deviceBootstrap.device_id) || null,
+    authContext
+  );
 
   if (!current?.token) {
-    const { session } = loginDevice(baseUrl, deviceBootstrap, "bootstrap");
+    const { session } = loginDevice(baseUrl, deviceBootstrap, "bootstrap", authContext);
     return session;
   }
 
@@ -141,7 +191,7 @@ function ensureDeviceSession(baseUrl, deviceBootstrap) {
   }
 
   const previous = { ...current };
-  const { session } = loginDevice(baseUrl, deviceBootstrap, "refresh");
+  const { session } = loginDevice(baseUrl, deviceBootstrap, "refresh", authContext);
 
   if (!session && previous.token && Date.now() < previous.expires_at) {
     deviceSessions.set(deviceBootstrap.device_id, previous);
@@ -151,13 +201,24 @@ function ensureDeviceSession(baseUrl, deviceBootstrap) {
   return session;
 }
 
+export function forceRefreshDevice(deviceBootstrap) {
+  const current = deviceSessions.get(deviceBootstrap.device_id);
+
+  if (!current) {
+    return;
+  }
+
+  current.refresh_at = 0;
+  deviceSessions.set(deviceBootstrap.device_id, current);
+}
+
 export function resetAuthState() {
   deviceSessions.clear();
 }
 
 export function buildDevicePool() {
   return Array.from({ length: config.deviceCount }, (_unused, index) => ({
-    device_id: deviceIdFromIndex(index),
+    device_id: `device-${String(index + 1).padStart(4, "0")}`,
     device_index: index,
     expires_at: 0,
     jti: null,
@@ -182,7 +243,7 @@ export function bootstrapDevicePool(baseUrl) {
   });
 }
 
-export function rawLogin(baseUrl, deviceId) {
+export function rawLogin(baseUrl, deviceId, authContext = {}) {
   const deviceBootstrap = {
     device_id: deviceId,
     device_index: 0,
@@ -192,7 +253,7 @@ export function rawLogin(baseUrl, deviceId) {
     token: null,
   };
 
-  return loginDevice(baseUrl, deviceBootstrap, "bootstrap").response;
+  return loginDevice(baseUrl, deviceBootstrap, "bootstrap", authContext).response;
 }
 
 export function requestWithDeviceAuth(
@@ -203,7 +264,8 @@ export function requestWithDeviceAuth(
   params = {},
   deviceBootstrap
 ) {
-  const session = ensureDeviceSession(baseUrl, deviceBootstrap);
+  const authContext = params.tags || {};
+  const session = ensureDeviceSession(baseUrl, deviceBootstrap, authContext);
 
   if (!session?.token) {
     throw new Error(`No auth session available for ${deviceBootstrap.device_id}`);
@@ -225,10 +287,10 @@ export function requestWithDeviceAuth(
   );
 
   if (response.status === 401) {
-    const refreshed = loginDevice(baseUrl, deviceBootstrap, "refresh").session;
+    const refreshed = loginDevice(baseUrl, deviceBootstrap, "refresh", authContext).session;
 
     if (!refreshed?.token) {
-      authFailures.add(1);
+      authFailures.add(1, buildMetricTags(authContext, "refresh"));
       return response;
     }
 
@@ -246,27 +308,27 @@ export function requestWithDeviceAuth(
     );
 
     if (response.status === 401) {
-      authFailures.add(1);
+      authFailures.add(1, buildMetricTags(authContext, "refresh"));
     }
   }
 
   return response;
 }
 
-export function getAttendees(baseUrl, deviceBootstrap) {
+export function getAttendees(baseUrl, deviceBootstrap, requestTags = {}) {
   return requestWithDeviceAuth(
     "GET",
     baseUrl,
     "/api/v1/mobile/attendees",
     null,
     {
-      tags: { endpoint: "mobile_attendees" },
+      tags: { endpoint: "mobile_attendees", ...requestTags },
     },
     deviceBootstrap
   );
 }
 
-export function postScans(baseUrl, scans, tags = {}, deviceBootstrap, extraHeaders = {}) {
+export function postScans(baseUrl, scans, requestTags = {}, deviceBootstrap, extraHeaders = {}) {
   return requestWithDeviceAuth(
     "POST",
     baseUrl,
@@ -274,7 +336,7 @@ export function postScans(baseUrl, scans, tags = {}, deviceBootstrap, extraHeade
     { scans },
     {
       headers: extraHeaders,
-      tags: { endpoint: "mobile_scans", ...tags },
+      tags: { endpoint: "mobile_scans", ...requestTags },
     },
     deviceBootstrap
   );

@@ -3,6 +3,7 @@ import { check } from "k6";
 
 import {
   bootstrapDevicePool,
+  forceRefreshDevice,
   getAttendees,
   postScans,
   rawLogin,
@@ -21,9 +22,29 @@ import {
   buildReplayPrimeScan,
   buildSuccessScan,
 } from "./lib/payloads.js";
+import { resolveScenarioOperation } from "./lib/scenario_mix.js";
 import { buildSummary } from "./lib/summary.js";
 
 export const options = buildOptions();
+
+function currentScenarioContext() {
+  const scenarioKey = exec.scenario.name;
+  const metadata = config.scenarioMetadata[scenarioKey];
+
+  if (!metadata) {
+    throw new Error(`Missing scenario metadata for ${scenarioKey}`);
+  }
+
+  return {
+    canonical_scenario: metadata.canonicalScenario,
+    family: metadata.family,
+    network_profile: metadata.networkProfile,
+    request_type: metadata.requestType,
+    scenario_key: scenarioKey,
+    slice: metadata.slice,
+    suite: metadata.suite,
+  };
+}
 
 function currentCapacityDevice(setupData) {
   const deviceIndex = (exec.vu.idInTest - 1) % setupData.devices.length;
@@ -44,95 +65,101 @@ function requireNonAuthStatus(response, description) {
   });
 }
 
-function assertTrustedProxyHeaders(response, device, description) {
-  const proxiedDeviceId = response.headers?.["X-Perf-Device-Id"]?.[0];
-  const proxiedIp = response.headers?.["X-Perf-Client-Ip"]?.[0];
-
-  return check(response, {
-    [`${description} preserved device identity via proxy`]: () => proxiedDeviceId === device.device_id,
-    [`${description} used synthetic 10.250/16 client IP`]: () =>
-      typeof proxiedIp === "string" &&
-      proxiedIp.startsWith(`${config.deviceIpPrefix}.`) &&
-      proxiedIp === device.synthetic_ip,
-  });
+function requestTags(context, overrides = {}) {
+  return {
+    canonical_scenario: context.canonical_scenario,
+    family: context.family,
+    network_profile: context.network_profile,
+    request_type: overrides.request_type || context.request_type,
+    scenario_key: context.scenario_key,
+    slice: overrides.slice || context.slice,
+    suite: context.suite,
+  };
 }
 
-function postSingleScan(baseUrl, scan, scenarioName, suite, device, extraHeaders = {}) {
-  const response = postScans(baseUrl, [scan], { scenario: scenarioName, suite }, device, extraHeaders);
-  const payload = recordResponse(response, {
-    deviceIndex: device.device_index,
-    requestType: "scan",
-    suite,
-  });
+function recordContext(context, device, requestType) {
+  return {
+    canonicalScenario: context.canonical_scenario,
+    deviceIndex: device?.device_index,
+    family: context.family,
+    networkProfile: context.network_profile,
+    requestType,
+    scenarioKey: context.scenario_key,
+    suite: context.suite,
+  };
+}
 
-  requireNonAuthStatus(response, scenarioName);
+function postSingleScan(baseUrl, scan, context, device, extraHeaders = {}) {
+  const response = postScans(
+    baseUrl,
+    [scan],
+    requestTags(context, { request_type: "scan" }),
+    device,
+    extraHeaders
+  );
+  const payload = recordResponse(response, recordContext(context, device, "scan"));
+
+  requireNonAuthStatus(response, context.scenario_key);
 
   return { payload, response };
+}
+
+function requestAttendees(baseUrl, context, device) {
+  const response = getAttendees(baseUrl, device, requestTags(context, { request_type: "attendees" }));
+  recordResponse(response, recordContext(context, device, "attendees"));
+  requireNonAuthStatus(response, context.scenario_key);
+
+  return response;
 }
 
 function primeDuplicateDatasets(baseUrl, setupData) {
   for (let index = 0; index < config.controls.replay_prime_count; index += 1) {
     const device = indexedDevice(setupData, index);
-    postSingleScan(baseUrl, buildReplayPrimeScan(index), "setup_prime_replay", "capacity", device);
+    const response = postScans(baseUrl, [buildReplayPrimeScan(index)], { scenario_key: "setup_prime" }, device);
+    requireNonAuthStatus(response, "setup_prime_replay");
   }
 
   for (let index = 0; index < config.controls.business_prime_count; index += 1) {
     const device = indexedDevice(setupData, index + config.controls.replay_prime_count);
-    postSingleScan(
+    const response = postScans(
       baseUrl,
-      buildBusinessPrimeScan(index),
-      "setup_prime_business_duplicate",
-      "capacity",
+      [buildBusinessPrimeScan(index)],
+      { scenario_key: "setup_prime" },
       device
     );
+    requireNonAuthStatus(response, "setup_prime_business_duplicate");
   }
 }
 
-function mixedOnlineRequest(sliceName, scenarioName, setupData) {
-  const iteration = exec.scenario.iterationInTest;
-  const bucket = iteration % 20;
+function buildOperationScan(context, iteration, operation) {
+  switch (operation.kind) {
+    case "replay_duplicate":
+      return buildReplayDuplicateScan(iteration);
+    case "business_duplicate":
+      return buildBusinessDuplicateScan(iteration);
+    case "invalid":
+      return buildInvalidScan(iteration);
+    default:
+      return buildSuccessScan(context.slice, iteration, context.scenario_key);
+  }
+}
+
+function runProfiledScenario(setupData) {
+  const context = currentScenarioContext();
   const device = currentCapacityDevice(setupData);
+  const iteration = exec.scenario.iterationInTest;
+  const operation = resolveScenarioOperation(context.canonical_scenario, iteration);
 
-  if (bucket === 0) {
-    postSingleScan(
-      config.baseUrl,
-      buildInvalidScan(iteration),
-      `${scenarioName}_invalid`,
-      "capacity",
-      device
-    );
+  if (operation.forceRefresh) {
+    forceRefreshDevice(device);
+  }
+
+  if (operation.kind === "attendee_sync") {
+    requestAttendees(config.baseUrl, context, device);
     return;
   }
 
-  if (bucket === 1) {
-    postSingleScan(
-      config.baseUrl,
-      buildReplayDuplicateScan(iteration),
-      `${scenarioName}_replay_duplicate`,
-      "capacity",
-      device
-    );
-    return;
-  }
-
-  if (bucket === 2) {
-    postSingleScan(
-      config.baseUrl,
-      buildBusinessDuplicateScan(iteration),
-      `${scenarioName}_business_duplicate`,
-      "capacity",
-      device
-    );
-    return;
-  }
-
-  postSingleScan(
-    config.baseUrl,
-    buildSuccessScan(sliceName, iteration, scenarioName),
-    `${scenarioName}_success`,
-    "capacity",
-    device
-  );
+  postSingleScan(config.baseUrl, buildOperationScan(context, iteration, operation), context, device);
 }
 
 export function setup() {
@@ -144,137 +171,57 @@ export function setup() {
 
   const devices = bootstrapDevicePool(config.baseUrl);
   const setupData = { devices };
-  const shouldPrime = config.selectedScenarios.some((name) =>
-    ["capacity_baseline", "capacity_stress", "capacity_spike"].includes(name)
-  );
 
-  if (shouldPrime) {
+  if (config.shouldPrimeDuplicateDatasets) {
     primeDuplicateDatasets(config.baseUrl, setupData);
   }
 
   return setupData;
 }
 
-export function capacitySmoke(setupData) {
+export function perfFreshSteady(setupData) {
+  runProfiledScenario(setupData);
+}
+
+export function perfDuplicateHeavy(setupData) {
+  runProfiledScenario(setupData);
+}
+
+export function perfAuthChurn(setupData) {
+  runProfiledScenario(setupData);
+}
+
+export function perfSyncScanMixedScan(setupData) {
+  runProfiledScenario(setupData);
+}
+
+export function perfSyncScanMixedAttendees(setupData) {
+  const context = currentScenarioContext();
   const device = currentCapacityDevice(setupData);
-
-  if (config.enableAttendeeSyncSmoke) {
-    const attendeeResponse = getAttendees(config.baseUrl, device);
-    recordResponse(attendeeResponse, { requestType: "attendees", suite: "capacity" });
-
-    check(attendeeResponse, {
-      "capacity attendee sync returned 200": (res) => res.status === 200,
-    });
-  }
-
-  const trustedHeaders = {
-    "X-Forwarded-For": "198.51.100.77",
-  };
-
-  const validResponse = postSingleScan(
-    config.baseUrl,
-    buildSuccessScan("soak", 0, "capacity_smoke"),
-    "capacity_smoke_valid",
-    "capacity",
-    device,
-    trustedHeaders
-  );
-
-  assertTrustedProxyHeaders(validResponse.response, device, "capacity smoke");
-
-  check(validResponse.payload, {
-    "capacity smoke valid scan succeeded": (payload) =>
-      payload?.data?.results?.[0]?.status === "success",
-  });
-
-  postSingleScan(
-    config.baseUrl,
-    buildReplayPrimeScan(0),
-    "capacity_smoke_replay_prime",
-    "capacity",
-    device
-  );
-
-  const replayResponse = postSingleScan(
-    config.baseUrl,
-    buildReplayDuplicateScan(0),
-    "capacity_smoke_replay_duplicate",
-    "capacity",
-    device
-  );
-
-  check(replayResponse.payload, {
-    "capacity smoke replay duplicate returned duplicate": (payload) =>
-      payload?.data?.results?.[0]?.status === "duplicate",
-  });
-
-  postSingleScan(
-    config.baseUrl,
-    buildBusinessPrimeScan(0),
-    "capacity_smoke_business_prime",
-    "capacity",
-    device
-  );
-
-  const businessResponse = postSingleScan(
-    config.baseUrl,
-    buildBusinessDuplicateScan(0),
-    "capacity_smoke_business_duplicate",
-    "capacity",
-    device
-  );
-
-  check(businessResponse.payload, {
-    "capacity smoke business duplicate returned already checked in": (payload) =>
-      (payload?.data?.results?.[0]?.message || "").includes("Already checked in"),
-  });
-
-  const invalidResponse = postSingleScan(
-    config.baseUrl,
-    buildInvalidScan(0),
-    "capacity_smoke_invalid",
-    "capacity",
-    device
-  );
-
-  check(invalidResponse.payload, {
-    "capacity smoke invalid ticket returned ticket not found": (payload) =>
-      (payload?.data?.results?.[0]?.message || "").includes("Ticket not found"),
-  });
+  requestAttendees(config.baseUrl, context, device);
 }
 
-export function capacityBaseline(setupData) {
-  mixedOnlineRequest("baseline_valid", "capacity_baseline", setupData);
-}
-
-export function capacityStress(setupData) {
-  mixedOnlineRequest("baseline_valid", "capacity_stress", setupData);
-}
-
-export function capacitySpike(setupData) {
+export function perfSpikeBatch(setupData) {
+  const context = currentScenarioContext();
   const device = currentCapacityDevice(setupData);
   const response = postScans(
     config.baseUrl,
     buildOfflineBurstBatch(exec.scenario.iterationInTest),
-    { scenario: "capacity_spike_batch", suite: "capacity" },
+    requestTags(context, { request_type: "scan" }),
     device
   );
 
-  recordResponse(response, {
-    deviceIndex: device.device_index,
-    requestType: "scan",
-    suite: "capacity",
-  });
-
-  requireNonAuthStatus(response, "capacity_spike");
+  recordResponse(response, recordContext(context, device, "scan"));
+  requireNonAuthStatus(response, context.scenario_key);
 }
 
-export function capacitySoak(setupData) {
-  mixedOnlineRequest("soak", "capacity_soak", setupData);
+export function perfSoakEndurance(setupData) {
+  runProfiledScenario(setupData);
 }
 
 export function abuseLogin() {
-  const response = rawLogin(config.baseUrl, deviceIdFromIndex(0));
+  const context = currentScenarioContext();
+  const response = rawLogin(config.baseUrl, deviceIdFromIndex(0), requestTags(context, { request_type: "login" }));
 
   check(response, {
     "abuse login returned a throttled or handled response": (res) => [200, 401, 403, 429].includes(res.status),
@@ -282,12 +229,12 @@ export function abuseLogin() {
 }
 
 export function abuseScansSingleDevice(setupData) {
+  const context = currentScenarioContext();
   const device = hotDevice(setupData);
   const response = postSingleScan(
     config.baseUrl,
-    buildSuccessScan("baseline_valid", exec.scenario.iterationInTest, "abuse_single_device"),
-    "abuse_scans_single_device",
-    "abuse",
+    buildSuccessScan(context.slice, exec.scenario.iterationInTest, context.scenario_key),
+    context,
     device
   );
 
@@ -296,41 +243,24 @@ export function abuseScansSingleDevice(setupData) {
   });
 }
 
-export function enqueueFailure(setupData) {
+export function diagnosticEnqueueFailure(setupData) {
+  const context = currentScenarioContext();
   const device = hotDevice(setupData);
   const recoveryScan = buildRecoveryScan();
-  const failureResponse = postSingleScan(
-    config.baseUrl,
-    recoveryScan,
-    "enqueue_failure",
-    "diagnostic",
-    device
-  );
+  const failureResponse = postSingleScan(config.baseUrl, recoveryScan, context, device);
 
   check(failureResponse.response, {
     "enqueue failure returned retryable status": (res) => res.status >= 500 || res.status === 503,
   });
 
   if (config.recoveryBaseUrl) {
-    const recoverySuccess = postSingleScan(
-      config.recoveryBaseUrl,
-      recoveryScan,
-      "enqueue_failure_recovery_success",
-      "diagnostic",
-      device
-    );
+    const recoverySuccess = postSingleScan(config.recoveryBaseUrl, recoveryScan, context, device);
 
     check(recoverySuccess.payload, {
       "recovery replay succeeded": (payload) => payload?.data?.results?.[0]?.status === "success",
     });
 
-    const recoveryDuplicate = postSingleScan(
-      config.recoveryBaseUrl,
-      recoveryScan,
-      "enqueue_failure_recovery_duplicate",
-      "diagnostic",
-      device
-    );
+    const recoveryDuplicate = postSingleScan(config.recoveryBaseUrl, recoveryScan, context, device);
 
     check(recoveryDuplicate.payload, {
       "recovery duplicate returned duplicate": (payload) =>
@@ -339,13 +269,13 @@ export function enqueueFailure(setupData) {
   }
 }
 
-export function legacySmoke(setupData) {
+export function diagnosticLegacySmoke(setupData) {
+  const context = currentScenarioContext();
   const device = hotDevice(setupData);
   const response = postSingleScan(
     config.baseUrl,
-    buildSuccessScan("baseline_valid", 1, "legacy_smoke"),
-    "legacy_smoke",
-    "diagnostic",
+    buildSuccessScan(context.slice, 1, context.scenario_key),
+    context,
     device
   );
 

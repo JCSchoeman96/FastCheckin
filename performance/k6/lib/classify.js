@@ -8,6 +8,7 @@ export const replayDuplicateResults = new Counter("scan_result_idempotency_repla
 export const businessDuplicateResults = new Counter("scan_result_business_duplicate");
 export const invalidResults = new Counter("scan_result_invalid");
 export const retryableFailureResults = new Counter("scan_result_retryable_failure");
+export const scanRetryableFailureRate = new Rate("scan_retryable_failure_rate");
 export const scanBlockedResponses = new Counter("scan_response_blocked");
 export const capacityScanBlockedResponses = new Counter("capacity_scan_response_blocked");
 export const abuseScanBlockedResponses = new Counter("abuse_scan_response_blocked");
@@ -27,9 +28,24 @@ function maybeJson(response) {
   }
 }
 
+function metricTags(context = {}) {
+  return {
+    canonical_scenario: context.canonicalScenario || "setup",
+    family: context.family || "setup",
+    network_profile: context.networkProfile || "normal",
+    request_type: context.requestType || "scan",
+    scenario_key: context.scenarioKey || "setup",
+    suite: context.suite || "setup",
+  };
+}
+
 function classifyResult(result) {
   const message = (result?.message || "").toLowerCase();
   const status = result?.status;
+
+  if (message.includes("already checked in")) {
+    return "business_duplicate";
+  }
 
   if (status === "success") {
     return "success";
@@ -39,10 +55,6 @@ function classifyResult(result) {
     return "replay_duplicate";
   }
 
-  if (message.includes("already checked in")) {
-    return "business_duplicate";
-  }
-
   if (message.includes("ticket not found")) {
     return "invalid";
   }
@@ -50,34 +62,40 @@ function classifyResult(result) {
   return "retryable_failure";
 }
 
-function incrementCategory(category) {
+function incrementCategory(category, tags) {
   switch (category) {
     case "success":
-      successResults.add(1);
+      successResults.add(1, tags);
+      scanRetryableFailureRate.add(false, tags);
       break;
     case "replay_duplicate":
-      replayDuplicateResults.add(1);
+      replayDuplicateResults.add(1, tags);
+      scanRetryableFailureRate.add(false, tags);
       break;
     case "business_duplicate":
-      businessDuplicateResults.add(1);
+      businessDuplicateResults.add(1, tags);
+      scanRetryableFailureRate.add(false, tags);
       break;
     case "invalid":
-      invalidResults.add(1);
+      invalidResults.add(1, tags);
+      scanRetryableFailureRate.add(false, tags);
       break;
     default:
-      retryableFailureResults.add(1);
+      retryableFailureResults.add(1, tags);
+      scanRetryableFailureRate.add(true, tags);
       break;
   }
 }
 
-function recordRequest(suite, blocked, deviceIndex) {
+function recordRequest(suite, blocked, deviceIndex, tags) {
   switch (suite) {
-    case "capacity":
-      capacityScanRequests.add(1);
-      capacityScanBlockedRate.add(blocked);
+    case "performance":
+    case "network":
+      capacityScanRequests.add(1, tags);
+      capacityScanBlockedRate.add(blocked, tags);
 
       if (blocked) {
-        capacityScanBlockedResponses.add(1);
+        capacityScanBlockedResponses.add(1, tags);
 
         if (
           Number.isInteger(deviceIndex) &&
@@ -89,22 +107,20 @@ function recordRequest(suite, blocked, deviceIndex) {
       }
 
       break;
-
     case "abuse":
-      abuseScanRequests.add(1);
+      abuseScanRequests.add(1, tags);
 
       if (blocked) {
-        abuseScanBlockedResponses.add(1);
+        abuseScanBlockedResponses.add(1, tags);
       }
 
       break;
-
     default:
       break;
   }
 
   if (blocked) {
-    scanBlockedResponses.add(1);
+    scanBlockedResponses.add(1, tags);
   }
 }
 
@@ -112,31 +128,39 @@ export function recordResponse(response, context = {}) {
   const payload = maybeJson(response);
   const requestType = context.requestType || "scan";
   const isBlocked = response.status === 429;
+  const tags = metricTags(context);
 
   if (requestType === "scan") {
-    recordRequest(context.suite, isBlocked, context.deviceIndex);
+    recordRequest(context.family, isBlocked, context.deviceIndex, tags);
   }
 
   if (isBlocked) {
+    scanRetryableFailureRate.add(false, tags);
     return payload;
   }
 
   if (response.status >= 500) {
-    retryableFailureResults.add(1);
+    retryableFailureResults.add(1, tags);
+    scanRetryableFailureRate.add(true, tags);
     return payload;
   }
 
   const topLevelCode = payload?.error?.code;
 
   if (topLevelCode === "durability_enqueue_failed" || topLevelCode === "scan_ingestion_failed") {
-    retryableFailureResults.add(1);
+    retryableFailureResults.add(1, tags);
+    scanRetryableFailureRate.add(true, tags);
     return payload;
   }
 
   const results = payload?.data?.results || [];
 
+  if (results.length === 0 && requestType === "scan") {
+    scanRetryableFailureRate.add(false, tags);
+  }
+
   for (const result of results) {
-    incrementCategory(classifyResult(result));
+    incrementCategory(classifyResult(result), tags);
   }
 
   return payload;
