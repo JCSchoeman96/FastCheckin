@@ -158,6 +158,37 @@ class ScanningViewModelTest {
     }
 
     @Test
+    fun grantedPermissionOutsideActiveScanSurfaceDoesNotReportStarting() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.Backgrounded)
+            )
+        )
+
+        assertThat(viewModel.uiState.value.shouldHostPreviewSurface).isFalse()
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Inactive)
+    }
+
+    @Test
+    fun permissionRequestStartedPreservesExplicitRequestingStatus() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = false)
+        viewModel.onPermissionRequestStarted()
+
+        assertThat(viewModel.uiState.value.scannerStatus)
+            .isEqualTo("Requesting camera permission for scanner input.")
+    }
+
+    @Test
     fun sourceErrorBlocksScannerWithTypedReason() {
         val viewModel = ScanningViewModel()
 

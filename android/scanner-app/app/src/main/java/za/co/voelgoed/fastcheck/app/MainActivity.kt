@@ -25,7 +25,9 @@ import za.co.voelgoed.fastcheck.R
 import za.co.voelgoed.fastcheck.app.navigation.AppShellDestination
 import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
 import za.co.voelgoed.fastcheck.app.scanning.ScanPreviewSurfaceHolder
+import za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason
 import za.co.voelgoed.fastcheck.app.scanning.ScannerActivationContext
+import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.app.scanning.ScannerShellSourceMode
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationDecision
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationPolicy
@@ -365,6 +367,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        scanningViewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.Backgrounded)
+            )
+        )
         scanningViewModel.onBindingAttemptChanged(false)
         scannerSourceBinding.stop()
         super.onStop()

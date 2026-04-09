@@ -84,6 +84,20 @@ class SupportOverviewPresenterTest {
     }
 
     @Test
+    fun inactiveRecoveryMapsToScannerInactiveGuidance() {
+        val uiState =
+            present(
+                ScanningUiState(
+                    scannerRecoveryState = ScannerRecoveryState.Inactive
+                )
+            )
+
+        assertThat(uiState.recoveryTitle).isEqualTo("Scanner inactive")
+        assertThat(uiState.recoveryTone).isEqualTo(StatusTone.Neutral)
+        assertThat(uiState.recoveryAction).isEqualTo(SupportRecoveryAction.ReturnToScan)
+    }
+
+    @Test
     fun unresolvedConflictsSurfaceSupportWarning() {
         val uiState =
             present(

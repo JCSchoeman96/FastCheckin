@@ -178,7 +178,10 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     private fun scannerRecoveryStateFor(
         sourceType: ScannerSourceType,
         permission: CameraPermissionState,
-        lifecycle: ScannerSourceState
+        lifecycle: ScannerSourceState,
+        shouldHostPreviewSurface: Boolean,
+        hasPreviewSurface: Boolean,
+        hasBindingAttempted: Boolean
     ): ScannerRecoveryState =
         when {
             lifecycle is ScannerSourceState.Error ->
@@ -200,8 +203,19 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
             lifecycle is ScannerSourceState.Ready ->
                 ScannerRecoveryState.Ready
 
-            permission == CameraPermissionState.GRANTED ->
+            shouldHostPreviewSurface && !hasPreviewSurface ->
                 ScannerRecoveryState.Starting
+
+            shouldHostPreviewSurface && hasPreviewSurface && !hasBindingAttempted ->
+                ScannerRecoveryState.Starting
+
+            shouldHostPreviewSurface &&
+                hasBindingAttempted &&
+                (lifecycle is ScannerSourceState.Idle || lifecycle is ScannerSourceState.Starting) ->
+                ScannerRecoveryState.Starting
+
+            permission == CameraPermissionState.GRANTED ->
+                ScannerRecoveryState.Inactive
 
             else ->
                 ScannerRecoveryState.RequestPermission(
@@ -268,7 +282,10 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 scannerRecoveryStateFor(
                     sourceType = current.activeSourceType,
                     permission = current.cameraPermissionState,
-                    lifecycle = current.sourceLifecycle
+                    lifecycle = current.sourceLifecycle,
+                    shouldHostPreviewSurface = shouldHostPreviewSurface,
+                    hasPreviewSurface = current.hasPreviewSurface,
+                    hasBindingAttempted = current.hasBindingAttempted
                 )
         )
     }
@@ -378,7 +395,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 } else {
                     "Camera permission is not required for the active Zebra DataWedge source."
                 }
-            deriveState(it.copy(scannerStatus = status))
+            deriveState(it).copy(scannerStatus = status)
         }
     }
 

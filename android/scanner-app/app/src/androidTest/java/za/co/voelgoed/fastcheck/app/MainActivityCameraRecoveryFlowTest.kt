@@ -331,7 +331,7 @@ class MainActivityCameraRecoveryFlowTest {
             scenario.moveToState(Lifecycle.State.CREATED)
             waitUntil("scanner stop on background") {
                 fakeSource.stopCount == 1 &&
-                    currentRecoveryState(scenario) != ScannerRecoveryState.Ready
+                    currentRecoveryState(scenario) == ScannerRecoveryState.Inactive
             }
 
             scenario.moveToState(Lifecycle.State.RESUMED)
@@ -377,7 +377,7 @@ class MainActivityCameraRecoveryFlowTest {
             }
             waitUntil("scanner stop after leaving scan") {
                 fakeSource.stopCount == 1 &&
-                    currentRecoveryState(scenario) != ScannerRecoveryState.Ready
+                    currentRecoveryState(scenario) == ScannerRecoveryState.Inactive
             }
 
             scenario.onActivity { activity ->

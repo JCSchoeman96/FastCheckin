@@ -28,6 +28,14 @@ class SupportOverviewPresenter {
                         action = SupportRecoveryAction.ReturnToScan
                     )
 
+                ScannerRecoveryState.Inactive ->
+                    RecoveryCopy(
+                        title = "Scanner inactive",
+                        message = "Camera access is available, but smartphone scanning is not currently active. Return to Scan to continue operating.",
+                        tone = StatusTone.Neutral,
+                        action = SupportRecoveryAction.ReturnToScan
+                    )
+
                 ScannerRecoveryState.Starting ->
                     RecoveryCopy(
                         title = "Scanner startup in progress",

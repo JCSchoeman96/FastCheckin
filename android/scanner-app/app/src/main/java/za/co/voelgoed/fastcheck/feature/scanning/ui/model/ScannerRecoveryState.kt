@@ -1,6 +1,8 @@
 package za.co.voelgoed.fastcheck.feature.scanning.ui.model
 
 sealed interface ScannerRecoveryState {
+    data object Inactive : ScannerRecoveryState
+
     data object Starting : ScannerRecoveryState
 
     data object Ready : ScannerRecoveryState

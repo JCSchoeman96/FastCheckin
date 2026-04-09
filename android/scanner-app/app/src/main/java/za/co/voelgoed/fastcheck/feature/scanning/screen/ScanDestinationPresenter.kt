@@ -78,6 +78,7 @@ class ScanDestinationPresenter(
                     null
                 }
 
+            ScannerRecoveryState.Inactive,
             ScannerRecoveryState.Starting,
             ScannerRecoveryState.Ready,
             ScannerRecoveryState.CameraNotRequired ->
