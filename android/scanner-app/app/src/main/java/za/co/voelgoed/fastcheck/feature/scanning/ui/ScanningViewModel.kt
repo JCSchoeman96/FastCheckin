@@ -73,20 +73,37 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    private fun shouldShowPreview(
+    private fun shouldHostPreviewSurface(
         sourceType: ScannerSourceType,
         permission: CameraPermissionState,
-        sessionState: ScannerSessionState
+        activationDecision: ScannerSourceActivationDecision?
     ): Boolean =
         isCameraSource(sourceType) &&
             permission == CameraPermissionState.GRANTED &&
-            sessionState in setOf(ScannerSessionState.Armed, ScannerSessionState.Active)
+            when (val sessionState = activationDecision?.sessionState) {
+                ScannerSessionState.Armed,
+                ScannerSessionState.Active -> true
+
+                is ScannerSessionState.Blocked ->
+                    sessionState.reason !in
+                        setOf(
+                            ScannerBlockReason.NotAuthenticated,
+                            ScannerBlockReason.Backgrounded,
+                            ScannerBlockReason.PermissionDenied
+                        )
+
+                else -> false
+            }
 
     private fun computeScannerStatus(
         sourceType: ScannerSourceType,
         lifecycle: ScannerSourceState,
         permission: CameraPermissionState,
-        sessionState: ScannerSessionState
+        sessionState: ScannerSessionState,
+        shouldHostPreviewSurface: Boolean,
+        hasPreviewSurface: Boolean,
+        hasBindingAttempted: Boolean,
+        isPreviewVisible: Boolean
     ): String =
         when {
             sessionState is ScannerSessionState.Blocked &&
@@ -126,11 +143,24 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
             permission == CameraPermissionState.DENIED ->
                 "Camera permission required before scanner preview can start."
 
-            lifecycle is ScannerSourceState.Starting ->
-                "Preparing scanner input source."
+            lifecycle is ScannerSourceState.Ready && !isPreviewVisible ->
+                "Scanner ready. Preview is still becoming visible in the UI."
 
             lifecycle is ScannerSourceState.Ready ->
                 "Scanner ready. Decoded values use local gate rules first, then queue background reconciliation."
+
+            shouldHostPreviewSurface && !hasPreviewSurface ->
+                "Preparing the scan preview"
+
+            hasPreviewSurface && !hasBindingAttempted ->
+                "Preparing scanner input source"
+
+            hasBindingAttempted &&
+                (lifecycle is ScannerSourceState.Idle || lifecycle is ScannerSourceState.Starting) ->
+                "Starting scanner input source"
+
+            lifecycle is ScannerSourceState.Starting ->
+                "Preparing scanner input source."
 
             lifecycle is ScannerSourceState.Stopping ->
                 "Stopping scanner input source."
@@ -157,19 +187,91 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
             !isCameraSource(sourceType) ->
                 ScannerRecoveryState.CameraNotRequired
 
-            permission == CameraPermissionState.GRANTED ->
-                ScannerRecoveryState.Ready
-
             permission == CameraPermissionState.DENIED &&
                 hasAttemptedCameraPermissionRequest &&
                 !shouldShowCameraPermissionRationale ->
                 ScannerRecoveryState.OpenSystemSettings
+
+            permission == CameraPermissionState.DENIED ->
+                ScannerRecoveryState.RequestPermission(
+                    shouldShowRationale = shouldShowCameraPermissionRationale
+                )
+
+            lifecycle is ScannerSourceState.Ready ->
+                ScannerRecoveryState.Ready
+
+            permission == CameraPermissionState.GRANTED ->
+                ScannerRecoveryState.Starting
 
             else ->
                 ScannerRecoveryState.RequestPermission(
                     shouldShowRationale = shouldShowCameraPermissionRationale
                 )
         }
+
+    private fun deriveState(current: ScanningUiState): ScanningUiState {
+        val sessionState =
+            resolveSessionState(
+                activationDecision = current.activationDecision,
+                lifecycle = current.sourceLifecycle,
+                sourceType = current.activeSourceType
+            )
+        val shouldHostPreviewSurface =
+            shouldHostPreviewSurface(
+                sourceType = current.activeSourceType,
+                permission = current.cameraPermissionState,
+                activationDecision = current.activationDecision
+            )
+        val isSourceReady = current.sourceLifecycle is ScannerSourceState.Ready
+        val isPreviewVisible = isCameraSource(current.activeSourceType) && current.isPreviewVisible
+        val isPermissionRequestVisible =
+            when {
+                !isCameraSource(current.activeSourceType) -> false
+                current.activationDecision != null ->
+                    current.activationDecision.shouldShowCameraPermissionRequest
+                else -> true
+            }
+        val isPermissionRequestEnabled =
+            when {
+                !isCameraSource(current.activeSourceType) -> false
+                current.activationDecision != null ->
+                    current.activationDecision.shouldShowCameraPermissionRequest
+                else -> current.cameraPermissionState != CameraPermissionState.GRANTED
+            }
+
+        return current.copy(
+            permissionSummary =
+                permissionSummaryFor(current.activeSourceType, current.cameraPermissionState),
+            sessionState = sessionState,
+            shouldHostPreviewSurface = shouldHostPreviewSurface,
+            isPermissionRequestVisible = isPermissionRequestVisible,
+            isPermissionRequestEnabled = isPermissionRequestEnabled,
+            isSourceReady = isSourceReady,
+            sourceErrorMessage =
+                when (current.sourceLifecycle) {
+                    is ScannerSourceState.Error -> current.sourceLifecycle.reason
+                    else -> null
+                },
+            isPreviewVisible = isPreviewVisible,
+            scannerStatus =
+                computeScannerStatus(
+                    sourceType = current.activeSourceType,
+                    lifecycle = current.sourceLifecycle,
+                    permission = current.cameraPermissionState,
+                    sessionState = sessionState,
+                    shouldHostPreviewSurface = shouldHostPreviewSurface,
+                    hasPreviewSurface = current.hasPreviewSurface,
+                    hasBindingAttempted = current.hasBindingAttempted,
+                    isPreviewVisible = isPreviewVisible
+                ),
+            scannerRecoveryState =
+                scannerRecoveryStateFor(
+                    sourceType = current.activeSourceType,
+                    permission = current.cameraPermissionState,
+                    lifecycle = current.sourceLifecycle
+                )
+        )
+    }
 
     fun onCaptureHandoffResult(result: CaptureHandoffResult) {
         _uiState.update { current ->
@@ -230,44 +332,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     }
 
     fun onSourceStateChanged(state: ScannerSourceState) {
-        _uiState.update { current ->
-            val sessionState =
-                resolveSessionState(
-                    activationDecision = current.activationDecision,
-                    lifecycle = state,
-                    sourceType = current.activeSourceType
-                )
-
-            current.copy(
-                sourceLifecycle = state,
-                sessionState = sessionState,
-                isSourceReady = state is ScannerSourceState.Ready,
-                sourceErrorMessage =
-                    when (state) {
-                        is ScannerSourceState.Error -> state.reason
-                        else -> null
-                    },
-                isPreviewVisible =
-                    shouldShowPreview(
-                        current.activeSourceType,
-                        current.cameraPermissionState,
-                        sessionState
-                    ),
-                scannerStatus =
-                    computeScannerStatus(
-                        current.activeSourceType,
-                        state,
-                        current.cameraPermissionState,
-                        sessionState
-                    ),
-                scannerRecoveryState =
-                    scannerRecoveryStateFor(
-                        sourceType = current.activeSourceType,
-                        permission = current.cameraPermissionState,
-                        lifecycle = state
-                    )
-            )
-        }
+        _uiState.update { current -> deriveState(current.copy(sourceLifecycle = state)) }
     }
 
     fun refreshPermissionState(
@@ -283,71 +348,23 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                     CameraPermissionState.DENIED
                 }
 
-            current.copy(
-                cameraPermissionState = newPermission,
-                permissionSummary = permissionSummaryFor(current.activeSourceType, newPermission),
-                isPermissionRequestEnabled =
-                    current.activationDecision?.shouldShowCameraPermissionRequest
-                        ?: (isCameraSource(current.activeSourceType) && !isGranted),
-                isPermissionRequestVisible =
-                    current.activationDecision?.shouldShowCameraPermissionRequest
-                        ?: isCameraSource(current.activeSourceType),
-                isPreviewVisible =
-                    shouldShowPreview(
-                        current.activeSourceType,
-                        newPermission,
-                        current.sessionState
-                    ),
-                scannerStatus =
-                    computeScannerStatus(
-                        current.activeSourceType,
-                        current.sourceLifecycle,
-                        newPermission,
-                        current.sessionState
-                    ),
-                scannerRecoveryState =
-                    scannerRecoveryStateFor(
-                        sourceType = current.activeSourceType,
-                        permission = newPermission,
-                        lifecycle = current.sourceLifecycle
-                    )
+            deriveState(
+                current.copy(
+                    cameraPermissionState = newPermission,
+                    hasBindingAttempted = if (isGranted) current.hasBindingAttempted else false
+                )
             )
         }
     }
 
     fun onActivationDecision(decision: ScannerSourceActivationDecision) {
         _uiState.update { current ->
-            val sessionState =
-                resolveSessionState(
+            deriveState(
+                current.copy(
                     activationDecision = decision,
-                    lifecycle = current.sourceLifecycle,
-                    sourceType = current.activeSourceType
+                    hasBindingAttempted =
+                        if (decision.shouldStartBinding) current.hasBindingAttempted else false
                 )
-
-            current.copy(
-                activationDecision = decision,
-                sessionState = sessionState,
-                isPermissionRequestEnabled = decision.shouldShowCameraPermissionRequest,
-                isPermissionRequestVisible = decision.shouldShowCameraPermissionRequest,
-                isPreviewVisible =
-                    shouldShowPreview(
-                        current.activeSourceType,
-                        current.cameraPermissionState,
-                        sessionState
-                    ),
-                scannerStatus =
-                    computeScannerStatus(
-                        current.activeSourceType,
-                        current.sourceLifecycle,
-                        current.cameraPermissionState,
-                        sessionState
-                    ),
-                scannerRecoveryState =
-                    scannerRecoveryStateFor(
-                        sourceType = current.activeSourceType,
-                        permission = current.cameraPermissionState,
-                        lifecycle = current.sourceLifecycle
-                    )
             )
         }
     }
@@ -361,43 +378,43 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 } else {
                     "Camera permission is not required for the active Zebra DataWedge source."
                 }
-            it.copy(
-                scannerStatus = status,
-                scannerRecoveryState =
-                    scannerRecoveryStateFor(
-                        sourceType = it.activeSourceType,
-                        permission = it.cameraPermissionState,
-                        lifecycle = it.sourceLifecycle
-                    )
-            )
+            deriveState(it.copy(scannerStatus = status))
         }
     }
 
     fun onActiveSourceTypeChanged(sourceType: ScannerSourceType) {
         _uiState.update { current ->
-            current.copy(
-                activeSourceType = sourceType,
-                permissionSummary = permissionSummaryFor(sourceType, current.cameraPermissionState),
-                isPermissionRequestEnabled =
-                    isCameraSource(sourceType) &&
-                        current.cameraPermissionState != CameraPermissionState.GRANTED,
-                isPermissionRequestVisible = isCameraSource(sourceType),
-                isPreviewVisible =
-                    shouldShowPreview(sourceType, current.cameraPermissionState, current.sessionState),
-                scannerStatus =
-                    computeScannerStatus(
-                        sourceType,
-                        current.sourceLifecycle,
-                        current.cameraPermissionState,
-                        current.sessionState
-                    ),
-                scannerRecoveryState =
-                    scannerRecoveryStateFor(
-                        sourceType = sourceType,
-                        permission = current.cameraPermissionState,
-                        lifecycle = current.sourceLifecycle
-                    )
+            deriveState(
+                current.copy(
+                    activeSourceType = sourceType,
+                    hasBindingAttempted =
+                        if (current.activeSourceType == sourceType) {
+                            current.hasBindingAttempted
+                        } else {
+                            false
+                        }
+                )
             )
+        }
+    }
+
+    fun onPreviewSurfaceStateChanged(
+        hasPreviewSurface: Boolean,
+        isPreviewVisible: Boolean
+    ) {
+        _uiState.update { current ->
+            deriveState(
+                current.copy(
+                    hasPreviewSurface = hasPreviewSurface,
+                    isPreviewVisible = isPreviewVisible
+                )
+            )
+        }
+    }
+
+    fun onBindingAttemptChanged(hasBindingAttempted: Boolean) {
+        _uiState.update { current ->
+            deriveState(current.copy(hasBindingAttempted = hasBindingAttempted))
         }
     }
 }

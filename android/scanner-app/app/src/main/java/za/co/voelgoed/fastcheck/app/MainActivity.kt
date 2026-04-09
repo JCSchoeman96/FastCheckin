@@ -365,6 +365,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        scanningViewModel.onBindingAttemptChanged(false)
         scannerSourceBinding.stop()
         super.onStop()
     }
@@ -391,6 +392,16 @@ class MainActivity : ComponentActivity() {
             isGranted = hasPermission,
             shouldShowRationale = shouldShowCameraPermissionRationale()
         )
+        val hasPreviewSurface =
+            MainActivityTestHooks.previewSurfaceOverride?.hasPreviewSurface
+                ?: previewSurfaceHolder.hasPreviewSurface()
+        val isPreviewVisible =
+            MainActivityTestHooks.previewSurfaceOverride?.isPreviewVisible
+                ?: previewSurfaceHolder.isPreviewVisible()
+        scanningViewModel.onPreviewSurfaceStateChanged(
+            hasPreviewSurface = hasPreviewSurface,
+            isPreviewVisible = isPreviewVisible
+        )
 
         val decision =
             scannerSourceActivationPolicy.evaluate(
@@ -400,20 +411,18 @@ class MainActivity : ComponentActivity() {
                     isScanDestinationSelected = isScanDestinationActive,
                     isForeground = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
                     hasCameraPermission = hasPermission,
-                    hasPreviewSurface =
-                        MainActivityTestHooks.previewSurfaceOverride?.hasPreviewSurface
-                            ?: previewSurfaceHolder.hasPreviewSurface(),
-                    isPreviewVisible =
-                        MainActivityTestHooks.previewSurfaceOverride?.isPreviewVisible
-                            ?: previewSurfaceHolder.isPreviewVisible()
+                    hasPreviewSurface = hasPreviewSurface,
+                    isPreviewVisible = isPreviewVisible
                 )
             )
 
         scanningViewModel.onActivationDecision(decision)
 
         if (decision.shouldStartBinding) {
+            scanningViewModel.onBindingAttemptChanged(true)
             scannerSourceBinding.start()
         } else {
+            scanningViewModel.onBindingAttemptChanged(false)
             scannerSourceBinding.stop()
         }
 

@@ -11,7 +11,6 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
-import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
@@ -39,9 +38,7 @@ class ScanDestinationPresenter(
             scannerStatusMessage = scanningUiState.scannerStatus,
             attendeeStatusChip = attendeeStatus.first,
             attendeeStatusMessage = attendeeStatus.second,
-            showCameraPreview =
-                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
-                    scanningUiState.cameraPermissionState == CameraPermissionState.GRANTED,
+            showCameraPreview = scanningUiState.shouldHostPreviewSurface,
             primaryRecoveryAction = primaryRecoveryAction?.first,
             primaryRecoveryActionLabel = primaryRecoveryAction?.second,
             previewBanner = previewBannerFor(scanningUiState),
@@ -81,6 +78,7 @@ class ScanDestinationPresenter(
                     null
                 }
 
+            ScannerRecoveryState.Starting,
             ScannerRecoveryState.Ready,
             ScannerRecoveryState.CameraNotRequired ->
                 null
@@ -90,8 +88,15 @@ class ScanDestinationPresenter(
         queueUiState.localQueueDepth > 0 &&
             (queueUiState.uploadSemanticState as? SyncUiState.Failed)?.reason == "Auth expired"
 
-    private fun scannerChipFor(uiState: ScanningUiState): StatusChipUiModel =
-        when (val sessionState = uiState.sessionState) {
+    private fun scannerChipFor(uiState: ScanningUiState): StatusChipUiModel {
+        if (
+            uiState.activeSourceType == ScannerSourceType.CAMERA &&
+            uiState.scannerRecoveryState == ScannerRecoveryState.Starting
+        ) {
+            return StatusChipUiModel(text = "Scanner starting", tone = StatusTone.Info)
+        }
+
+        return when (val sessionState = uiState.sessionState) {
             ScannerSessionState.Active ->
                 StatusChipUiModel(text = "Scanner active", tone = StatusTone.Brand)
 
@@ -119,6 +124,7 @@ class ScanDestinationPresenter(
                         StatusChipUiModel(text = "Scanner idle", tone = StatusTone.Muted)
                 }
         }
+    }
 
     private fun attendeeStatusFor(
         syncUiState: SyncScreenUiState,
@@ -188,10 +194,17 @@ class ScanDestinationPresenter(
                     tone = StatusTone.Destructive
                 )
 
-            !uiState.isSourceReady ->
+            uiState.scannerRecoveryState == ScannerRecoveryState.Starting ->
                 BannerUiModel(
                     title = "Preparing camera",
-                    message = "The scan surface is active and the camera is getting ready.",
+                    message = uiState.scannerStatus,
+                    tone = StatusTone.Info
+                )
+
+            uiState.scannerRecoveryState == ScannerRecoveryState.Ready && !uiState.isPreviewVisible ->
+                BannerUiModel(
+                    title = "Scanner ready",
+                    message = uiState.scannerStatus,
                     tone = StatusTone.Info
                 )
 
