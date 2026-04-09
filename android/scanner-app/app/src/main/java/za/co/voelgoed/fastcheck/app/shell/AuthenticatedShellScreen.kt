@@ -36,6 +36,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.annotation.StringRes
 import za.co.voelgoed.fastcheck.R
 import za.co.voelgoed.fastcheck.app.navigation.AppShellDestination
 import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
@@ -61,7 +62,8 @@ fun AuthenticatedShellScreen(
     FastCheckTheme {
         val activeSupportRoute = uiState.activeSupportRoute
         val topBarTitle =
-            activeSupportRoute?.title ?: uiState.selectedDestination.topBarTitle()
+            activeSupportRoute?.title
+                ?: stringResource(uiState.selectedDestination.topBarTitleRes())
         var overflowExpanded by remember { mutableStateOf(false) }
 
         if (activeSupportRoute != null) {
@@ -225,10 +227,10 @@ private fun ShellContent(
     }
 }
 
-@Composable
-private fun AppShellDestination.topBarTitle(): String =
+@StringRes
+private fun AppShellDestination.topBarTitleRes(): Int =
     when (this) {
-        AppShellDestination.Scan -> stringResource(R.string.top_bar_title_scan)
-        AppShellDestination.Search -> stringResource(R.string.top_bar_title_search)
-        AppShellDestination.Event -> stringResource(R.string.top_bar_title_event)
+        AppShellDestination.Scan -> R.string.top_bar_title_scan
+        AppShellDestination.Search -> R.string.top_bar_title_search
+        AppShellDestination.Event -> R.string.top_bar_title_event
     }
