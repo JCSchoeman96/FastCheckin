@@ -18,6 +18,7 @@ import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
+import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
@@ -25,12 +26,17 @@ import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.AttendeeDetailRecord
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSearchRecord
+import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionDecision
+import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionRejectReason
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
+import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
+import za.co.voelgoed.fastcheck.domain.usecase.AdmitScanUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 
@@ -122,6 +128,22 @@ object TestRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideEventAttendeeMetricsRepository(): EventAttendeeMetricsRepository =
+        object : EventAttendeeMetricsRepository {
+            override fun observeMetrics(eventId: Long): Flow<EventAttendeeCacheMetrics> =
+                flowOf(
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 0,
+                        currentlyInsideCount = 0,
+                        attendeesWithRemainingCheckinsCount = 0,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
+                    )
+                )
+        }
+
+    @Provides
+    @Singleton
     fun provideSessionAuthGateway(): SessionAuthGateway =
         object : SessionAuthGateway {
             override suspend fun currentEventId(): Long = 5
@@ -130,11 +152,28 @@ object TestRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideAdmitScanUseCase(): AdmitScanUseCase =
+        object : AdmitScanUseCase {
+            override suspend fun admit(
+                ticketCode: String,
+                direction: ScanDirection,
+                operatorName: String,
+                entranceName: String
+            ): LocalAdmissionDecision =
+                LocalAdmissionDecision.Rejected(
+                    reason = LocalAdmissionRejectReason.InvalidTicketCode,
+                    displayMessage = "Ticket not found in test repository.",
+                    ticketCode = ticketCode
+                )
+        }
+
+    @Provides
+    @Singleton
     fun provideQueueCapturedScanUseCase(): QueueCapturedScanUseCase =
         object : QueueCapturedScanUseCase {
             override suspend fun enqueue(
                 ticketCode: String,
-                direction: za.co.voelgoed.fastcheck.domain.model.ScanDirection,
+                direction: ScanDirection,
                 operatorName: String,
                 entranceName: String
             ): QueueCreationResult = QueueCreationResult.InvalidTicketCode
