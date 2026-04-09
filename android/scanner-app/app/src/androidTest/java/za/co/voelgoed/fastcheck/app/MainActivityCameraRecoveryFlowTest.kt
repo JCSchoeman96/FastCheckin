@@ -292,7 +292,7 @@ class MainActivityCameraRecoveryFlowTest {
     }
 
     @Test
-    fun permissionGrantedScanStartupDoesNotStayBlockedOnPreviewUnavailable() {
+    fun permissionGrantedScanStartupAttemptsCameraSourceWithoutPreviewOverride() {
         val fakeSource = FakeScannerInputSource()
         MainActivityTestHooks.permissionStateOverride =
             CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
