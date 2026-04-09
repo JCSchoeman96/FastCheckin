@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
@@ -299,5 +300,27 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.primaryRecoveryAction).isNull()
         assertThat(uiState.primaryRecoveryActionLabel).isNull()
+    }
+
+    @Test
+    fun cameraPreviewHostsWhileStartupProgressesAfterPermissionGrant() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        cameraPermissionState = CameraPermissionState.GRANTED,
+                        isPreviewVisible = false,
+                        isSourceReady = false,
+                        sessionState = ScannerSessionState.Blocked(
+                            za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason.PreviewUnavailable
+                        )
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.showCameraPreview).isTrue()
     }
 }

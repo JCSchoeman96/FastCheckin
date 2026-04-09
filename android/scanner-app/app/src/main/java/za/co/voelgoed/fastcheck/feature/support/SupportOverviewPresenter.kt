@@ -5,6 +5,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
@@ -30,9 +31,33 @@ class SupportOverviewPresenter {
 
                 ScannerRecoveryState.Ready ->
                     RecoveryCopy(
-                        title = "Scanner access ready",
-                        message = "Camera access is available for smartphone scanning. Return to Scan to continue operating.",
-                        tone = StatusTone.Success,
+                        title =
+                            if (
+                                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
+                                !scanningUiState.isSourceReady
+                            ) {
+                                "Scanner startup in progress"
+                            } else {
+                                "Scanner access ready"
+                            },
+                        message =
+                            if (
+                                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
+                                !scanningUiState.isSourceReady
+                            ) {
+                                "Camera access is available and scanner startup is still preparing. Return to Scan while the preview finishes starting."
+                            } else {
+                                "Camera access is available for smartphone scanning. Return to Scan to continue operating."
+                            },
+                        tone =
+                            if (
+                                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
+                                !scanningUiState.isSourceReady
+                            ) {
+                                StatusTone.Info
+                            } else {
+                                StatusTone.Success
+                            },
                         action = SupportRecoveryAction.ReturnToScan
                     )
 

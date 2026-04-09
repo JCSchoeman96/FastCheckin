@@ -245,6 +245,68 @@ class MainActivityCameraRecoveryFlowTest {
         }
     }
 
+    @Test
+    fun firstEntryToScanStartsCameraSourceWithoutPreviewOverride() {
+        val fakeSource = FakeScannerInputSource()
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitUntil("camera source start without preview override") {
+                fakeSource.startCount == 1
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun permissionGrantResyncStartsCameraSourceWithoutPreviewOverride() {
+        val fakeSource = FakeScannerInputSource()
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = false, shouldShowRationale = true)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitForIdle()
+            assertThat(fakeSource.startCount).isEqualTo(0)
+
+            MainActivityTestHooks.permissionStateOverride =
+                CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+
+            scenario.onActivity { activity ->
+                activity.invokeSyncScannerBindingState()
+            }
+
+            waitUntil("camera source start after permission grant resync") {
+                fakeSource.startCount == 1
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun permissionGrantedScanStartupAttemptsCameraSourceWithoutPreviewOverride() {
+        val fakeSource = FakeScannerInputSource()
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitUntil("camera source start") { fakeSource.startCount == 1 }
+        } finally {
+            scenario.close()
+        }
+    }
+
     private fun launchActivity(): ActivityScenario<MainActivity> =
         ActivityScenario.launch(MainActivity::class.java).also {
             waitForIdle()
@@ -320,6 +382,13 @@ class MainActivityCameraRecoveryFlowTest {
             )
         method.isAccessible = true
         method.invoke(this, action)
+    }
+
+    private fun MainActivity.invokeSyncScannerBindingState() {
+        val method =
+            MainActivity::class.java.getDeclaredMethod("syncScannerBindingState")
+        method.isAccessible = true
+        method.invoke(this)
     }
 
     private class FakeScannerInputSource : ScannerInputSource {
