@@ -117,7 +117,7 @@ fun AuthenticatedShellScreen(
                             icon = {
                                 Icon(
                                     imageVector = destination.icon,
-                                    contentDescription = destination.label
+                                    contentDescription = null
                                 )
                             },
                             label = { Text(text = destination.label) }
