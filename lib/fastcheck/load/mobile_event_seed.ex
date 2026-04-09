@@ -115,7 +115,6 @@ defmodule FastCheck.Load.MobileEventSeed do
     {:ok, encrypted_secret} = Crypto.encrypt(opts.credential)
 
     event_attrs = %{
-      checked_in_count: 0,
       entrance_name: "Main Gate",
       mobile_access_secret_encrypted: encrypted_secret,
       name: opts.event_name,

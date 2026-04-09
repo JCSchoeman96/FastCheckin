@@ -15,7 +15,7 @@ defmodule FastCheck.Ticketing.Event do
           entrance_name: String.t() | nil,
           location: String.t() | nil,
           total_tickets: integer() | nil,
-          checked_in_count: integer() | nil,
+          checked_in_count: integer(),
           mobile_access_secret_encrypted: String.t() | nil,
           scanner_policy_mode: String.t() | nil,
           config_version: integer() | nil,
@@ -29,7 +29,7 @@ defmodule FastCheck.Ticketing.Event do
     field :entrance_name, :string
     field :location, :string
     field :total_tickets, :integer
-    field :checked_in_count, :integer
+    field :checked_in_count, :integer, virtual: true, default: 0
     field :mobile_access_secret_encrypted, :string
     field :scanner_policy_mode, :string
     field :config_version, :integer

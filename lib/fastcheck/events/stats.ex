@@ -263,8 +263,7 @@ defmodule FastCheck.Events.Stats do
     with %Event{} = event <- Repo.get(Event, event_id),
          {:ok, site_url, api_key} <- ensure_event_credentials(event),
          {:ok, payload} <- fetch_live_occupancy(site_url, api_key),
-         {:ok, {occupancy_map, missing_fields}} <- extract_live_occupancy(payload),
-         :ok <- persist_live_occupancy(event_id, occupancy_map) do
+         {:ok, {occupancy_map, missing_fields}} <- extract_live_occupancy(payload) do
       log_live_occupancy(event_id, occupancy_map, missing_fields)
       broadcast_live_occupancy(event_id, occupancy_map.current_occupancy)
       {:ok, occupancy_map}
@@ -577,9 +576,6 @@ defmodule FastCheck.Events.Stats do
   end
 
   defp extract_live_occupancy(_payload), do: {:error, :invalid_payload}
-
-  defp persist_live_occupancy(_event_id, %{current_occupancy: _current, per_entrance: _per_gate}),
-    do: :ok
 
   defp log_live_occupancy(event_id, occupancy_map, []) do
     Logger.info(

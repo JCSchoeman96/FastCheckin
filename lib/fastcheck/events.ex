@@ -777,7 +777,7 @@ defmodule FastCheck.Events do
     event_name = resolve_event_name(attrs, essentials)
     event_location = resolve_event_location(attrs, essentials)
     entrance_name = resolve_entrance_name(attrs)
-    {total_tickets, checked_in_count} = resolve_event_counts(essentials)
+    total_tickets = resolve_event_counts(essentials)
 
     %{
       name: event_name,
@@ -786,7 +786,6 @@ defmodule FastCheck.Events do
       entrance_name: entrance_name,
       location: event_location,
       total_tickets: total_tickets,
-      checked_in_count: checked_in_count,
       event_date:
         if(blank_value?(event_date_override), do: derived_event_date, else: event_date_override),
       event_time:
@@ -825,14 +824,11 @@ defmodule FastCheck.Events do
   end
 
   defp resolve_event_counts(essentials) do
-    total_tickets =
-      (Map.get(essentials, "total_tickets") ||
-         Map.get(essentials, :total_tickets) ||
-         Map.get(essentials, "sold_tickets") ||
-         Map.get(essentials, :sold_tickets))
-      |> normalize_non_negative_integer()
-
-    {total_tickets, 0}
+    (Map.get(essentials, "total_tickets") ||
+       Map.get(essentials, :total_tickets) ||
+       Map.get(essentials, "sold_tickets") ||
+       Map.get(essentials, :sold_tickets))
+    |> normalize_non_negative_integer()
   end
 
   defp split_datetime(%DateTime{} = datetime) do
