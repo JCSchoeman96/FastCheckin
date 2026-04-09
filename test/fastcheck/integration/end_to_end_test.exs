@@ -76,6 +76,9 @@ defmodule FastCheck.Integration.EndToEndTest do
       assert {:ok, message} = Events.sync_event(event.id)
       assert message =~ "Synced"
 
+      refreshed_event = Repo.get!(Event, event.id)
+      assert refreshed_event.total_tickets == 100
+
       # Verify attendees were inserted
       attendees = Attendees.list_event_attendees(event.id)
       assert length(attendees) > 0
@@ -127,8 +130,24 @@ defmodule FastCheck.Integration.EndToEndTest do
         Plug.Conn.resp(conn, 200, Jason.encode!(response))
       end)
 
+      Bypass.expect_once(bypass, "GET", "/tc-api/#{api_key}/event_essentials", fn conn ->
+        response = %{
+          "event_name" => "Test Event",
+          "event_date_time" => "15th January 2025 19:00",
+          "event_location" => "Test Venue",
+          "sold_tickets" => 60,
+          "checked_tickets" => 0,
+          "pass" => true
+        }
+
+        Plug.Conn.resp(conn, 200, Jason.encode!(response))
+      end)
+
       assert {:ok, incremental_message} = Events.sync_event(event.id, nil, incremental: true)
       assert incremental_message =~ "Incremental sync" || incremental_message =~ "new/updated"
+
+      refreshed_event = Repo.get!(Event, event.id)
+      assert refreshed_event.total_tickets == 60
 
       # Step 7: Test export functionality
       conn = get(conn, ~p"/export/attendees/#{event.id}")
