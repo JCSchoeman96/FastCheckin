@@ -11,6 +11,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
@@ -40,7 +41,7 @@ class ScanDestinationPresenter(
             attendeeStatusMessage = attendeeStatus.second,
             showCameraPreview =
                 scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
-                    scanningUiState.isPreviewVisible,
+                    scanningUiState.cameraPermissionState == CameraPermissionState.GRANTED,
             primaryRecoveryAction = primaryRecoveryAction?.first,
             primaryRecoveryActionLabel = primaryRecoveryAction?.second,
             previewBanner = previewBannerFor(scanningUiState),
@@ -187,7 +188,7 @@ class ScanDestinationPresenter(
                     tone = StatusTone.Destructive
                 )
 
-            uiState.sessionState == ScannerSessionState.Armed ->
+            !uiState.isSourceReady ->
                 BannerUiModel(
                     title = "Preparing camera",
                     message = "The scan surface is active and the camera is getting ready.",

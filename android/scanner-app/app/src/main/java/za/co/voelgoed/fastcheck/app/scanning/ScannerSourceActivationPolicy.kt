@@ -68,7 +68,7 @@ class ScannerSourceActivationPolicy {
                 )
 
             context.sourceMode.requiresCameraPermission &&
-                (!context.hasPreviewSurface || !context.isPreviewVisible) ->
+                !context.hasPreviewSurface ->
                 ScannerSourceActivationDecision(
                     shouldStartBinding = false,
                     shouldShowCameraPermissionRequest = false,

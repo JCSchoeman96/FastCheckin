@@ -88,6 +88,26 @@ class ScannerSourceActivationPolicyTest {
     }
 
     @Test
+    fun attachedPreviewAllowsInitialCameraBindingBeforeVisibleStreaming() {
+        val decision =
+            policy.evaluate(
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = true,
+                    isPreviewVisible = false
+                )
+            )
+
+        assertThat(decision.shouldStartBinding).isTrue()
+        assertThat(decision.shouldShowCameraPermissionRequest).isFalse()
+        assertThat(decision.sessionState).isEqualTo(ScannerSessionState.Armed)
+    }
+
+    @Test
     fun leavingScanTabReturnsIdle() {
         val decision =
             policy.evaluate(

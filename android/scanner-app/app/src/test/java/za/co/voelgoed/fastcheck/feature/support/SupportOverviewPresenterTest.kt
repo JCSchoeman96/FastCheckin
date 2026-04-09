@@ -6,6 +6,8 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
+import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
@@ -145,5 +147,21 @@ class SupportOverviewPresenterTest {
         assertThat(uiState.uploadQuarantineNotice).contains("upload quarantine")
         assertThat(uiState.sessionMessage).doesNotContain("Diagnostics")
         assertThat(uiState.sessionMessage).contains("not required to clear")
+    }
+
+    @Test
+    fun permissionGrantedWithoutSourceReadyDoesNotClaimScannerReady() {
+        val uiState =
+            present(
+                ScanningUiState(
+                    activeSourceType = ScannerSourceType.CAMERA,
+                    cameraPermissionState = CameraPermissionState.GRANTED,
+                    isSourceReady = false,
+                    scannerRecoveryState = ScannerRecoveryState.Ready
+                )
+            )
+
+        assertThat(uiState.recoveryTitle).isNotEqualTo("Scanner access ready")
+        assertThat(uiState.recoveryMessage).contains("starting")
     }
 }
