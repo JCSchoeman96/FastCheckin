@@ -110,11 +110,6 @@ config :fastcheck,
   cache_ttl: cache_ttl,
   redis_url: redis_url
 
-mobile_scan_ingestion_mode =
-  "MOBILE_SCAN_INGESTION_MODE"
-  |> System.get_env("legacy")
-  |> FastCheck.Scans.IngestionMode.resolve()
-
 mobile_scan_force_enqueue_failure =
   case System.get_env("MOBILE_SCAN_FORCE_ENQUEUE_FAILURE", "false")
        |> String.trim()
@@ -124,10 +119,8 @@ mobile_scan_force_enqueue_failure =
   end
 
 config :fastcheck, :mobile_scan_ingestion,
-  mode: mobile_scan_ingestion_mode,
   chunk_size: String.to_integer(System.get_env("MOBILE_SCAN_CHUNK_SIZE") || "100"),
   live_namespace: System.get_env("MOBILE_SCAN_LIVE_NAMESPACE", "live"),
-  shadow_namespace: System.get_env("MOBILE_SCAN_SHADOW_NAMESPACE", "shadow"),
   force_enqueue_failure: mobile_scan_force_enqueue_failure
 
 # Scanner runtime tuning for launch performance.

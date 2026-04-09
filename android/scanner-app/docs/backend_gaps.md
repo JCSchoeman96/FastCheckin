@@ -17,7 +17,7 @@
   structured QR parsing is not promoted.
 - Contract tests are the source of truth for the accepted trim vectors.
 - Android runtime remains effectively IN-only; OUT is not a promoted successful business flow.
-- redis_authoritative is the target/proven path in tests and perf; legacy and shadow are fallback/migration modes; deployed production truth cannot be proven from repo code alone.
+- redis_authoritative is now the only supported mobile upload runtime path in this repo; legacy and shadow are no longer supported runtime modes.
 
 ## Future Routes Are Inactive
 

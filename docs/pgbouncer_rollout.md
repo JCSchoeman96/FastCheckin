@@ -4,8 +4,8 @@ This note covers PgBouncer rollout for the current Railway/Phoenix/Postgres depl
 
 ## Preconditions
 
-- Verify production `MOBILE_SCAN_INGESTION_MODE=redis_authoritative` from Railway env or boot logs before rollout.
-- Keep authoritative tests pinned to `:redis_authoritative` and fail loudly if they drift to legacy assumptions.
+- Verify mobile scan upload is running on the authoritative path from boot logs or deployed config before rollout.
+- Keep authoritative tests pinned to the authoritative path and fail loudly if they drift.
 - Keep the mobile scan request path unchanged:
   `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
 - Do not reintroduce per-scan durable Postgres mutation before acknowledgement.

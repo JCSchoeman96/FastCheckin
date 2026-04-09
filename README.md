@@ -144,11 +144,10 @@ $env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-25.0.2.10-hotspot'
 
 ## Performance testing
 
-The repo includes a k6-based mobile scan performance harness aimed at the `redis_authoritative` ingestion path behind `POST /api/v1/mobile/scans`.
+The repo includes a k6-based mobile scan performance harness aimed at the authoritative mobile upload path behind `POST /api/v1/mobile/scans`.
 
 - Seed deterministic load data with `mix fastcheck.load.seed_mobile_event`
 - Run k6 scenarios from `performance/k6/mobile_scans.js`
-- Use `MOBILE_SCAN_INGESTION_MODE=redis_authoritative` for the primary path
 - Use `MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true` only for the dedicated non-production enqueue-failure scenario
 - Use `docker compose --profile perf-small up --build app-perf perf-proxy` for the opt-in capped app-tier path
 - Use `mix fastcheck.load.cleanup_mobile_event` to remove seeded perf events and related DB/Redis data after a run

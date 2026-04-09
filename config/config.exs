@@ -17,10 +17,8 @@ config :fastcheck, Oban,
   plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
 
 config :fastcheck, :mobile_scan_ingestion,
-  mode: :legacy,
   chunk_size: 100,
   live_namespace: "live",
-  shadow_namespace: "shadow",
   store: FastCheck.Scans.HotState.RedisStore
 
 config :fastcheck, :event_post_grace_days, 14

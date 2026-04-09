@@ -11,7 +11,7 @@
 - If future or accidental code inserts `OUT`, the queued direction is preserved
   through storage and upload so the backend rejects it honestly instead of the
   client silently rewriting it to `IN`.
-- redis_authoritative is the target/proven path in tests and perf; legacy and shadow are fallback/migration modes; deployed production truth cannot be proven from repo code alone.
+- redis_authoritative is now the only supported mobile upload runtime path in this repo; legacy and shadow are no longer supported runtime modes.
 
 ## Queue Shape
 

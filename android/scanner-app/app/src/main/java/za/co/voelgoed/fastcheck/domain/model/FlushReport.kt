@@ -5,6 +5,12 @@ data class FlushReport(
     val itemOutcomes: List<FlushItemResult> = emptyList(),
     val uploadedCount: Int = 0,
     val retryableRemainingCount: Int = 0,
+    val httpStatusCode: Int? = null,
+    val retryAfterMillis: Long? = null,
+    val rateLimitLimit: Int? = null,
+    val rateLimitRemaining: Int? = null,
+    val rateLimitResetEpochSeconds: Long? = null,
+    val backpressureObserved: Boolean = false,
     val authExpired: Boolean = false,
     val backlogRemaining: Boolean = false,
     val summaryMessage: String = "No flush has run yet."

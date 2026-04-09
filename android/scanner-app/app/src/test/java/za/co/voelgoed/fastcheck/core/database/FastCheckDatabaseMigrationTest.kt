@@ -17,6 +17,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
@@ -1183,24 +1184,26 @@ class FastCheckDatabaseMigrationTest {
             error("Not used in this migration test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
+        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
             lastUploadBody = body
-            return UploadScansResponse(
-                data =
-                    UploadScansPayload(
-                        results =
-                            body.scans.map { scan ->
-                                UploadedScanResult(
-                                    idempotency_key = scan.idempotency_key,
-                                    status = "success",
-                                    message = "Check-in successful",
-                                    reason_code = null
-                                )
-                            },
-                        processed = body.scans.size
-                    ),
-                error = null,
-                message = null
+            return Response.success(
+                UploadScansResponse(
+                    data =
+                        UploadScansPayload(
+                            results =
+                                body.scans.map { scan ->
+                                    UploadedScanResult(
+                                        idempotency_key = scan.idempotency_key,
+                                        status = "success",
+                                        message = "Check-in successful",
+                                        reason_code = null
+                                    )
+                                },
+                            processed = body.scans.size
+                        ),
+                    error = null,
+                    message = null
+                )
             )
         }
     }
