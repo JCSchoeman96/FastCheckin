@@ -832,11 +832,7 @@ defmodule FastCheck.Events do
          Map.get(essentials, :sold_tickets))
       |> normalize_non_negative_integer()
 
-    checked_in_count =
-      (Map.get(essentials, "checked_tickets") || Map.get(essentials, :checked_tickets))
-      |> normalize_non_negative_integer()
-
-    {total_tickets, checked_in_count}
+    {total_tickets, 0}
   end
 
   defp split_datetime(%DateTime{} = datetime) do

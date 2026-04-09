@@ -40,7 +40,7 @@ defmodule FastCheck.EventsCreateEventTest do
     assert event.location == "Randburg Theatre"
     assert event.entrance_name == "Main Gate"
     assert event.total_tickets == 500
-    assert event.checked_in_count == 12
+    assert event.checked_in_count == 0
     assert event.tickera_site_url == "https://voelgoed.co.za"
     assert event.event_date == ~D[2026-02-20]
     assert event.event_time == ~T[19:00:00]
@@ -70,7 +70,7 @@ defmodule FastCheck.EventsCreateEventTest do
     assert event.location == "Auto Venue"
     assert event.entrance_name == "Main Gate"
     assert event.total_tickets == 120
-    assert event.checked_in_count == 1
+    assert event.checked_in_count == 0
   end
 
   test "create_event/1 keeps location optional when Tickera omits event_location" do

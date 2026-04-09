@@ -157,26 +157,33 @@ defmodule FastCheck.Events.Cache do
   end
 
   defp fetch_events_from_db do
-    # Optimized query: Use subquery for attendee counts to avoid N+1
-    # This is more efficient than a left join with group_by
-    attendee_counts =
+    attendee_rollups =
       from(a in Attendee,
         group_by: a.event_id,
-        select: %{event_id: a.event_id, attendee_count: count(a.id)}
+        select: %{
+          event_id: a.event_id,
+          attendee_count: count(a.id),
+          checked_in_count:
+            fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_in_at)
+        }
       )
       |> Repo.all()
-      |> Map.new(fn %{event_id: id, attendee_count: count} -> {id, count} end)
+      |> Map.new(fn %{
+                      event_id: id,
+                      attendee_count: attendee_count,
+                      checked_in_count: checked_in_count
+                    } ->
+        {id, %{attendee_count: attendee_count, checked_in_count: checked_in_count || 0}}
+      end)
 
-    # Fetch events and merge attendee counts
     events =
       Event
       |> order_by([e], desc: e.inserted_at)
       |> Repo.all(timeout: 10_000)
 
-    # Merge attendee counts into events
     Enum.map(events, fn event ->
-      attendee_count = Map.get(attendee_counts, event.id, 0)
-      %{event | attendee_count: attendee_count}
+      rollup = Map.get(attendee_rollups, event.id, %{attendee_count: 0, checked_in_count: 0})
+      %{event | attendee_count: rollup.attendee_count, checked_in_count: rollup.checked_in_count}
     end)
   end
 
