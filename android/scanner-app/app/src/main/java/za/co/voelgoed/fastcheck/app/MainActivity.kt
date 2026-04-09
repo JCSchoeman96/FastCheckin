@@ -370,16 +370,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasCameraPermission(): Boolean =
-        ContextCompat.checkSelfPermission(
-            this,
-            android.Manifest.permission.CAMERA
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        MainActivityTestHooks.permissionStateOverride?.isGranted
+            ?: (
+                ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.CAMERA
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            )
 
     private fun shouldShowCameraPermissionRationale(): Boolean =
-        ActivityCompat.shouldShowRequestPermissionRationale(
-            this,
-            android.Manifest.permission.CAMERA
-        )
+        MainActivityTestHooks.permissionStateOverride?.shouldShowRationale
+            ?: ActivityCompat.shouldShowRequestPermissionRationale(
+                this,
+                android.Manifest.permission.CAMERA
+            )
 
     private fun syncScannerBindingState(): ScannerSourceActivationDecision {
         val hasPermission = hasCameraPermission()
@@ -396,8 +400,12 @@ class MainActivity : ComponentActivity() {
                     isScanDestinationSelected = isScanDestinationActive,
                     isForeground = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
                     hasCameraPermission = hasPermission,
-                    hasPreviewSurface = previewSurfaceHolder.hasPreviewSurface(),
-                    isPreviewVisible = previewSurfaceHolder.isPreviewVisible()
+                    hasPreviewSurface =
+                        MainActivityTestHooks.previewSurfaceOverride?.hasPreviewSurface
+                            ?: previewSurfaceHolder.hasPreviewSurface(),
+                    isPreviewVisible =
+                        MainActivityTestHooks.previewSurfaceOverride?.isPreviewVisible
+                            ?: previewSurfaceHolder.isPreviewVisible()
                 )
             )
 
@@ -493,11 +501,20 @@ class MainActivity : ComponentActivity() {
 
     private fun launchCameraPermissionRequest() {
         scanningViewModel.onPermissionRequestStarted()
+        MainActivityTestHooks.onCameraPermissionRequest?.let { onRequest ->
+            onRequest()
+            return
+        }
         cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
     }
 
     private fun openAppSettings() {
-        startActivity(appSettingsIntent(packageName))
+        val intent = appSettingsIntent(packageName)
+        MainActivityTestHooks.onOpenAppSettings?.let { onOpen ->
+            onOpen(intent)
+            return
+        }
+        startActivity(intent)
     }
 
     private fun maybeAutoRequestCameraPermissionOnScanEntry(
@@ -524,24 +541,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createScannerInputSource(sourceMode: ScannerShellSourceMode): ScannerInputSource =
-        when (sourceMode) {
-            ScannerShellSourceMode.CAMERA ->
-                CameraScannerInputSource(
-                    scannerCameraBinder = scannerCameraBinder,
-                    lifecycleOwnerProvider = { this },
-                    previewViewProvider = { previewSurfaceHolder.requirePreviewView() },
-                    appDispatchers = appDispatchers,
-                    clock = clock,
-                    barcodeScannerEngine = barcodeScannerEngine
-                )
+        MainActivityTestHooks.scannerInputSourceFactory?.invoke(sourceMode)
+            ?: when (sourceMode) {
+                ScannerShellSourceMode.CAMERA ->
+                    CameraScannerInputSource(
+                        scannerCameraBinder = scannerCameraBinder,
+                        lifecycleOwnerProvider = { this },
+                        previewViewProvider = { previewSurfaceHolder.requirePreviewView() },
+                        appDispatchers = appDispatchers,
+                        clock = clock,
+                        barcodeScannerEngine = barcodeScannerEngine
+                    )
 
-            ScannerShellSourceMode.DATAWEDGE ->
-                DataWedgeScannerInputSource(
-                    appContext = applicationContext,
-                    appDispatchers = appDispatchers,
-                    clock = clock
-                )
-        }
+                ScannerShellSourceMode.DATAWEDGE ->
+                    DataWedgeScannerInputSource(
+                        appContext = applicationContext,
+                        appDispatchers = appDispatchers,
+                        clock = clock
+                    )
+            }
 
     private companion object {
         const val LOG_TAG: String = "FastCheckMainActivity"

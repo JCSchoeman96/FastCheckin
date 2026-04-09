@@ -46,32 +46,13 @@ object TestRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideSessionRepository(): SessionRepository =
-        object : SessionRepository {
-            override suspend fun login(eventId: Long, credential: String): ScannerSession =
-                ScannerSession(
-                    eventId = eventId,
-                    eventName = "Test Event",
-                    expiresInSeconds = 3600,
-                    authenticatedAtEpochMillis = 1_700_000_000_000,
-                    expiresAtEpochMillis = 1_700_003_600_000
-                )
+    fun provideTestSessionRepository(): TestSessionRepository = TestSessionRepository()
 
-            override suspend fun currentSession(): ScannerSession =
-                ScannerSession(
-                    eventId = 5,
-                    eventName = "Test Event",
-                    expiresInSeconds = 3600,
-                    authenticatedAtEpochMillis = 1_700_000_000_000,
-                    expiresAtEpochMillis = 1_700_003_600_000
-                )
-
-            override suspend fun logout() = Unit
-
-            override suspend fun onAuthExpired() = Unit
-
-            override suspend fun clearBlockedRestoredSession() = Unit
-        }
+    @Provides
+    @Singleton
+    fun provideSessionRepository(
+        repository: TestSessionRepository
+    ): SessionRepository = repository
 
     @Provides
     @Singleton
@@ -125,6 +106,11 @@ object TestRepositoryModule {
 
             override fun observeDetail(eventId: Long, attendeeId: Long): Flow<AttendeeDetailRecord?> =
                 flowOf(null)
+
+            override suspend fun findByTicketCode(
+                eventId: Long,
+                ticketCode: String
+            ): AttendeeDetailRecord? = null
         }
 
     @Provides
