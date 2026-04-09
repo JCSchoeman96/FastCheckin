@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -113,7 +114,12 @@ fun AuthenticatedShellScreen(
                         NavigationBarItem(
                             selected = destination == uiState.selectedDestination,
                             onClick = { onDestinationSelected(destination) },
-                            icon = { Text(text = destination.compactLabel) },
+                            icon = {
+                                Icon(
+                                    imageVector = destination.icon,
+                                    contentDescription = null
+                                )
+                            },
                             label = { Text(text = destination.label) }
                         )
                     }

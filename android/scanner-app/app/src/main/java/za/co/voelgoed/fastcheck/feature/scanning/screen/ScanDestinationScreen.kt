@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -20,6 +19,9 @@ import androidx.compose.ui.unit.dp
 import za.co.voelgoed.fastcheck.app.scanning.ScanPreviewSurfaceHolder
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcDangerButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcPrimaryButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
@@ -65,9 +67,11 @@ fun ScanDestinationScreen(
         }
 
         if (uiState.primaryRecoveryAction != null && uiState.primaryRecoveryActionLabel != null) {
-            TextButton(onClick = { onOperatorAction(uiState.primaryRecoveryAction) }) {
-                Text(text = uiState.primaryRecoveryActionLabel)
-            }
+            FcPrimaryButton(
+                text = uiState.primaryRecoveryActionLabel,
+                onClick = { onOperatorAction(uiState.primaryRecoveryAction) },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         if (uiState.showCameraPreview) {
@@ -133,19 +137,25 @@ fun ScanDestinationScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (uiState.manualSyncVisible) {
-                    TextButton(onClick = { onOperatorAction(ScanOperatorAction.ManualSync) }) {
-                        Text(text = "Sync attendee list")
-                    }
+                    FcSecondaryButton(
+                        text = "Sync attendee list",
+                        onClick = { onOperatorAction(ScanOperatorAction.ManualSync) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
                 if (uiState.retryUploadVisible) {
-                    TextButton(onClick = { onOperatorAction(ScanOperatorAction.RetryUpload) }) {
-                        Text(text = "Retry upload")
-                    }
+                    FcSecondaryButton(
+                        text = "Retry upload",
+                        onClick = { onOperatorAction(ScanOperatorAction.RetryUpload) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
                 if (uiState.reloginVisible) {
-                    TextButton(onClick = { onOperatorAction(ScanOperatorAction.Relogin) }) {
-                        Text(text = "Re-login")
-                    }
+                    FcDangerButton(
+                        text = "Re-login",
+                        onClick = { onOperatorAction(ScanOperatorAction.Relogin) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }

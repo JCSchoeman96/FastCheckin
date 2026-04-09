@@ -5,11 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcDangerButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcPrimaryButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
 
@@ -50,9 +52,11 @@ fun SupportOverviewScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 uiState.recoveryAction?.let { action ->
-                    TextButton(onClick = { onRecoveryActionSelected(action) }) {
-                        Text(text = action.label)
-                    }
+                    FcPrimaryButton(
+                        text = action.label,
+                        onClick = { onRecoveryActionSelected(action) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }
@@ -69,9 +73,11 @@ fun SupportOverviewScreen(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     uiState.operationalActions.forEach { row ->
-                        TextButton(onClick = { onOperationalAction(row.action) }) {
-                            Text(text = row.label)
-                        }
+                        FcSecondaryButton(
+                            text = row.label,
+                            onClick = { onOperationalAction(row.action) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -119,9 +125,11 @@ fun SupportOverviewScreen(
                     text = uiState.diagnosticsMessage,
                     style = MaterialTheme.typography.bodyMedium
                 )
-                TextButton(onClick = onViewDiagnostics) {
-                    Text(text = "View diagnostics")
-                }
+                FcSecondaryButton(
+                    text = "View diagnostics",
+                    onClick = onViewDiagnostics,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 
@@ -135,9 +143,11 @@ fun SupportOverviewScreen(
                     text = uiState.sessionMessage,
                     style = MaterialTheme.typography.bodyMedium
                 )
-                TextButton(onClick = onLogoutRequested) {
-                    Text(text = "Log out")
-                }
+                FcDangerButton(
+                    text = "Log out",
+                    onClick = onLogoutRequested,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

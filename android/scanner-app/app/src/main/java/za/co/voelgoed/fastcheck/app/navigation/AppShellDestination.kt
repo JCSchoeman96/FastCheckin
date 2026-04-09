@@ -1,12 +1,18 @@
 package za.co.voelgoed.fastcheck.app.navigation
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.ui.graphics.vector.ImageVector
+
 enum class AppShellDestination(
     val label: String,
-    val compactLabel: String
+    val icon: ImageVector
 ) {
-    Scan(label = "Scan", compactLabel = "S"),
-    Search(label = "Search", compactLabel = "F"),
-    Event(label = "Event", compactLabel = "E");
+    Scan(label = "Scan", icon = Icons.Outlined.QrCodeScanner),
+    Search(label = "Search", icon = Icons.Outlined.Search),
+    Event(label = "Event", icon = Icons.Outlined.Event);
 
     companion object {
         val bottomNavigationDestinations: List<AppShellDestination> =
