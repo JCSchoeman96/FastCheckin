@@ -1,12 +1,17 @@
 package za.co.voelgoed.fastcheck.app.shell
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -23,7 +28,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.annotation.StringRes
+import za.co.voelgoed.fastcheck.R
 import za.co.voelgoed.fastcheck.app.navigation.AppShellDestination
 import za.co.voelgoed.fastcheck.app.navigation.AppShellOverflowAction
 import za.co.voelgoed.fastcheck.core.designsystem.theme.FastCheckTheme
@@ -47,6 +61,9 @@ fun AuthenticatedShellScreen(
 ) {
     FastCheckTheme {
         val activeSupportRoute = uiState.activeSupportRoute
+        val topBarTitle =
+            activeSupportRoute?.title
+                ?: stringResource(uiState.selectedDestination.topBarTitleRes())
         var overflowExpanded by remember { mutableStateOf(false) }
 
         if (activeSupportRoute != null) {
@@ -58,7 +75,7 @@ fun AuthenticatedShellScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        Text(text = activeSupportRoute?.title ?: "FastCheck")
+                        ShellTopAppBarTitle(title = topBarTitle)
                     },
                     navigationIcon = {
                         if (activeSupportRoute != null) {
@@ -143,6 +160,41 @@ fun AuthenticatedShellScreen(
 }
 
 @Composable
+private fun ShellTopAppBarTitle(
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val showLogo = maxWidth >= 180.dp
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(if (showLogo) 8.dp else 0.dp)
+        ) {
+            if (showLogo) {
+                Image(
+                    painter = painterResource(id = R.drawable.fastcheck_logo),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier =
+                        Modifier
+                            .height(16.dp)
+                            .widthIn(max = 64.dp)
+                            .alpha(0.84f)
+                )
+            }
+            Text(
+                text = title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
 private fun ShellContent(
     uiState: AppShellUiState,
     contentPadding: PaddingValues,
@@ -174,3 +226,11 @@ private fun ShellContent(
         }
     }
 }
+
+@StringRes
+private fun AppShellDestination.topBarTitleRes(): Int =
+    when (this) {
+        AppShellDestination.Scan -> R.string.top_bar_title_scan
+        AppShellDestination.Search -> R.string.top_bar_title_search
+        AppShellDestination.Event -> R.string.top_bar_title_event
+    }

@@ -3,7 +3,11 @@
     <string name="app_name">FastCheck Scanner</string>
     <string name="app_title">FastCheck Android Scanner</string>
     <string name="app_subtitle">Current Phoenix mobile API login, attendee sync, manual debug queue, and diagnostics.</string>
+    <string name="login_logo_content_description">FastCheck logo</string>
     <string name="login_section_title">Login</string>
+    <string name="top_bar_title_scan">Scan</string>
+    <string name="top_bar_title_search">Search</string>
+    <string name="top_bar_title_event">Event</string>
     <string name="event_id_hint">Event ID</string>
     <string name="credential_hint">Credential</string>
     <string name="login_button_label">Login and Store Session</string>
