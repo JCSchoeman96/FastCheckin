@@ -195,6 +195,77 @@ defmodule FastCheckWeb.DashboardLiveTest do
     end
   end
 
+  describe "event card sync totals" do
+    test "full sync refreshes Tickets on the dashboard without changing Total semantics", %{
+      conn: conn
+    } do
+      event = insert_event!(%{name: "Tickets Refresh Event", total_tickets: 10})
+
+      mock_tickera_requests(
+        %{
+          "event_name" => event.name,
+          "event_location" => event.location,
+          "sold_tickets" => 137,
+          "checked_tickets" => 0,
+          "pass" => true
+        },
+        ticket_delay_ms: 0
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#full-sync-#{event.id}")
+      |> render_click()
+
+      assert_sync_finishes(view)
+
+      refreshed_event = Events.get_event!(event.id)
+
+      assert refreshed_event.total_tickets == 137
+
+      listed_event =
+        Events.list_events()
+        |> Enum.find(&(&1.id == event.id))
+
+      assert listed_event.attendee_count == 0
+
+      html = render(view)
+      assert html =~ event.name
+      assert html =~ "137"
+    end
+
+    test "cancelling an in-flight sync leaves Tickets unchanged", %{conn: conn} do
+      event = insert_event!(%{name: "Tickets Cancel Event", total_tickets: 10})
+
+      mock_tickera_requests(
+        %{
+          "event_name" => event.name,
+          "event_location" => event.location,
+          "sold_tickets" => 88,
+          "checked_tickets" => 0,
+          "pass" => true
+        },
+        ticket_delay_ms: 1_000
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#full-sync-#{event.id}")
+      |> render_click()
+
+      assert render(view) =~ "Starting full attendee sync"
+
+      view
+      |> element("#cancel-sync-#{event.id}")
+      |> render_click()
+
+      assert render(view) =~ "Sync cancelled"
+      assert Repo.get!(Event, event.id).total_tickets == 10
+    end
+  end
+
   describe "create event flow" do
     test "create form is minimal by default and pre-fills Tickera site URL", %{conn: conn} do
       {:ok, view, _html} = mount_dashboard(conn)

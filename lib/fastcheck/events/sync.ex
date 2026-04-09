@@ -73,25 +73,47 @@ defmodule FastCheck.Events.Sync do
   end
 
   defp sync_event_with_api_key(event, api_key, callback, incremental, sync_log_id) do
-    _ = refresh_event_window_from_tickera(event, api_key)
+    pending_total_tickets = refresh_event_window_from_tickera(event, api_key)
 
     case fetch_remote_attendees(event.tickera_site_url, api_key, callback) do
       {:ok, attendees, total_count} ->
-        process_fetched_attendees(event, attendees, total_count, incremental, sync_log_id)
+        process_fetched_attendees(
+          event,
+          attendees,
+          total_count,
+          pending_total_tickets,
+          incremental,
+          sync_log_id
+        )
 
       {:error, reason, _partial} ->
         fail_sync(event, sync_log_id, reason, format_reason(reason))
     end
   end
 
-  defp process_fetched_attendees(event, attendees, total_count, incremental, sync_log_id) do
+  defp process_fetched_attendees(
+         event,
+         attendees,
+         total_count,
+         pending_total_tickets,
+         incremental,
+         sync_log_id
+       ) do
     Logger.info("Fetched #{total_count} attendees for event #{event.id}")
 
     attendees_to_process = attendees_for_sync(event, attendees, incremental)
 
     case Attendees.create_bulk(event.id, attendees_to_process, incremental: incremental) do
       {:ok, processed_count} ->
-        complete_sync(event, attendees, total_count, processed_count, incremental, sync_log_id)
+        complete_sync(
+          event,
+          attendees,
+          total_count,
+          processed_count,
+          pending_total_tickets,
+          incremental,
+          sync_log_id
+        )
 
       {:error, reason} ->
         fail_sync(event, sync_log_id, reason, format_reason(reason))
@@ -104,23 +126,40 @@ defmodule FastCheck.Events.Sync do
 
   defp attendees_for_sync(_event, attendees, false), do: attendees
 
-  defp complete_sync(event, attendees, total_count, processed_count, incremental, sync_log_id) do
-    finalize_sync(event)
+  defp complete_sync(
+         event,
+         attendees,
+         total_count,
+         processed_count,
+         pending_total_tickets,
+         incremental,
+         sync_log_id
+       ) do
+    case maybe_refresh_total_tickets(event, pending_total_tickets) do
+      :ok ->
+        finalize_sync(event)
 
-    count_message =
-      build_sync_count_message(incremental, processed_count, attendees, total_count)
+        count_message =
+          build_sync_count_message(incremental, processed_count, attendees, total_count)
 
-    actual_pages_processed = current_sync_pages(event.id)
-    SyncState.clear_state(event.id)
-    maybe_log_sync_completion(sync_log_id, processed_count, actual_pages_processed)
-    invalidate_sync_caches(event.id)
+        actual_pages_processed = current_sync_pages(event.id)
+        SyncState.clear_state(event.id)
+        maybe_log_sync_completion(sync_log_id, processed_count, actual_pages_processed)
+        invalidate_sync_caches(event.id)
 
-    sync_message =
-      if incremental,
-        do: "Incremental sync: #{count_message}",
-        else: "Synced #{count_message} attendees"
+        sync_message =
+          if incremental,
+            do: "Incremental sync: #{count_message}",
+            else: "Synced #{count_message} attendees"
 
-    {:ok, sync_message}
+        {:ok, sync_message}
+
+      {:error, reason} ->
+        log_sync_failure(sync_log_id, event.id, reason)
+        SyncState.clear_state(event.id)
+        force_reset_sync(event.id, reason)
+        {:error, "Failed to refresh event ticket totals"}
+    end
   end
 
   defp build_sync_count_message(true, processed_count, _attendees, total_count) do
@@ -565,16 +604,58 @@ defmodule FastCheck.Events.Sync do
           Map.get(essentials, "event_end_date") ||
             Map.get(essentials, :event_end_date)
 
-        persist_event_window(event, start_dt, end_dt)
+        _ = persist_event_window(event, start_dt, end_dt)
+        extract_total_tickets(essentials)
 
       {:error, reason} ->
         Logger.debug(fn ->
           {"event window refresh skipped", event_id: event.id, reason: inspect(reason)}
         end)
 
-        :error
+        nil
     end
   end
+
+  defp maybe_refresh_total_tickets(_event, nil), do: :ok
+
+  defp maybe_refresh_total_tickets(%Event{total_tickets: current_total} = event, refreshed_total)
+       when is_integer(refreshed_total) and refreshed_total >= 0 do
+    if current_total == refreshed_total do
+      :ok
+    else
+      event
+      |> Event.changeset(%{total_tickets: refreshed_total})
+      |> Repo.update(stale_error_field: :id)
+      |> case do
+        {:ok, _updated} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Failed to refresh total_tickets for event #{event.id}: #{inspect(reason)}"
+          )
+
+          {:error, {:total_tickets_refresh_failed, reason}}
+      end
+    end
+  end
+
+  defp maybe_refresh_total_tickets(_event, _refreshed_total), do: :ok
+
+  defp extract_total_tickets(essentials) when is_map(essentials) do
+    essentials
+    |> Map.get("total_tickets", Map.get(essentials, :total_tickets))
+    |> case do
+      nil ->
+        Map.get(essentials, "sold_tickets") || Map.get(essentials, :sold_tickets)
+
+      total_tickets ->
+        total_tickets
+    end
+    |> normalize_non_negative_integer()
+  end
+
+  defp extract_total_tickets(_essentials), do: nil
 
   defp persist_event_window(_event, nil, nil), do: :unchanged
 
@@ -669,6 +750,21 @@ defmodule FastCheck.Events.Sync do
   end
 
   defp coerce_window_datetime(_value), do: nil
+
+  defp normalize_non_negative_integer(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_non_negative_integer(value) when is_integer(value), do: 0
+  defp normalize_non_negative_integer(value) when is_float(value) and value >= 0, do: trunc(value)
+  defp normalize_non_negative_integer(value) when is_float(value), do: 0
+
+  defp normalize_non_negative_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, _rest} when parsed >= 0 -> parsed
+      {parsed, _rest} when parsed < 0 -> 0
+      :error -> nil
+    end
+  end
+
+  defp normalize_non_negative_integer(_value), do: nil
 
   defp parse_window_datetime_string(value) do
     case DateTime.from_iso8601(value) do
