@@ -15,6 +15,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
@@ -351,7 +352,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
             error("syncAttendees is not used by this migration test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
+        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
             val results =
                 body.scans.map { scan ->
                     UploadedScanResult(
@@ -362,10 +363,12 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
                     )
                 }
 
-            return UploadScansResponse(
-                data = UploadScansPayload(results = results, processed = body.scans.size),
-                error = null,
-                message = null
+            return Response.success(
+                UploadScansResponse(
+                    data = UploadScansPayload(results = results, processed = body.scans.size),
+                    error = null,
+                    message = null
+                )
             )
         }
     }
