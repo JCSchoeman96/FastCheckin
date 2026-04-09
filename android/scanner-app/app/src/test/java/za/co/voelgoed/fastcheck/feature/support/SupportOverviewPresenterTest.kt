@@ -6,7 +6,6 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
-import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
@@ -68,6 +67,34 @@ class SupportOverviewPresenterTest {
         assertThat(uiState.recoveryTone).isEqualTo(StatusTone.Destructive)
         assertThat(uiState.recoveryAction).isEqualTo(SupportRecoveryAction.ReturnToScan)
         assertThat(uiState.recoveryMessage).contains("camera unavailable")
+    }
+
+    @Test
+    fun startingRecoveryMapsToStartupInProgress() {
+        val uiState =
+            present(
+                ScanningUiState(
+                    scannerRecoveryState = ScannerRecoveryState.Starting
+                )
+            )
+
+        assertThat(uiState.recoveryTitle).isEqualTo("Scanner startup in progress")
+        assertThat(uiState.recoveryTone).isEqualTo(StatusTone.Info)
+        assertThat(uiState.recoveryAction).isEqualTo(SupportRecoveryAction.ReturnToScan)
+    }
+
+    @Test
+    fun inactiveRecoveryMapsToScannerInactiveGuidance() {
+        val uiState =
+            present(
+                ScanningUiState(
+                    scannerRecoveryState = ScannerRecoveryState.Inactive
+                )
+            )
+
+        assertThat(uiState.recoveryTitle).isEqualTo("Scanner inactive")
+        assertThat(uiState.recoveryTone).isEqualTo(StatusTone.Neutral)
+        assertThat(uiState.recoveryAction).isEqualTo(SupportRecoveryAction.ReturnToScan)
     }
 
     @Test
@@ -150,18 +177,17 @@ class SupportOverviewPresenterTest {
     }
 
     @Test
-    fun permissionGrantedWithoutSourceReadyDoesNotClaimScannerReady() {
+    fun readyRecoveryMapsToScannerAccessReadyWithoutWorkaroundBranch() {
         val uiState =
             present(
                 ScanningUiState(
                     activeSourceType = ScannerSourceType.CAMERA,
-                    cameraPermissionState = CameraPermissionState.GRANTED,
-                    isSourceReady = false,
                     scannerRecoveryState = ScannerRecoveryState.Ready
                 )
             )
 
-        assertThat(uiState.recoveryTitle).isNotEqualTo("Scanner access ready")
-        assertThat(uiState.recoveryMessage).contains("starting")
+        assertThat(uiState.recoveryTitle).isEqualTo("Scanner access ready")
+        assertThat(uiState.recoveryMessage).contains("smartphone scanning")
+        assertThat(uiState.recoveryTone).isEqualTo(StatusTone.Success)
     }
 }

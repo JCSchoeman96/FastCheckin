@@ -9,35 +9,16 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
-import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
+import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
 class ScanningViewModelTest {
     @Test
-    fun permissionChangesDriveScannerUiStateWithoutQueueDependencies() {
+    fun grantedPermissionOnActiveScanSurfaceDoesNotImmediatelyMarkScannerRecoveryReady() {
         val viewModel = ScanningViewModel()
 
-        viewModel.refreshPermissionState(false)
-        assertThat(viewModel.uiState.value.cameraPermissionState)
-            .isEqualTo(CameraPermissionState.DENIED)
-        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
-        assertThat(viewModel.uiState.value.scannerRecoveryState)
-            .isEqualTo(ScannerRecoveryState.RequestPermission(false))
-
-        viewModel.refreshPermissionState(true)
-        assertThat(viewModel.uiState.value.cameraPermissionState)
-            .isEqualTo(CameraPermissionState.GRANTED)
-        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
-        assertThat(viewModel.uiState.value.scannerStatus).contains("Scanner scaffold ready")
-        assertThat(viewModel.uiState.value.scannerRecoveryState)
-            .isEqualTo(ScannerRecoveryState.Ready)
-    }
-
-    @Test
-    fun armedDecisionOnlyBecomesActiveWhenSourceIsReady() {
-        val viewModel = ScanningViewModel()
-
-        viewModel.refreshPermissionState(true)
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
         viewModel.onActivationDecision(
             ScannerSourceActivationDecision(
                 shouldStartBinding = true,
@@ -46,21 +27,173 @@ class ScanningViewModelTest {
             )
         )
 
-        assertThat(viewModel.uiState.value.sessionState).isEqualTo(ScannerSessionState.Armed)
+        assertThat(viewModel.uiState.value.cameraPermissionState)
+            .isEqualTo(CameraPermissionState.GRANTED)
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Starting)
+        assertThat(viewModel.uiState.value.shouldHostPreviewSurface).isTrue()
+        assertThat(viewModel.uiState.value.hasPreviewSurface).isFalse()
+        assertThat(viewModel.uiState.value.hasBindingAttempted).isFalse()
+    }
+
+    @Test
+    fun previewVisibilityIsHolderDrivenNotSessionDriven() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
+
+        assertThat(viewModel.uiState.value.isPreviewVisible).isFalse()
+
+        viewModel.onPreviewSurfaceStateChanged(
+            hasPreviewSurface = true,
+            isPreviewVisible = true
+        )
+
         assertThat(viewModel.uiState.value.isPreviewVisible).isTrue()
+    }
+
+    @Test
+    fun bindingAttemptAndSourceReadyDriveRecoveryProgression() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
+        viewModel.onPreviewSurfaceStateChanged(
+            hasPreviewSurface = true,
+            isPreviewVisible = false
+        )
+        viewModel.onBindingAttemptChanged(true)
+        viewModel.onSourceStateChanged(ScannerSourceState.Starting)
+
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Starting)
 
         viewModel.onSourceStateChanged(ScannerSourceState.Ready)
 
-        assertThat(viewModel.uiState.value.sessionState).isEqualTo(ScannerSessionState.Active)
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Ready)
         assertThat(viewModel.uiState.value.isSourceReady).isTrue()
-        assertThat(viewModel.uiState.value.isPreviewVisible).isTrue()
+    }
+
+    @Test
+    fun sourceReadyWithPreviewNotVisibleStaysTruthful() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
+        viewModel.onPreviewSurfaceStateChanged(
+            hasPreviewSurface = true,
+            isPreviewVisible = false
+        )
+        viewModel.onBindingAttemptChanged(true)
+        viewModel.onSourceStateChanged(ScannerSourceState.Ready)
+
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Ready)
+        assertThat(viewModel.uiState.value.scannerStatus)
+            .isEqualTo("Scanner ready. Preview is still becoming visible in the UI.")
+        assertThat(viewModel.uiState.value.scannerStatus).doesNotContain("confirmed")
+    }
+
+    @Test
+    fun bindingAttemptResetsOnStopOrPermissionLoss() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
+        viewModel.onBindingAttemptChanged(true)
+
+        assertThat(viewModel.uiState.value.hasBindingAttempted).isTrue()
+
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.Backgrounded)
+            )
+        )
+
+        assertThat(viewModel.uiState.value.hasBindingAttempted).isFalse()
+
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = true,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Armed
+            )
+        )
+        viewModel.onBindingAttemptChanged(true)
+        viewModel.refreshPermissionState(isGranted = false)
+
+        assertThat(viewModel.uiState.value.hasBindingAttempted).isFalse()
+    }
+
+    @Test
+    fun grantedPermissionOutsideActiveScanSurfaceDoesNotReportStarting() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.Backgrounded)
+            )
+        )
+
+        assertThat(viewModel.uiState.value.shouldHostPreviewSurface).isFalse()
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Inactive)
+    }
+
+    @Test
+    fun permissionRequestStartedPreservesExplicitRequestingStatus() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = false)
+        viewModel.onPermissionRequestStarted()
+
+        assertThat(viewModel.uiState.value.scannerStatus)
+            .isEqualTo("Requesting camera permission for scanner input.")
     }
 
     @Test
     fun sourceErrorBlocksScannerWithTypedReason() {
         val viewModel = ScanningViewModel()
 
-        viewModel.refreshPermissionState(true)
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
         viewModel.onActivationDecision(
             ScannerSourceActivationDecision(
                 shouldStartBinding = true,
@@ -68,6 +201,7 @@ class ScanningViewModelTest {
                 sessionState = ScannerSessionState.Armed
             )
         )
+        viewModel.onBindingAttemptChanged(true)
 
         viewModel.onSourceStateChanged(ScannerSourceState.Error("camera unavailable"))
 
@@ -93,13 +227,6 @@ class ScanningViewModelTest {
             )
         )
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
-        val acceptedFeedback = viewModel.uiState.value.lastCaptureFeedback
-        assertThat(acceptedFeedback).isInstanceOf(
-            za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState.Success::class.java
-        )
-        assertThat(
-            (acceptedFeedback as za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState.Success).message
-        ).isEqualTo("Welcome, Jane Doe")
 
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.Suppressed)

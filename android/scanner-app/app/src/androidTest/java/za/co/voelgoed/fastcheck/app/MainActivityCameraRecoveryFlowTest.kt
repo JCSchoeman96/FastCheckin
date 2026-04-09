@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.app
 
 import android.content.Intent
 import android.os.SystemClock
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -307,6 +308,172 @@ class MainActivityCameraRecoveryFlowTest {
         }
     }
 
+    @Test
+    fun backgroundingStopsScannerAndForegroundingRestartsStartupTruthfully() {
+        val fakeSource =
+            FakeScannerInputSource().apply {
+                enqueueStateOnStart(ScannerSourceState.Starting)
+                enqueueStateOnStart(ScannerSourceState.Starting)
+            }
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+        MainActivityTestHooks.previewSurfaceOverride =
+            PreviewSurfaceOverride(hasPreviewSurface = true, isPreviewVisible = false)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitUntil("initial startup state") {
+                fakeSource.startCount == 1 && currentRecoveryState(scenario) == ScannerRecoveryState.Starting
+            }
+
+            scenario.moveToState(Lifecycle.State.CREATED)
+            waitUntil("scanner stop on background") {
+                fakeSource.stopCount == 1 &&
+                    currentRecoveryState(scenario) == ScannerRecoveryState.Inactive
+            }
+
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            waitUntil("scanner restart on foreground") {
+                fakeSource.startCount == 2 && currentRecoveryState(scenario) == ScannerRecoveryState.Starting
+            }
+
+            fakeSource.emitState(ScannerSourceState.Ready)
+            waitUntil("scanner ready after foreground restart") {
+                currentRecoveryState(scenario) == ScannerRecoveryState.Ready
+            }
+
+            assertThat(fakeSource.startCount).isEqualTo(2)
+            assertThat(fakeSource.stopCount).isEqualTo(1)
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun leavingScanAndReturningRestartsWithoutStaleReady() {
+        val fakeSource =
+            FakeScannerInputSource().apply {
+                enqueueStateOnStart(ScannerSourceState.Starting)
+                enqueueStateOnStart(ScannerSourceState.Starting)
+            }
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+        MainActivityTestHooks.previewSurfaceOverride =
+            PreviewSurfaceOverride(hasPreviewSurface = true, isPreviewVisible = false)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            fakeSource.emitState(ScannerSourceState.Ready)
+            waitUntil("scanner ready on initial scan route") {
+                currentRecoveryState(scenario) == ScannerRecoveryState.Ready
+            }
+
+            scenario.onActivity { activity ->
+                viewModel<AppShellViewModel>(activity).selectDestination(AppShellDestination.Event)
+            }
+            waitUntil("scanner stop after leaving scan") {
+                fakeSource.stopCount == 1 &&
+                    currentRecoveryState(scenario) == ScannerRecoveryState.Inactive
+            }
+
+            scenario.onActivity { activity ->
+                viewModel<AppShellViewModel>(activity).selectDestination(AppShellDestination.Scan)
+            }
+            waitUntil("scanner restart after returning to scan") {
+                fakeSource.startCount == 2 && currentRecoveryState(scenario) == ScannerRecoveryState.Starting
+            }
+
+            fakeSource.emitState(ScannerSourceState.Ready)
+            waitUntil("scanner ready after returning to scan") {
+                currentRecoveryState(scenario) == ScannerRecoveryState.Ready
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun permissionGrantWhileScanOpenTransitionsFromPermissionToStartingThenReady() {
+        val fakeSource =
+            FakeScannerInputSource().apply {
+                enqueueStateOnStart(ScannerSourceState.Starting)
+            }
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = false, shouldShowRationale = true)
+        MainActivityTestHooks.previewSurfaceOverride =
+            PreviewSurfaceOverride(hasPreviewSurface = true, isPreviewVisible = false)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitUntil("permission-required state") {
+                fakeSource.startCount == 0 &&
+                    currentRecoveryState(scenario) is ScannerRecoveryState.RequestPermission
+            }
+
+            MainActivityTestHooks.permissionStateOverride =
+                CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+            scenario.onActivity { activity ->
+                activity.invokeSyncScannerBindingState()
+            }
+
+            waitUntil("starting state after permission grant") {
+                fakeSource.startCount == 1 && currentRecoveryState(scenario) == ScannerRecoveryState.Starting
+            }
+
+            fakeSource.emitState(ScannerSourceState.Ready)
+            waitUntil("ready state after permission grant") {
+                currentRecoveryState(scenario) == ScannerRecoveryState.Ready
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun reconnectAfterSourceErrorTransitionsThroughStartingBeforeReady() {
+        val fakeSource =
+            FakeScannerInputSource().apply {
+                enqueueStateOnStart(ScannerSourceState.Error("camera unavailable"))
+                enqueueStateOnStart(ScannerSourceState.Starting)
+            }
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+        MainActivityTestHooks.previewSurfaceOverride =
+            PreviewSurfaceOverride(hasPreviewSurface = true, isPreviewVisible = false)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitUntil("source error state") {
+                fakeSource.startCount == 1 &&
+                    currentRecoveryState(scenario) == ScannerRecoveryState.SourceError("camera unavailable")
+            }
+
+            scenario.onActivity { activity ->
+                activity.invokeHandleScanOperatorAction(ScanOperatorAction.ReconnectCamera)
+            }
+            waitUntil("starting state after reconnect") {
+                fakeSource.startCount == 2 &&
+                    fakeSource.stopCount == 1 &&
+                    currentRecoveryState(scenario) == ScannerRecoveryState.Starting
+            }
+
+            fakeSource.emitState(ScannerSourceState.Ready)
+            waitUntil("ready state after reconnect") {
+                currentRecoveryState(scenario) == ScannerRecoveryState.Ready
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
     private fun launchActivity(): ActivityScenario<MainActivity> =
         ActivityScenario.launch(MainActivity::class.java).also {
             waitForIdle()
@@ -371,6 +538,16 @@ class MainActivityCameraRecoveryFlowTest {
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync()
     }
 
+    private fun currentRecoveryState(
+        scenario: ActivityScenario<MainActivity>
+    ): ScannerRecoveryState {
+        var recoveryState: ScannerRecoveryState? = null
+        scenario.onActivity { activity ->
+            recoveryState = viewModel<ScanningViewModel>(activity).uiState.value.scannerRecoveryState
+        }
+        return checkNotNull(recoveryState)
+    }
+
     private inline fun <reified T : ViewModel> viewModel(activity: MainActivity): T =
         ViewModelProvider(activity)[T::class.java]
 
@@ -409,6 +586,10 @@ class MainActivityCameraRecoveryFlowTest {
 
         fun enqueueStateOnStart(state: ScannerSourceState) {
             queuedStates.addLast(state)
+        }
+
+        fun emitState(state: ScannerSourceState) {
+            mutableState.value = state
         }
 
         override fun start() {

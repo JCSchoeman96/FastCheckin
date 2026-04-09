@@ -5,7 +5,6 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
-import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningUiState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.support.model.SupportOperationalAction
@@ -29,35 +28,27 @@ class SupportOverviewPresenter {
                         action = SupportRecoveryAction.ReturnToScan
                     )
 
+                ScannerRecoveryState.Inactive ->
+                    RecoveryCopy(
+                        title = "Scanner inactive",
+                        message = "Camera access is available, but smartphone scanning is not currently active. Return to Scan to continue operating.",
+                        tone = StatusTone.Neutral,
+                        action = SupportRecoveryAction.ReturnToScan
+                    )
+
+                ScannerRecoveryState.Starting ->
+                    RecoveryCopy(
+                        title = "Scanner startup in progress",
+                        message = "Camera startup is still in progress. Return to Scan to continue while the scanner finishes preparing.",
+                        tone = StatusTone.Info,
+                        action = SupportRecoveryAction.ReturnToScan
+                    )
+
                 ScannerRecoveryState.Ready ->
                     RecoveryCopy(
-                        title =
-                            if (
-                                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
-                                !scanningUiState.isSourceReady
-                            ) {
-                                "Scanner startup in progress"
-                            } else {
-                                "Scanner access ready"
-                            },
-                        message =
-                            if (
-                                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
-                                !scanningUiState.isSourceReady
-                            ) {
-                                "Camera access is available and scanner startup is still preparing. Return to Scan while the preview finishes starting."
-                            } else {
-                                "Camera access is available for smartphone scanning. Return to Scan to continue operating."
-                            },
-                        tone =
-                            if (
-                                scanningUiState.activeSourceType == ScannerSourceType.CAMERA &&
-                                !scanningUiState.isSourceReady
-                            ) {
-                                StatusTone.Info
-                            } else {
-                                StatusTone.Success
-                            },
+                        title = "Scanner access ready",
+                        message = "Camera access is available for smartphone scanning. Return to Scan to continue operating.",
+                        tone = StatusTone.Success,
                         action = SupportRecoveryAction.ReturnToScan
                     )
 

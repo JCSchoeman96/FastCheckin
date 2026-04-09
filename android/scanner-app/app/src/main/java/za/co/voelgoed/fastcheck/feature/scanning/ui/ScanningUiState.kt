@@ -15,6 +15,9 @@ data class ScanningUiState(
     val permissionSummary: String = "Camera permission status unknown.",
     val scannerStatus: String =
         "Scanner scaffold ready. Decoded values will use local gate rules first, then queue background reconciliation.",
+    val shouldHostPreviewSurface: Boolean = false,
+    val hasPreviewSurface: Boolean = false,
+    val hasBindingAttempted: Boolean = false,
     val isPreviewVisible: Boolean = false,
     val isPermissionRequestEnabled: Boolean = true,
     val isPermissionRequestVisible: Boolean = true,

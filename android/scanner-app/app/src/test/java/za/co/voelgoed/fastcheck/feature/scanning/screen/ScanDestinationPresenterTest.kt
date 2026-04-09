@@ -303,18 +303,74 @@ class ScanDestinationPresenterTest {
     }
 
     @Test
-    fun cameraPreviewHostsWhileStartupProgressesAfterPermissionGrant() {
+    fun startingRecoveryShowsPreparingStateNotReady() {
         val uiState =
             presenter.present(
                 scanningUiState =
                     ScanningUiState(
                         activeSourceType = ScannerSourceType.CAMERA,
                         cameraPermissionState = CameraPermissionState.GRANTED,
-                        isPreviewVisible = false,
-                        isSourceReady = false,
+                        scannerRecoveryState = ScannerRecoveryState.Starting,
                         sessionState = ScannerSessionState.Blocked(
                             za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason.PreviewUnavailable
-                        )
+                        ),
+                        scannerStatus = "Preparing scanner input source"
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.scannerStatusChip.text).isNotEqualTo("Scanner ready")
+        assertThat(uiState.previewBanner?.tone).isEqualTo(StatusTone.Info)
+        assertThat(uiState.previewBanner?.message).isEqualTo("Preparing scanner input source")
+    }
+
+    @Test
+    fun showCameraPreviewFollowsSharedShouldHostPreviewSurface() {
+        val hostingUiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        cameraPermissionState = CameraPermissionState.GRANTED,
+                        shouldHostPreviewSurface = true,
+                        scannerRecoveryState = ScannerRecoveryState.Starting
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+        val nonHostingUiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        cameraPermissionState = CameraPermissionState.GRANTED,
+                        shouldHostPreviewSurface = false,
+                        scannerRecoveryState = ScannerRecoveryState.Starting
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(hostingUiState.showCameraPreview).isTrue()
+        assertThat(nonHostingUiState.showCameraPreview).isFalse()
+    }
+
+    @Test
+    fun readyWithInvisiblePreviewUsesTruthfulInformationalCopy() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        scannerRecoveryState = ScannerRecoveryState.Ready,
+                        shouldHostPreviewSurface = true,
+                        isSourceReady = true,
+                        isPreviewVisible = false,
+                        scannerStatus = "Scanner ready. Preview is still becoming visible in the UI."
                     ),
                 queueUiState = QueueUiState(),
                 syncUiState = SyncScreenUiState(),
@@ -322,5 +378,8 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.showCameraPreview).isTrue()
+        assertThat(uiState.previewBanner?.title).isEqualTo("Scanner ready")
+        assertThat(uiState.previewBanner?.message)
+            .isEqualTo("Scanner ready. Preview is still becoming visible in the UI.")
     }
 }

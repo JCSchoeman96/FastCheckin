@@ -39,6 +39,32 @@ Replacement targets to document and support:
 - worker-facing use cases
 - scanner-boundary collaborators
 
+## Connected Android Tests
+
+Use the stable connected-test harness under:
+
+- `android/scanner-app/scripts/run-connected-android-tests.sh`
+
+This script standardizes the local emulator flow that Gradle connected tests
+should use:
+
+- stable `android-36` Google APIs x86_64 system image
+- AVD name `Medium_Phone_API_36`
+- headless boot with software rendering
+- preview AVDs avoided for connected tests
+
+Do not use preview emulator targets such as `36.1` for
+`connectedDebugAndroidTest`. They may boot, but Gradle device detection can
+still reject them as unknown API levels.
+
+Example:
+
+```bash
+cd android/scanner-app
+./scripts/run-connected-android-tests.sh \
+  --class za.co.voelgoed.fastcheck.app.MainActivityCameraRecoveryFlowTest
+```
+
 ## Worker Tests
 
 Worker tests should verify:
