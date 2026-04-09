@@ -26,8 +26,7 @@ defmodule FastCheck.Fixtures do
       mobile_access_secret_encrypted: encrypted_mobile_secret,
       status: "active",
       entrance_name: "Main Gate",
-      total_tickets: 0,
-      checked_in_count: 0
+      total_tickets: 0
     }
 
     params = Map.merge(default_attrs, attrs)

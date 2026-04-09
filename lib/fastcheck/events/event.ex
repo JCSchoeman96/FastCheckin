@@ -30,7 +30,7 @@ defmodule FastCheck.Events.Event do
           scanner_login_code: String.t() | nil,
           status: String.t() | nil,
           total_tickets: integer() | nil,
-          checked_in_count: integer() | nil,
+          checked_in_count: integer(),
           attendee_count: integer() | nil,
           event_date: Date.t() | nil,
           event_time: Time.t() | nil,
@@ -66,7 +66,7 @@ defmodule FastCheck.Events.Event do
     # Total number of tickets made available for the event
     field :total_tickets, :integer
     # Local checked-in total derived from attendee check-in timestamps
-    field :checked_in_count, :integer
+    field :checked_in_count, :integer, virtual: true, default: 0
     # Virtual count of attendees loaded via aggregate queries
     field :attendee_count, :integer, virtual: true
     # Calendar date when the event takes place
@@ -114,7 +114,6 @@ defmodule FastCheck.Events.Event do
       :tickera_end_date,
       :status,
       :total_tickets,
-      :checked_in_count,
       :entrance_name,
       :event_date,
       :event_time,
@@ -133,7 +132,6 @@ defmodule FastCheck.Events.Event do
     |> check_constraint(:scanner_login_code, name: "events_scanner_login_code_format")
     |> validate_inclusion(:status, ["active", "syncing", "archived"])
     |> validate_number(:total_tickets, greater_than_or_equal_to: 0)
-    |> validate_number(:checked_in_count, greater_than_or_equal_to: 0)
     |> check_constraint(:status, name: "events_status_must_be_valid")
     |> validate_required([
       :name,

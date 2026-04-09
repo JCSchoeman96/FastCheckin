@@ -44,8 +44,7 @@ defmodule FastCheck.Integration.EndToEndTest do
         scanner_login_code: unique_scanner_code(),
         status: "active",
         entrance_name: "Main Gate",
-        total_tickets: 0,
-        checked_in_count: 0
+        total_tickets: 0
       }
       |> Repo.insert!()
 

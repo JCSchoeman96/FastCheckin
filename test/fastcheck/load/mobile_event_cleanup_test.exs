@@ -125,7 +125,6 @@ defmodule FastCheck.Load.MobileEventCleanupTest do
 
     %Event{}
     |> Event.changeset(%{
-      checked_in_count: 0,
       mobile_access_secret_encrypted: encrypted_secret,
       name: "Regular Event #{System.unique_integer([:positive])}",
       scanner_login_code: random_scanner_code(),
