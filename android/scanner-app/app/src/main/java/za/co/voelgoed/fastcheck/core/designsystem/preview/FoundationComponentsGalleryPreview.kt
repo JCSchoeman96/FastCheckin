@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcDangerButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcPrimaryButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.theme.FastCheckTheme
@@ -73,6 +76,26 @@ internal fun FoundationComponentsGalleryPreview() {
                             title = "Sync info",
                             message = "The scanner is waiting for the next sync window.",
                             tone = StatusTone.Info,
+                        )
+                    }
+                }
+
+                GallerySection(title = "Action buttons") {
+                    Column(verticalArrangement = Arrangement.spacedBy(theme.spacing.small)) {
+                        FcPrimaryButton(
+                            text = "Allow camera access",
+                            onClick = {},
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        FcSecondaryButton(
+                            text = "Retry upload",
+                            onClick = {},
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        FcDangerButton(
+                            text = "Log out",
+                            onClick = {},
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
