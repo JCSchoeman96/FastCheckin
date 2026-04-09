@@ -21,6 +21,9 @@ or new background orchestration.
 
 - Phoenix backend is reachable for the target environment.
 - Backend runtime is confirmed to be the promoted hot path for Android.
+- For Gradle connected tests on Linux, prefer the stable `android-36` emulator
+  harness under `android/scanner-app/scripts/run-connected-android-tests.sh`.
+  Do not use preview AVDs such as `36.1` for `connectedDebugAndroidTest`.
 - Test event exists with:
   - valid mobile login credential
   - at least one valid attendee/ticket
@@ -61,6 +64,23 @@ Expected rule:
 
 - no source edits are required to switch targets
 - diagnostics and logs must show the same resolved base URL used by Retrofit
+
+### Connected-test harness
+
+For instrumentation classes that should run through Gradle connected tests, use:
+
+```bash
+cd android/scanner-app
+./scripts/run-connected-android-tests.sh \
+  --class za.co.voelgoed.fastcheck.app.MainActivityCameraRecoveryFlowTest
+```
+
+This script:
+
+- creates the stable `Medium_Phone_API_36` AVD if missing
+- boots it headless with software rendering
+- waits for Android boot completion
+- runs `:app:connectedDebugAndroidTest --no-daemon`
 
 ## Test Matrix
 
