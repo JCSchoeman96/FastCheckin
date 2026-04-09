@@ -65,7 +65,7 @@ defmodule FastCheck.Events.Event do
     field :status, :string
     # Total number of tickets made available for the event
     field :total_tickets, :integer
-    # Number of tickets already checked in at the entrance
+    # Local checked-in total derived from attendee check-in timestamps
     field :checked_in_count, :integer
     # Virtual count of attendees loaded via aggregate queries
     field :attendee_count, :integer, virtual: true

@@ -6,7 +6,6 @@ defmodule FastCheck.Events.Stats do
   import Ecto.Query, warn: false
   require Logger
 
-  alias Ecto.Changeset
   alias FastCheck.Attendees
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Cache.CacheManager
@@ -65,7 +64,7 @@ defmodule FastCheck.Events.Stats do
   def get_event_stats(_), do: @default_event_stats
 
   @doc """
-  Fetches an event and refreshes its `checked_in_count` statistic based on the
+  Fetches an event and overlays a local `checked_in_count` derived from the
   number of attendees with a populated `checked_in_at` timestamp.
   """
   @spec get_event_with_stats(integer()) :: Event.t()
@@ -79,16 +78,7 @@ defmodule FastCheck.Events.Stats do
       )
       |> Repo.one()
 
-    case event |> Changeset.change(%{checked_in_count: checked_in_count}) |> Repo.update() do
-      {:ok, updated} ->
-        Cache.invalidate_event_cache(updated.id)
-        Cache.invalidate_events_list_cache()
-        updated
-
-      {:error, changeset} ->
-        Logger.error("Failed to update stats for event #{event_id}: #{inspect(changeset.errors)}")
-        %{event | checked_in_count: checked_in_count}
-    end
+    %{event | checked_in_count: checked_in_count}
   end
 
   @doc """
@@ -259,7 +249,7 @@ defmodule FastCheck.Events.Stats do
 
   @doc """
   Fetches live occupancy information for an event using the Tickera API,
-  persists the latest statistics, and broadcasts the updated totals over PubSub.
+  then broadcasts the updated totals over PubSub.
   """
   @spec update_event_occupancy_live(integer()) :: {:ok, map()} | {:error, String.t()}
   def update_event_occupancy_live(event_id) when is_integer(event_id) do
@@ -588,25 +578,8 @@ defmodule FastCheck.Events.Stats do
 
   defp extract_live_occupancy(_payload), do: {:error, :invalid_payload}
 
-  defp persist_live_occupancy(event_id, %{current_occupancy: current, per_entrance: per_gate}) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-    updates = [
-      checked_in_count: current,
-      last_occupancy_sync: now,
-      occupancy_per_gate: per_gate
-    ]
-
-    case Event |> where([e], e.id == ^event_id) |> Repo.update_all(set: updates) do
-      {count, _} when count > 0 ->
-        Cache.invalidate_event_cache(event_id)
-        Cache.invalidate_events_list_cache()
-        :ok
-
-      _ ->
-        {:error, :not_updated}
-    end
-  end
+  defp persist_live_occupancy(_event_id, %{current_occupancy: _current, per_entrance: _per_gate}),
+    do: :ok
 
   defp log_live_occupancy(event_id, occupancy_map, []) do
     Logger.info(

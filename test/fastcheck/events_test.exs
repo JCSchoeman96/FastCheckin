@@ -37,6 +37,55 @@ defmodule FastCheck.EventsTest do
       assert counts[first_event.id] == 3
       assert counts[second_event.id] == 1
     end
+
+    test "returns checked_in_count derived from local attendee rows" do
+      event = insert_event!("Check-In Rollup")
+
+      insert_attendee(%{event_id: event.id})
+
+      checked_in_at =
+        DateTime.utc_now()
+        |> DateTime.truncate(:second)
+
+      insert_attendee(%{
+        event_id: event.id,
+        checked_in_at: checked_in_at,
+        last_checked_in_at: checked_in_at
+      })
+
+      listed_event =
+        Events.list_events()
+        |> Enum.find(&(&1.id == event.id))
+
+      assert listed_event.attendee_count == 2
+      assert listed_event.checked_in_count == 1
+    end
+
+    test "invalidates the cached event list after a successful check-in" do
+      event = insert_event!("Dashboard In Cache")
+
+      attendee =
+        insert_attendee(%{
+          event_id: event.id,
+          payment_status: "completed",
+          checkins_remaining: 1
+        })
+
+      cached_event =
+        Events.list_events()
+        |> Enum.find(&(&1.id == event.id))
+
+      assert cached_event.checked_in_count == 0
+
+      assert {:ok, _updated_attendee, _message} =
+               FastCheck.Attendees.check_in(event.id, attendee.ticket_code, "Main Gate")
+
+      refreshed_event =
+        Events.list_events()
+        |> Enum.find(&(&1.id == event.id))
+
+      assert refreshed_event.checked_in_count == 1
+    end
   end
 
   describe "scanner login codes" do

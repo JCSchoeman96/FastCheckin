@@ -852,6 +852,8 @@ defmodule FastCheck.Attendees.Scan do
     FastCheck.Attendees.delete_attendee_id_cache(attendee_id)
     delete_cache_entry("attendees:event:#{event_id}", "event attendees cache")
     delete_cache_entry("stats:#{event_id}", "event stats cache")
+    FastCheck.Events.Cache.invalidate_event_cache(event_id)
+    FastCheck.Events.Cache.invalidate_events_list_cache()
     purge_local_occupancy_breakdown(event_id)
     :ok
   end
