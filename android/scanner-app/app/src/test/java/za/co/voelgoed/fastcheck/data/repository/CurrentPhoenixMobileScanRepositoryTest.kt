@@ -7,7 +7,11 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.test.runTest
+import okhttp3.Headers
+import okhttp3.Protocol
+import okhttp3.Request
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -36,8 +40,7 @@ import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.usecase.DefaultQueueCapturedScanUseCase
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.ResponseBody
-import retrofit2.HttpException
+import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Response
 
 @RunWith(RobolectricTestRunner::class)
@@ -58,7 +61,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
         repository =
             CurrentPhoenixMobileScanRepository(
                 scannerDao = database.scannerDao(),
-                remoteDataSource = PhoenixMobileRemoteDataSource(api),
+                remoteDataSource = PhoenixMobileRemoteDataSource(api, clock),
                 sessionProvider = object : SessionProvider {
                     override suspend fun bearerToken(): String = "jwt-token"
                 },
@@ -124,6 +127,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
             )
 
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -139,6 +143,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                     ),
                 error = null,
                 message = null
+            )
             )
 
         repository.flushQueuedScans(maxBatchSize = 50)
@@ -157,6 +162,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-3", ticketCode = "VG-3", createdAt = 9_000L))
 
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -172,6 +178,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                     ),
                 error = null,
                 message = null
+            )
             )
 
         val report = repository.flushQueuedScans(maxBatchSize = 50)
@@ -204,6 +211,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
         }
 
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -220,6 +228,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 error = null,
                 message = null
             )
+            )
 
         val report = repository.flushQueuedScans(maxBatchSize = 50)
 
@@ -233,7 +242,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
         val noTokenRepository =
             CurrentPhoenixMobileScanRepository(
                 scannerDao = database.scannerDao(),
-                remoteDataSource = PhoenixMobileRemoteDataSource(api),
+                remoteDataSource = PhoenixMobileRemoteDataSource(api, clock),
                 sessionProvider = object : SessionProvider {
                     override suspend fun bearerToken(): String? = null
                 },
@@ -254,6 +263,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     fun flushSuccessMovesOverlayToConfirmedLocalUnsynced() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-success")
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -270,6 +280,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 error = null,
                 message = null
             )
+            )
 
         repository.flushQueuedScans(maxBatchSize = 50)
 
@@ -282,6 +293,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     fun flushDuplicateMovesOverlayToConflictDuplicate() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-dup")
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -298,6 +310,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 error = null,
                 message = null
             )
+            )
 
         repository.flushQueuedScans(maxBatchSize = 50)
 
@@ -309,6 +322,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     fun flushTerminalErrorMovesOverlayToConflictRejected() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-term")
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -326,6 +340,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 error = null,
                 message = null
             )
+            )
 
         repository.flushQueuedScans(maxBatchSize = 50)
 
@@ -337,6 +352,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     fun flushTerminalErrorWithBusinessDuplicateMovesOverlayToConflictDuplicate() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-biz-dup")
         api.uploadResponse =
+            successResponse(
             UploadScansResponse(
                 data =
                     UploadScansPayload(
@@ -354,6 +370,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 error = null,
                 message = null
             )
+            )
 
         repository.flushQueuedScans(maxBatchSize = 50)
 
@@ -364,16 +381,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     @Test
     fun flushRetryableServerErrorDoesNotTransitionOverlay() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-overlay-retry")
-        api.uploadException =
-            HttpException(
-                Response.error<UploadScansResponse>(
-                    500,
-                    ResponseBody.create(
-                        "application/json".toMediaType(),
-                        """{"error":"server_error"}"""
-                    )
-                )
-            )
+        api.uploadResponse = errorResponse(500, """{"error":"server_error"}""")
 
         repository.flushQueuedScans(maxBatchSize = 50)
 
@@ -382,18 +390,9 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
-    fun flushNon401ClientErrorQuarantinesBatchAndDoesNotTouchReplayCacheOrOverlaySuccess() = runTest {
+    fun flush400ClientErrorQuarantinesBatchAndDoesNotTouchReplayCacheOrOverlaySuccess() = runTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-q-400")
-        api.uploadException =
-            HttpException(
-                Response.error<UploadScansResponse>(
-                    400,
-                    ResponseBody.create(
-                        "application/json".toMediaType(),
-                        """{"error":"bad_request"}"""
-                    )
-                )
-            )
+        api.uploadResponse = errorResponse(400, """{"error":"bad_request"}""")
 
         val report = repository.flushQueuedScans(maxBatchSize = 50)
         val dao = database.scannerDao()
@@ -412,7 +411,10 @@ class CurrentPhoenixMobileScanRepositoryTest {
     @Test
     fun flushIncompleteResponseQuarantinesBatch() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-null-data", createdAt = 10_000L))
-        api.uploadResponse = UploadScansResponse(data = null, error = "missing", message = "no data")
+        api.uploadResponse =
+            successResponse(
+                UploadScansResponse(data = null, error = "missing", message = "no data")
+            )
 
         val report = repository.flushQueuedScans(maxBatchSize = 50)
         val dao = database.scannerDao()
@@ -431,16 +433,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     @Test
     fun flush401PreservesQueueAndLeavesQuarantineEmpty() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-401", createdAt = 10_000L))
-        api.uploadException =
-            HttpException(
-                Response.error<UploadScansResponse>(
-                    401,
-                    ResponseBody.create(
-                        "application/json".toMediaType(),
-                        """{"error":"unauthorized"}"""
-                    )
-                )
-            )
+        api.uploadResponse = errorResponse(401, """{"error":"unauthorized"}""")
 
         repository.flushQueuedScans(maxBatchSize = 50)
         val dao = database.scannerDao()
@@ -457,23 +450,110 @@ class CurrentPhoenixMobileScanRepositoryTest {
     @Test
     fun flush5xxPreservesQueueAndLeavesQuarantineEmpty() = runTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-500", createdAt = 10_000L))
-        api.uploadException =
-            HttpException(
-                Response.error<UploadScansResponse>(
-                    503,
-                    ResponseBody.create(
-                        "application/json".toMediaType(),
-                        """{"error":"unavailable"}"""
-                    )
-                )
-            )
+        api.uploadResponse = errorResponse(503, """{"error":"unavailable"}""")
 
-        repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
         val dao = database.scannerDao()
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
         assertThat(repository.quarantineCount()).isEqualTo(0)
+        assertThat(report.backpressureObserved).isTrue()
+        assertThat(report.httpStatusCode).isEqualTo(503)
+    }
+
+    @Test
+    fun flush429PreservesQueueAndLeavesQuarantineEmpty() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-429", createdAt = 10_000L))
+        api.uploadResponse =
+            errorResponse(
+                429,
+                """{"error":"rate_limited"}""",
+                headers = Headers.headersOf("Retry-After", "5", "x-ratelimit-remaining", "0")
+            )
+
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val dao = database.scannerDao()
+
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.RETRYABLE_FAILURE)
+        assertThat(report.retryAfterMillis).isEqualTo(5_000L)
+        assertThat(report.httpStatusCode).isEqualTo(429)
+        assertThat(report.rateLimitRemaining).isEqualTo(0)
+        assertThat(report.backpressureObserved).isTrue()
+        assertThat(dao.countPendingScans()).isEqualTo(1)
+        assertThat(dao.countQuarantinedScans()).isEqualTo(0)
+    }
+
+    @Test
+    fun flush429ParsesHttpDateRetryAfter() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-429-date", createdAt = 10_000L))
+        val retryInstant = Instant.parse("2026-03-12T10:00:45Z")
+        api.uploadResponse =
+            errorResponse(
+                429,
+                """{"error":"rate_limited"}""",
+                headers = Headers.headersOf("Retry-After", DateTimeFormatter.RFC_1123_DATE_TIME.format(retryInstant.atZone(ZoneOffset.UTC)))
+            )
+
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
+
+        assertThat(report.retryAfterMillis).isEqualTo(45_000L)
+    }
+
+    @Test
+    fun flushIgnoresInvalidRetryAfterAndFallsBackCleanly() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-429-invalid", createdAt = 10_000L))
+        api.uploadResponse =
+            errorResponse(
+                429,
+                """{"error":"rate_limited"}""",
+                headers = Headers.headersOf("Retry-After", "Wed, 12 Mar 2026 09:59:59 GMT")
+            )
+
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
+
+        assertThat(report.retryAfterMillis).isNull()
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.RETRYABLE_FAILURE)
+    }
+
+    @Test
+    fun flushSuccessSurfacesRateLimitHeadersWithoutChangingPayloadContract() = runTest {
+        repository.queueScan(sampleScan(idempotencyKey = "idem-success-headers", createdAt = 10_000L))
+        api.uploadResponse =
+            successResponse(
+                UploadScansResponse(
+                    data =
+                        UploadScansPayload(
+                            results =
+                                listOf(
+                                    UploadedScanResult(
+                                        idempotency_key = "idem-success-headers",
+                                        status = "success",
+                                        message = "Check-in successful"
+                                    )
+                                ),
+                            processed = 1
+                        ),
+                    error = null,
+                    message = null
+                ),
+                headers =
+                    Headers.headersOf(
+                        "x-ratelimit-limit",
+                        "50",
+                        "x-ratelimit-remaining",
+                        "49",
+                        "x-ratelimit-reset",
+                        "1741514400"
+                    )
+            )
+
+        val report = repository.flushQueuedScans(maxBatchSize = 50)
+
+        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
+        assertThat(report.rateLimitLimit).isEqualTo(50)
+        assertThat(report.rateLimitRemaining).isEqualTo(49)
+        assertThat(report.rateLimitResetEpochSeconds).isEqualTo(1_741_514_400L)
     }
 
     /**
@@ -560,13 +640,14 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
     private class FakePhoenixMobileApi : PhoenixMobileApi {
         var lastUploadBody: UploadScansRequest? = null
-        var uploadException: HttpException? = null
         var uploadIoException: IOException? = null
-        var uploadResponse: UploadScansResponse =
-            UploadScansResponse(
-                data = UploadScansPayload(results = emptyList(), processed = 0),
-                error = null,
-                message = null
+        var uploadResponse: Response<UploadScansResponse> =
+            Response.success(
+                UploadScansResponse(
+                    data = UploadScansPayload(results = emptyList(), processed = 0),
+                    error = null,
+                    message = null
+                )
             )
 
         override suspend fun login(body: MobileLoginRequest): MobileLoginResponse {
@@ -577,11 +658,31 @@ class CurrentPhoenixMobileScanRepositoryTest {
             error("Not used in this test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
+        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
             lastUploadBody = body
             uploadIoException?.let { throw it }
-            uploadException?.let { throw it }
             return uploadResponse
         }
     }
+
+    private fun successResponse(
+        body: UploadScansResponse,
+        headers: Headers = Headers.headersOf()
+    ): Response<UploadScansResponse> = Response.success(body, headers)
+
+    private fun errorResponse(
+        code: Int,
+        body: String,
+        headers: Headers = Headers.headersOf()
+    ): Response<UploadScansResponse> =
+        Response.error(
+            body.toResponseBody("application/json".toMediaType()),
+            okhttp3.Response.Builder()
+                .code(code)
+                .message("HTTP $code")
+                .protocol(Protocol.HTTP_1_1)
+                .headers(headers)
+                .request(Request.Builder().url("https://example.test/api/v1/mobile/scans").build())
+                .build()
+        )
 }

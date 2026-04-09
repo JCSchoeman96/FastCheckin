@@ -6,6 +6,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import java.time.Clock
 import javax.inject.Singleton
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -72,6 +73,9 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideRemoteDataSource(api: PhoenixMobileApi): PhoenixMobileRemoteDataSource =
-        PhoenixMobileRemoteDataSource(api)
+    fun provideRemoteDataSource(
+        api: PhoenixMobileApi,
+        clock: Clock
+    ): PhoenixMobileRemoteDataSource =
+        PhoenixMobileRemoteDataSource(api, clock)
 }

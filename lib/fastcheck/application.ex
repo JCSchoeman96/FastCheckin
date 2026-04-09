@@ -44,9 +44,7 @@ defmodule FastCheck.Application do
     # NOW safe to attach telemetry handlers (tables guaranteed to exist)
     FastCheck.Telemetry.setup()
 
-    Logger.info(
-      "Mobile scan ingestion mode resolved: #{FastCheck.Scans.MobileUploadService.ingestion_mode()}"
-    )
+    Logger.info("Mobile scan ingestion initialized on the authoritative runtime path")
 
     log_database_pooling_mode()
 

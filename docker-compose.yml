@@ -28,7 +28,6 @@ services:
       PORT: 4000
       REDIS_URL: redis://redis:6379
       ENABLE_METRICS: "true"
-      MOBILE_SCAN_INGESTION_MODE: redis_authoritative
       RUN_MIGRATIONS: "true"
     networks:
       - fastcheck_network

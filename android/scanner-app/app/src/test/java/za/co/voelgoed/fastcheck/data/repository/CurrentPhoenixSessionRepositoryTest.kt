@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.datastore.SessionMetadata
 import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
@@ -420,7 +421,7 @@ class CurrentPhoenixSessionRepositoryTest {
             error("Not used in this test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
+        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
             error("Not used in this test")
         }
     }

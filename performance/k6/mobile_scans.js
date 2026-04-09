@@ -337,21 +337,6 @@ export function diagnosticEnqueueFailure(setupData) {
   }
 }
 
-export function diagnosticLegacySmoke(setupData) {
-  const context = currentScenarioContext();
-  const device = hotDevice(setupData);
-  const response = postSingleScan(
-    config.baseUrl,
-    buildSuccessScan(context.slice, 1, context.scenario_key),
-    context,
-    device
-  );
-
-  check(response.payload, {
-    "legacy smoke request returned a result": (payload) => Array.isArray(payload?.data?.results),
-  });
-}
-
 export function networkLatencyDegraded(setupData) {
   runProfiledScenario(setupData);
 }

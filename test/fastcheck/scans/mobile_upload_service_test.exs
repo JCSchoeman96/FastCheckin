@@ -62,8 +62,7 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   end
 
   test "authoritative mode acknowledges only after queueing durability work", %{event: event} do
-    configure_mode(:redis_authoritative)
-    assert_authoritative_mode!()
+    configure_ingestion()
 
     event_id = event.id
     scan = valid_scan("idem-1", "TEST001")
@@ -111,15 +110,14 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   end
 
   test "retry after enqueue failure reuses pending durability and succeeds", %{event: event} do
-    configure_mode(:redis_authoritative, force_enqueue_failure: true)
-    assert_authoritative_mode!()
+    configure_ingestion(force_enqueue_failure: true)
 
     scan = valid_scan("idem-retry", "TEST001")
 
     assert {:error, %{code: "durability_enqueue_failed"}} =
              MobileUploadService.upload_batch(event.id, [scan])
 
-    configure_mode(:redis_authoritative)
+    configure_ingestion()
 
     assert {:ok, [%{status: "success"}]} = MobileUploadService.upload_batch(event.id, [scan])
     assert {:ok, [%{status: "duplicate"}]} = MobileUploadService.upload_batch(event.id, [scan])
@@ -128,8 +126,7 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   test "authoritative mode keeps the stable three-field API envelope across outcomes", %{
     event: event
   } do
-    configure_mode(:redis_authoritative)
-    assert_authoritative_mode!()
+    configure_ingestion()
 
     success_scan = valid_scan("idem-contract-success", "TEST001")
 
@@ -152,57 +149,23 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
     assert contract_keys(error) == ["idempotency_key", "message", "status"]
   end
 
-  test "legacy and shadow modes remain available fallback modes, not authoritative modes" do
-    configure_mode(:legacy)
-    assert MobileUploadService.ingestion_mode() == :legacy
-    refute MobileUploadService.authoritative_mode?()
+  test "authoritative upload writes only to the configured live namespace", %{event: event} do
+    namespace = unique_namespace("authoritative-live")
+    configure_ingestion(live_namespace: namespace)
 
-    configure_mode(:shadow)
-    assert MobileUploadService.ingestion_mode() == :shadow
-    refute MobileUploadService.authoritative_mode?()
-  end
-
-  test "shadow mode does not contaminate the live namespace", %{event: event} do
-    configure_mode(:shadow)
-    refute MobileUploadService.authoritative_mode?()
-
-    shadow_scan = valid_scan("idem-shadow", "TEST001")
+    scan = valid_scan("idem-live-1", "TEST001")
 
     assert {:ok, [%{status: "success"}]} =
-             MobileUploadService.upload_batch(event.id, [shadow_scan])
+             MobileUploadService.upload_batch(event.id, [scan])
 
     assert %{
-             stage: :pending_durability,
-             result: %{idempotency_key: "idem-shadow", ticket_code: "TEST001"}
-           } = InMemoryStore.idempotency_entry("shadow", event.id, "idem-shadow")
-
-    assert nil == InMemoryStore.idempotency_entry("live", event.id, "idem-shadow")
-
-    %Attendee{
-      event_id: event.id,
-      ticket_code: "TEST002",
-      first_name: "Jane",
-      last_name: "Doe",
-      payment_status: "completed",
-      allowed_checkins: 1,
-      checkins_remaining: 1
-    }
-    |> Repo.insert!()
-
-    configure_mode(:redis_authoritative)
-
-    authoritative_scan = valid_scan("idem-live-1", "TEST002")
-
-    assert {:ok, [%{status: "success"}]} =
-             MobileUploadService.upload_batch(event.id, [authoritative_scan])
-
-    assert {:ok, [%{status: "duplicate"}]} =
-             MobileUploadService.upload_batch(event.id, [authoritative_scan])
+             stage: :final_acknowledged,
+             result: %{idempotency_key: "idem-live-1", ticket_code: "TEST001"}
+           } = InMemoryStore.idempotency_entry(namespace, event.id, "idem-live-1")
   end
 
   test "authoritative mode preserves payment rejection results", %{event: event} do
-    configure_mode(:redis_authoritative)
-    assert_authoritative_mode!()
+    configure_ingestion()
 
     scan = valid_scan("idem-refund", "REFUND001")
 
@@ -215,12 +178,7 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   test "authoritative mode surfaces build-timeout hot-state failures", %{event: event} do
     namespace = unique_namespace("build-timeout")
 
-    configure_mode(:redis_authoritative,
-      live_namespace: namespace,
-      shadow_namespace: "#{namespace}-shadow"
-    )
-
-    assert_authoritative_mode!()
+    configure_ingestion(live_namespace: namespace)
     InMemoryStore.inject_process_error(namespace, :build_timeout)
 
     scan = valid_scan("idem-build-timeout", "TEST001")
@@ -235,12 +193,7 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   test "authoritative mode surfaces promotion failures without false success", %{event: event} do
     namespace = unique_namespace("promotion")
 
-    configure_mode(:redis_authoritative,
-      live_namespace: namespace,
-      shadow_namespace: "#{namespace}-shadow"
-    )
-
-    assert_authoritative_mode!()
+    configure_ingestion(live_namespace: namespace)
     InMemoryStore.inject_promote_error(namespace, :promotion_failed)
 
     scan = valid_scan("idem-promotion-fail", "TEST001")
@@ -261,27 +214,20 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
              nil
   end
 
-  defp configure_mode(mode, extra \\ []) do
+  defp configure_ingestion(extra \\ []) do
     Application.put_env(
       :fastcheck,
       :mobile_scan_ingestion,
       Keyword.merge(
         [
-          mode: mode,
           chunk_size: 100,
           live_namespace: "live",
-          shadow_namespace: "shadow",
           store: InMemoryStore,
           force_enqueue_failure: false
         ],
         extra
       )
     )
-  end
-
-  defp assert_authoritative_mode! do
-    assert MobileUploadService.ingestion_mode() == :redis_authoritative
-    assert MobileUploadService.authoritative_mode?()
   end
 
   defp valid_scan(idempotency_key, ticket_code) do

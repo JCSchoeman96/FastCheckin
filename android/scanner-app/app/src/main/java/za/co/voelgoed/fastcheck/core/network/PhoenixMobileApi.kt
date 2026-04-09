@@ -1,5 +1,6 @@
 package za.co.voelgoed.fastcheck.core.network
 
+import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -22,5 +23,5 @@ interface PhoenixMobileApi {
     ): MobileSyncResponse
 
     @POST("/api/v1/mobile/scans")
-    suspend fun uploadScans(@Body body: UploadScansRequest): UploadScansResponse
+    suspend fun uploadScans(@Body body: UploadScansRequest): Response<UploadScansResponse>
 }

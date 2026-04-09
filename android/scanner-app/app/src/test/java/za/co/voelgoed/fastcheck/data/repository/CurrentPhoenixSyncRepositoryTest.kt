@@ -680,7 +680,7 @@ class CurrentPhoenixSyncRepositoryTest {
 
                             override suspend fun uploadScans(
                                 body: UploadScansRequest
-                            ): UploadScansResponse = error("Not used in this test")
+                            ): Response<UploadScansResponse> = error("Not used in this test")
                         }
                     ),
                 scannerDao = database.scannerDao(),
@@ -744,7 +744,7 @@ class CurrentPhoenixSyncRepositoryTest {
 
                             override suspend fun uploadScans(
                                 body: UploadScansRequest
-                            ): UploadScansResponse = error("Not used in this test")
+                            ): Response<UploadScansResponse> = error("Not used in this test")
                         }
                     ),
                 scannerDao = database.scannerDao(),
@@ -1004,7 +1004,7 @@ class CurrentPhoenixSyncRepositoryTest {
                     throw HttpException(response)
                 }
 
-                override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse =
+                override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> =
                     error("Not used in this test")
             }
 
@@ -1137,7 +1137,7 @@ class CurrentPhoenixSyncRepositoryTest {
             }
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): UploadScansResponse {
+        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
             error("Not used in this test")
         }
     }

@@ -9,8 +9,8 @@ D2 is a design and constraint note. It does not create queues by itself.
 ## Preconditions
 
 - Runtime proof remains mandatory for any follow-up work:
-  - `MOBILE_SCAN_INGESTION_MODE=redis_authoritative`
-  - authoritative tests fail loudly if they drift off that mode
+  - mobile scan upload is authoritative-only
+  - authoritative tests fail loudly if they drift from that path
 - The mobile scan request path remains:
   `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
 - Do not reintroduce per-scan durable Postgres mutation into the request path.

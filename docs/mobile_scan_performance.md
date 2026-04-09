@@ -121,19 +121,17 @@ For a clean rerun after knee-finding or soak work, use a fresh cleanup and resee
 
 ## Runtime Configuration
 
-Mode selection is server-side. k6 does not switch ingestion modes per request.
+The server runtime is authoritative-only. k6 does not switch ingestion behavior per request.
 
 Primary target:
 
 ```bash
-set MOBILE_SCAN_INGESTION_MODE=redis_authoritative
 set ENABLE_METRICS=true
 mix phx.server
 ```
 
 The `perf-small` Docker path already bakes in:
 
-- `MOBILE_SCAN_INGESTION_MODE=redis_authoritative`
 - `ENABLE_METRICS=true`
 - `REDIS_URL=redis://redis:6379`
 - `DATABASE_POOLING_MODE=pgbouncer_transaction`
@@ -144,22 +142,14 @@ The `perf-small` Docker path already bakes in:
 
 For capacity and endurance runs, use the proxy path only. Do not target `app-perf` directly.
 
-Optional rollback-confidence run:
-
-```bash
-set MOBILE_SCAN_INGESTION_MODE=legacy
-mix phx.server
-```
-
 Failure-injection target:
 
 ```bash
-set MOBILE_SCAN_INGESTION_MODE=redis_authoritative
 set MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true
 mix phx.server
 ```
 
-For a dedicated enqueue-failure recovery check, run one forced-failure instance and one normal `redis_authoritative` instance against the same Postgres and Redis.
+For a dedicated enqueue-failure recovery check, run one forced-failure instance and one normal authoritative instance against the same Postgres and Redis.
 
 ## Canonical k6 Suites
 
@@ -174,7 +164,6 @@ Canonical scenario keys:
 - `abuse_login`
 - `abuse_scans_single_device`
 - `diagnostic_enqueue_failure`
-- `diagnostic_legacy_smoke`
 - `network_latency_degraded`
 - `network_jitter_degraded`
 - `network_loss_recovery`
@@ -293,14 +282,7 @@ k6 run performance/k6/mobile_scans.js ^
 ```
 
 Diagnostics:
-
 ```bash
-k6 run performance/k6/mobile_scans.js ^
-  -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
-  -e PERF_BASE_URL=http://127.0.0.1:4100 ^
-  -e PERF_DEVICE_COUNT=1 ^
-  -e SCENARIOS=diagnostic_legacy_smoke
-
 k6 run performance/k6/mobile_scans.js ^
   -e MANIFEST_PATH=performance/manifests/mobile-load-event.json ^
   -e PERF_BASE_URL=http://127.0.0.1:4101 ^

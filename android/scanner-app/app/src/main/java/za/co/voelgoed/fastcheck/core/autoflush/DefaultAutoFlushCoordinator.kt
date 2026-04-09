@@ -27,7 +27,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private val connectivityProvider: ConnectivityProvider,
     private val connectivityMonitor: ConnectivityMonitor,
     private val clock: Clock,
-    private val maxBatchSize: Int = 25,
+    private val maxBatchSize: Int = AutoFlushBatchPolicy.DEFAULT_BATCH_SIZE,
     private val afterEnqueueDebounceMs: Long = 250,
     private val retryBackoff: RetryBackoff =
         FullJitterExponentialBackoff(
@@ -53,6 +53,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private var scheduledStartJob: Job? = null
     private var pendingRetryJob: Job? = null
     private var retryAttempt: Int = 0
+    private var currentBatchSize: Int = AutoFlushBatchPolicy.clamp(maxBatchSize)
+    private var consecutiveHealthyFlushes: Int = 0
 
     init {
         coordinatorScope.launch {
@@ -197,7 +199,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                         isRetryScheduled = false,
                         nextRetryAtEpochMs = null
                     )
-                val report = flushQueuedScansUseCase.run(maxBatchSize = maxBatchSize)
+                val report = flushQueuedScansUseCase.run(maxBatchSize = currentBatchSize)
+                adaptBatchSize(report)
 
                 _state.value =
                     _state.value.copy(
@@ -234,7 +237,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                             if (retryAttempt >= maxRetryAttempts) return@withLock false
 
                             val attempt = retryAttempt + 1
-                            val delayMs = retryBackoff.delayMs(attempt)
+                            val delayMs = report.retryAfterMillis?.takeIf { it > 0 } ?: retryBackoff.delayMs(attempt)
                             setRetryState(attempt = attempt, delayMs = delayMs)
                             pendingRetryJob =
                                 coordinatorScope.launch {
@@ -315,6 +318,48 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                 scheduledStartJob?.cancel()
                 scheduledStartJob = null
                 _state.value = _state.value.copy(isFlushing = false)
+            }
+        }
+    }
+
+    private fun adaptBatchSize(report: za.co.voelgoed.fastcheck.domain.model.FlushReport) {
+        if (report.executionStatus != FlushExecutionStatus.COMPLETED) {
+            consecutiveHealthyFlushes = 0
+        }
+
+        when {
+            report.retryAfterMillis != null || report.httpStatusCode == 429 -> {
+                currentBatchSize =
+                    AutoFlushBatchPolicy.clamp((currentBatchSize / 2).coerceAtLeast(AutoFlushBatchPolicy.MIN_BATCH_SIZE))
+                consecutiveHealthyFlushes = 0
+            }
+
+            report.httpStatusCode == 503 -> {
+                currentBatchSize = AutoFlushBatchPolicy.clamp(currentBatchSize - 10)
+                consecutiveHealthyFlushes = 0
+            }
+
+            report.executionStatus == FlushExecutionStatus.RETRYABLE_FAILURE -> {
+                currentBatchSize = AutoFlushBatchPolicy.clamp(currentBatchSize - 5)
+                consecutiveHealthyFlushes = 0
+            }
+
+            report.executionStatus == FlushExecutionStatus.AUTH_EXPIRED -> {
+                consecutiveHealthyFlushes = 0
+            }
+
+            report.executionStatus == FlushExecutionStatus.COMPLETED &&
+                !report.backpressureObserved &&
+                report.uploadedCount > 0 -> {
+                consecutiveHealthyFlushes += 1
+                if (consecutiveHealthyFlushes >= 2) {
+                    currentBatchSize = AutoFlushBatchPolicy.clamp(currentBatchSize + 5)
+                    consecutiveHealthyFlushes = 0
+                }
+            }
+
+            else -> {
+                consecutiveHealthyFlushes = 0
             }
         }
     }

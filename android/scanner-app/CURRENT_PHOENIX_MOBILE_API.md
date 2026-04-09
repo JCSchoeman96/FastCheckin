@@ -247,10 +247,8 @@ Android may rely on:
 
 ## Backend Ingestion Mode Note
 
-- Repo fallback truth remains `legacy` in `config/config.exs` and `config/test.exs`.
-- redis_authoritative is the target/proven path in tests and perf.
-- `legacy` and `shadow` remain fallback or migration modes.
-- Deployed production truth cannot be proven from repo code alone.
+- redis_authoritative is now the only supported mobile upload runtime path in this repo.
+- `config/config.exs`, `config/runtime.exs`, and `config/test.exs` no longer expose mode switching for mobile scan upload.
 
 ## Known Backend Limitations
 

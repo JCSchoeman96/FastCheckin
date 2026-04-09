@@ -28,26 +28,14 @@ Android runtime remains effectively IN-only; OUT is not a promoted successful bu
 
 ## Ingestion Mode Truth
 
-redis_authoritative is the target/proven path in tests and perf; legacy and shadow are fallback/migration modes; deployed production truth cannot be proven from repo code alone.
+redis_authoritative is now the only supported mobile upload runtime path in this repo; legacy and shadow are no longer supported runtime modes.
 
-- Repo default and fallback truth today is `legacy`.
-- Exercised authoritative truth today is `redis_authoritative`.
-- Deployed production truth remains unproven from repo code alone.
-- Repo fallback truth:
-  - `config/config.exs` defaults to `:legacy`
-  - `config/test.exs` defaults to `:legacy`
-- Runtime override truth:
-  - `config/runtime.exs` resolves `MOBILE_SCAN_INGESTION_MODE`
-  - `lib/fastcheck/scans/ingestion_mode.ex` defines the supported values and
-    fallback behavior
-- Exercised authoritative proof:
-  - `README.md`
+- `config/config.exs`, `config/runtime.exs`, and `config/test.exs` no longer expose runtime mode switching for mobile scan upload.
+- `lib/fastcheck/scans/mobile_upload_service.ex` runs only the authoritative path.
+- Authoritative proof lives in:
   - `docs/mobile_scan_performance.md`
   - `test/fastcheck/scans/mobile_upload_service_test.exs`
   - `test/fastcheck_web/controllers/mobile/sync_controller_test.exs`
-- Deployed production truth:
-  - not provable from repo code alone because the live runtime environment is
-    outside this repository
 
 ## Current Promoted Request Path
 

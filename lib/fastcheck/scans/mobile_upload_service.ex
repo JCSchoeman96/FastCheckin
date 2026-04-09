@@ -1,15 +1,13 @@
 defmodule FastCheck.Scans.MobileUploadService do
   @moduledoc """
-  Orchestrates mobile scan uploads across legacy, shadow, and Redis-backed
-  authoritative modes.
+  Orchestrates authoritative mobile scan uploads backed by Redis hot state and
+  Oban durability handoff.
   """
 
   require Logger
 
   alias FastCheck.Repo
-  alias FastCheck.Scans.IngestionMode
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
-  alias FastCheck.Scans.LegacyUploadService
   alias FastCheck.Scans.Result
   alias FastCheck.Scans.Validator
 
@@ -18,29 +16,7 @@ defmodule FastCheck.Scans.MobileUploadService do
 
   @spec upload_batch(integer(), list()) :: {:ok, [api_result()]} | {:error, service_error()}
   def upload_batch(event_id, scans) when is_integer(event_id) and is_list(scans) do
-    case ingestion_mode() do
-      :legacy ->
-        LegacyUploadService.upload_batch(event_id, scans)
-
-      :shadow ->
-        with {:ok, results} <- LegacyUploadService.upload_batch(event_id, scans) do
-          run_shadow_compare(event_id, scans, results)
-          {:ok, results}
-        end
-
-      :redis_authoritative ->
-        upload_authoritative(event_id, scans)
-    end
-  end
-
-  @spec ingestion_mode() :: :legacy | :shadow | :redis_authoritative
-  def ingestion_mode do
-    ingestion_config().mode
-  end
-
-  @spec authoritative_mode?() :: boolean()
-  def authoritative_mode? do
-    ingestion_mode() == :redis_authoritative
+    upload_authoritative(event_id, scans)
   end
 
   defp upload_authoritative(event_id, scans) do
@@ -156,47 +132,6 @@ defmodule FastCheck.Scans.MobileUploadService do
     end
   end
 
-  defp run_shadow_compare(event_id, scans, legacy_results) do
-    config = ingestion_config()
-    store = config.store
-
-    scans
-    |> Enum.zip(legacy_results)
-    |> Enum.each(fn {scan, legacy_result} ->
-      with {:ok, command} <- Validator.validate(event_id, scan),
-           {:ok, shadow_result} <- store.process_scan(command, config.shadow_namespace) do
-        if comparable_shadow_result?(legacy_result) do
-          parity =
-            normalize_shadow_api_result(legacy_result) ==
-              normalize_shadow_api_result(Result.to_api_result(shadow_result))
-
-          :telemetry.execute(
-            [:fastcheck, :mobile_scan, :shadow, :comparison],
-            %{count: 1},
-            %{
-              event_id: event_id,
-              idempotency_key: command.idempotency_key,
-              parity: parity
-            }
-          )
-        end
-      else
-        _ -> :ok
-      end
-    end)
-  end
-
-  defp comparable_shadow_result?(%{status: "duplicate"}), do: false
-  defp comparable_shadow_result?(%{"status" => "duplicate"}), do: false
-  defp comparable_shadow_result?(_result), do: true
-
-  defp normalize_shadow_api_result(result) when is_map(result) do
-    %{
-      status: Map.get(result, :status) || Map.get(result, "status"),
-      message: Map.get(result, :message) || Map.get(result, "message")
-    }
-  end
-
   defp serialize_result(%Result{} = result) do
     %{
       event_id: result.event_id,
@@ -266,10 +201,8 @@ defmodule FastCheck.Scans.MobileUploadService do
     config = Application.get_env(:fastcheck, :mobile_scan_ingestion, [])
 
     %{
-      mode: config |> Keyword.get(:mode, :legacy) |> IngestionMode.resolve(),
       chunk_size: Keyword.get(config, :chunk_size, 100),
       live_namespace: Keyword.get(config, :live_namespace, "live"),
-      shadow_namespace: Keyword.get(config, :shadow_namespace, "shadow"),
       store: Keyword.get(config, :store, FastCheck.Scans.HotState.RedisStore),
       force_enqueue_failure: Keyword.get(config, :force_enqueue_failure, false)
     }

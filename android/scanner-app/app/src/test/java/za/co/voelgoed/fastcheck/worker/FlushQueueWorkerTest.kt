@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushBatchPolicy
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
 import za.co.voelgoed.fastcheck.domain.model.FlushItemResult
@@ -34,7 +35,7 @@ class FlushQueueWorkerTest {
         val result = worker.doWork()
 
         assertThat(result).isInstanceOf(ListenableWorker.Result.Retry::class.java)
-        assertThat(recorder.lastBatchSize).isEqualTo(50)
+        assertThat(recorder.lastBatchSize).isEqualTo(AutoFlushBatchPolicy.DEFAULT_BATCH_SIZE)
     }
 
     @Test

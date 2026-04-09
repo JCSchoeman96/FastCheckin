@@ -425,7 +425,7 @@ class DefaultAutoFlushCoordinatorTest {
             advanceUntilIdle()
 
             assertThat(invocation).isEqualTo(3)
-            assertThat(useCase.batchSizes).containsExactly(25, 25, 25).inOrder()
+            assertThat(useCase.batchSizes).containsExactly(25, 25, 30).inOrder()
             assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
         }
 
@@ -891,5 +891,189 @@ class DefaultAutoFlushCoordinatorTest {
             runCurrent()
             assertThat(calls).isEqualTo(2)
         }
-}
 
+    @Test
+    fun retryAfterBackpressureUsesHeaderDelayAndShrinksBatch() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    when (calls) {
+                        1 ->
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                                uploadedCount = 0,
+                                httpStatusCode = 429,
+                                retryAfterMillis = 5_000L,
+                                backpressureObserved = true
+                            )
+
+                        else -> {
+                            repo.depth = 0
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.COMPLETED,
+                                uploadedCount = 1
+                            )
+                        }
+                    }
+                }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = RetryBackoff { 60_000L },
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+            assertThat(useCase.batchSizes).containsExactly(25)
+
+            advanceTimeBy(4_999)
+            runCurrent()
+            assertThat(calls).isEqualTo(1)
+
+            advanceTimeBy(1)
+            runCurrent()
+            advanceUntilIdle()
+
+            assertThat(calls).isEqualTo(2)
+            assertThat(useCase.batchSizes).containsExactly(25, 12).inOrder()
+        }
+
+    @Test
+    fun serverPressure503ShrinksBatchMoreAggressively() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    when (calls) {
+                        1 ->
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                                uploadedCount = 0,
+                                httpStatusCode = 503,
+                                backpressureObserved = true
+                            )
+
+                        else -> {
+                            repo.depth = 0
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.COMPLETED,
+                                uploadedCount = 1
+                            )
+                        }
+                    }
+                }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = RetryBackoff { 1_000L },
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            advanceUntilIdle()
+
+            assertThat(useCase.batchSizes).containsExactly(25, 15).inOrder()
+        }
+
+    @Test
+    fun retryableIoFailureShrinksBatchConservatively() =
+        runTest(StandardTestDispatcher()) {
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            val repo = RecordingScanRepository().apply { depth = 1 }
+            var calls = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    calls += 1
+                    when (calls) {
+                        1 ->
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                                uploadedCount = 0,
+                                backpressureObserved = true
+                            )
+
+                        else -> {
+                            repo.depth = 0
+                            FlushReport(
+                                executionStatus = FlushExecutionStatus.COMPLETED,
+                                uploadedCount = 1
+                            )
+                        }
+                    }
+                }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { monitor.isOnline.value },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    retryBackoff = RetryBackoff { 1_000L },
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            advanceUntilIdle()
+
+            assertThat(useCase.batchSizes).containsExactly(25, 20).inOrder()
+        }
+
+    @Test
+    fun healthySuccessesGrowBatchWithoutBreakingSingleFlight() =
+        runTest(StandardTestDispatcher()) {
+            val repo = RecordingScanRepository().apply { depth = 3 }
+            val monitor = FakeConnectivityMonitor(initialOnline = true)
+            var invocation = 0
+            val useCase =
+                RecordingFlushUseCase {
+                    invocation += 1
+                    repo.depth =
+                        when (invocation) {
+                            1 -> 2
+                            2 -> 1
+                            else -> 0
+                        }
+
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.COMPLETED,
+                        uploadedCount = 1
+                    )
+                }
+
+            val coordinator =
+                DefaultAutoFlushCoordinator(
+                    flushQueuedScansUseCase = useCase,
+                    mobileScanRepository = repo,
+                    connectivityProvider = ConnectivityProvider { true },
+                    connectivityMonitor = monitor,
+                    clock = java.time.Clock.systemUTC(),
+                    coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+                ).also { closeables += it }
+
+            coordinator.requestFlush(AutoFlushTrigger.Manual)
+            advanceUntilIdle()
+
+            assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
+            assertThat(useCase.batchSizes).containsExactly(25, 25, 30).inOrder()
+        }
+}

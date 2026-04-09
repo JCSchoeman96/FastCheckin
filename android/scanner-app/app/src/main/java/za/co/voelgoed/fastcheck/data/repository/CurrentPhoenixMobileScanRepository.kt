@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
-import retrofit2.HttpException
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
 import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
@@ -115,73 +114,49 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
 
         return try {
             val response = remoteDataSource.uploadScans(queued.map { it.toPayload() })
-            val payload = requireNotNull(response.data) { response.message ?: response.error ?: "Upload failed" }
-            val outcomes = flushResultClassifier.classify(queued, payload.results)
-            val terminalOutcomes = outcomes.filter { it.outcome != FlushItemOutcome.RETRYABLE_FAILURE }
-            val matchedIds =
-                terminalOutcomes.mapNotNull { outcome ->
-                    queued.firstOrNull { it.idempotencyKey == outcome.idempotencyKey }?.localId
-                }
-            val now = Instant.ofEpochMilli(clock.millis()).toString()
-
-            if (terminalOutcomes.isNotEmpty()) {
-                scannerDao.upsertReplayCache(
-                    terminalOutcomes.map { outcome ->
-                        ReplayCacheEntity(
-                            idempotencyKey = outcome.idempotencyKey,
-                            status = outcome.outcome.name.lowercase(),
-                            message = outcome.message,
-                            reasonCode = outcome.reasonCode,
-                            storedAt = now,
-                            terminal = true
-                        )
-                    }
-                )
-
-                terminalOutcomes.forEach { outcome ->
-                    transitionOverlayForFlushOutcome(outcome)
-                }
-            }
-
-            if (matchedIds.isNotEmpty()) {
-                scannerDao.deleteQueuedScans(matchedIds)
-            }
-
-            val remainingCount = scannerDao.countPendingScans()
-            persistLatestFlushReport(
-                FlushReport(
-                    executionStatus = FlushExecutionStatus.COMPLETED,
-                    itemOutcomes = outcomes,
-                    uploadedCount = terminalOutcomes.size,
-                    retryableRemainingCount =
-                        outcomes.count { it.outcome == FlushItemOutcome.RETRYABLE_FAILURE },
-                    authExpired = false,
-                    backlogRemaining = remainingCount > 0,
-                    summaryMessage =
-                        if (outcomes.any { it.outcome == FlushItemOutcome.RETRYABLE_FAILURE }) {
-                            "Flush completed with retry backlog."
-                        } else {
-                            "Flush completed. ${terminalOutcomes.size} queued scans classified."
-                        }
-                )
-            )
-        } catch (exception: HttpException) {
             when {
-                exception.code() == 401 -> {
+                response.statusCode == 401 ->
                     persistLatestFlushReport(
                         FlushReport(
                             executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
                             itemOutcomes = queued.map { it.toAuthExpiredOutcome() },
                             uploadedCount = 0,
                             retryableRemainingCount = queued.size,
+                            httpStatusCode = response.statusCode,
                             authExpired = true,
                             backlogRemaining = queued.isNotEmpty(),
                             summaryMessage = "Flush stopped. Session expired and manual login is required."
                         )
                     )
-                }
 
-                exception.code() >= 500 -> {
+                response.statusCode == 429 ->
+                    persistLatestFlushReport(
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
+                            itemOutcomes =
+                                queued.map { pendingScan ->
+                                    pendingScan.toRetryableOutcome("Server rate limit reached during scan upload.")
+                                },
+                            uploadedCount = 0,
+                            retryableRemainingCount = queued.size,
+                            httpStatusCode = response.statusCode,
+                            retryAfterMillis = response.retryAfterMillis,
+                            rateLimitLimit = response.rateLimitLimit,
+                            rateLimitRemaining = response.rateLimitRemaining,
+                            rateLimitResetEpochSeconds = response.rateLimitResetEpochSeconds,
+                            backpressureObserved = true,
+                            authExpired = false,
+                            backlogRemaining = queued.isNotEmpty(),
+                            summaryMessage =
+                                if (response.retryAfterMillis != null) {
+                                    "Flush paused because the server requested a retry delay."
+                                } else {
+                                    "Flush paused because the server rate-limited scan uploads."
+                                }
+                        )
+                    )
+
+                response.statusCode >= 500 ->
                     persistLatestFlushReport(
                         FlushReport(
                             executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
@@ -191,19 +166,88 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                                 },
                             uploadedCount = 0,
                             retryableRemainingCount = queued.size,
+                            httpStatusCode = response.statusCode,
+                            retryAfterMillis = response.retryAfterMillis,
+                            rateLimitLimit = response.rateLimitLimit,
+                            rateLimitRemaining = response.rateLimitRemaining,
+                            rateLimitResetEpochSeconds = response.rateLimitResetEpochSeconds,
+                            backpressureObserved = response.statusCode == 503 || response.retryAfterMillis != null,
                             authExpired = false,
                             backlogRemaining = queued.isNotEmpty(),
                             summaryMessage = "Flush failed with a retryable server error."
                         )
                     )
-                }
 
-                else -> {
+                response.statusCode !in 200..299 ->
                     quarantineAttemptedBatch(
                         queuedEntities = queuedEntities,
                         reason = QuarantineReason.UNRECOVERABLE_API_CONTRACT_ERROR,
-                        message = httpExceptionDetail(exception),
+                        message = httpResponseDetail(response.statusCode, response.errorBody),
                         batchAttributed = true
+                    )
+
+                else -> {
+                    val responseBody =
+                        requireNotNull(response.body) {
+                            httpResponseDetail(response.statusCode, response.errorBody)
+                        }
+                    val payload =
+                        requireNotNull(responseBody.data) {
+                            responseBody.message ?: responseBody.error ?: "Upload failed"
+                        }
+                    val outcomes = flushResultClassifier.classify(queued, payload.results)
+                    val terminalOutcomes = outcomes.filter { it.outcome != FlushItemOutcome.RETRYABLE_FAILURE }
+                    val matchedIds =
+                        terminalOutcomes.mapNotNull { outcome ->
+                            queued.firstOrNull { it.idempotencyKey == outcome.idempotencyKey }?.localId
+                        }
+                    val now = Instant.ofEpochMilli(clock.millis()).toString()
+
+                    if (terminalOutcomes.isNotEmpty()) {
+                        scannerDao.upsertReplayCache(
+                            terminalOutcomes.map { outcome ->
+                                ReplayCacheEntity(
+                                    idempotencyKey = outcome.idempotencyKey,
+                                    status = outcome.outcome.name.lowercase(),
+                                    message = outcome.message,
+                                    reasonCode = outcome.reasonCode,
+                                    storedAt = now,
+                                    terminal = true
+                                )
+                            }
+                        )
+
+                        terminalOutcomes.forEach { outcome ->
+                            transitionOverlayForFlushOutcome(outcome)
+                        }
+                    }
+
+                    if (matchedIds.isNotEmpty()) {
+                        scannerDao.deleteQueuedScans(matchedIds)
+                    }
+
+                    val remainingCount = scannerDao.countPendingScans()
+                    persistLatestFlushReport(
+                        FlushReport(
+                            executionStatus = FlushExecutionStatus.COMPLETED,
+                            itemOutcomes = outcomes,
+                            uploadedCount = terminalOutcomes.size,
+                            retryableRemainingCount =
+                                outcomes.count { it.outcome == FlushItemOutcome.RETRYABLE_FAILURE },
+                            httpStatusCode = response.statusCode,
+                            rateLimitLimit = response.rateLimitLimit,
+                            rateLimitRemaining = response.rateLimitRemaining,
+                            rateLimitResetEpochSeconds = response.rateLimitResetEpochSeconds,
+                            backpressureObserved = false,
+                            authExpired = false,
+                            backlogRemaining = remainingCount > 0,
+                            summaryMessage =
+                                if (outcomes.any { it.outcome == FlushItemOutcome.RETRYABLE_FAILURE }) {
+                                    "Flush completed with retry backlog."
+                                } else {
+                                    "Flush completed. ${terminalOutcomes.size} queued scans classified."
+                                }
+                        )
                     )
                 }
             }
@@ -224,6 +268,7 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                         },
                     uploadedCount = 0,
                     retryableRemainingCount = queued.size,
+                    backpressureObserved = true,
                     authExpired = false,
                     backlogRemaining = queued.isNotEmpty(),
                     summaryMessage = "Flush failed with a retryable network error."
@@ -350,16 +395,8 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
         )
     }
 
-    private fun httpExceptionDetail(exception: HttpException): String {
-        val body =
-            try {
-                exception.response()?.errorBody()?.string()?.trim()?.takeIf { it.isNotEmpty() }
-            } catch (_ignored: Exception) {
-                null
-            }
-        val prefix = "HTTP ${exception.code()}"
-        return if (body != null) "$prefix: $body" else prefix
-    }
+    private fun httpResponseDetail(statusCode: Int, body: String?): String =
+        if (body.isNullOrBlank()) "HTTP $statusCode" else "HTTP $statusCode: $body"
 
     private suspend fun persistLatestFlushReport(report: FlushReport): FlushReport {
         val completedAt = Instant.ofEpochMilli(clock.millis()).toString()

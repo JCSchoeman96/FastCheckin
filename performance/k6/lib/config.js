@@ -149,7 +149,6 @@ const deprecatedAliases = {
   capacity_spike: "perf_spike_batch",
   capacity_soak: "perf_soak_endurance",
   enqueue_failure: "diagnostic_enqueue_failure",
-  legacy_smoke: "diagnostic_legacy_smoke",
 };
 
 function deprecatedAliasWarning(invokedScenario, canonicalScenario) {
@@ -497,33 +496,6 @@ function buildScenarioCatalog() {
           },
           requestType: "scan",
           slice: "soak",
-        },
-      },
-    },
-    diagnostic_legacy_smoke: {
-      family: "diagnostic",
-      suite: "legacy_smoke",
-      requiresDeviceBootstrap: true,
-      shouldPrimeDuplicates: false,
-      networkProfile: resolveNetworkProfile("normal"),
-      sections: [
-        {
-          key: "scan",
-          label: "Smoke Executor",
-          requestType: "scan",
-          scenarioKey: "diagnostic_legacy_smoke",
-        },
-      ],
-      scenarios: {
-        diagnostic_legacy_smoke: {
-          definition: {
-            executor: "per-vu-iterations",
-            vus: 1,
-            iterations: 1,
-            exec: "diagnosticLegacySmoke",
-          },
-          requestType: "scan",
-          slice: "baseline_valid",
         },
       },
     },

@@ -16,7 +16,6 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   alias FastCheck.Repo
   alias FastCheck.Scans.HotState.RedisStore
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
-  alias FastCheck.Scans.MobileUploadService
   alias FastCheck.Scans.ScanAttempt
   alias FastCheck.TestSupport.Scans.InMemoryStore
 
@@ -607,10 +606,10 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         |> Enum.map(& &1["status"])
         |> Enum.sort()
 
-      assert statuses == ["duplicate", "success"]
+      assert statuses == ["success", "success"]
     end
 
-    test "clears stale pending idempotency reservations and returns retryable error", %{
+    test "ignores legacy pending idempotency reservations on the authoritative path", %{
       conn: conn,
       token: token,
       event: event
@@ -641,10 +640,9 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
         })
 
       assert %{"data" => %{"results" => [result]}} = json_response(conn, 200)
-      assert result["status"] == "error"
-      assert result["message"] =~ "timed out"
+      assert result["status"] == "success"
 
-      refute Repo.get_by(MobileIdempotencyLog,
+      assert Repo.get_by(MobileIdempotencyLog,
                event_id: event.id,
                idempotency_key: "stale-pending-key"
              )
@@ -713,7 +711,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     end
 
     test "trims required mobile scan fields on the Phoenix side without promoting client normalization",
-         %{conn: conn, token: token, event: event} do
+         %{conn: conn, token: token} do
       scan = %{
         "idempotency_key" => "  trim-me  ",
         "ticket_code" => "  TEST001  ",
@@ -732,13 +730,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert result["idempotency_key"] == "trim-me"
       assert result["status"] == "success"
       assert contract_keys(result) == ["idempotency_key", "message", "status"]
-      assert Repo.get_by!(CheckIn, event_id: event.id, ticket_code: "TEST001", status: "success")
-
-      assert Repo.get_by(CheckIn,
-               event_id: event.id,
-               ticket_code: "  TEST001  ",
-               status: "success"
-             ) == nil
+      assert all_enqueued(worker: PersistScanBatchJob) != []
     end
 
     test "validates required fields in scan", %{conn: conn, token: token} do
@@ -791,8 +783,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       token: token,
       event: event
     } do
-      configure_mode(:redis_authoritative)
-      assert_authoritative_mode!()
+      configure_ingestion()
       event_id = event.id
 
       scan = %{
@@ -857,8 +848,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn: conn,
       token: token
     } do
-      configure_mode(:redis_authoritative, force_enqueue_failure: true)
-      assert_authoritative_mode!()
+      configure_ingestion(force_enqueue_failure: true)
 
       scan = %{
         "idempotency_key" => "controller-retry-1",
@@ -879,7 +869,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
 
       assert message =~ "Unable to queue scan durability handoff"
 
-      configure_mode(:redis_authoritative)
+      configure_ingestion()
 
       success_conn =
         build_conn()
@@ -910,14 +900,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     } do
       namespace = unique_namespace("controller-promotion")
 
-      configure_mode(
-        :redis_authoritative,
+      configure_ingestion(
         store: InMemoryStore,
-        live_namespace: namespace,
-        shadow_namespace: "#{namespace}-shadow"
+        live_namespace: namespace
       )
 
-      assert_authoritative_mode!()
       InMemoryStore.inject_promote_error(namespace, :promotion_failed)
 
       failed_conn =
@@ -947,14 +934,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     } do
       namespace = unique_namespace("controller-build-timeout")
 
-      configure_mode(
-        :redis_authoritative,
+      configure_ingestion(
         store: InMemoryStore,
-        live_namespace: namespace,
-        shadow_namespace: "#{namespace}-shadow"
+        live_namespace: namespace
       )
 
-      assert_authoritative_mode!()
       InMemoryStore.inject_process_error(namespace, :build_timeout)
 
       failed_conn =
@@ -977,8 +961,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       conn: conn,
       token: token
     } do
-      configure_mode(:redis_authoritative)
-      assert_authoritative_mode!()
+      configure_ingestion()
 
       first_conn =
         conn
@@ -1026,8 +1009,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       event: event
     } do
       namespace = unique_namespace("redis-same-idem")
-      configure_redis_authoritative_mode(namespace)
-      assert_authoritative_mode!()
+      configure_redis_store_ingestion(namespace)
       assert {:ok, _version} = RedisStore.ensure_event_loaded(event.id, namespace)
 
       scan = valid_scan("redis-concurrent-same", "TEST001")
@@ -1061,8 +1043,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       event: event
     } do
       namespace = unique_namespace("redis-different-idem")
-      configure_redis_authoritative_mode(namespace)
-      assert_authoritative_mode!()
+      configure_redis_store_ingestion(namespace)
       assert {:ok, _version} = RedisStore.ensure_event_loaded(event.id, namespace)
 
       responses =
@@ -1088,8 +1069,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       event: event
     } do
       namespace = unique_namespace("redis-different-tickets")
-      configure_redis_authoritative_mode(namespace)
-      assert_authoritative_mode!()
+      configure_redis_store_ingestion(namespace)
       assert {:ok, _version} = RedisStore.ensure_event_loaded(event.id, namespace)
 
       responses =
@@ -1194,16 +1174,14 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     |> String.pad_leading(6, "0")
   end
 
-  defp configure_mode(mode, extra \\ []) do
+  defp configure_ingestion(extra \\ []) do
     Application.put_env(
       :fastcheck,
       :mobile_scan_ingestion,
       Keyword.merge(
         [
-          mode: mode,
           chunk_size: 100,
           live_namespace: "live",
-          shadow_namespace: "shadow",
           store: InMemoryStore,
           force_enqueue_failure: false
         ],
@@ -1212,18 +1190,11 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
     )
   end
 
-  defp configure_redis_authoritative_mode(namespace) do
-    configure_mode(
-      :redis_authoritative,
+  defp configure_redis_store_ingestion(namespace) do
+    configure_ingestion(
       live_namespace: namespace,
-      shadow_namespace: "#{namespace}-shadow",
       store: RedisStore
     )
-  end
-
-  defp assert_authoritative_mode! do
-    assert MobileUploadService.ingestion_mode() == :redis_authoritative
-    assert MobileUploadService.authoritative_mode?()
   end
 
   defp valid_scan(idempotency_key, ticket_code) do
