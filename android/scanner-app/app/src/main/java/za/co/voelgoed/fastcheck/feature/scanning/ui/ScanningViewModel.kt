@@ -118,6 +118,10 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 sessionState.reason == ScannerBlockReason.PreviewUnavailable ->
                 "Preparing the scan preview before camera scanning can start."
 
+            sessionState is ScannerSessionState.Blocked &&
+                sessionState.reason == ScannerBlockReason.PreviewNotVisible ->
+                "Camera preview is becoming visible. Scanner will start automatically."
+
             !isCameraSource(sourceType) ->
                 when (lifecycle) {
                     is ScannerSourceState.Starting ->

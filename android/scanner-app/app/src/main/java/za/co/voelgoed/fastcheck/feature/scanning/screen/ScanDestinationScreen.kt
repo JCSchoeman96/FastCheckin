@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
+import za.co.voelgoed.fastcheck.app.scanning.PreviewVisibilityObserver
 import za.co.voelgoed.fastcheck.app.scanning.ScanPreviewSurfaceHolder
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
@@ -190,6 +191,26 @@ private fun PreviewSurface(
         onDispose {
             currentPreviewView?.let(previewSurfaceHolder::detach)
             onPreviewSurfaceChanged()
+        }
+    }
+
+    DisposableEffect(currentPreviewView) {
+        val view = currentPreviewView ?: return@DisposableEffect onDispose {}
+        val observer = PreviewVisibilityObserver(onBecameVisible = onPreviewSurfaceChanged)
+
+        fun evaluateNow() {
+            val isVisible = view.isAttachedToWindow &&
+                view.visibility == android.view.View.VISIBLE && view.isShown
+            observer.onVisibilityEvaluated(isVisible)
+        }
+
+        val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener { evaluateNow() }
+        view.viewTreeObserver.addOnGlobalLayoutListener(listener)
+
+        evaluateNow()
+
+        onDispose {
+            view.viewTreeObserver.removeOnGlobalLayoutListener(listener)
         }
     }
 }

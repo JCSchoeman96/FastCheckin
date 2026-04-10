@@ -5,6 +5,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import org.junit.Test
+import za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
@@ -357,6 +358,70 @@ class ScanDestinationPresenterTest {
 
         assertThat(hostingUiState.showCameraPreview).isTrue()
         assertThat(nonHostingUiState.showCameraPreview).isFalse()
+    }
+
+    @Test
+    fun previewNotVisibleChipIsDistinctFromPreviewUnavailable() {
+        val notVisibleUiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        cameraPermissionState = CameraPermissionState.GRANTED,
+                        sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible),
+                        scannerRecoveryState = ScannerRecoveryState.Starting,
+                        shouldHostPreviewSurface = true,
+                        scannerStatus = "Camera preview is becoming visible. Scanner will start automatically."
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        val unavailableUiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        cameraPermissionState = CameraPermissionState.GRANTED,
+                        sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewUnavailable),
+                        scannerRecoveryState = ScannerRecoveryState.Starting,
+                        shouldHostPreviewSurface = true,
+                        scannerStatus = "Preparing the scan preview before camera scanning can start."
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(notVisibleUiState.scannerStatusChip.text).isEqualTo("Preview loading")
+        assertThat(notVisibleUiState.scannerStatusChip.tone).isEqualTo(StatusTone.Info)
+        assertThat(unavailableUiState.scannerStatusChip.text).isEqualTo("Preparing preview")
+        assertThat(unavailableUiState.scannerStatusChip.tone).isEqualTo(StatusTone.Info)
+        assertThat(notVisibleUiState.scannerStatusChip.text)
+            .isNotEqualTo(unavailableUiState.scannerStatusChip.text)
+    }
+
+    @Test
+    fun previewNotVisibleDoesNotShowRecoveryAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        cameraPermissionState = CameraPermissionState.GRANTED,
+                        sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible),
+                        scannerRecoveryState = ScannerRecoveryState.Starting,
+                        shouldHostPreviewSurface = true,
+                        scannerStatus = "Camera preview is becoming visible. Scanner will start automatically."
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.primaryRecoveryAction).isNull()
+        assertThat(uiState.primaryRecoveryActionLabel).isNull()
     }
 
     @Test
