@@ -10,6 +10,9 @@ import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 
 data class ScanningUiState(
+    val activeEventLabel: String = "Active event unavailable",
+    val syncedAttendeeCount: Int? = null,
+    val lastSyncLabel: String = "Last sync unknown",
     val activeSourceType: ScannerSourceType = ScannerSourceType.CAMERA,
     val cameraPermissionState: CameraPermissionState = CameraPermissionState.UNKNOWN,
     val permissionSummary: String = "Camera permission status unknown.",
@@ -28,5 +31,6 @@ data class ScanningUiState(
     val isSourceReady: Boolean = false,
     val sourceErrorMessage: String? = null,
     val lastCaptureFeedback: CaptureFeedbackState? = null,
+    val scannerDebugStatus: String? = null,
     val scannerRecoveryState: ScannerRecoveryState = ScannerRecoveryState.RequestPermission(false)
 )

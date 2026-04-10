@@ -20,6 +20,7 @@ import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationDecision
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
+import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodeDiagnostic
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
@@ -37,6 +38,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     private var timeoutDispatcher: CoroutineDispatcher = Dispatchers.Default
     private var timeoutScope: CoroutineScope = CoroutineScope(SupervisorJob() + timeoutDispatcher)
     private var stuckPreviewTimeoutMs: Long = STUCK_PREVIEW_TIMEOUT_MS
+    private var lastDecodeDiagnosticAtMillis: Long = 0L
 
     internal constructor(
         appDispatchers: AppDispatchers,
@@ -537,6 +539,30 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         updateUiState { current -> current.copy(hasBindingAttempted = hasBindingAttempted) }
     }
 
+    fun onDecodeDiagnostic(diagnostic: DecodeDiagnostic) {
+        val now = System.currentTimeMillis()
+        if (
+            diagnostic == DecodeDiagnostic.DecodeNoUsableRawValue &&
+                now - lastDecodeDiagnosticAtMillis < DECODE_NO_VALUE_DIAGNOSTIC_WINDOW_MS
+        ) {
+            return
+        }
+        if (diagnostic == DecodeDiagnostic.DecodeNoUsableRawValue) {
+            lastDecodeDiagnosticAtMillis = now
+        }
+        updateUiState { current ->
+            val status =
+                when (diagnostic) {
+                    DecodeDiagnostic.FrameReceived -> current.scannerDebugStatus
+                    DecodeDiagnostic.MediaImageMissing -> "Frame missing media image."
+                    DecodeDiagnostic.DecodeFailure -> "Barcode decode failed for current frame."
+                    DecodeDiagnostic.DecodeNoUsableRawValue -> "No usable barcode value in current frame."
+                    DecodeDiagnostic.DecodeHandoffStarted -> "Decoded value handed to admission pipeline."
+                }
+            current.copy(scannerDebugStatus = status)
+        }
+    }
+
     override fun onCleared() {
         stuckPreviewTimeoutJob?.cancel()
         stuckPreviewTimeoutJob = null
@@ -547,5 +573,6 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     private companion object {
         const val STUCK_PREVIEW_TIMEOUT_MS: Long = 2_500
         const val STUCK_PREVIEW_STATUS: String = "Camera preview appears stuck. Restart camera to recover."
+        const val DECODE_NO_VALUE_DIAGNOSTIC_WINDOW_MS: Long = 3_000
     }
 }

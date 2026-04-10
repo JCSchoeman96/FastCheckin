@@ -5,6 +5,7 @@ import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
 import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
+import za.co.voelgoed.fastcheck.core.common.ScannerRuntimeLogger
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
@@ -41,7 +42,13 @@ class DefaultAdmitScanUseCase @Inject constructor(
                     reason = LocalAdmissionRejectReason.InvalidTicketCode,
                     displayMessage = "Invalid scan. Ticket code could not be read.",
                     ticketCode = ticketCode
-                )
+                ).also {
+                    ScannerRuntimeLogger.i(
+                        LOG_TAG,
+                        "admit_result type=invalid_ticket_code ticket=${maskTicketCode(ticketCode)}"
+                    )
+                }
+        ScannerRuntimeLogger.i(LOG_TAG, "admit_started ticket=${maskTicketCode(canonicalTicketCode)}")
 
         val eventId =
             sessionAuthGateway.currentEventId()
@@ -49,7 +56,13 @@ class DefaultAdmitScanUseCase @Inject constructor(
                     reason = LocalAdmissionReviewReason.MissingSessionContext,
                     displayMessage = "Login is required before local admission can continue.",
                     ticketCode = canonicalTicketCode
-                )
+                ).also {
+                    ScannerRuntimeLogger.i(
+                        LOG_TAG,
+                        "admit_result type=missing_session_context ticket=${maskTicketCode(canonicalTicketCode)}"
+                    )
+                }
+        ScannerRuntimeLogger.d(LOG_TAG, "admit_context eventId=$eventId")
 
         val syncStatus = syncRepository.currentSyncStatus()
         if (!currentEventAdmissionReadiness.hasTrustedCurrentEventCache(eventId, syncStatus)) {
@@ -57,7 +70,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                 reason = LocalAdmissionReviewReason.CacheNotTrusted,
                 displayMessage = "Attendee cache is not trusted enough for a green admission decision yet.",
                 ticketCode = canonicalTicketCode
-            )
+            ).also {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=cache_not_trusted eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
         }
 
         val attendee =
@@ -66,7 +84,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                     reason = LocalAdmissionRejectReason.TicketNotFound,
                     displayMessage = "Invalid scan. Ticket not found for this event.",
                     ticketCode = canonicalTicketCode
-                )
+                ).also {
+                    ScannerRuntimeLogger.i(
+                        LOG_TAG,
+                        "admit_result type=ticket_not_found eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                    )
+                }
 
         if (
             attendee.localOverlayState == LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name ||
@@ -79,7 +102,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                         ?: "Invalid scan. This attendee has an unresolved reconciliation conflict.",
                 ticketCode = canonicalTicketCode,
                 displayName = attendee.displayName
-            )
+            ).also {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=conflict_requires_resolution eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
         }
 
         if (attendee.isCurrentlyInside) {
@@ -88,7 +116,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                 displayMessage = "Invalid scan. This attendee is already inside.",
                 ticketCode = canonicalTicketCode,
                 displayName = attendee.displayName
-            )
+            ).also {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=already_inside eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
         }
 
         if (attendee.checkinsRemaining <= 0) {
@@ -97,7 +130,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                 displayMessage = "Invalid scan. No check-ins remain for this attendee.",
                 ticketCode = canonicalTicketCode,
                 displayName = attendee.displayName
-            )
+            ).also {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=no_checkins_remaining eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
         }
 
         when (paymentStatusRuleMapper.map(attendee.paymentStatus)) {
@@ -107,7 +145,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                     displayMessage = "Invalid scan. Payment status does not allow admission.",
                     ticketCode = canonicalTicketCode,
                     displayName = attendee.displayName
-                )
+                ).also {
+                    ScannerRuntimeLogger.i(
+                        LOG_TAG,
+                        "admit_result type=payment_blocked eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                    )
+                }
 
             PaymentStatusDecision.UNKNOWN ->
                 return LocalAdmissionDecision.ReviewRequired(
@@ -115,7 +158,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                     displayMessage = "Payment status needs manual review before admission.",
                     ticketCode = canonicalTicketCode,
                     displayName = attendee.displayName
-                )
+                ).also {
+                    ScannerRuntimeLogger.i(
+                        LOG_TAG,
+                        "admit_result type=payment_unknown eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                    )
+                }
 
             PaymentStatusDecision.ALLOWED -> Unit
         }
@@ -161,7 +209,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                 displayMessage = "Invalid scan. Same ticket was just scanned on this device.",
                 ticketCode = canonicalTicketCode,
                 displayName = attendee.displayName
-            )
+            ).also {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=replay_suppressed eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
         }
 
         if (insertedQueueId <= 0L) {
@@ -170,7 +223,12 @@ class DefaultAdmitScanUseCase @Inject constructor(
                 displayMessage = "Local admission could not be written safely. Manual review is required.",
                 ticketCode = canonicalTicketCode,
                 displayName = attendee.displayName
-            )
+            ).also {
+                ScannerRuntimeLogger.w(
+                    LOG_TAG,
+                    "admit_result type=local_write_failed eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
         }
 
         return LocalAdmissionDecision.Accepted(
@@ -180,6 +238,21 @@ class DefaultAdmitScanUseCase @Inject constructor(
             idempotencyKey = idempotencyKey,
             scannedAt = scannedAt,
             localQueueId = insertedQueueId
-        )
+        ).also {
+            ScannerRuntimeLogger.i(
+                LOG_TAG,
+                "admit_result type=accepted eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+            )
+        }
+    }
+
+    private fun maskTicketCode(ticketCode: String): String {
+        val trimmed = ticketCode.trim()
+        if (trimmed.length <= 4) return "***$trimmed"
+        return "***${trimmed.takeLast(4)}"
+    }
+
+    private companion object {
+        private const val LOG_TAG: String = "DefaultAdmitScan"
     }
 }

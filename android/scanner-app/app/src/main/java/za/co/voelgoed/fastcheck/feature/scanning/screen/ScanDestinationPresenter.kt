@@ -34,8 +34,12 @@ class ScanDestinationPresenter(
         val primaryRecoveryAction = primaryRecoveryActionFor(scanningUiState)
 
         return ScanDestinationUiState(
+            activeEventLabel = activeEventLabelFor(syncUiState, currentEventSyncStatus),
+            syncedAttendeeCountLabel = syncedAttendeeCountLabelFor(currentEventSyncStatus),
+            lastSyncLabel = lastSyncLabelFor(currentEventSyncStatus),
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = scanningUiState.scannerStatus,
+            scannerDiagnosticMessage = scanningUiState.scannerDebugStatus,
             attendeeStatusChip = attendeeStatus.first,
             attendeeStatusMessage = attendeeStatus.second,
             showCameraPreview = scanningUiState.shouldHostPreviewSurface,
@@ -60,6 +64,26 @@ class ScanDestinationPresenter(
             reloginVisible = requiresRelogin(queueUiState)
         )
     }
+
+    private fun activeEventLabelFor(
+        syncUiState: SyncScreenUiState,
+        currentEventSyncStatus: AttendeeSyncStatus?
+    ): String {
+        val eventId = currentEventSyncStatus?.eventId ?: syncUiState.bootstrapEventId
+        return if (eventId != null) {
+            "Active event: #$eventId"
+        } else {
+            "Active event: unavailable"
+        }
+    }
+
+    private fun syncedAttendeeCountLabelFor(currentEventSyncStatus: AttendeeSyncStatus?): String =
+        currentEventSyncStatus?.let { "Synced attendees: ${it.attendeeCount}" }
+            ?: "Synced attendees: unknown"
+
+    private fun lastSyncLabelFor(currentEventSyncStatus: AttendeeSyncStatus?): String =
+        currentEventSyncStatus?.lastSuccessfulSyncAt?.let { "Last sync: $it" }
+            ?: "Last sync: unknown"
 
     private fun primaryRecoveryActionFor(
         uiState: ScanningUiState
@@ -145,6 +169,12 @@ class ScanDestinationPresenter(
         currentEventSyncStatus: AttendeeSyncStatus?
     ): Pair<StatusChipUiModel, String> {
         if (currentEventSyncStatus != null) {
+            if (currentEventSyncStatus.attendeeCount <= 0) {
+                return StatusChipUiModel(
+                    text = "No attendees synced",
+                    tone = StatusTone.Warning
+                ) to "No attendees are currently available in the local cache for this event. Run attendee sync before trusting scanner outcomes."
+            }
             return if (isStale(currentEventSyncStatus)) {
                 StatusChipUiModel(
                     text = "Attendee list may be old",

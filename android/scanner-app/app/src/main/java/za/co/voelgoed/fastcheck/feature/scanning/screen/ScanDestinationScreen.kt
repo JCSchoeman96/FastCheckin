@@ -47,6 +47,18 @@ fun ScanDestinationScreen(
                     text = "Scan",
                     style = MaterialTheme.typography.headlineSmall
                 )
+                Text(
+                    text = uiState.activeEventLabel,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = uiState.syncedAttendeeCountLabel,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = uiState.lastSyncLabel,
+                    style = MaterialTheme.typography.bodyMedium
+                )
                 FcStatusChip(
                     text = uiState.scannerStatusChip.text,
                     tone = uiState.scannerStatusChip.tone
@@ -55,6 +67,12 @@ fun ScanDestinationScreen(
                     text = uiState.scannerStatusMessage,
                     style = MaterialTheme.typography.bodyMedium
                 )
+                uiState.scannerDiagnosticMessage?.let { diagnosticMessage ->
+                    Text(
+                        text = "Diagnostics: $diagnosticMessage",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
 
