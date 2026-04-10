@@ -343,7 +343,7 @@ class ScanningViewModelTest {
         )
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
 
-        advanceTimeBy(1_400)
+        advanceTimeBy(2_900)
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
 
         advanceTimeBy(200)

@@ -592,6 +592,6 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         const val STUCK_PREVIEW_TIMEOUT_MS: Long = 2_500
         const val STUCK_PREVIEW_STATUS: String = "Camera preview appears stuck. Restart camera to recover."
         const val DECODE_NO_VALUE_DIAGNOSTIC_WINDOW_MS: Long = 3_000
-        const val CAPTURE_FEEDBACK_AUTO_CLEAR_MS: Long = 1_500
+        const val CAPTURE_FEEDBACK_AUTO_CLEAR_MS: Long = 3_000
     }
 }
