@@ -35,6 +35,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     private var hasAttemptedCameraPermissionRequest: Boolean = false
     private var shouldShowCameraPermissionRationale: Boolean = false
     private var stuckPreviewTimeoutJob: Job? = null
+    private var captureFeedbackClearJob: Job? = null
     private var timeoutDispatcher: CoroutineDispatcher = Dispatchers.Default
     private var timeoutScope: CoroutineScope = CoroutineScope(SupervisorJob() + timeoutDispatcher)
     private var stuckPreviewTimeoutMs: Long = STUCK_PREVIEW_TIMEOUT_MS
@@ -410,6 +411,9 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     }
 
     fun onCaptureHandoffResult(result: CaptureHandoffResult) {
+        if (result is CaptureHandoffResult.SuppressedByCooldown) {
+            return
+        }
         updateUiState { current ->
             val feedback =
                 when (result) {
@@ -432,10 +436,7 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         )
 
                     is CaptureHandoffResult.SuppressedByCooldown ->
-                        CaptureFeedbackState.Warning(
-                            title = "Repeated scan ignored",
-                            message = "Capture ignored during active cooldown."
-                        )
+                        current.lastCaptureFeedback
 
                     is CaptureHandoffResult.Failed -> {
                         val message =
@@ -459,12 +460,27 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                     }
             )
         }
+        scheduleCaptureFeedbackClear()
     }
 
     fun clearCaptureFeedback() {
+        captureFeedbackClearJob?.cancel()
+        captureFeedbackClearJob = null
         updateUiState { current ->
             current.copy(lastCaptureFeedback = null, captureSemanticState = null)
         }
+    }
+
+    private fun scheduleCaptureFeedbackClear() {
+        captureFeedbackClearJob?.cancel()
+        captureFeedbackClearJob =
+            timeoutScope.launch {
+                delay(CAPTURE_FEEDBACK_AUTO_CLEAR_MS)
+                updateUiState { current ->
+                    current.copy(lastCaptureFeedback = null, captureSemanticState = null)
+                }
+                captureFeedbackClearJob = null
+            }
     }
 
     fun onSourceStateChanged(state: ScannerSourceState) {
@@ -566,6 +582,8 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     override fun onCleared() {
         stuckPreviewTimeoutJob?.cancel()
         stuckPreviewTimeoutJob = null
+        captureFeedbackClearJob?.cancel()
+        captureFeedbackClearJob = null
         timeoutScope.coroutineContext.cancel()
         super.onCleared()
     }
@@ -574,5 +592,6 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         const val STUCK_PREVIEW_TIMEOUT_MS: Long = 2_500
         const val STUCK_PREVIEW_STATUS: String = "Camera preview appears stuck. Restart camera to recover."
         const val DECODE_NO_VALUE_DIAGNOSTIC_WINDOW_MS: Long = 3_000
+        const val CAPTURE_FEEDBACK_AUTO_CLEAR_MS: Long = 1_500
     }
 }

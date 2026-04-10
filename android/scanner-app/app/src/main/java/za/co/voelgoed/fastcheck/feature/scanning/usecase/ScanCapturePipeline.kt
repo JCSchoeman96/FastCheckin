@@ -4,6 +4,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.channels.BufferOverflow
 import za.co.voelgoed.fastcheck.app.di.CurrentTimeProvider
 import za.co.voelgoed.fastcheck.core.common.ScannerRuntimeLogger
+import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionDecision
@@ -36,17 +37,19 @@ class ScanCapturePipeline @Inject constructor(
         )
     val decodeDiagnostics: SharedFlow<DecodeDiagnostic> = _decodeDiagnostics
 
-    private var lastAcceptedAtEpochMillis: Long? = null
+    private val suppressedTicketsByEpochMillis: MutableMap<String, Long> = mutableMapOf()
 
     override suspend fun onDecoded(rawValue: String) {
         val now = timeProvider.invoke()
-        val lastAccepted = lastAcceptedAtEpochMillis
+        val suppressionKey = TicketCodeNormalizer.normalizeOrNull(rawValue) ?: rawValue.trim()
         ScannerRuntimeLogger.i(LOG_TAG, "handoff_received ticket=${maskTicketCode(rawValue)}")
 
-        if (lastAccepted != null && now - lastAccepted < COOLDOWN_WINDOW_MILLIS) {
+        pruneExpiredSuppressionEntries(now)
+        val lastProcessedAt = suppressedTicketsByEpochMillis[suppressionKey]
+        if (lastProcessedAt != null && now - lastProcessedAt < SAME_TICKET_SUPPRESSION_WINDOW_MILLIS) {
             ScannerRuntimeLogger.i(
                 LOG_TAG,
-                "handoff_suppressed_by_cooldown deltaMs=${now - lastAccepted}"
+                "handoff_suppressed_same_ticket deltaMs=${now - lastProcessedAt} ticket=${maskTicketCode(suppressionKey)}"
             )
             _handoffResults.tryEmit(CaptureHandoffResult.SuppressedByCooldown)
             return
@@ -67,7 +70,6 @@ class ScanCapturePipeline @Inject constructor(
                         LOG_TAG,
                         "admit_decision type=accepted ticket=${maskTicketCode(decision.ticketCode)}"
                     )
-                    lastAcceptedAtEpochMillis = now
                     _handoffResults.tryEmit(
                         CaptureHandoffResult.Accepted(
                             attendeeId = decision.attendeeId,
@@ -77,6 +79,7 @@ class ScanCapturePipeline @Inject constructor(
                             scannedAt = decision.scannedAt
                         )
                     )
+                    suppressedTicketsByEpochMillis[suppressionKey] = now
                 }
 
                 is LocalAdmissionDecision.Rejected ->
@@ -91,6 +94,7 @@ class ScanCapturePipeline @Inject constructor(
                                 displayName = decision.displayName
                             )
                         )
+                        suppressedTicketsByEpochMillis[suppressionKey] = now
                     }
 
                 is LocalAdmissionDecision.ReviewRequired ->
@@ -105,6 +109,7 @@ class ScanCapturePipeline @Inject constructor(
                                 displayName = decision.displayName
                             )
                         )
+                        suppressedTicketsByEpochMillis[suppressionKey] = now
                     }
 
                 is LocalAdmissionDecision.OperationalFailure ->
@@ -129,8 +134,14 @@ class ScanCapturePipeline @Inject constructor(
         return "***${trimmed.takeLast(4)}"
     }
 
+    private fun pruneExpiredSuppressionEntries(now: Long) {
+        suppressedTicketsByEpochMillis.entries.removeIf { (_, seenAt) ->
+            now - seenAt >= SAME_TICKET_SUPPRESSION_WINDOW_MILLIS
+        }
+    }
+
     private companion object {
-        const val COOLDOWN_WINDOW_MILLIS: Long = 1_000L
+        const val SAME_TICKET_SUPPRESSION_WINDOW_MILLIS: Long = 10_000L
         private const val LOG_TAG: String = "ScanCapturePipeline"
     }
 }

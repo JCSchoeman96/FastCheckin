@@ -187,33 +187,36 @@ private fun PreviewSurface(
     onPreviewSurfaceChanged: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var currentPreviewView by remember { mutableStateOf<PreviewView?>(null) }
+    var attachedPreviewView by remember { mutableStateOf<PreviewView?>(null) }
 
     AndroidView(
         modifier = modifier,
         factory = { context ->
             PreviewView(context).also {
-                currentPreviewView = it
+                attachedPreviewView = it
                 previewSurfaceHolder.attach(it)
                 onPreviewSurfaceChanged()
             }
         },
         update = {
-            currentPreviewView = it
-            previewSurfaceHolder.attach(it)
-            onPreviewSurfaceChanged()
+            // Keep holder attachment stable across recompositions.
+            if (attachedPreviewView !== it) {
+                attachedPreviewView = it
+                previewSurfaceHolder.attach(it)
+                onPreviewSurfaceChanged()
+            }
         }
     )
 
-    DisposableEffect(previewSurfaceHolder, onPreviewSurfaceChanged, currentPreviewView) {
+    DisposableEffect(previewSurfaceHolder, onPreviewSurfaceChanged) {
         onDispose {
-            currentPreviewView?.let(previewSurfaceHolder::detach)
+            attachedPreviewView?.let(previewSurfaceHolder::detach)
             onPreviewSurfaceChanged()
         }
     }
 
-    DisposableEffect(currentPreviewView) {
-        val view = currentPreviewView ?: return@DisposableEffect onDispose {}
+    DisposableEffect(attachedPreviewView) {
+        val view = attachedPreviewView ?: return@DisposableEffect onDispose {}
         val observer = PreviewVisibilityObserver(onBecameVisible = onPreviewSurfaceChanged)
 
         fun evaluateNow() {
