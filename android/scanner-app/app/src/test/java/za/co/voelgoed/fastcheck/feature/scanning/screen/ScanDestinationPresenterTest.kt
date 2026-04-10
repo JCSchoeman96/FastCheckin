@@ -87,7 +87,32 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.attendeeStatusChip.text).isEqualTo("Attendee list ready")
         assertThat(uiState.attendeeStatusMessage).contains("latest local sync")
+        assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
+        assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 20")
         assertThat(uiState.healthBanner).isNull()
+    }
+
+    @Test
+    fun zeroSyncedAttendeesIsShownAsBlocker() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 99,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 0
+                    )
+            )
+
+        assertThat(uiState.attendeeStatusChip.text).isEqualTo("No attendees synced")
+        assertThat(uiState.attendeeStatusMessage).contains("Run attendee sync")
+        assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
+        assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 0")
     }
 
     @Test

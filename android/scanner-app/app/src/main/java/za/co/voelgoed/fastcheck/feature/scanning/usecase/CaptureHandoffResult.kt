@@ -37,8 +37,8 @@ sealed class CaptureHandoffResult {
     ) : CaptureHandoffResult()
 
     /**
-     * The capture was intentionally ignored because a short global cooldown
-     * window is still active.
+     * The capture was intentionally ignored because the same canonical ticket
+     * was handled recently and is still inside suppression window.
      */
     data object SuppressedByCooldown : CaptureHandoffResult()
 

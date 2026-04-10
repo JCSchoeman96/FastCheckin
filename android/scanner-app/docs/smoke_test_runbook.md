@@ -240,3 +240,43 @@ If any smoke step fails:
 - capture target, build command, device/emulator details, and backend URL
 - record the failing step and expected vs actual behavior
 - create or update a Beads item immediately
+
+## Scanner Runtime Reliability Pass (Plan `mlkit-camerax-audit_ad12c701`)
+
+Use this focused pass after PR-1 through PR-5:
+
+- Confirm scan screen shows:
+  - active event identity
+  - synced attendee count
+  - last sync value
+- Confirm scanner telemetry boundaries in logs:
+  - activation evaluated
+  - bind requested/success (or stale skipped)
+  - decode diagnostics
+  - handoff decision
+  - admit decision
+
+### Required plain-text test codes
+
+Known plain-text ticket set for runtime validation:
+
+- `99984-2`
+- `99998-1`
+- `99982-1`
+- `99984-1`
+- `99941-1`
+
+Run at least:
+
+1. one known-valid code -> accepted
+2. immediate repeat of same code -> cooldown suppression
+3. one known-invalid or not-found code -> rejected
+4. one refunded/payment-blocked code from the same event dataset -> rejected (must not accept)
+5. leave Scan -> Event/Support -> Scan -> valid code still decodes and admits
+6. app background/resume -> valid code still decodes and admits
+
+Pass gate for this slice:
+
+- no silent decode-dead state while preview is visible
+- scanner outcomes remain distinct (`accepted` vs `invalid` vs `cooldown`)
+- refunded/payment-blocked tickets are never admitted

@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationDecision
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
+import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodeDiagnostic
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
@@ -296,12 +297,58 @@ class ScanningViewModelTest {
         )
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
 
+        viewModel.clearCaptureFeedback()
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
-        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.Suppressed)
+        assertThat(viewModel.uiState.value.captureSemanticState).isNull()
 
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.Failed("Queue failed"))
         assertThat(viewModel.uiState.value.captureSemanticState)
             .isEqualTo(ScanUiState.Failed("Queue failed"))
+    }
+
+    @Test
+    fun immediateSuppressedResultDoesNotReplaceAcceptedFeedback() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onCaptureHandoffResult(
+            CaptureHandoffResult.Accepted(
+                attendeeId = 7L,
+                displayName = "Jane Doe",
+                ticketCode = "VG-007",
+                idempotencyKey = "idem-7",
+                scannedAt = "2026-04-02T09:00:00Z"
+            )
+        )
+        val acceptedFeedback = viewModel.uiState.value.lastCaptureFeedback
+
+        viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
+
+        assertThat(viewModel.uiState.value.lastCaptureFeedback).isEqualTo(acceptedFeedback)
+        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
+    }
+
+    @Test
+    fun captureFeedbackAutoClearsAfterShortTimeout() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val viewModel = ScanningViewModel(AppDispatchers(main = dispatcher), stuckPreviewTimeoutMs = 2_500)
+
+        viewModel.onCaptureHandoffResult(
+            CaptureHandoffResult.Accepted(
+                attendeeId = 11L,
+                displayName = "Quick Clear",
+                ticketCode = "VG-011",
+                idempotencyKey = "idem-11",
+                scannedAt = "2026-04-02T10:00:00Z"
+            )
+        )
+        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
+
+        advanceTimeBy(2_900)
+        assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
+
+        advanceTimeBy(200)
+        assertThat(viewModel.uiState.value.captureSemanticState).isNull()
+        assertThat(viewModel.uiState.value.lastCaptureFeedback).isNull()
     }
 
     @Test
@@ -411,6 +458,31 @@ class ScanningViewModelTest {
         )
 
         assertThat(viewModel.uiState.value.shouldHostPreviewSurface).isTrue()
+    }
+
+    @Test
+    fun decodeDiagnosticFailureSetsDebugStatus() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onDecodeDiagnostic(DecodeDiagnostic.DecodeFailure)
+
+        assertThat(viewModel.uiState.value.scannerDebugStatus)
+            .isEqualTo("Barcode decode failed for current frame.")
+    }
+
+    @Test
+    fun decodeNoUsableRawValueDiagnosticIsRateLimited() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onDecodeDiagnostic(DecodeDiagnostic.DecodeNoUsableRawValue)
+        val first = viewModel.uiState.value.scannerDebugStatus
+
+        viewModel.onDecodeDiagnostic(DecodeDiagnostic.FrameReceived)
+        viewModel.onDecodeDiagnostic(DecodeDiagnostic.DecodeNoUsableRawValue)
+        val second = viewModel.uiState.value.scannerDebugStatus
+
+        assertThat(first).isEqualTo("No usable barcode value in current frame.")
+        assertThat(second).isEqualTo("No usable barcode value in current frame.")
     }
 
     @Test

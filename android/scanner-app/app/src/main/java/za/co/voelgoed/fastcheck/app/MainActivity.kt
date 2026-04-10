@@ -347,6 +347,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+
+                launch {
+                    scanCapturePipeline.decodeDiagnostics.collectLatest { diagnostic ->
+                        scanningViewModel.onDecodeDiagnostic(diagnostic)
+                        Log.d(LOG_TAG, "decode_diagnostic=$diagnostic")
+                    }
+                }
             }
         }
 
@@ -426,14 +433,30 @@ class MainActivity : ComponentActivity() {
                     isPreviewVisible = isPreviewVisible
                 )
             )
+        val eventId = lastBootstrappedSessionKey?.eventId
+        Log.i(
+            LOG_TAG,
+            "scanner_activation_evaluated " +
+                "eventId=${eventId ?: -1} " +
+                "source=${selectedScannerSourceMode.wireName} " +
+                "isAuthenticated=$isAuthenticatedRouteActive " +
+                "isScanDestinationActive=$isScanDestinationActive " +
+                "hasPreviewSurface=$hasPreviewSurface " +
+                "isPreviewVisible=$isPreviewVisible " +
+                "hasPermission=$hasPermission " +
+                "shouldStartBinding=${decision.shouldStartBinding} " +
+                "sessionState=${decision.sessionState::class.simpleName}"
+        )
 
         scanningViewModel.onActivationDecision(decision)
 
         if (decision.shouldStartBinding) {
             scanningViewModel.onBindingAttemptChanged(true)
+            Log.i(LOG_TAG, "scanner_binding_start_requested eventId=${eventId ?: -1}")
             scannerSourceBinding.start()
         } else {
             scanningViewModel.onBindingAttemptChanged(false)
+            Log.i(LOG_TAG, "scanner_binding_stop_requested eventId=${eventId ?: -1}")
             scannerSourceBinding.stop()
         }
 

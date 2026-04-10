@@ -52,4 +52,20 @@ class CameraBindGenerationGuardTest {
         assertThat(staleErrorApplied).isFalse()
         assertThat(latestSuccessApplied).isTrue()
     }
+
+    @Test
+    fun analysisExecutorOwnerRecreatesAfterRelease() {
+        val owner = AnalysisExecutorOwner()
+
+        val first = owner.ensureExecutor()
+        val second = owner.ensureExecutor()
+        assertThat(second).isSameInstanceAs(first)
+
+        owner.releaseExecutor()
+
+        val third = owner.ensureExecutor()
+        assertThat(third).isNotSameInstanceAs(first)
+
+        owner.releaseExecutor()
+    }
 }
