@@ -251,7 +251,7 @@ class ScanDestinationPresenterTest {
     }
 
     @Test
-    fun cameraSourceErrorShowsReconnectAction() {
+    fun cameraSourceErrorShowsNoPrimaryRecoveryAction() {
         val uiState =
             presenter.present(
                 scanningUiState =
@@ -264,8 +264,29 @@ class ScanDestinationPresenterTest {
                 currentEventSyncStatus = null
             )
 
+        assertThat(uiState.primaryRecoveryAction).isNull()
+        assertThat(uiState.primaryRecoveryActionLabel).isNull()
+    }
+
+    @Test
+    fun stuckPreviewShowsRestartCameraAction() {
+        val uiState =
+            presenter.present(
+                scanningUiState =
+                    ScanningUiState(
+                        activeSourceType = ScannerSourceType.CAMERA,
+                        scannerRecoveryState = ScannerRecoveryState.StuckPreview,
+                        scannerStatus = "Camera preview appears stuck. Restart camera to recover."
+                    ),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
         assertThat(uiState.primaryRecoveryAction).isEqualTo(ScanOperatorAction.ReconnectCamera)
-        assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Reconnect camera")
+        assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Restart camera")
+        assertThat(uiState.scannerStatusChip.text).isEqualTo("Camera restart required")
+        assertThat(uiState.previewBanner?.title).isEqualTo("Camera preview stuck")
     }
 
     @Test

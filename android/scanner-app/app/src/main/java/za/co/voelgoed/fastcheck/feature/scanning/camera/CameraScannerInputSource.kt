@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.scanning.camera
 
 import java.time.Clock
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -42,6 +43,7 @@ class CameraScannerInputSource(
     override val captures = _captures.asSharedFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + appDispatchers.default)
+    private val sourceGeneration = AtomicLong(0)
 
     private val emitCapture: (ScannerCaptureEvent) -> Unit = { event ->
         scope.launch {
@@ -64,6 +66,7 @@ class CameraScannerInputSource(
         )
 
     override fun start() {
+        val bindGeneration = sourceGeneration.incrementAndGet()
         _state.value = ScannerSourceState.Starting
 
         scannerCameraBinder.bind(
@@ -71,15 +74,20 @@ class CameraScannerInputSource(
             previewView = previewViewProvider(),
             analyzer = analyzer,
             onBound = {
-                _state.value = ScannerSourceState.Ready
+                if (sourceGeneration.get() == bindGeneration) {
+                    _state.value = ScannerSourceState.Ready
+                }
             },
             onError = { throwable ->
-                _state.value = ScannerSourceState.Error(throwable.message ?: "Failed to bind camera")
+                if (sourceGeneration.get() == bindGeneration) {
+                    _state.value = ScannerSourceState.Error(throwable.message ?: "Failed to bind camera")
+                }
             }
         )
     }
 
     override fun stop() {
+        sourceGeneration.incrementAndGet()
         _state.value = ScannerSourceState.Stopping
         scannerCameraBinder.unbindAll()
         _state.value = ScannerSourceState.Idle

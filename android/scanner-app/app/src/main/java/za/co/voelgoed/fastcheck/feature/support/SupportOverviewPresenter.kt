@@ -44,6 +44,14 @@ class SupportOverviewPresenter {
                         action = SupportRecoveryAction.ReturnToScan
                     )
 
+                ScannerRecoveryState.StuckPreview ->
+                    RecoveryCopy(
+                        title = "Camera restart needed",
+                        message = "Camera preview appears stuck. Return to Scan and use Restart camera to recover.",
+                        tone = StatusTone.Warning,
+                        action = SupportRecoveryAction.ReturnToScan
+                    )
+
                 ScannerRecoveryState.Ready ->
                     RecoveryCopy(
                         title = "Scanner access ready",

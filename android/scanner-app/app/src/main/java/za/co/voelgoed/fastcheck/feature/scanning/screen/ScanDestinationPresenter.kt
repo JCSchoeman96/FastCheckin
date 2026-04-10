@@ -71,12 +71,15 @@ class ScanDestinationPresenter(
             ScannerRecoveryState.OpenSystemSettings ->
                 ScanOperatorAction.OpenAppSettings to "Open app settings"
 
-            is ScannerRecoveryState.SourceError ->
+            ScannerRecoveryState.StuckPreview ->
                 if (uiState.activeSourceType == ScannerSourceType.CAMERA) {
-                    ScanOperatorAction.ReconnectCamera to "Reconnect camera"
+                    ScanOperatorAction.ReconnectCamera to "Restart camera"
                 } else {
                     null
                 }
+
+            is ScannerRecoveryState.SourceError ->
+                null
 
             ScannerRecoveryState.Inactive,
             ScannerRecoveryState.Starting,
@@ -90,6 +93,10 @@ class ScanDestinationPresenter(
             (queueUiState.uploadSemanticState as? SyncUiState.Failed)?.reason == "Auth expired"
 
     private fun scannerChipFor(uiState: ScanningUiState): StatusChipUiModel {
+        if (uiState.scannerRecoveryState == ScannerRecoveryState.StuckPreview) {
+            return StatusChipUiModel(text = "Camera restart required", tone = StatusTone.Warning)
+        }
+
         val blockedReason = (uiState.sessionState as? ScannerSessionState.Blocked)?.reason
         if (
             uiState.activeSourceType == ScannerSourceType.CAMERA &&
@@ -206,6 +213,13 @@ class ScanDestinationPresenter(
                     title = "Preparing camera",
                     message = uiState.scannerStatus,
                     tone = StatusTone.Info
+                )
+
+            uiState.scannerRecoveryState == ScannerRecoveryState.StuckPreview ->
+                BannerUiModel(
+                    title = "Camera preview stuck",
+                    message = uiState.scannerStatus,
+                    tone = StatusTone.Warning
                 )
 
             uiState.scannerRecoveryState == ScannerRecoveryState.Ready && !uiState.isPreviewVisible ->
