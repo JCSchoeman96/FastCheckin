@@ -517,6 +517,45 @@ class MainActivityCameraRecoveryFlowTest {
     }
 
     @Test
+    fun searchDestinationStopsScannerAndReturningToScanRestarts() {
+        val fakeSource =
+            FakeScannerInputSource().apply {
+                enqueueStateOnStart(ScannerSourceState.Ready)
+                enqueueStateOnStart(ScannerSourceState.Ready)
+            }
+        MainActivityTestHooks.permissionStateOverride =
+            CameraPermissionOverride(isGranted = true, shouldShowRationale = false)
+        MainActivityTestHooks.previewSurfaceOverride =
+            PreviewSurfaceOverride(hasPreviewSurface = true, isPreviewVisible = true)
+        MainActivityTestHooks.scannerInputSourceFactory = { fakeSource }
+
+        val scenario = launchActivity()
+        try {
+            authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
+            waitUntil("initial scanner ready") {
+                fakeSource.startCount == 1 && fakeSource.state.value is ScannerSourceState.Ready
+            }
+
+            scenario.onActivity { activity ->
+                viewModel<AppShellViewModel>(activity).selectDestination(AppShellDestination.Search)
+            }
+            waitUntil("scanner stop after Search selected") { fakeSource.stopCount == 1 }
+            assertRemains("scanner start count while Search selected", expected = 1) {
+                fakeSource.startCount
+            }
+
+            scenario.onActivity { activity ->
+                viewModel<AppShellViewModel>(activity).selectDestination(AppShellDestination.Scan)
+            }
+            waitUntil("scanner restart after returning from Search") {
+                fakeSource.startCount == 2 && fakeSource.state.value is ScannerSourceState.Ready
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
     fun previewNotVisibleBlocksBindingUntilVisibilityTransition() {
         val fakeSource =
             FakeScannerInputSource().apply {

@@ -5,6 +5,8 @@ sealed interface ScannerRecoveryState {
 
     data object Starting : ScannerRecoveryState
 
+    data object StuckPreview : ScannerRecoveryState
+
     data object Ready : ScannerRecoveryState
 
     data class RequestPermission(

@@ -3,13 +3,22 @@ package za.co.voelgoed.fastcheck.feature.scanning.ui
 import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSourceActivationDecision
+import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
@@ -24,6 +33,19 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     val uiState: StateFlow<ScanningUiState> = _uiState.asStateFlow()
     private var hasAttemptedCameraPermissionRequest: Boolean = false
     private var shouldShowCameraPermissionRationale: Boolean = false
+    private var stuckPreviewTimeoutJob: Job? = null
+    private var timeoutDispatcher: CoroutineDispatcher = Dispatchers.Default
+    private var timeoutScope: CoroutineScope = CoroutineScope(SupervisorJob() + timeoutDispatcher)
+    private var stuckPreviewTimeoutMs: Long = STUCK_PREVIEW_TIMEOUT_MS
+
+    internal constructor(
+        appDispatchers: AppDispatchers,
+        stuckPreviewTimeoutMs: Long = STUCK_PREVIEW_TIMEOUT_MS
+    ) : this() {
+        timeoutDispatcher = appDispatchers.main
+        timeoutScope = CoroutineScope(SupervisorJob() + timeoutDispatcher)
+        this.stuckPreviewTimeoutMs = stuckPreviewTimeoutMs
+    }
 
     private fun isCameraSource(sourceType: ScannerSourceType): Boolean =
         sourceType == ScannerSourceType.CAMERA
@@ -100,12 +122,16 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         lifecycle: ScannerSourceState,
         permission: CameraPermissionState,
         sessionState: ScannerSessionState,
+        recoveryState: ScannerRecoveryState,
         shouldHostPreviewSurface: Boolean,
         hasPreviewSurface: Boolean,
         hasBindingAttempted: Boolean,
         isPreviewVisible: Boolean
     ): String =
         when {
+            recoveryState == ScannerRecoveryState.StuckPreview ->
+                STUCK_PREVIEW_STATUS
+
             sessionState is ScannerSessionState.Blocked &&
                 sessionState.reason == ScannerBlockReason.PermissionDenied ->
                 "Camera permission required before scanner preview can start."
@@ -227,6 +253,35 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 )
         }
 
+    private fun isStuckPreviewCandidate(
+        sourceType: ScannerSourceType,
+        permission: CameraPermissionState,
+        activationDecision: ScannerSourceActivationDecision?,
+        shouldHostPreviewSurface: Boolean,
+        isPreviewVisible: Boolean,
+        hasBindingAttempted: Boolean,
+        lifecycle: ScannerSourceState
+    ): Boolean =
+        isCameraSource(sourceType) &&
+            permission == CameraPermissionState.GRANTED &&
+            activationDecision?.shouldStartBinding == true &&
+            shouldHostPreviewSurface &&
+            hasBindingAttempted &&
+            !isPreviewVisible &&
+            lifecycle !is ScannerSourceState.Stopping &&
+            lifecycle !is ScannerSourceState.Error
+
+    private fun isStuckPreviewCandidate(state: ScanningUiState): Boolean =
+        isStuckPreviewCandidate(
+            sourceType = state.activeSourceType,
+            permission = state.cameraPermissionState,
+            activationDecision = state.activationDecision,
+            shouldHostPreviewSurface = state.shouldHostPreviewSurface,
+            isPreviewVisible = state.isPreviewVisible,
+            hasBindingAttempted = state.hasBindingAttempted,
+            lifecycle = state.sourceLifecycle
+        )
+
     private fun deriveState(current: ScanningUiState): ScanningUiState {
         val sessionState =
             resolveSessionState(
@@ -256,6 +311,32 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                     current.activationDecision.shouldShowCameraPermissionRequest
                 else -> current.cameraPermissionState != CameraPermissionState.GRANTED
             }
+        val computedRecoveryState =
+            scannerRecoveryStateFor(
+                sourceType = current.activeSourceType,
+                permission = current.cameraPermissionState,
+                lifecycle = current.sourceLifecycle,
+                shouldHostPreviewSurface = shouldHostPreviewSurface,
+                hasPreviewSurface = current.hasPreviewSurface,
+                hasBindingAttempted = current.hasBindingAttempted
+            )
+        val shouldKeepStuckPreview =
+            current.scannerRecoveryState == ScannerRecoveryState.StuckPreview &&
+                isStuckPreviewCandidate(
+                    sourceType = current.activeSourceType,
+                    permission = current.cameraPermissionState,
+                    activationDecision = current.activationDecision,
+                    shouldHostPreviewSurface = shouldHostPreviewSurface,
+                    isPreviewVisible = isPreviewVisible,
+                    hasBindingAttempted = current.hasBindingAttempted,
+                    lifecycle = current.sourceLifecycle
+                )
+        val recoveryState =
+            if (shouldKeepStuckPreview) {
+                ScannerRecoveryState.StuckPreview
+            } else {
+                computedRecoveryState
+            }
 
         return current.copy(
             permissionSummary =
@@ -277,25 +358,57 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                     lifecycle = current.sourceLifecycle,
                     permission = current.cameraPermissionState,
                     sessionState = sessionState,
+                    recoveryState = recoveryState,
                     shouldHostPreviewSurface = shouldHostPreviewSurface,
                     hasPreviewSurface = current.hasPreviewSurface,
                     hasBindingAttempted = current.hasBindingAttempted,
                     isPreviewVisible = isPreviewVisible
                 ),
-            scannerRecoveryState =
-                scannerRecoveryStateFor(
-                    sourceType = current.activeSourceType,
-                    permission = current.cameraPermissionState,
-                    lifecycle = current.sourceLifecycle,
-                    shouldHostPreviewSurface = shouldHostPreviewSurface,
-                    hasPreviewSurface = current.hasPreviewSurface,
-                    hasBindingAttempted = current.hasBindingAttempted
-                )
+            scannerRecoveryState = recoveryState
         )
     }
 
-    fun onCaptureHandoffResult(result: CaptureHandoffResult) {
+    private fun updateUiState(transform: (ScanningUiState) -> ScanningUiState) {
         _uiState.update { current ->
+            deriveState(transform(current))
+        }
+        syncStuckPreviewTimeout()
+    }
+
+    private fun syncStuckPreviewTimeout() {
+        val state = _uiState.value
+        if (!isStuckPreviewCandidate(state) || state.scannerRecoveryState == ScannerRecoveryState.StuckPreview) {
+            stuckPreviewTimeoutJob?.cancel()
+            stuckPreviewTimeoutJob = null
+            return
+        }
+        if (stuckPreviewTimeoutJob != null) return
+
+        stuckPreviewTimeoutJob =
+            timeoutScope.launch {
+                delay(stuckPreviewTimeoutMs)
+                val latest = _uiState.value
+                if (!isStuckPreviewCandidate(latest)) {
+                    return@launch
+                }
+                _uiState.update { current ->
+                    deriveState(
+                        current.copy(
+                            scannerRecoveryState = ScannerRecoveryState.StuckPreview
+                        )
+                    )
+                }
+            }.also { job ->
+                job.invokeOnCompletion {
+                    if (stuckPreviewTimeoutJob === job) {
+                        stuckPreviewTimeoutJob = null
+                    }
+                }
+            }
+    }
+
+    fun onCaptureHandoffResult(result: CaptureHandoffResult) {
+        updateUiState { current ->
             val feedback =
                 when (result) {
                     is CaptureHandoffResult.Accepted ->
@@ -347,13 +460,13 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
     }
 
     fun clearCaptureFeedback() {
-        _uiState.update { current ->
+        updateUiState { current ->
             current.copy(lastCaptureFeedback = null, captureSemanticState = null)
         }
     }
 
     fun onSourceStateChanged(state: ScannerSourceState) {
-        _uiState.update { current -> deriveState(current.copy(sourceLifecycle = state)) }
+        updateUiState { current -> current.copy(sourceLifecycle = state) }
     }
 
     fun refreshPermissionState(
@@ -361,31 +474,21 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         shouldShowRationale: Boolean = false
     ) {
         shouldShowCameraPermissionRationale = shouldShowRationale
-        _uiState.update { current ->
-            val newPermission =
-                if (isGranted) {
-                    CameraPermissionState.GRANTED
-                } else {
-                    CameraPermissionState.DENIED
-                }
-
-            deriveState(
-                current.copy(
-                    cameraPermissionState = newPermission,
-                    hasBindingAttempted = if (isGranted) current.hasBindingAttempted else false
-                )
+        updateUiState { current ->
+            val newPermission = if (isGranted) CameraPermissionState.GRANTED else CameraPermissionState.DENIED
+            current.copy(
+                cameraPermissionState = newPermission,
+                hasBindingAttempted = if (isGranted) current.hasBindingAttempted else false
             )
         }
     }
 
     fun onActivationDecision(decision: ScannerSourceActivationDecision) {
-        _uiState.update { current ->
-            deriveState(
-                current.copy(
-                    activationDecision = decision,
-                    hasBindingAttempted =
-                        if (decision.shouldStartBinding) current.hasBindingAttempted else false
-                )
+        updateUiState { current ->
+            current.copy(
+                activationDecision = decision,
+                hasBindingAttempted =
+                    if (decision.shouldStartBinding) current.hasBindingAttempted else false
             )
         }
     }
@@ -401,20 +504,19 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                 }
             deriveState(it).copy(scannerStatus = status)
         }
+        syncStuckPreviewTimeout()
     }
 
     fun onActiveSourceTypeChanged(sourceType: ScannerSourceType) {
-        _uiState.update { current ->
-            deriveState(
-                current.copy(
-                    activeSourceType = sourceType,
-                    hasBindingAttempted =
-                        if (current.activeSourceType == sourceType) {
-                            current.hasBindingAttempted
-                        } else {
-                            false
-                        }
-                )
+        updateUiState { current ->
+            current.copy(
+                activeSourceType = sourceType,
+                hasBindingAttempted =
+                    if (current.activeSourceType == sourceType) {
+                        current.hasBindingAttempted
+                    } else {
+                        false
+                    }
             )
         }
     }
@@ -423,19 +525,27 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
         hasPreviewSurface: Boolean,
         isPreviewVisible: Boolean
     ) {
-        _uiState.update { current ->
-            deriveState(
-                current.copy(
-                    hasPreviewSurface = hasPreviewSurface,
-                    isPreviewVisible = isPreviewVisible
-                )
+        updateUiState { current ->
+            current.copy(
+                hasPreviewSurface = hasPreviewSurface,
+                isPreviewVisible = isPreviewVisible
             )
         }
     }
 
     fun onBindingAttemptChanged(hasBindingAttempted: Boolean) {
-        _uiState.update { current ->
-            deriveState(current.copy(hasBindingAttempted = hasBindingAttempted))
-        }
+        updateUiState { current -> current.copy(hasBindingAttempted = hasBindingAttempted) }
+    }
+
+    override fun onCleared() {
+        stuckPreviewTimeoutJob?.cancel()
+        stuckPreviewTimeoutJob = null
+        timeoutScope.coroutineContext.cancel()
+        super.onCleared()
+    }
+
+    private companion object {
+        const val STUCK_PREVIEW_TIMEOUT_MS: Long = 2_500
+        const val STUCK_PREVIEW_STATUS: String = "Camera preview appears stuck. Restart camera to recover."
     }
 }
