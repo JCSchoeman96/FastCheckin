@@ -90,9 +90,12 @@ class ScanDestinationPresenter(
             (queueUiState.uploadSemanticState as? SyncUiState.Failed)?.reason == "Auth expired"
 
     private fun scannerChipFor(uiState: ScanningUiState): StatusChipUiModel {
+        val blockedReason = (uiState.sessionState as? ScannerSessionState.Blocked)?.reason
         if (
             uiState.activeSourceType == ScannerSourceType.CAMERA &&
-            uiState.scannerRecoveryState == ScannerRecoveryState.Starting
+            uiState.scannerRecoveryState == ScannerRecoveryState.Starting &&
+            blockedReason != ScannerBlockReason.PreviewNotVisible &&
+            blockedReason != ScannerBlockReason.PreviewUnavailable
         ) {
             return StatusChipUiModel(text = "Scanner starting", tone = StatusTone.Info)
         }
@@ -120,6 +123,9 @@ class ScanDestinationPresenter(
 
                     ScannerBlockReason.PreviewUnavailable ->
                         StatusChipUiModel(text = "Preparing preview", tone = StatusTone.Info)
+
+                    ScannerBlockReason.PreviewNotVisible ->
+                        StatusChipUiModel(text = "Preview loading", tone = StatusTone.Info)
 
                     ScannerBlockReason.NotAuthenticated ->
                         StatusChipUiModel(text = "Scanner idle", tone = StatusTone.Muted)

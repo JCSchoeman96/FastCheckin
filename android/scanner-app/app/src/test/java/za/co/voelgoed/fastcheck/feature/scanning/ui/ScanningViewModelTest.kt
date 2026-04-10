@@ -286,4 +286,61 @@ class ScanningViewModelTest {
         assertThat(viewModel.uiState.value.scannerRecoveryState)
             .isEqualTo(ScannerRecoveryState.RequestPermission(true))
     }
+
+    @Test
+    fun previewNotVisibleShowsTransientStatusText() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible)
+            )
+        )
+
+        assertThat(viewModel.uiState.value.scannerStatus)
+            .isEqualTo("Camera preview is becoming visible. Scanner will start automatically.")
+        assertThat(viewModel.uiState.value.scannerStatus)
+            .doesNotContain("Preparing the scan preview")
+    }
+
+    @Test
+    fun previewHostStaysMountedUnderPreviewNotVisible() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible)
+            )
+        )
+
+        assertThat(viewModel.uiState.value.shouldHostPreviewSurface).isTrue()
+    }
+
+    @Test
+    fun previewNotVisibleRecoveryStateIsTransientNotError() {
+        val viewModel = ScanningViewModel()
+
+        viewModel.onActiveSourceTypeChanged(ScannerSourceType.CAMERA)
+        viewModel.refreshPermissionState(isGranted = true)
+        viewModel.onActivationDecision(
+            ScannerSourceActivationDecision(
+                shouldStartBinding = false,
+                shouldShowCameraPermissionRequest = false,
+                sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible)
+            )
+        )
+
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isEqualTo(ScannerRecoveryState.Starting)
+        assertThat(viewModel.uiState.value.scannerRecoveryState)
+            .isNotInstanceOf(ScannerRecoveryState.SourceError::class.java)
+    }
 }

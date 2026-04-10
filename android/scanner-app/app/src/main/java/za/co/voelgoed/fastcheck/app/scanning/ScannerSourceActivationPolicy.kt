@@ -17,6 +17,7 @@ enum class ScannerBlockReason {
     Backgrounded,
     PermissionDenied,
     PreviewUnavailable,
+    PreviewNotVisible,
     SourceError
 }
 
@@ -73,6 +74,14 @@ class ScannerSourceActivationPolicy {
                     shouldStartBinding = false,
                     shouldShowCameraPermissionRequest = false,
                     sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewUnavailable)
+                )
+
+            context.sourceMode.requiresCameraPermission &&
+                context.hasPreviewSurface && !context.isPreviewVisible ->
+                ScannerSourceActivationDecision(
+                    shouldStartBinding = false,
+                    shouldShowCameraPermissionRequest = false,
+                    sessionState = ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible)
                 )
 
             else ->

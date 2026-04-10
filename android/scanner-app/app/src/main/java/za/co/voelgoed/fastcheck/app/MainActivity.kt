@@ -302,8 +302,10 @@ class MainActivity : ComponentActivity() {
                 launch {
                     appShellViewModel.uiState.collectLatest { state ->
                         val wasScanDestinationActive = isScanDestinationActive
-                        isScanDestinationActive =
-                            state.selectedDestination == AppShellDestination.Scan
+                        isScanDestinationActive = isScanSurfaceReallyActive(
+                            selectedDestination = state.selectedDestination,
+                            activeSupportRoute = state.activeSupportRoute
+                        )
                         val enteredScan = !wasScanDestinationActive && isScanDestinationActive
                         if (enteredScan) {
                             hasAutoRequestedCameraPermissionThisScanEntry = false
@@ -583,6 +585,12 @@ class MainActivity : ComponentActivity() {
         const val LOG_TAG: String = "FastCheckMainActivity"
     }
 }
+
+internal fun isScanSurfaceReallyActive(
+    selectedDestination: AppShellDestination,
+    activeSupportRoute: AppShellSupportRoute?
+): Boolean =
+    selectedDestination == AppShellDestination.Scan && activeSupportRoute == null
 
 internal fun shouldAutoRequestCameraPermissionOnScanEntry(
     sourceMode: ScannerShellSourceMode,

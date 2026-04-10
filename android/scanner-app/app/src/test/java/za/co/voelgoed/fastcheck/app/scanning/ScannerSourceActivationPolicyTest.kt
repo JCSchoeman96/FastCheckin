@@ -88,7 +88,7 @@ class ScannerSourceActivationPolicyTest {
     }
 
     @Test
-    fun attachedPreviewAllowsInitialCameraBindingBeforeVisibleStreaming() {
+    fun attachedButNotVisiblePreviewBlocksCameraBinding() {
         val decision =
             policy.evaluate(
                 ScannerActivationContext(
@@ -102,9 +102,65 @@ class ScannerSourceActivationPolicyTest {
                 )
             )
 
+        assertThat(decision.shouldStartBinding).isFalse()
+        assertThat(decision.shouldShowCameraPermissionRequest).isFalse()
+        assertThat(decision.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible))
+    }
+
+    @Test
+    fun visiblePreviewArmsCameraBinding() {
+        val decision =
+            policy.evaluate(
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = true,
+                    isPreviewVisible = true
+                )
+            )
+
         assertThat(decision.shouldStartBinding).isTrue()
         assertThat(decision.shouldShowCameraPermissionRequest).isFalse()
         assertThat(decision.sessionState).isEqualTo(ScannerSessionState.Armed)
+    }
+
+    @Test
+    fun previewUnavailableAndPreviewNotVisibleAreDistinctBlockReasons() {
+        val noSurface =
+            policy.evaluate(
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = false,
+                    isPreviewVisible = false
+                )
+            )
+
+        val attachedNotVisible =
+            policy.evaluate(
+                ScannerActivationContext(
+                    sourceMode = ScannerShellSourceMode.CAMERA,
+                    isAuthenticated = true,
+                    isScanDestinationSelected = true,
+                    isForeground = true,
+                    hasCameraPermission = true,
+                    hasPreviewSurface = true,
+                    isPreviewVisible = false
+                )
+            )
+
+        assertThat(noSurface.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.PreviewUnavailable))
+        assertThat(attachedNotVisible.sessionState)
+            .isEqualTo(ScannerSessionState.Blocked(ScannerBlockReason.PreviewNotVisible))
+        assertThat(noSurface.sessionState).isNotEqualTo(attachedNotVisible.sessionState)
     }
 
     @Test
