@@ -4,11 +4,15 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.withTimeoutOrNull
+import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
 import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
 import za.co.voelgoed.fastcheck.core.common.ScannerRuntimeLogger
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
+import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.PaymentStatusRuleMapper
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
@@ -19,6 +23,8 @@ import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionRejectReason
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionReviewReason
 import za.co.voelgoed.fastcheck.domain.model.PaymentStatusDecision
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
+import za.co.voelgoed.fastcheck.domain.policy.AdmissionCacheReadiness
+import za.co.voelgoed.fastcheck.domain.policy.AttendeeSyncBootstrapGate
 import za.co.voelgoed.fastcheck.domain.policy.CurrentEventAdmissionReadiness
 
 class DefaultAdmitScanUseCase @Inject constructor(
@@ -28,6 +34,9 @@ class DefaultAdmitScanUseCase @Inject constructor(
     private val syncRepository: SyncRepository,
     private val paymentStatusRuleMapper: PaymentStatusRuleMapper,
     private val currentEventAdmissionReadiness: CurrentEventAdmissionReadiness,
+    private val attendeeSyncBootstrapGate: AttendeeSyncBootstrapGate,
+    private val connectivityMonitor: ConnectivityMonitor,
+    private val attendeeSyncOrchestrator: AttendeeSyncOrchestrator,
     private val clock: Clock
 ) : AdmitScanUseCase {
     override suspend fun admit(
@@ -65,10 +74,21 @@ class DefaultAdmitScanUseCase @Inject constructor(
         ScannerRuntimeLogger.d(LOG_TAG, "admit_context eventId=$eventId")
 
         val syncStatus = syncRepository.currentSyncStatus()
-        if (!currentEventAdmissionReadiness.hasTrustedCurrentEventCache(eventId, syncStatus)) {
+        val bootstrapInFlight =
+            attendeeSyncBootstrapGate.isInitialBootstrapSyncInProgressForEvent(eventId)
+        val readiness =
+            currentEventAdmissionReadiness.evaluateReadiness(
+                eventId = eventId,
+                syncStatus = syncStatus,
+                bootstrapSyncInProgress = bootstrapInFlight
+            )
+
+        if (readiness.readiness == AdmissionCacheReadiness.NOT_READY_UNSAFE) {
             return LocalAdmissionDecision.ReviewRequired(
                 reason = LocalAdmissionReviewReason.CacheNotTrusted,
-                displayMessage = "Attendee cache is not trusted enough for a green admission decision yet.",
+                displayMessage =
+                    "Attendee list is not ready for this event yet. " +
+                        "Wait for sync to finish or use manual review.",
                 ticketCode = canonicalTicketCode
             ).also {
                 ScannerRuntimeLogger.i(
@@ -78,18 +98,44 @@ class DefaultAdmitScanUseCase @Inject constructor(
             }
         }
 
-        val attendee =
+        var attendee =
             attendeeLookupRepository.findByTicketCode(eventId, canonicalTicketCode)
-                ?: return LocalAdmissionDecision.Rejected(
-                    reason = LocalAdmissionRejectReason.TicketNotFound,
-                    displayMessage = "Invalid scan. Ticket not found for this event.",
-                    ticketCode = canonicalTicketCode
-                ).also {
-                    ScannerRuntimeLogger.i(
-                        LOG_TAG,
-                        "admit_result type=ticket_not_found eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
-                    )
+
+        if (attendee == null && readiness.readiness == AdmissionCacheReadiness.READY_STALE) {
+            attendeeSyncOrchestrator.notifyStaleScanRefreshAdvisory()
+            if (connectivityMonitor.isOnline.value) {
+                withTimeoutOrNull(SCAN_ASSIST_TIMEOUT_MS) {
+                    syncRepository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
                 }
+            }
+            attendee =
+                attendeeLookupRepository.findByTicketCode(eventId, canonicalTicketCode)
+        }
+
+        if (attendee == null) {
+            if (readiness.readiness == AdmissionCacheReadiness.READY_STALE) {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=local_attendee_missing eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+                return LocalAdmissionDecision.ReviewRequired(
+                    reason = LocalAdmissionReviewReason.TicketNotInLocalAttendeeList,
+                    displayMessage = "Ticket not in saved attendee list.",
+                    ticketCode = canonicalTicketCode
+                )
+            }
+
+            return LocalAdmissionDecision.Rejected(
+                reason = LocalAdmissionRejectReason.TicketNotFound,
+                displayMessage = "Invalid scan. Ticket not found for this event.",
+                ticketCode = canonicalTicketCode
+            ).also {
+                ScannerRuntimeLogger.i(
+                    LOG_TAG,
+                    "admit_result type=ticket_not_found eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
+                )
+            }
+        }
 
         if (
             attendee.localOverlayState == LocalAdmissionOverlayState.CONFLICT_DUPLICATE.name ||
@@ -108,6 +154,10 @@ class DefaultAdmitScanUseCase @Inject constructor(
                     "admit_result type=conflict_requires_resolution eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)}"
                 )
             }
+        }
+
+        if (readiness.readiness == AdmissionCacheReadiness.READY_STALE) {
+            attendeeSyncOrchestrator.notifyStaleScanRefreshAdvisory()
         }
 
         if (attendee.isCurrentlyInside) {
@@ -254,5 +304,6 @@ class DefaultAdmitScanUseCase @Inject constructor(
 
     private companion object {
         private const val LOG_TAG: String = "DefaultAdmitScan"
+        private const val SCAN_ASSIST_TIMEOUT_MS: Long = 250L
     }
 }

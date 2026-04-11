@@ -176,10 +176,18 @@ class ScanDestinationPresenter(
                 ) to "No attendees are currently available in the local cache for this event. Run attendee sync before trusting scanner outcomes."
             }
             return if (isStale(currentEventSyncStatus)) {
-                StatusChipUiModel(
-                    text = "Attendee list may be old",
-                    tone = StatusTone.Warning
-                ) to "Using cached attendee data from ${currentEventSyncStatus.lastSuccessfulSyncAt ?: "an earlier sync"}."
+                if (currentEventSyncStatus.consecutiveFailures > 0) {
+                    StatusChipUiModel(
+                        text = "Sync delayed, scanning continues",
+                        tone = StatusTone.Warning
+                    ) to
+                        "Sync is retrying in the background; you can keep scanning using the saved attendee list."
+                } else {
+                    StatusChipUiModel(
+                        text = "Attendee list may be old",
+                        tone = StatusTone.Warning
+                    ) to "Using cached attendee data from ${currentEventSyncStatus.lastSuccessfulSyncAt ?: "an earlier sync"}."
+                }
             } else {
                 StatusChipUiModel(
                     text = "Attendee list ready",

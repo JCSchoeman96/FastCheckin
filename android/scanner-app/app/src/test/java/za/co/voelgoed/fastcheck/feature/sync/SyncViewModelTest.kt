@@ -42,7 +42,9 @@ class SyncViewModelTest {
     ) : SyncRepository {
         var callCount: Int = 0
 
-        override suspend fun syncAttendees(): AttendeeSyncStatus? {
+        override suspend fun syncAttendees(
+            mode: za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
+        ): AttendeeSyncStatus? {
             callCount += 1
             return behavior()
         }

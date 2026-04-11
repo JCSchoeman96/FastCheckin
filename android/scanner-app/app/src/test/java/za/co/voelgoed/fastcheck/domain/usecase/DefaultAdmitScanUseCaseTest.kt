@@ -5,9 +5,14 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
+import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
@@ -30,6 +35,7 @@ import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionRejectReason
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionReviewReason
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
+import za.co.voelgoed.fastcheck.domain.policy.AttendeeSyncBootstrapGate
 import za.co.voelgoed.fastcheck.domain.policy.CurrentEventAdmissionReadiness
 
 class DefaultAdmitScanUseCaseTest {
@@ -40,7 +46,8 @@ class DefaultAdmitScanUseCaseTest {
             lastServerTime = "2026-04-06T09:55:00Z",
             lastSuccessfulSyncAt = "2026-04-06T09:55:00Z",
             syncType = "full",
-            attendeeCount = 100
+            attendeeCount = 100,
+            bootstrapCompletedAt = "2026-04-06T09:55:00Z"
         )
 
     private fun baseAttendee(
@@ -88,6 +95,26 @@ class DefaultAdmitScanUseCaseTest {
             syncRepository = syncRepo,
             paymentStatusRuleMapper = PaymentStatusRuleMapper(),
             currentEventAdmissionReadiness = CurrentEventAdmissionReadiness(clock),
+            attendeeSyncBootstrapGate =
+                object : AttendeeSyncBootstrapGate {
+                    override fun isInitialBootstrapSyncInProgressForEvent(eventId: Long): Boolean = false
+                },
+            connectivityMonitor =
+                object : ConnectivityMonitor {
+                    override val isOnline: StateFlow<Boolean> = MutableStateFlow(true)
+                },
+            attendeeSyncOrchestrator =
+                object : AttendeeSyncOrchestrator {
+                    override fun start() = Unit
+
+                    override fun notifyAppForeground() = Unit
+
+                    override fun notifyStaleScanRefreshAdvisory() = Unit
+
+                    override fun notifyConnectivityRestored() = Unit
+
+                    override fun requestManualSync() = Unit
+                },
             clock = clock
         )
     }
@@ -312,7 +339,7 @@ class DefaultAdmitScanUseCaseTest {
     private class FakeSyncRepository(
         private val status: AttendeeSyncStatus?
     ) : SyncRepository {
-        override suspend fun syncAttendees() = error("not used")
+        override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? = null
 
         override suspend fun currentSyncStatus(): AttendeeSyncStatus? = status
 
@@ -348,6 +375,7 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun findAttendeeById(eventId: Long, attendeeId: Long): AttendeeEntity? = unused()
         override suspend fun deleteAllAttendees() = unused()
         override suspend fun deleteAttendeesForEvent(eventId: Long) = unused()
+        override suspend fun clearEventAttendeeCacheForFullReconcile(eventId: Long) = unused()
         override suspend fun upsertLocalAdmissionOverlay(overlay: LocalAdmissionOverlayEntity): Long = unused()
         override suspend fun upsertLocalAdmissionOverlays(overlays: List<LocalAdmissionOverlayEntity>) = unused()
         override suspend fun findLatestActiveOverlayForAttendee(eventId: Long, attendeeId: Long) = unused()

@@ -29,6 +29,16 @@ interface ScannerDao {
     @Query("DELETE FROM attendees WHERE eventId = :eventId")
     suspend fun deleteAttendeesForEvent(eventId: Long)
 
+    /**
+     * Clears local attendee rows and sync metadata for an event before a full reconcile pull.
+     * Scanning must remain gated until a coherent metadata commit completes.
+     */
+    @Transaction
+    suspend fun clearEventAttendeeCacheForFullReconcile(eventId: Long) {
+        deleteAttendeesForEvent(eventId)
+        deleteSyncMetadataForEvent(eventId)
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLocalAdmissionOverlay(overlay: LocalAdmissionOverlayEntity): Long
 

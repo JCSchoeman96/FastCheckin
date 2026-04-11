@@ -30,8 +30,8 @@ class EventDestinationPresenter(
         return EventDestinationUiState(
             headerTitle = session.eventName,
             headerSubtitle = "Event #${session.eventId}",
-            statusChip = statusChipFor(queueUiState, syncUiState, currentCacheStatus),
-            statusMessage = statusMessageFor(queueUiState, syncUiState, currentCacheStatus),
+            statusChip = statusChipFor(queueUiState, syncUiState, currentCacheStatus, currentEventSyncStatus),
+            statusMessage = statusMessageFor(queueUiState, syncUiState, currentCacheStatus, currentEventSyncStatus),
             attentionBanner =
                 attentionBannerFor(
                     queueUiState = queueUiState,
@@ -60,7 +60,8 @@ class EventDestinationPresenter(
     private fun statusChipFor(
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
-        currentCacheStatus: CurrentCacheStatus
+        currentCacheStatus: CurrentCacheStatus,
+        currentEventSyncStatus: AttendeeSyncStatus?
     ): EventStatusChipUiModel =
         when {
             requiresRelogin(queueUiState) ->
@@ -87,6 +88,10 @@ class EventDestinationPresenter(
             currentCacheStatus == CurrentCacheStatus.Unavailable ->
                 EventStatusChipUiModel("Attendee cache pending", StatusTone.Warning)
 
+            currentCacheStatus == CurrentCacheStatus.Stale &&
+                (currentEventSyncStatus?.consecutiveFailures ?: 0) > 0 ->
+                EventStatusChipUiModel("Sync delayed", StatusTone.Warning)
+
             currentCacheStatus == CurrentCacheStatus.Stale ->
                 EventStatusChipUiModel("Cache may be old", StatusTone.Warning)
 
@@ -97,7 +102,8 @@ class EventDestinationPresenter(
     private fun statusMessageFor(
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
-        currentCacheStatus: CurrentCacheStatus
+        currentCacheStatus: CurrentCacheStatus,
+        currentEventSyncStatus: AttendeeSyncStatus?
     ): String =
         when {
             requiresRelogin(queueUiState) ->
@@ -127,6 +133,10 @@ class EventDestinationPresenter(
 
             currentCacheStatus == CurrentCacheStatus.Unavailable ->
                 "This event does not have a current attendee cache yet."
+
+            currentCacheStatus == CurrentCacheStatus.Stale &&
+                (currentEventSyncStatus?.consecutiveFailures ?: 0) > 0 ->
+                "Sync delayed, scanning continues. Attendee sync is retrying in the background."
 
             currentCacheStatus == CurrentCacheStatus.Stale ->
                 "Attendee totals come from an older local sync and may not reflect the latest backend changes."

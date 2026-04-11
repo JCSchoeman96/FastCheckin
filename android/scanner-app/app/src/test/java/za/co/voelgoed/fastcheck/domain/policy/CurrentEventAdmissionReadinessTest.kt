@@ -12,9 +12,9 @@ class CurrentEventAdmissionReadinessTest {
     private val readiness = CurrentEventAdmissionReadiness(clock)
 
     @Test
-    fun trustedCacheRequiresMatchingFreshSuccessfulSyncBoundary() {
-        val trusted =
-            readiness.evaluate(
+    fun freshCacheIsReadyFresh() {
+        val result =
+            readiness.evaluateReadiness(
                 eventId = 42L,
                 syncStatus =
                     AttendeeSyncStatus(
@@ -22,18 +22,20 @@ class CurrentEventAdmissionReadinessTest {
                         lastServerTime = "2026-04-06T09:45:00Z",
                         lastSuccessfulSyncAt = "2026-04-06T09:45:00Z",
                         syncType = "full",
-                        attendeeCount = 100
-                    )
+                        attendeeCount = 100,
+                        bootstrapCompletedAt = "2026-04-06T09:45:00Z"
+                    ),
+                bootstrapSyncInProgress = false
             )
 
-        assertThat(trusted.isTrusted).isTrue()
-        assertThat(trusted.reason).isEqualTo(AdmissionReadinessReason.Ready)
+        assertThat(result.readiness).isEqualTo(AdmissionCacheReadiness.READY_FRESH)
+        assertThat(result.reason).isEqualTo(AdmissionReadinessReason.ReadyFresh)
     }
 
     @Test
-    fun staleCacheIsNotTrusted() {
-        val stale =
-            readiness.evaluate(
+    fun staleCacheIsReadyStale() {
+        val result =
+            readiness.evaluateReadiness(
                 eventId = 42L,
                 syncStatus =
                     AttendeeSyncStatus(
@@ -41,11 +43,13 @@ class CurrentEventAdmissionReadinessTest {
                         lastServerTime = "2026-04-06T09:00:00Z",
                         lastSuccessfulSyncAt = "2026-04-06T09:00:00Z",
                         syncType = "full",
-                        attendeeCount = 100
-                    )
+                        attendeeCount = 100,
+                        bootstrapCompletedAt = "2026-04-06T09:00:00Z"
+                    ),
+                bootstrapSyncInProgress = false
             )
 
-        assertThat(stale.isTrusted).isFalse()
-        assertThat(stale.reason).isEqualTo(AdmissionReadinessReason.Stale)
+        assertThat(result.readiness).isEqualTo(AdmissionCacheReadiness.READY_STALE)
+        assertThat(result.reason).isEqualTo(AdmissionReadinessReason.ReadyStale)
     }
 }

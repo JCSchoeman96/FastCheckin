@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.repository.SyncRateLimitedException
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -140,7 +141,7 @@ class SyncViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            runCatching { syncRepository.syncAttendees() }
+            runCatching { syncRepository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }
                 .onSuccess { status ->
                     _currentEventSyncStatus.value = status
                     _uiState.update {

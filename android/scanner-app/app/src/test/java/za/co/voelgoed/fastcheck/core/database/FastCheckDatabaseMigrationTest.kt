@@ -67,7 +67,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -145,7 +146,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -180,7 +182,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -231,7 +234,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -256,7 +260,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_4_5,
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -282,7 +287,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -309,7 +315,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -336,7 +343,8 @@ class FastCheckDatabaseMigrationTest {
                 .addMigrations(
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
-                    FastCheckDatabaseMigrations.MIGRATION_7_8
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()

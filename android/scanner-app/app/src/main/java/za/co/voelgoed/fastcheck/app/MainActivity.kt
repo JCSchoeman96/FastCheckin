@@ -39,6 +39,7 @@ import za.co.voelgoed.fastcheck.app.shell.AppShellViewModel
 import za.co.voelgoed.fastcheck.app.shell.AuthenticatedShellScreen
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
@@ -93,6 +94,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var apiEnvironmentConfig: ApiEnvironmentConfig
 
+    @Inject
+    lateinit var attendeeSyncOrchestrator: AttendeeSyncOrchestrator
+
     private val authViewModel: AuthViewModel by viewModels()
     private val sessionGateViewModel: SessionGateViewModel by viewModels()
     private val appShellViewModel: AppShellViewModel by viewModels()
@@ -127,6 +131,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        attendeeSyncOrchestrator.start()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.authenticatedShellComposeView.setViewCompositionStrategy(

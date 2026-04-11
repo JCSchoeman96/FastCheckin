@@ -307,6 +307,66 @@ class EventDestinationPresenterTest {
             .contains("Upload quarantine rows")
     }
 
+    @Test
+    fun staleCacheWithSyncFailuresShowsSyncDelayedMessaging() {
+        val uiState =
+            presenter.present(
+                session = session(),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:00:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                        syncType = "incremental",
+                        attendeeCount = 100,
+                        consecutiveFailures = 2
+                    ),
+                attendeeMetrics =
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 100,
+                        currentlyInsideCount = 0,
+                        attendeesWithRemainingCheckinsCount = 100,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
+                    )
+            )
+
+        assertThat(uiState.statusChip.text).isEqualTo("Sync delayed")
+        assertThat(uiState.statusMessage).contains("Sync delayed, scanning continues")
+    }
+
+    @Test
+    fun staleCacheWithoutFailuresShowsOlderCacheMessaging() {
+        val uiState =
+            presenter.present(
+                session = session(),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:00:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                        syncType = "incremental",
+                        attendeeCount = 100,
+                        consecutiveFailures = 0
+                    ),
+                attendeeMetrics =
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 100,
+                        currentlyInsideCount = 0,
+                        attendeesWithRemainingCheckinsCount = 100,
+                        activeOverlayCount = 0,
+                        unresolvedConflictCount = 0
+                    )
+            )
+
+        assertThat(uiState.statusChip.text).isEqualTo("Cache may be old")
+        assertThat(uiState.statusMessage).contains("older local sync")
+    }
+
     private fun session(): ScannerSession =
         ScannerSession(
             eventId = 5,
