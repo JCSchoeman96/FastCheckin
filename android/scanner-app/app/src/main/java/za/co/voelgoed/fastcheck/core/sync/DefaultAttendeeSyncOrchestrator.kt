@@ -14,6 +14,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -73,7 +74,7 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
         consumerJob =
             scope.launch {
                 for (ignored in syncRequests) {
-                    runOneSyncCycle()
+                    runBackgroundSyncCycle()
                 }
             }
 
@@ -113,17 +114,37 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
     }
 
     override suspend fun runSyncCycleNow() {
-        runOneSyncCycle(failIfOffline = true)
+        try {
+            runOneSyncCycle(failIfOffline = true)
+        } catch (t: Throwable) {
+            if (shouldScheduleRetry(t)) {
+                scheduleBackoffRetry()
+            }
+            throw t
+        }
     }
 
     private fun enqueueSyncRequest() {
         syncRequests.trySend(Unit)
     }
 
+    private suspend fun runBackgroundSyncCycle() {
+        try {
+            runOneSyncCycle(failIfOffline = false)
+        } catch (t: Throwable) {
+            if (t is CancellationException) {
+                throw t
+            }
+            if (shouldScheduleRetry(t)) {
+                scheduleBackoffRetry()
+            }
+        }
+    }
+
     private suspend fun runOneSyncCycle(failIfOffline: Boolean = false) {
         if (!connectivityMonitor.isOnline.value) {
             if (failIfOffline) {
-                throw IllegalStateException("Cannot sync while offline.")
+                throw NonRetryableSyncException("Cannot sync while offline.")
             }
             return
         }
@@ -132,22 +153,30 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
             withContext(Dispatchers.IO) {
                 sessionRepository.currentSession()
             }
-                ?: return
+                ?: if (failIfOffline) {
+                    throw NonRetryableSyncException("No active session. Login before syncing.")
+                } else {
+                    return
+                }
 
-        val eventId = session.eventId
+        val mode = resolveMode(session.eventId)
         try {
-            val mode = resolveMode(eventId)
             withContext(Dispatchers.IO) {
                 syncRepository.syncAttendees(mode)
             }
-            sessionIntegrityFailures = 0
         } catch (pagination: SyncPaginationException) {
             sessionIntegrityFailures += 1
-            scheduleBackoffRetry()
-        } catch (_: Throwable) {
-            scheduleBackoffRetry()
+            throw pagination
         }
+        sessionIntegrityFailures = 0
     }
+
+    private fun shouldScheduleRetry(t: Throwable): Boolean =
+        t !is NonRetryableSyncException && t !is CancellationException
+
+    private class NonRetryableSyncException(
+        message: String
+    ) : IllegalStateException(message)
 
     private fun scheduleBackoffRetry() {
         retryJob?.cancel()

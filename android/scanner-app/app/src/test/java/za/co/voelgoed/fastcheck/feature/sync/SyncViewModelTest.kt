@@ -239,6 +239,19 @@ class SyncViewModelTest {
     }
 
     @Test
+    fun bootstrapDoesNotReportSuccessWhenSyncCompletesWithoutCurrentEventStatus() = runTest(dispatcher) {
+        val repo = RecordingSyncRepository(behavior = { null })
+        val viewModel = syncViewModel(repo, clock)
+
+        viewModel.beginAuthenticatedEventBootstrap(7)
+        advanceUntilIdle()
+
+        assertThat(repo.callCount).isEqualTo(1)
+        assertThat(viewModel.uiState.value.bootstrapStatus).isEqualTo(BootstrapSyncStatus.Failed)
+        assertThat(viewModel.uiState.value.errorMessage).isEqualTo("Attendee sync failed.")
+    }
+
+    @Test
     fun bootstrapDoesNotRerunUnnecessarilyForSameEventAfterSuccess() = runTest(dispatcher) {
         val syncedStatus =
             AttendeeSyncStatus(

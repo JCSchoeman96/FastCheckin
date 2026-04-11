@@ -146,6 +146,14 @@ class SyncViewModel @Inject constructor(
                 .onSuccess {
                     val status = syncRepository.currentSyncStatus()
                     _currentEventSyncStatus.value = status
+                    val bootstrapSyncSucceeded =
+                        !isBootstrap || (bootstrapEventId != null && status?.eventId == bootstrapEventId)
+                    val successErrorMessage =
+                        if (isBootstrap && !bootstrapSyncSucceeded) {
+                            "Attendee sync failed."
+                        } else {
+                            null
+                        }
                     _uiState.update {
                         it.copy(
                             isSyncing = false,
@@ -158,12 +166,14 @@ class SyncViewModel @Inject constructor(
                                         }
                                     "Synced ${sync.attendeeCount} attendees via $syncType sync."
                                 } ?: "No active session. Login before syncing.",
-                            errorMessage = null,
+                            errorMessage = successErrorMessage,
                             isRateLimited = false,
                             nextAllowedSyncAtMillis = null,
                             bootstrapStatus =
-                                if (isBootstrap) {
+                                if (isBootstrap && bootstrapSyncSucceeded) {
                                     BootstrapSyncStatus.Succeeded
+                                } else if (isBootstrap) {
+                                    BootstrapSyncStatus.Failed
                                 } else {
                                     it.bootstrapStatus
                                 },

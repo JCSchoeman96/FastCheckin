@@ -85,9 +85,10 @@ class DefaultAdmitScanUseCaseTest {
         lookup: AttendeeLookupRepository,
         scannerDao: FakeScannerDao,
         session: SessionAuthGateway = FakeSessionAuthGateway(eventId = 5L, operatorName = "Op"),
-        syncStatus: AttendeeSyncStatus? = trustedSync
+        syncStatus: AttendeeSyncStatus? = trustedSync,
+        syncRepositoryOverride: SyncRepository? = null
     ): DefaultAdmitScanUseCase {
-        val syncRepo = FakeSyncRepository(syncStatus)
+        val syncRepo = syncRepositoryOverride ?: FakeSyncRepository(syncStatus)
         return DefaultAdmitScanUseCase(
             attendeeLookupRepository = lookup,
             scannerDao = scannerDao,
@@ -164,6 +165,46 @@ class DefaultAdmitScanUseCaseTest {
         assertThat(decision).isInstanceOf(LocalAdmissionDecision.ReviewRequired::class.java)
         assertThat((decision as LocalAdmissionDecision.ReviewRequired).reason)
             .isEqualTo(LocalAdmissionReviewReason.CacheNotTrusted)
+    }
+
+    @Test
+    fun staleMissingTicketFallsBackToReviewWhenAssistSyncThrows() = runTest {
+        val staleStatus =
+            AttendeeSyncStatus(
+                eventId = 5L,
+                lastServerTime = "2026-04-06T07:00:00Z",
+                lastSuccessfulSyncAt = "2026-04-06T07:00:00Z",
+                syncType = "incremental",
+                attendeeCount = 80,
+                bootstrapCompletedAt = "2026-04-06T07:00:00Z"
+            )
+        val throwingSyncRepository =
+            object : SyncRepository {
+                var syncCalls: Int = 0
+
+                override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
+                    syncCalls += 1
+                    throw IllegalStateException("assist failed")
+                }
+
+                override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
+
+                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+            }
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(null),
+                scannerDao = FakeScannerDao(),
+                syncStatus = staleStatus,
+                syncRepositoryOverride = throwingSyncRepository
+            )
+
+        val decision = useCase.admit("VG-404", ScanDirection.IN, "Op", "Main")
+
+        assertThat(throwingSyncRepository.syncCalls).isEqualTo(1)
+        assertThat(decision).isInstanceOf(LocalAdmissionDecision.ReviewRequired::class.java)
+        assertThat((decision as LocalAdmissionDecision.ReviewRequired).reason)
+            .isEqualTo(LocalAdmissionReviewReason.TicketNotInLocalAttendeeList)
     }
 
     @Test

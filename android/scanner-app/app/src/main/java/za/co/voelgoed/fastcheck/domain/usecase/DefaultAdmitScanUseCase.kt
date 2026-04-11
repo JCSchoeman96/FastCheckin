@@ -4,6 +4,7 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
@@ -104,8 +105,17 @@ class DefaultAdmitScanUseCase @Inject constructor(
         if (attendee == null && readiness.readiness == AdmissionCacheReadiness.READY_STALE) {
             attendeeSyncOrchestrator.notifyStaleScanRefreshAdvisory()
             if (connectivityMonitor.isOnline.value) {
-                withTimeoutOrNull(SCAN_ASSIST_TIMEOUT_MS) {
-                    syncRepository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+                try {
+                    withTimeoutOrNull(SCAN_ASSIST_TIMEOUT_MS) {
+                        syncRepository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (assistError: Throwable) {
+                    ScannerRuntimeLogger.w(
+                        LOG_TAG,
+                        "stale_assist_sync_failed eventId=$eventId ticket=${maskTicketCode(canonicalTicketCode)} message=${assistError.message}"
+                    )
                 }
             }
             attendee =
