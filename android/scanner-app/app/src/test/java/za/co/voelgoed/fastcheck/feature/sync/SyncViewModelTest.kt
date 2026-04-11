@@ -17,6 +17,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
+import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.repository.SyncRateLimitedException
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -42,18 +44,48 @@ class SyncViewModelTest {
     ) : SyncRepository {
         var callCount: Int = 0
 
+        private var lastSyncResult: AttendeeSyncStatus? = null
+
         override suspend fun syncAttendees(
-            mode: za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
+            mode: AttendeeSyncMode
         ): AttendeeSyncStatus? {
             callCount += 1
-            return behavior()
+            lastSyncResult = behavior()
+            return lastSyncResult
         }
 
-        override suspend fun currentSyncStatus(): AttendeeSyncStatus? = currentStatusProvider()
+        override suspend fun currentSyncStatus(): AttendeeSyncStatus? =
+            lastSyncResult ?: currentStatusProvider()
 
         override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> =
             error("Not used in this test")
     }
+
+    private class RecordingOrchestrator(
+        private val repository: RecordingSyncRepository
+    ) : AttendeeSyncOrchestrator {
+        override fun start() = Unit
+
+        override fun notifyAppForeground() = Unit
+
+        override fun notifyStaleScanRefreshAdvisory() = Unit
+
+        override fun notifyConnectivityRestored() = Unit
+
+        override suspend fun runSyncCycleNow() {
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+        }
+    }
+
+    private fun syncViewModel(
+        repository: RecordingSyncRepository,
+        clock: Clock
+    ): SyncViewModel =
+        SyncViewModel(
+            syncRepository = repository,
+            attendeeSyncOrchestrator = RecordingOrchestrator(repository),
+            clock = clock
+        )
 
     @Test
     fun rapidTapsWhileSyncing_doNotTriggerMultipleCalls() = runTest(dispatcher) {
@@ -67,7 +99,7 @@ class SyncViewModelTest {
                     attendeeCount = 10
                 )
             })
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.syncAttendees()
         viewModel.syncAttendees()
@@ -87,7 +119,7 @@ class SyncViewModelTest {
                     retryAfterMillis = 10_000L
                 )
             })
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.syncAttendees()
         advanceUntilIdle()
@@ -100,8 +132,7 @@ class SyncViewModelTest {
         assertThat(repo.callCount).isEqualTo(1)
 
         val advancedClock = Clock.offset(clock, Duration.ofMillis(11_000L))
-        val viewModelWithAdvancedClock =
-            SyncViewModel(syncRepository = repo, clock = advancedClock)
+        val viewModelWithAdvancedClock = syncViewModel(repo, advancedClock)
 
         viewModelWithAdvancedClock.syncAttendees()
         advanceUntilIdle()
@@ -120,7 +151,7 @@ class SyncViewModelTest {
                 attendeeCount = 42
             )
         val repo = RecordingSyncRepository(behavior = { syncedStatus })
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.beginAuthenticatedEventBootstrap(7)
         runCurrent()
@@ -147,7 +178,7 @@ class SyncViewModelTest {
                 behavior = { error("Should not sync") },
                 currentStatusProvider = { existingStatus }
             )
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.beginAuthenticatedEventBootstrap(9)
         advanceUntilIdle()
@@ -180,7 +211,7 @@ class SyncViewModelTest {
                 behavior = { targetStatus },
                 currentStatusProvider = { otherEventStatus }
             )
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.beginAuthenticatedEventBootstrap(8)
         advanceUntilIdle()
@@ -195,7 +226,7 @@ class SyncViewModelTest {
             RecordingSyncRepository(
                 behavior = { throw IllegalStateException("Backend timeout") }
             )
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.beginAuthenticatedEventBootstrap(7)
         advanceUntilIdle()
@@ -218,7 +249,7 @@ class SyncViewModelTest {
                 attendeeCount = 42
             )
         val repo = RecordingSyncRepository(behavior = { syncedStatus })
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.beginAuthenticatedEventBootstrap(7)
         advanceUntilIdle()
@@ -240,7 +271,7 @@ class SyncViewModelTest {
                 attendeeCount = 42
             )
         val repo = RecordingSyncRepository(behavior = { syncedStatus })
-        val viewModel = SyncViewModel(syncRepository = repo, clock = clock)
+        val viewModel = syncViewModel(repo, clock)
 
         viewModel.beginAuthenticatedEventBootstrap(7)
         advanceUntilIdle()

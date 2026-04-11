@@ -9,6 +9,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
@@ -111,16 +112,19 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
         enqueueSyncRequest()
     }
 
-    override fun requestManualSync() {
-        enqueueSyncRequest()
+    override suspend fun runSyncCycleNow() {
+        runOneSyncCycle(failIfOffline = true)
     }
 
     private fun enqueueSyncRequest() {
         syncRequests.trySend(Unit)
     }
 
-    private suspend fun runOneSyncCycle() {
+    private suspend fun runOneSyncCycle(failIfOffline: Boolean = false) {
         if (!connectivityMonitor.isOnline.value) {
+            if (failIfOffline) {
+                throw IllegalStateException("Cannot sync while offline.")
+            }
             return
         }
 
@@ -149,7 +153,10 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
         retryJob?.cancel()
         retryJob =
             scope.launch {
-                val failures = syncRepository.currentSyncStatus()?.consecutiveFailures ?: 1
+                val status = syncRepository.currentSyncStatus()
+                val transport = status?.consecutiveFailures ?: 0
+                val integrity = status?.consecutiveIntegrityFailures ?: 0
+                val failures = max(transport, integrity).coerceAtLeast(1)
                 val idx = (failures - 1).coerceIn(0, config.backoffScheduleMs.lastIndex)
                 val delayMs = config.backoffScheduleMs[idx]
                 delay(delayMs)

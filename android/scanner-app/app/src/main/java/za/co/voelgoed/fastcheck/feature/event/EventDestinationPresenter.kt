@@ -6,6 +6,7 @@ import java.time.Instant
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
@@ -89,7 +90,7 @@ class EventDestinationPresenter(
                 EventStatusChipUiModel("Attendee cache pending", StatusTone.Warning)
 
             currentCacheStatus == CurrentCacheStatus.Stale &&
-                (currentEventSyncStatus?.consecutiveFailures ?: 0) > 0 ->
+                currentEventSyncStatus?.isSyncStruggling() == true ->
                 EventStatusChipUiModel("Sync delayed", StatusTone.Warning)
 
             currentCacheStatus == CurrentCacheStatus.Stale ->
@@ -135,7 +136,7 @@ class EventDestinationPresenter(
                 "This event does not have a current attendee cache yet."
 
             currentCacheStatus == CurrentCacheStatus.Stale &&
-                (currentEventSyncStatus?.consecutiveFailures ?: 0) > 0 ->
+                currentEventSyncStatus?.isSyncStruggling() == true ->
                 "Sync delayed, scanning continues. Attendee sync is retrying in the background."
 
             currentCacheStatus == CurrentCacheStatus.Stale ->
@@ -413,16 +414,13 @@ class EventDestinationPresenter(
                 .getOrNull()
                 ?: return false
 
-        return Duration.between(syncedAt, clock.instant()) > STALE_SYNC_THRESHOLD
+        return Duration.between(syncedAt, clock.instant()) >
+            AdmissionRuntimePolicy.ATTENDEE_CACHE_STALE_THRESHOLD
     }
 
     private enum class CurrentCacheStatus {
         Ready,
         Stale,
         Unavailable
-    }
-
-    private companion object {
-        val STALE_SYNC_THRESHOLD: Duration = Duration.ofMinutes(30)
     }
 }

@@ -113,7 +113,7 @@ class DefaultAdmitScanUseCaseTest {
 
                     override fun notifyConnectivityRestored() = Unit
 
-                    override fun requestManualSync() = Unit
+                    override suspend fun runSyncCycleNow() = Unit
                 },
             clock = clock
         )

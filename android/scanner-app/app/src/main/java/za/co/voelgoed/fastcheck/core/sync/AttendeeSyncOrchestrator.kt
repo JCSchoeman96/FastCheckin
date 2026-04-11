@@ -15,5 +15,9 @@ interface AttendeeSyncOrchestrator {
 
     fun notifyConnectivityRestored()
 
-    fun requestManualSync()
+    /**
+     * Runs one sync cycle now (same mode resolution as background triggers). Use for operator
+     * manual sync and bootstrap flows that must await completion.
+     */
+    suspend fun runSyncCycleNow()
 }

@@ -14,4 +14,8 @@ data class AttendeeSyncStatus(
     val lastFullReconcileAt: String? = null,
     val incrementalCyclesSinceFullReconcile: Int = 0,
     val consecutiveIntegrityFailures: Int = 0
-)
+) {
+    /** True when recent sync attempts have failed for transport reasons or pagination/integrity checks. */
+    fun isSyncStruggling(): Boolean =
+        consecutiveFailures > 0 || consecutiveIntegrityFailures > 0
+}

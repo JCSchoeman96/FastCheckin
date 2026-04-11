@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
 import za.co.voelgoed.fastcheck.data.repository.SyncRateLimitedException
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -18,6 +18,7 @@ import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 @HiltViewModel
 class SyncViewModel @Inject constructor(
     private val syncRepository: SyncRepository,
+    private val attendeeSyncOrchestrator: AttendeeSyncOrchestrator,
     private val clock: Clock
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(SyncScreenUiState())
@@ -141,8 +142,9 @@ class SyncViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            runCatching { syncRepository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }
-                .onSuccess { status ->
+            runCatching { attendeeSyncOrchestrator.runSyncCycleNow() }
+                .onSuccess {
+                    val status = syncRepository.currentSyncStatus()
                     _currentEventSyncStatus.value = status
                     _uiState.update {
                         it.copy(
