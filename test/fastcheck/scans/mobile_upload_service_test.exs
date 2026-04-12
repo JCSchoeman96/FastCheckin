@@ -175,6 +175,30 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
     assert message =~ "Payment invalid"
   end
 
+  test "authoritative mode rejects not_scannable tickets using DB authority", %{event: event} do
+    configure_ingestion()
+
+    _revoked =
+      %Attendee{
+        event_id: event.id,
+        ticket_code: "REVOKED-1",
+        first_name: "Revoked",
+        last_name: "User",
+        payment_status: "completed",
+        allowed_checkins: 1,
+        checkins_remaining: 1,
+        scan_eligibility: "not_scannable"
+      }
+      |> Repo.insert!()
+
+    scan = valid_scan("idem-not-scannable", "REVOKED-1")
+
+    assert {:ok, [%{status: "error", message: message}]} =
+             MobileUploadService.upload_batch(event.id, [scan])
+
+    assert message =~ "no longer valid for scanning"
+  end
+
   test "authoritative mode surfaces build-timeout hot-state failures", %{event: event} do
     namespace = unique_namespace("build-timeout")
 
