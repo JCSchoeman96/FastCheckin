@@ -222,6 +222,9 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
             return AttendeeSyncMode.FULL_RECONCILE
         }
 
+        // Upgraded rows can legitimately have null lastFullReconcileAt before backfill runs.
+        // We anchor wall-clock reconcile checks to lastSuccessfulSyncAt in that case.
+        // If neither anchor parses, we conservatively force FULL_RECONCILE.
         val fullReconcileAnchor = status.lastFullReconcileAt ?: status.lastSuccessfulSyncAt
         val lastFull =
             fullReconcileAnchor?.let {

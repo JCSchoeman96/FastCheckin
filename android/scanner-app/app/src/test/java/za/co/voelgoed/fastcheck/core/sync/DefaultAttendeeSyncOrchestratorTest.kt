@@ -139,10 +139,12 @@ class DefaultAttendeeSyncOrchestratorTest {
     @Test
     fun runSyncCycleNow_honorsRetryAfterDelayWhenRateLimited() = runBlocking {
         var callCount = 0
+        val callNanos = mutableListOf<Long>()
         val syncRepository =
             RecordingSyncRepository(
                 syncBehavior = {
                     callCount += 1
+                    callNanos += System.nanoTime()
                     if (callCount == 1) {
                         throw SyncRateLimitedException(
                             message = "rate limited",
@@ -167,37 +169,40 @@ class DefaultAttendeeSyncOrchestratorTest {
 
         waitForAtLeastSyncCalls(repository = syncRepository, expectedCalls = 2)
         assertThat(syncRepository.syncCalls).isAtLeast(2)
+        val elapsedMs = (callNanos[1] - callNanos[0]) / 1_000_000
+        // Keep this loose to avoid flaky timing checks while still proving not-immediate retry.
+        assertThat(elapsedMs).isAtLeast(10L)
     }
 
     @Test
     fun nullLastFullReconcileAtUsesLastSuccessfulSyncAnchorBeforeForcingFullReconcile() {
         runBlocking {
-        val statusWithUpgradeStyleNullLastFull =
-            AttendeeSyncStatus(
-                eventId = 5L,
-                lastServerTime = "2026-04-11T09:58:00Z",
-                lastSuccessfulSyncAt = "2026-04-11T10:00:00Z",
-                syncType = "incremental",
-                attendeeCount = 12,
-                lastFullReconcileAt = null,
-                incrementalCyclesSinceFullReconcile = 0,
-                consecutiveFailures = 0,
-                consecutiveIntegrityFailures = 0
-            )
-        val syncRepository =
-            RecordingSyncRepository(
-                syncBehavior = { statusWithUpgradeStyleNullLastFull },
-                currentStatusProvider = { statusWithUpgradeStyleNullLastFull }
-            )
-        val orchestrator =
-            DefaultAttendeeSyncOrchestrator(
-                syncRepository = syncRepository,
-                sessionRepository = fixedSessionRepository(),
-                connectivityMonitor = alwaysOnline(),
-                clock = TEST_CLOCK
-            )
+            val statusWithUpgradeStyleNullLastFull =
+                AttendeeSyncStatus(
+                    eventId = 5L,
+                    lastServerTime = "2026-04-11T09:58:00Z",
+                    lastSuccessfulSyncAt = "2026-04-11T10:00:00Z",
+                    syncType = "incremental",
+                    attendeeCount = 12,
+                    lastFullReconcileAt = null,
+                    incrementalCyclesSinceFullReconcile = 0,
+                    consecutiveFailures = 0,
+                    consecutiveIntegrityFailures = 0
+                )
+            val syncRepository =
+                RecordingSyncRepository(
+                    syncBehavior = { statusWithUpgradeStyleNullLastFull },
+                    currentStatusProvider = { statusWithUpgradeStyleNullLastFull }
+                )
+            val orchestrator =
+                DefaultAttendeeSyncOrchestrator(
+                    syncRepository = syncRepository,
+                    sessionRepository = fixedSessionRepository(),
+                    connectivityMonitor = alwaysOnline(),
+                    clock = TEST_CLOCK
+                )
 
-        orchestrator.runSyncCycleNow()
+            orchestrator.runSyncCycleNow()
 
             assertThat(syncRepository.modes).containsExactly(AttendeeSyncMode.INCREMENTAL)
         }
