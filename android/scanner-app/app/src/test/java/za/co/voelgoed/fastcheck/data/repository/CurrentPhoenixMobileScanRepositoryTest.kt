@@ -654,7 +654,12 @@ class CurrentPhoenixMobileScanRepositoryTest {
             error("Not used in this test")
         }
 
-        override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+        override suspend fun syncAttendees(
+            since: String?,
+            cursor: String?,
+            sinceInvalidationId: Long,
+            limit: Int
+        ): MobileSyncResponse {
             error("Not used in this test")
         }
 

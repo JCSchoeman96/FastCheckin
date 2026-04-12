@@ -18,5 +18,9 @@ data class SyncMetadataEntity(
     val lastFullReconcileAt: String? = null,
     val incrementalCyclesSinceFullReconcile: Int = 0,
     val consecutiveIntegrityFailures: Int = 0,
-    val integrityFailuresInForegroundSession: Int = 0
+    val integrityFailuresInForegroundSession: Int = 0,
+    /** Last applied server `invalidations_checkpoint` for GET /api/v1/mobile/attendees. */
+    val lastInvalidationsCheckpoint: Long = 0L,
+    /** Last observed `event_sync_version` from attendee sync responses. */
+    val lastEventSyncVersion: Long = 0L
 )

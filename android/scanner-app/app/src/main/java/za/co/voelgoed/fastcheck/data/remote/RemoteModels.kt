@@ -27,9 +27,23 @@ data class MobileSyncResponse(
 data class MobileSyncPayload(
     val server_time: String,
     val attendees: List<AttendeeDto>,
+    val invalidations: List<AttendeeInvalidationDto> = emptyList(),
     val count: Int,
     val sync_type: String,
-    val next_cursor: String?
+    val next_cursor: String?,
+    val invalidations_checkpoint: Long = 0L,
+    val event_sync_version: Long = 0L
+)
+
+data class AttendeeInvalidationDto(
+    val id: Long,
+    val event_id: Long,
+    val attendee_id: Long,
+    val ticket_code: String,
+    val change_type: String,
+    val reason_code: String,
+    val effective_at: String?,
+    val source_sync_run_id: String? = null
 )
 
 data class AttendeeDto(

@@ -685,7 +685,12 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                            override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -728,7 +733,12 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                            override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                                 throw CancellationException("caller cancelled")
                             }
 
@@ -794,7 +804,12 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                            override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -1071,7 +1086,12 @@ class CurrentPhoenixSyncRepositoryTest {
                 override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                     error("Not used in this test")
 
-                override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                     val responseBody =
                         ResponseBody.create(
                             "application/json".toMediaType(),
@@ -1182,10 +1202,12 @@ class CurrentPhoenixSyncRepositoryTest {
         data class SyncCall(
             val since: String?,
             val cursor: String?,
+            val sinceInvalidationId: Long,
             val limit: Int
         )
 
         var lastSince: String? = null
+        var lastSinceInvalidationId: Long = 0L
         val syncCalls: MutableList<SyncCall> = mutableListOf()
         var pagedResponses: MutableList<MobileSyncResponse> = mutableListOf()
         var syncResponse: MobileSyncResponse =
@@ -1211,10 +1233,12 @@ class CurrentPhoenixSyncRepositoryTest {
         override suspend fun syncAttendees(
             since: String?,
             cursor: String?,
+            sinceInvalidationId: Long,
             limit: Int
         ): MobileSyncResponse {
             lastSince = since
-            syncCalls += SyncCall(since = since, cursor = cursor, limit = limit)
+            lastSinceInvalidationId = sinceInvalidationId
+            syncCalls += SyncCall(since = since, cursor = cursor, sinceInvalidationId = sinceInvalidationId, limit = limit)
 
             return if (pagedResponses.isNotEmpty()) {
                 pagedResponses.removeFirst()

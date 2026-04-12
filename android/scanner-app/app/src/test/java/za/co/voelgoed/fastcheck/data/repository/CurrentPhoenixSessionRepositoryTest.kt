@@ -417,7 +417,12 @@ class CurrentPhoenixSessionRepositoryTest {
     ) : PhoenixMobileApi {
         override suspend fun login(body: MobileLoginRequest): MobileLoginResponse = loginResponse
 
-        override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+        override suspend fun syncAttendees(
+            since: String?,
+            cursor: String?,
+            sinceInvalidationId: Long,
+            limit: Int
+        ): MobileSyncResponse {
             error("Not used in this test")
         }
 

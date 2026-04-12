@@ -16,8 +16,15 @@ class PhoenixMobileRemoteDataSource(
     suspend fun syncAttendees(
         since: String?,
         cursor: String? = null,
+        sinceInvalidationId: Long = 0L,
         limit: Int
-    ): MobileSyncResponse = api.syncAttendees(since = since, cursor = cursor, limit = limit)
+    ): MobileSyncResponse =
+        api.syncAttendees(
+            since = since,
+            cursor = cursor,
+            sinceInvalidationId = sinceInvalidationId,
+            limit = limit
+        )
 
     suspend fun uploadScans(scans: List<QueuedScanPayload>): UploadScansTransportResponse {
         val response = api.uploadScans(UploadScansRequest(scans = scans))
