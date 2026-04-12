@@ -1,8 +1,10 @@
 defmodule FastCheck.Events.SyncTest do
   use FastCheck.DataCase, async: false
 
+  import Ecto.Query
   import FastCheck.Fixtures
 
+  alias FastCheck.Attendees.{Attendee, AttendeeInvalidationEvent, ReasonCodes}
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Event
@@ -129,7 +131,53 @@ defmodule FastCheck.Events.SyncTest do
         end)
 
       assert {:ok, _message} = result
-      assert event_update_count == 2
+
+      # Full sync: finalize_sync touches the event row; authoritative reconciliation bumps `event_sync_version`.
+      assert event_update_count == 3
+    end
+
+    test "full sync reconciles locals missing from authoritative snapshot to not_scannable" do
+      event = create_event(%{total_tickets: 2})
+      _keep = create_attendee(event, %{ticket_code: "KEEP-AUTH"})
+      gone = create_attendee(event, %{ticket_code: "GONE-AUTH"})
+
+      mock_tickera_sync_requests(
+        event_total: 1,
+        attendees: [unchanged_remote_attendee("KEEP-AUTH")]
+      )
+
+      assert {:ok, _message} = Events.sync_event(event.id)
+
+      assert Repo.get_by!(Attendee, event_id: event.id, ticket_code: "KEEP-AUTH").scan_eligibility ==
+               "active"
+
+      dropped = Repo.get_by!(Attendee, event_id: event.id, ticket_code: "GONE-AUTH")
+      assert dropped.scan_eligibility == "not_scannable"
+      assert dropped.ineligibility_reason == ReasonCodes.source_missing_from_authoritative_sync()
+
+      assert Repo.exists?(
+               from(i in AttendeeInvalidationEvent,
+                 where: i.attendee_id == ^gone.id and i.event_id == ^event.id
+               )
+             )
+    end
+
+    test "incremental sync does not reconcile locals missing from the remote fetch" do
+      last_sync_at =
+        DateTime.utc_now() |> DateTime.add(-3600, :second) |> DateTime.truncate(:second)
+
+      event = create_event(%{total_tickets: 2, last_sync_at: last_sync_at})
+
+      stale = create_attendee(event, %{ticket_code: "STALE-INCR"})
+
+      mock_tickera_sync_requests(
+        event_total: 1,
+        attendees: [unchanged_remote_attendee("ONLY-REMOTE")]
+      )
+
+      assert {:ok, _message} = Events.sync_event(event.id, nil, incremental: true)
+
+      assert Repo.get_by!(Attendee, id: stale.id).scan_eligibility == "active"
     end
   end
 

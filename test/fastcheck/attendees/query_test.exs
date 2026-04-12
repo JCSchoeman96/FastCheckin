@@ -3,6 +3,16 @@ defmodule FastCheck.Attendees.QueryTest do
 
   alias FastCheck.Attendees.Query
 
+  describe "fetch_attendee_for_update/2" do
+    test "returns TICKET_NOT_SCANNABLE for not_scannable rows" do
+      event = create_event()
+      attendee = create_attendee(event, %{ticket_code: "NS-1", scan_eligibility: "not_scannable"})
+
+      assert {:error, "TICKET_NOT_SCANNABLE", _msg} =
+               Query.fetch_attendee_for_update(event.id, attendee.ticket_code)
+    end
+  end
+
   describe "module exports" do
     test "exports list_event_attendees/1" do
       assert_exported(Query, :list_event_attendees, 1)

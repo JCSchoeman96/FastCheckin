@@ -53,6 +53,27 @@ defmodule FastCheck.AttendeesTest do
       assert refreshed.inserted_at == existing.inserted_at
     end
 
+    test "full sync upsert does not overwrite scan_eligibility audit fields" do
+      event = insert_event!("Eligibility preserve")
+
+      existing =
+        create_attendee_record(event, %{ticket_code: "ELIG-1", scan_eligibility: "not_scannable"})
+
+      payload = [
+        %{
+          "checksum" => "ELIG-1",
+          "allowed_checkins" => "1",
+          "payment_date" => "Februarie 19 2026 - 8:14 vm",
+          "custom_fields" => [["Buyer Name", "Sync User"], ["Buyer E-mail", "sync@example.com"]]
+        }
+      ]
+
+      assert {:ok, 1} = Attendees.create_bulk(event.id, payload, incremental: false)
+
+      refreshed = Repo.get_by!(Attendee, event_id: event.id, ticket_code: existing.ticket_code)
+      assert refreshed.scan_eligibility == "not_scannable"
+    end
+
     test "handles boundary at 500 and 501 rows" do
       event = insert_event!("Boundary Event")
       payload_500 = attendee_payloads(500)

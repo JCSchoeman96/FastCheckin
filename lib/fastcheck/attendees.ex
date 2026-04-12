@@ -28,6 +28,7 @@ defmodule FastCheck.Attendees do
 
   Options:
   - `:incremental` - If true, uses upsert to update existing records (default: false)
+  - `:skip_inner_transaction` - If true, runs inserts without wrapping `Repo.transaction/1` (caller must provide outer transaction).
 
   Returns `{:ok, count}` where `count` is the number of new/updated attendees stored.
   """
@@ -38,6 +39,7 @@ defmodule FastCheck.Attendees do
   def create_bulk(event_id, attendees_data, opts)
       when is_integer(event_id) and is_list(attendees_data) do
     incremental = Keyword.get(opts, :incremental, false)
+    skip_inner_transaction = Keyword.get(opts, :skip_inner_transaction, false)
     insert_batch_fun = Keyword.get(opts, :insert_batch_fun, &default_insert_batch/2)
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
@@ -76,43 +78,54 @@ defmodule FastCheck.Attendees do
           total_chunks = length(chunks)
 
           # Always upsert so syncs can correct stale fields (for example payment_status)
-          # while preserving scan-state fields managed locally during check-in flow.
-          transaction_result =
-            Repo.transaction(fn ->
-              chunks
-              |> Enum.with_index(1)
-              |> Enum.reduce(0, fn {chunk, chunk_index}, processed_count ->
-                try do
-                  # Keep sync count semantics tied to actual DB response.
-                  {chunk_count, _} =
-                    insert_batch_fun.(
-                      chunk,
-                      on_conflict:
-                        {:replace_all_except,
-                         [
-                           :id,
-                           :checked_in_at,
-                           :last_checked_in_at,
-                           :checkins_remaining,
-                           :is_currently_inside,
-                           :inserted_at
-                         ]},
-                      conflict_target: conflict_target
-                    )
+          # while preserving scan-state fields and eligibility/audit columns during check-in / revocation flows.
+          run_chunks = fn ->
+            chunks
+            |> Enum.with_index(1)
+            |> Enum.reduce(0, fn {chunk, chunk_index}, processed_count ->
+              try do
+                # Keep sync count semantics tied to actual DB response.
+                {chunk_count, _} =
+                  insert_batch_fun.(
+                    chunk,
+                    on_conflict:
+                      {:replace_all_except,
+                       [
+                         :id,
+                         :checked_in_at,
+                         :last_checked_in_at,
+                         :checkins_remaining,
+                         :is_currently_inside,
+                         :inserted_at,
+                         :scan_eligibility,
+                         :ineligibility_reason,
+                         :ineligible_since,
+                         :source_last_seen_at,
+                         :last_authoritative_sync_run_id
+                       ]},
+                    conflict_target: conflict_target
+                  )
 
-                  processed_count + chunk_count
-                rescue
-                  exception ->
-                    Logger.error(
-                      "Attendee chunk insert failed for event #{event_id}: " <>
-                        "chunk_index=#{chunk_index} chunk_size=#{length(chunk)} " <>
-                        "total_chunks=#{total_chunks} error=#{Exception.message(exception)}"
-                    )
+                processed_count + chunk_count
+              rescue
+                exception ->
+                  Logger.error(
+                    "Attendee chunk insert failed for event #{event_id}: " <>
+                      "chunk_index=#{chunk_index} chunk_size=#{length(chunk)} " <>
+                      "total_chunks=#{total_chunks} error=#{Exception.message(exception)}"
+                  )
 
-                    Repo.rollback("Failed to store attendees")
-                end
-              end)
+                  Repo.rollback("Failed to store attendees")
+              end
             end)
+          end
+
+          transaction_result =
+            if skip_inner_transaction do
+              {:ok, run_chunks.()}
+            else
+              Repo.transaction(run_chunks)
+            end
 
           count =
             case transaction_result do

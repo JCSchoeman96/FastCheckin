@@ -75,6 +75,12 @@ defmodule FastCheck.Attendees.Attendee do
     field :is_currently_inside, :boolean, default: false
     # Stores the last entrance used during check-in
     field :last_entrance, :string
+    # Scanner / sync eligibility: active (scannable) or not_scannable (revoked upstream)
+    field :scan_eligibility, :string, default: "active"
+    field :ineligibility_reason, :string
+    field :ineligible_since, :utc_datetime
+    field :source_last_seen_at, :utc_datetime
+    field :last_authoritative_sync_run_id, Ecto.UUID
 
     # inserted_at/updated_at timestamps for auditing changes
     timestamps()
@@ -107,7 +113,12 @@ defmodule FastCheck.Attendees.Attendee do
       :monthly_scan_count,
       :is_currently_inside,
       :last_entrance,
-      :event_id
+      :event_id,
+      :scan_eligibility,
+      :ineligibility_reason,
+      :ineligible_since,
+      :source_last_seen_at,
+      :last_authoritative_sync_run_id
     ])
     |> validate_required([:ticket_code, :event_id])
     |> unique_constraint(:ticket_code, name: :unique_ticket_per_event)
