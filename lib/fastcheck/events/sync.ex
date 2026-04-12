@@ -718,8 +718,6 @@ defmodule FastCheck.Events.Sync do
     |> normalize_non_negative_integer()
   end
 
-  defp extract_total_tickets(_essentials), do: nil
-
   defp persist_event_window(_event, nil, nil), do: :unchanged
 
   defp persist_event_window(%Event{} = event, start_dt, end_dt) do

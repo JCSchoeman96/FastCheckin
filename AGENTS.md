@@ -41,6 +41,19 @@ Before substantial work:
 - Create and claim a worktree for each implementation or group of implementations
 - When finished closed down and create a PR with detailed descriptions
 - Run `mix precommit` after repo changes and fix anything it reports.
+
+### Verification commands (Phoenix + Android)
+
+- **`mix precommit`** — day-to-day gate: `deps.get`, compile with warnings as errors, `deps.unlock --unused`, `format`, `credo --strict`, `test` (includes `ecto.create` / `ecto.migrate` via the `test` alias). Does not run Dialyzer or Sobelow.
+- **`mix ci`** — fuller local check aligned with stricter automation: adds `format --check-formatted`, Dialyzer (via `mix dialyzer_check`, which runs `mix dialyzer` in `MIX_ENV=dev` from any host OS), Sobelow, and `test`. Use this before a release or when you want parity with “everything except GitHub-only infra.”
+- **`mix quality`** — static analysis only: format check, credo, `mix dialyzer_check`, Sobelow (no tests).
+
+Android (`android/scanner-app`), from that directory:
+
+- **`./gradlew testDebugUnitTest`** — JVM unit tests.
+- **`./gradlew assembleDebug`** — compile smoke check.
+- **`./gradlew lintDebug`** — Lint (must be clean for error-level issues; `app/lint.xml` documents CameraX `ExperimentalGetImage` opt-in for `UnsafeOptInUsageError`).
+- **`./gradlew connectedDebugAndroidTest`** — on-device/instrumented tests (requires a running emulator or device with `adb`; not run in GitHub Actions by default).
 - Use `Req` for HTTP work in Elixir. Do not introduce `HTTPoison`, `Tesla`, or `:httpc`.
 - Keep LiveView templates wrapped in `<Layouts.app ...>`.
 - Use HEEx, `to_form/2`, `<.form>`, `<.input>`, and `<.icon>` consistently.

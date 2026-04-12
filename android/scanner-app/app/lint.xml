@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CameraX ImageProxy.image is opt-in; Android Lint requires explicit opt-in for ExperimentalGetImage. -->
+<lint>
+    <issue id="UnsafeOptInUsageError">
+        <option name="opt-in" value="androidx.camera.core.ExperimentalGetImage" />
+    </issue>
+</lint>

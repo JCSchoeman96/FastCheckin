@@ -161,9 +161,6 @@ defmodule FastCheck.MixProject do
         "format",
         "credo --strict",
         "test"
-      ],
-      dialyzer_check: [
-        "cmd cmd.exe /c \"set MIX_ENV=dev&& mix dialyzer --quiet-with-result\""
       ]
     ]
   end
