@@ -290,6 +290,19 @@ defmodule FastCheck.Attendees.Scan do
   end
 
   defp handle_existing_attendee_check_in(
+         %Attendee{scan_eligibility: "not_scannable"} = attendee,
+         event_id,
+         _sanitized_code,
+         sanitized_entrance,
+         operator_name,
+         _started_at
+       ) do
+    _ = record_check_in(attendee, event_id, "ineligible", sanitized_entrance, operator_name)
+
+    {:error, "TICKET_NOT_SCANNABLE", "This ticket is no longer valid for scanning"}
+  end
+
+  defp handle_existing_attendee_check_in(
          attendee,
          event_id,
          sanitized_code,

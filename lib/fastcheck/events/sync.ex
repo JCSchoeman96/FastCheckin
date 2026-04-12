@@ -8,6 +8,7 @@ defmodule FastCheck.Events.Sync do
 
   alias Ecto.Changeset
   alias FastCheck.Attendees
+  alias FastCheck.Attendees.Reconciliation
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Cache
@@ -103,21 +104,81 @@ defmodule FastCheck.Events.Sync do
 
     attendees_to_process = attendees_for_sync(event, attendees, incremental)
 
-    case Attendees.create_bulk(event.id, attendees_to_process, incremental: incremental) do
-      {:ok, processed_count} ->
-        complete_sync(
-          event,
-          attendees,
-          total_count,
-          processed_count,
-          pending_total_tickets,
-          incremental,
-          sync_log_id
-        )
+    if incremental do
+      case Attendees.create_bulk(event.id, attendees_to_process, incremental: true) do
+        {:ok, processed_count} ->
+          Events.bump_event_sync_version!(event.id)
 
-      {:error, reason} ->
-        fail_sync(event, sync_log_id, reason, format_reason(reason))
+          complete_sync(
+            event,
+            attendees,
+            total_count,
+            processed_count,
+            pending_total_tickets,
+            incremental,
+            sync_log_id
+          )
+
+        {:error, reason} ->
+          fail_sync(event, sync_log_id, reason, format_reason(reason))
+      end
+    else
+      imported_codes = extract_imported_ticket_codes(attendees)
+      sync_run_id = Ecto.UUID.generate()
+
+      case full_sync_bulk_and_reconcile(
+             event.id,
+             attendees_to_process,
+             imported_codes,
+             sync_run_id
+           ) do
+        {:ok, processed_count} ->
+          complete_sync(
+            event,
+            attendees,
+            total_count,
+            processed_count,
+            pending_total_tickets,
+            incremental,
+            sync_log_id
+          )
+
+        {:error, {:bulk_failed, reason}} ->
+          fail_sync(event, sync_log_id, :bulk_failed, format_reason(reason))
+
+        {:error, reason} ->
+          fail_sync(event, sync_log_id, :transaction_failed, inspect(reason))
+      end
     end
+  end
+
+  defp full_sync_bulk_and_reconcile(event_id, attendees_to_process, imported_codes, sync_run_id) do
+    Repo.transaction(fn ->
+      case Attendees.create_bulk(event_id, attendees_to_process,
+             incremental: false,
+             skip_inner_transaction: true
+           ) do
+        {:ok, processed_count} ->
+          :ok =
+            Reconciliation.apply_after_authoritative_snapshot(
+              event_id,
+              imported_codes,
+              sync_run_id
+            )
+
+          processed_count
+
+        {:error, reason} ->
+          Repo.rollback({:bulk_failed, reason})
+      end
+    end)
+  end
+
+  defp extract_imported_ticket_codes(attendees) when is_list(attendees) do
+    attendees
+    |> Enum.map(fn t -> TickeraClient.parse_attendee(t) |> Map.get(:ticket_code) end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
   end
 
   defp attendees_for_sync(event, attendees, true) do

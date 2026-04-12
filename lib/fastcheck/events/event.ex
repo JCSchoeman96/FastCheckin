@@ -42,6 +42,7 @@ defmodule FastCheck.Events.Event do
           last_soft_sync_at: DateTime.t() | nil,
           last_checked_at: DateTime.t() | nil,
           last_config_sync: DateTime.t() | nil,
+          event_sync_version: integer() | nil,
           attendees: [FastCheck.Attendees.Attendee.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: NaiveDateTime.t() | nil,
           updated_at: NaiveDateTime.t() | nil
@@ -86,6 +87,9 @@ defmodule FastCheck.Events.Event do
     # Timestamp of the last attendee check-in action
     field :last_checked_at, :utc_datetime
     field :last_config_sync, :utc_datetime
+
+    # Monotonic version for mobile attendee/invalidation sync (bumped once per export-affecting txn)
+    field :event_sync_version, :integer, default: 0
 
     # Relationship to all attendees belonging to the event
     has_many :attendees, FastCheck.Attendees.Attendee

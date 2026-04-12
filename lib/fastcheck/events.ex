@@ -60,6 +60,17 @@ defmodule FastCheck.Events do
   @scanner_login_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
 
   @doc """
+  Increments the monotonic mobile sync version for an event (call once per transaction that changes mobile-export-visible state).
+  """
+  @spec bump_event_sync_version!(integer()) :: :ok
+  def bump_event_sync_version!(event_id) when is_integer(event_id) do
+    from(e in Event, where: e.id == ^event_id)
+    |> Repo.update_all(inc: [event_sync_version: 1])
+
+    :ok
+  end
+
+  @doc """
   Warm up ETS cache for a given event.
 
   Loads attendees and entrances into ETS for ultra-fast lookup.

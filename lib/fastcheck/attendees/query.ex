@@ -92,6 +92,9 @@ defmodule FastCheck.Attendees.Query do
         Logger.warning("Attendee not found for event #{event_id} ticket #{ticket_code}")
         {:error, "NOT_FOUND", "Ticket not found"}
 
+      %Attendee{scan_eligibility: "not_scannable"} ->
+        {:error, "TICKET_NOT_SCANNABLE", "This ticket is no longer valid for scanning"}
+
       %Attendee{} = attendee ->
         {:ok, attendee}
     end

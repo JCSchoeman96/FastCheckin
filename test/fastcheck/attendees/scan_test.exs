@@ -1,7 +1,21 @@
 defmodule FastCheck.Attendees.ScanTest do
   use FastCheck.DataCase, async: true
 
+  import FastCheck.Fixtures
+
   alias FastCheck.Attendees.Scan
+
+  describe "check_in/4" do
+    test "rejects not_scannable tickets with TICKET_NOT_SCANNABLE" do
+      event = create_event()
+
+      _attendee =
+        create_attendee(event, %{ticket_code: "REVOKED-1", scan_eligibility: "not_scannable"})
+
+      assert {:error, "TICKET_NOT_SCANNABLE", _msg} =
+               Scan.check_in(event.id, "REVOKED-1", "Main", nil)
+    end
+  end
 
   describe "module exports" do
     test "exports check_in/4" do
