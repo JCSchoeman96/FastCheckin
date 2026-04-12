@@ -61,9 +61,15 @@ class SyncViewModelTest {
             error("Not used in this test")
     }
 
+    /**
+     * Intentionally a test double: ViewModel tests verify UI contract and delegation boundaries,
+     * while scheduling/coalescing policy is covered by DefaultAttendeeSyncOrchestratorTest.
+     */
     private class RecordingOrchestrator(
         private val repository: RecordingSyncRepository
     ) : AttendeeSyncOrchestrator {
+        var runNowCalls: Int = 0
+
         override fun start() = Unit
 
         override fun notifyAppForeground() = Unit
@@ -73,17 +79,19 @@ class SyncViewModelTest {
         override fun notifyConnectivityRestored() = Unit
 
         override suspend fun runSyncCycleNow() {
+            runNowCalls += 1
             repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
         }
     }
 
     private fun syncViewModel(
         repository: RecordingSyncRepository,
-        clock: Clock
+        clock: Clock,
+        orchestrator: RecordingOrchestrator = RecordingOrchestrator(repository)
     ): SyncViewModel =
         SyncViewModel(
             syncRepository = repository,
-            attendeeSyncOrchestrator = RecordingOrchestrator(repository),
+            attendeeSyncOrchestrator = orchestrator,
             clock = clock
         )
 
@@ -249,6 +257,48 @@ class SyncViewModelTest {
         assertThat(repo.callCount).isEqualTo(1)
         assertThat(viewModel.uiState.value.bootstrapStatus).isEqualTo(BootstrapSyncStatus.Failed)
         assertThat(viewModel.uiState.value.errorMessage).isEqualTo("Attendee sync failed.")
+    }
+
+    @Test
+    fun bootstrapFailsWhenReturnedSyncStatusIsForDifferentEvent() = runTest(dispatcher) {
+        val wrongEventStatus =
+            AttendeeSyncStatus(
+                eventId = 3,
+                lastServerTime = "2026-03-13T08:20:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:20:00Z",
+                syncType = "full",
+                attendeeCount = 42
+            )
+        val repo = RecordingSyncRepository(behavior = { wrongEventStatus })
+        val viewModel = syncViewModel(repo, clock)
+
+        viewModel.beginAuthenticatedEventBootstrap(7)
+        advanceUntilIdle()
+
+        assertThat(repo.callCount).isEqualTo(1)
+        assertThat(viewModel.uiState.value.bootstrapStatus).isEqualTo(BootstrapSyncStatus.Failed)
+        assertThat(viewModel.uiState.value.errorMessage).isEqualTo("Attendee sync failed.")
+    }
+
+    @Test
+    fun syncAttendeesDelegatesThroughOrchestratorRunNow() = runTest(dispatcher) {
+        val syncedStatus =
+            AttendeeSyncStatus(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:20:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:20:00Z",
+                syncType = "full",
+                attendeeCount = 10
+            )
+        val repo = RecordingSyncRepository(behavior = { syncedStatus })
+        val orchestrator = RecordingOrchestrator(repo)
+        val viewModel = syncViewModel(repo, clock, orchestrator)
+
+        viewModel.syncAttendees()
+        advanceUntilIdle()
+
+        assertThat(orchestrator.runNowCalls).isEqualTo(1)
+        assertThat(repo.callCount).isEqualTo(1)
     }
 
     @Test

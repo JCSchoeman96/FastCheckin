@@ -27,6 +27,7 @@ import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.data.repository.SyncPaginationException
+import za.co.voelgoed.fastcheck.data.repository.SyncRateLimitedException
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 
 /**
@@ -118,7 +119,7 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
             runOneSyncCycle(failIfOffline = true)
         } catch (t: Throwable) {
             if (shouldScheduleRetry(t)) {
-                scheduleBackoffRetry()
+                scheduleBackoffRetry(t)
             }
             throw t
         }
@@ -136,7 +137,7 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
                 throw t
             }
             if (shouldScheduleRetry(t)) {
-                scheduleBackoffRetry()
+                scheduleBackoffRetry(t)
             }
         }
     }
@@ -178,21 +179,28 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
         message: String
     ) : IllegalStateException(message)
 
-    private fun scheduleBackoffRetry() {
+    private fun scheduleBackoffRetry(cause: Throwable) {
         retryJob?.cancel()
         retryJob =
             scope.launch {
-                val status = syncRepository.currentSyncStatus()
-                val transport = status?.consecutiveFailures ?: 0
-                val integrity = status?.consecutiveIntegrityFailures ?: 0
-                val failures = max(transport, integrity).coerceAtLeast(1)
-                val idx = (failures - 1).coerceIn(0, config.backoffScheduleMs.lastIndex)
-                val delayMs = config.backoffScheduleMs[idx]
+                val delayMs = retryDelayMillisFor(cause)
                 delay(delayMs)
                 if (connectivityMonitor.isOnline.value) {
                     enqueueSyncRequest()
                 }
             }
+    }
+
+    private suspend fun retryDelayMillisFor(cause: Throwable): Long {
+        if (cause is SyncRateLimitedException && cause.retryAfterMillis != null && cause.retryAfterMillis > 0) {
+            return cause.retryAfterMillis
+        }
+        val status = syncRepository.currentSyncStatus()
+        val transport = status?.consecutiveFailures ?: 0
+        val integrity = status?.consecutiveIntegrityFailures ?: 0
+        val failures = max(transport, integrity).coerceAtLeast(1)
+        val idx = (failures - 1).coerceIn(0, config.backoffScheduleMs.lastIndex)
+        return config.backoffScheduleMs[idx]
     }
 
     private suspend fun resolveMode(eventId: Long): AttendeeSyncMode {
@@ -214,8 +222,9 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
             return AttendeeSyncMode.FULL_RECONCILE
         }
 
+        val fullReconcileAnchor = status.lastFullReconcileAt ?: status.lastSuccessfulSyncAt
         val lastFull =
-            status.lastFullReconcileAt?.let {
+            fullReconcileAnchor?.let {
                 runCatching { Instant.parse(it) }.getOrNull()
             }
         val needsTimeBasedFull =

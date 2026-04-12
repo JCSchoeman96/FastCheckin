@@ -9,6 +9,7 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
@@ -456,6 +457,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(secondPagedAttendee).isNull()
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("integrity")
     }
 
     @Test
@@ -518,6 +522,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(lastPagedAttendee?.id).isEqualTo(2100)
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("integrity")
     }
 
     @Test
@@ -569,6 +576,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(countAttendeesForEvent(5)).isEqualTo(1)
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("sync_failed")
     }
 
     @Test
@@ -699,6 +709,50 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
+    fun structuredCancellationRethrowsWithoutIncrementingSyncFailureCounters() = runTest {
+        database.scannerDao().upsertSyncMetadata(
+            metadataRow(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
+        repository =
+            CurrentPhoenixSyncRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        object : PhoenixMobileApi {
+                            override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                                error("Not used in this test")
+
+                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                                throw CancellationException("caller cancelled")
+                            }
+
+                            override suspend fun uploadScans(
+                                body: UploadScansRequest
+                            ): Response<UploadScansResponse> = error("Not used in this test")
+                        }
+                    ),
+                scannerDao = database.scannerDao(),
+                sessionRepository = fixedSessionRepository(),
+                clock = Clock.systemUTC(),
+                bootstrapStateHub = AttendeeSyncBootstrapStateHub()
+            )
+
+        val failure = runCatching { repository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }.exceptionOrNull()
+        val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(failure).isInstanceOf(CancellationException::class.java)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.lastErrorCode).isNull()
+    }
+
+    @Test
     fun failedSyncLeavesSeededAttendeeAndMetadataUnchanged() = runTest {
         database.scannerDao().upsertAttendees(
             listOf(
@@ -769,6 +823,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(attendeeAfterFailure?.updatedAt).isEqualTo("2026-03-13T07:59:00Z")
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("http_500")
     }
 
     @Test

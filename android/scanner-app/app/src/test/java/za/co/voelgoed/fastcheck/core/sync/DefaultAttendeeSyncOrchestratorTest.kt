@@ -76,6 +76,133 @@ class DefaultAttendeeSyncOrchestratorTest {
         assertThat(orchestrator.currentRetryJob()).isNotNull()
     }
 
+    @Test
+    fun runSyncCycleNow_offlineFailsFast_andDoesNotScheduleRetry() = runBlocking {
+        val syncRepository =
+            RecordingSyncRepository(
+                syncBehavior = {
+                    AttendeeSyncStatus(
+                        eventId = 5L,
+                        lastServerTime = null,
+                        lastSuccessfulSyncAt = null,
+                        syncType = null,
+                        attendeeCount = 0
+                    )
+                }
+            )
+        val orchestrator =
+            DefaultAttendeeSyncOrchestrator(
+                syncRepository = syncRepository,
+                sessionRepository = fixedSessionRepository(),
+                connectivityMonitor = alwaysOffline(),
+                clock = TEST_CLOCK
+            )
+
+        val thrown = runCatching { orchestrator.runSyncCycleNow() }.exceptionOrNull()
+
+        assertThat(thrown).isNotNull()
+        assertThat(syncRepository.syncCalls).isEqualTo(0)
+        assertThat(orchestrator.currentRetryJob()).isNull()
+    }
+
+    @Test
+    fun burstForegroundAndAdvisoryTriggers_areCoalescedToBoundedSyncCycles() = runBlocking {
+        val syncRepository =
+            RecordingSyncRepository(
+                syncBehavior = {
+                    delay(120)
+                    null
+                }
+            )
+        val orchestrator =
+            DefaultAttendeeSyncOrchestrator(
+                syncRepository = syncRepository,
+                sessionRepository = fixedSessionRepository(),
+                connectivityMonitor = alwaysOnline(),
+                clock = TEST_CLOCK
+            )
+
+        orchestrator.start()
+        repeat(8) {
+            orchestrator.notifyAppForeground()
+            orchestrator.notifyStaleScanRefreshAdvisory()
+            orchestrator.notifyConnectivityRestored()
+        }
+
+        waitForAtLeastSyncCalls(repository = syncRepository, expectedCalls = 1)
+        delay(350)
+
+        // Conflated channel should collapse bursts to one in-flight cycle plus one pending rerun.
+        assertThat(syncRepository.syncCalls).isAtMost(2)
+    }
+
+    @Test
+    fun runSyncCycleNow_honorsRetryAfterDelayWhenRateLimited() = runBlocking {
+        var callCount = 0
+        val syncRepository =
+            RecordingSyncRepository(
+                syncBehavior = {
+                    callCount += 1
+                    if (callCount == 1) {
+                        throw SyncRateLimitedException(
+                            message = "rate limited",
+                            retryAfterMillis = 20L
+                        )
+                    }
+                    null
+                }
+            )
+        val orchestrator =
+            DefaultAttendeeSyncOrchestrator(
+                syncRepository = syncRepository,
+                sessionRepository = fixedSessionRepository(),
+                connectivityMonitor = alwaysOnline(),
+                clock = TEST_CLOCK
+            )
+
+        orchestrator.start()
+        val thrown = runCatching { orchestrator.runSyncCycleNow() }.exceptionOrNull()
+        assertThat(thrown).isInstanceOf(SyncRateLimitedException::class.java)
+        assertThat(syncRepository.syncCalls).isEqualTo(1)
+
+        waitForAtLeastSyncCalls(repository = syncRepository, expectedCalls = 2)
+        assertThat(syncRepository.syncCalls).isAtLeast(2)
+    }
+
+    @Test
+    fun nullLastFullReconcileAtUsesLastSuccessfulSyncAnchorBeforeForcingFullReconcile() {
+        runBlocking {
+        val statusWithUpgradeStyleNullLastFull =
+            AttendeeSyncStatus(
+                eventId = 5L,
+                lastServerTime = "2026-04-11T09:58:00Z",
+                lastSuccessfulSyncAt = "2026-04-11T10:00:00Z",
+                syncType = "incremental",
+                attendeeCount = 12,
+                lastFullReconcileAt = null,
+                incrementalCyclesSinceFullReconcile = 0,
+                consecutiveFailures = 0,
+                consecutiveIntegrityFailures = 0
+            )
+        val syncRepository =
+            RecordingSyncRepository(
+                syncBehavior = { statusWithUpgradeStyleNullLastFull },
+                currentStatusProvider = { statusWithUpgradeStyleNullLastFull }
+            )
+        val orchestrator =
+            DefaultAttendeeSyncOrchestrator(
+                syncRepository = syncRepository,
+                sessionRepository = fixedSessionRepository(),
+                connectivityMonitor = alwaysOnline(),
+                clock = TEST_CLOCK
+            )
+
+        orchestrator.runSyncCycleNow()
+
+            assertThat(syncRepository.modes).containsExactly(AttendeeSyncMode.INCREMENTAL)
+        }
+    }
+
     private suspend fun waitForSyncCall(repository: RecordingSyncRepository) {
         repeat(100) {
             if (repository.syncCalls > 0) return
@@ -84,9 +211,22 @@ class DefaultAttendeeSyncOrchestratorTest {
         error("Timed out waiting for orchestrator to execute sync cycle.")
     }
 
+    private suspend fun waitForAtLeastSyncCalls(repository: RecordingSyncRepository, expectedCalls: Int) {
+        repeat(150) {
+            if (repository.syncCalls >= expectedCalls) return
+            delay(10)
+        }
+        error("Timed out waiting for orchestrator to execute $expectedCalls sync calls.")
+    }
+
     private fun alwaysOnline(): ConnectivityMonitor =
         object : ConnectivityMonitor {
             override val isOnline = MutableStateFlow(true)
+        }
+
+    private fun alwaysOffline(): ConnectivityMonitor =
+        object : ConnectivityMonitor {
+            override val isOnline = MutableStateFlow(false)
         }
 
     private fun fixedSessionRepository(): SessionRepository =
@@ -112,16 +252,19 @@ class DefaultAttendeeSyncOrchestratorTest {
         )
 
     private class RecordingSyncRepository(
-        private val syncBehavior: suspend () -> AttendeeSyncStatus?
+        private val syncBehavior: suspend () -> AttendeeSyncStatus?,
+        private val currentStatusProvider: () -> AttendeeSyncStatus? = { null }
     ) : SyncRepository {
         var syncCalls: Int = 0
+        val modes: MutableList<AttendeeSyncMode> = mutableListOf()
 
         override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
             syncCalls += 1
+            modes += mode
             return syncBehavior()
         }
 
-        override suspend fun currentSyncStatus(): AttendeeSyncStatus? = null
+        override suspend fun currentSyncStatus(): AttendeeSyncStatus? = currentStatusProvider()
 
         override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
     }

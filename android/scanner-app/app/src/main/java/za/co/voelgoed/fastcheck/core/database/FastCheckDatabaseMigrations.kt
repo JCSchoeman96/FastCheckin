@@ -133,6 +133,13 @@ object FastCheckDatabaseMigrations {
                     WHERE bootstrapCompletedAt IS NULL AND lastSuccessfulSyncAt IS NOT NULL
                     """.trimIndent()
                 )
+                db.execSQL(
+                    """
+                    UPDATE sync_metadata
+                    SET lastFullReconcileAt = lastSuccessfulSyncAt
+                    WHERE lastFullReconcileAt IS NULL AND lastSuccessfulSyncAt IS NOT NULL
+                    """.trimIndent()
+                )
             }
         }
 

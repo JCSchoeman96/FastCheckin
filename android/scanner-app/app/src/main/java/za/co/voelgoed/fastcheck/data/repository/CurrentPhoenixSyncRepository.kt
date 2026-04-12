@@ -6,6 +6,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -86,6 +87,8 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 scannerDao.upsertSyncMetadata(current.withIntegrityFailure(clock))
             }
             throw pagination
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (http: HttpException) {
             val current = scannerDao.loadSyncMetadata(eventId)
             if (current != null) {
@@ -198,10 +201,10 @@ class CurrentPhoenixSyncRepository @Inject constructor(
         val bootstrapCompletedAt: String? =
             when {
                 !previousBeforeLoop?.bootstrapCompletedAt.isNullOrBlank() ->
-                    previousBeforeLoop?.bootstrapCompletedAt
+                    previousBeforeLoop.bootstrapCompletedAt
 
                 !previousBeforeLoop?.lastSuccessfulSyncAt.isNullOrBlank() ->
-                    previousBeforeLoop?.lastSuccessfulSyncAt
+                    previousBeforeLoop.lastSuccessfulSyncAt
 
                 else -> finalPayload.server_time
             }

@@ -356,6 +356,36 @@ class FastCheckDatabaseMigrationTest {
         database.close()
     }
 
+    @Test
+    fun migration8To9BackfillsLastFullReconcileAtFromLastSuccessfulSyncAt() = runTest {
+        createVersion5Schema(databaseFile)
+        val seedDb = SQLiteDatabase.openDatabase(databaseFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        seedDb.execSQL(
+            """
+            INSERT INTO sync_metadata (eventId, lastServerTime, lastSuccessfulSyncAt, lastSyncType, attendeeCount)
+            VALUES (5, '2026-03-28T10:05:00Z', '2026-03-28T10:05:00Z', 'incremental', 12)
+            """.trimIndent()
+        )
+        seedDb.close()
+
+        val database =
+            Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                )
+                .allowMainThreadQueries()
+                .build()
+
+        val metadata = database.scannerDao().loadSyncMetadata(5)
+        assertThat(metadata?.bootstrapCompletedAt).isEqualTo("2026-03-28T10:05:00Z")
+        assertThat(metadata?.lastFullReconcileAt).isEqualTo("2026-03-28T10:05:00Z")
+
+        database.close()
+    }
+
     private fun assertNullableReasonCodeColumn(cursor: Cursor, columnName: String) {
         cursor.use {
             while (it.moveToNext()) {
