@@ -1,10 +1,10 @@
 defmodule FastCheckWeb.Mobile.SyncController do
   @moduledoc """
-  Handles mobile client data synchronization operations.
+  Mobile JSON boundary for FastCheck: sync-down attendee cache plus invalidation feed, sync-up scan batches.
 
   Mobile scanners use this controller to:
-  - Download attendee data for offline mode (sync down)
-  - Upload queued scans when connectivity returns (sync up)
+  - Download **active** attendee rows and append-only **invalidation** events under one atomic envelope
+  - Upload queued scans when connectivity returns
   """
 
   use FastCheckWeb, :controller
@@ -15,7 +15,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   import Ecto.Query
 
-  alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.{Attendee, AttendeeInvalidationEvent}
+  alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Scans.MobileUploadService
 
@@ -28,8 +29,13 @@ defmodule FastCheckWeb.Mobile.SyncController do
     event_id = conn.assigns.current_event_id
 
     with {:ok, since_timestamp} <- parse_since_parameter(params),
+         {:ok, since_invalidation_id} <- parse_since_invalidation_id(params),
          {:ok, page_options} <- parse_page_options(params),
-         {:ok, attendees, next_cursor} <- fetch_attendees(event_id, since_timestamp, page_options) do
+         {:ok, invalidations, invalidations_checkpoint} <-
+           fetch_invalidations(event_id, since_invalidation_id, page_options.limit),
+         {:ok, attendees, next_cursor} <-
+           fetch_attendees(event_id, since_timestamp, page_options, page_options.limit),
+         {:ok, event_sync_version} <- fetch_event_sync_version(event_id) do
       server_time = DateTime.utc_now() |> DateTime.truncate(:second)
       sync_type = if since_timestamp, do: "incremental", else: "full"
 
@@ -48,15 +54,25 @@ defmodule FastCheckWeb.Mobile.SyncController do
         data: %{
           server_time: DateTime.to_iso8601(server_time),
           attendees: Enum.map(attendees, &serialize_attendee/1),
+          invalidations: Enum.map(invalidations, &serialize_invalidation/1),
           count: length(attendees),
           sync_type: sync_type,
-          next_cursor: next_cursor
+          next_cursor: next_cursor,
+          invalidations_checkpoint: invalidations_checkpoint,
+          event_sync_version: event_sync_version
         },
         error: nil
       })
     else
       {:error, :invalid_since} ->
         bad_request(conn, "invalid_since", "since must be a valid ISO8601 datetime")
+
+      {:error, :invalid_since_invalidation_id} ->
+        bad_request(
+          conn,
+          "invalid_since_invalidation_id",
+          "since_invalidation_id must be a non-negative integer"
+        )
 
       {:error, :missing_limit} ->
         bad_request(conn, "missing_limit", "Parameter 'limit' is required")
@@ -194,6 +210,18 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp parse_since_parameter(_params), do: {:ok, nil}
 
+  defp parse_since_invalidation_id(%{"since_invalidation_id" => id_str}) when is_binary(id_str) do
+    case Integer.parse(id_str) do
+      {parsed, ""} when parsed >= 0 ->
+        {:ok, parsed}
+
+      _ ->
+        {:error, :invalid_since_invalidation_id}
+    end
+  end
+
+  defp parse_since_invalidation_id(_params), do: {:ok, 0}
+
   defp parse_page_options(params) do
     with {:ok, limit} <- parse_limit_parameter(params),
          {:ok, cursor} <- parse_cursor_parameter(params) do
@@ -225,12 +253,43 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp parse_cursor_parameter(_params), do: {:ok, nil}
 
-  defp fetch_attendees(event_id, since, page_options) do
+  defp fetch_invalidations(event_id, since_id, inv_limit)
+       when is_integer(event_id) and is_integer(since_id) and is_integer(inv_limit) do
+    query =
+      from inv in AttendeeInvalidationEvent,
+        where: inv.event_id == ^event_id and inv.id > ^since_id,
+        order_by: [asc: inv.id],
+        limit: ^(inv_limit + 1)
+
+    page_results = Repo.all(query)
+    {visible, _overflow} = Enum.split(page_results, inv_limit)
+
+    checkpoint =
+      case List.last(visible) do
+        %AttendeeInvalidationEvent{id: id} -> id
+        nil -> since_id
+      end
+
+    {:ok, visible, checkpoint}
+  rescue
+    error -> {:error, error}
+  end
+
+  defp fetch_event_sync_version(event_id) do
+    case Repo.one(from(e in Event, where: e.id == ^event_id, select: e.event_sync_version)) do
+      v when is_integer(v) -> {:ok, v}
+      _ -> {:error, :event_not_found}
+    end
+  end
+
+  defp fetch_attendees(event_id, since, page_options, att_limit) do
     since = normalize_attendee_timestamp(since)
 
     query =
       from attendee in Attendee,
-        where: attendee.event_id == ^event_id,
+        where:
+          attendee.event_id == ^event_id and
+            (attendee.scan_eligibility == "active" or is_nil(attendee.scan_eligibility)),
         order_by: [asc: attendee.updated_at, asc: attendee.id]
 
     query =
@@ -252,7 +311,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
           query
       end
 
-    limit = page_options.limit
+    limit = att_limit
     page_results = Repo.all(from attendee in query, limit: ^(limit + 1))
     {visible_results, overflow_results} = Enum.split(page_results, limit)
 
@@ -290,6 +349,19 @@ defmodule FastCheckWeb.Mobile.SyncController do
     Base.url_encode64(cursor, padding: false)
   end
 
+  defp serialize_invalidation(%AttendeeInvalidationEvent{} = inv) do
+    %{
+      id: inv.id,
+      event_id: inv.event_id,
+      attendee_id: inv.attendee_id,
+      ticket_code: inv.ticket_code,
+      change_type: inv.change_type,
+      reason_code: inv.reason_code,
+      effective_at: serialize_datetime(inv.effective_at),
+      source_sync_run_id: format_uuid_for_json(inv.source_sync_run_id)
+    }
+  end
+
   defp serialize_attendee(attendee) do
     %{
       id: attendee.id,
@@ -316,6 +388,17 @@ defmodule FastCheckWeb.Mobile.SyncController do
     do: datetime |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_iso8601()
 
   defp serialize_datetime(_), do: nil
+
+  defp format_uuid_for_json(nil), do: nil
+
+  defp format_uuid_for_json(uuid) when is_binary(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, canonical} -> canonical
+      :error -> uuid
+    end
+  end
+
+  defp format_uuid_for_json(_), do: nil
 
   defp normalize_attendee_timestamp(nil), do: nil
   defp normalize_attendee_timestamp(%DateTime{} = datetime), do: DateTime.to_naive(datetime)
