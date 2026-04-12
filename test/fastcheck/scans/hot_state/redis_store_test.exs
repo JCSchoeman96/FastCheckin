@@ -97,6 +97,31 @@ defmodule FastCheck.Scans.HotState.RedisStoreTest do
     assert {:error, :build_timeout} = RedisStore.ensure_event_loaded(event.id, namespace)
   end
 
+  test "process_scan rejects not_scannable tickets before Redis Lua decision", %{
+    event: event,
+    namespace: namespace
+  } do
+    _revoked =
+      create_attendee(event, %{
+        ticket_code: "REVOKED-1",
+        allowed_checkins: 1,
+        checkins_remaining: 1,
+        payment_status: "completed",
+        scan_eligibility: "not_scannable"
+      })
+
+    assert {:ok, result} =
+             RedisStore.process_scan(
+               scan_command(event.id, "idem-revoked", "REVOKED-1"),
+               namespace
+             )
+
+    assert result.status == "error"
+    assert result.reason_code == "TICKET_NOT_SCANNABLE"
+    assert result.message =~ "no longer valid for scanning"
+    assert result.delivery_state == :new_staged
+  end
+
   test "rejects out direction as not implemented instead of returning success", %{
     event: event,
     namespace: namespace

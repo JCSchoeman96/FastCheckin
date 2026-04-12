@@ -5,6 +5,7 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
 
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Repo
+  alias FastCheck.Scans.HotState.DbAuthority
   alias FastCheck.Scans.Ingest.ScanCommand
   alias FastCheck.Scans.Result
 
@@ -87,6 +88,36 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
 
   defp fresh_result(%ScanCommand{} = command, state_key) do
     processed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    case DbAuthority.check(command.event_id, command.ticket_code) do
+      {:reject, :not_found} ->
+        base_result(
+          command,
+          processed_at,
+          "error",
+          "INVALID",
+          "Ticket not found: Ticket not found",
+          nil,
+          %{}
+        )
+
+      {:reject, {:not_scannable, attendee_id}} ->
+        base_result(
+          command,
+          processed_at,
+          "error",
+          "TICKET_NOT_SCANNABLE",
+          "This ticket is no longer valid for scanning",
+          attendee_id,
+          %{}
+        )
+
+      :ok ->
+        fresh_result_after_authority(command, state_key, processed_at)
+    end
+  end
+
+  defp fresh_result_after_authority(%ScanCommand{} = command, state_key, processed_at) do
     state = load_state(state_key, command.event_id)
 
     case Map.get(state, command.ticket_code) do
@@ -170,6 +201,8 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
           Repo.all(
             from attendee in Attendee,
               where: attendee.event_id == ^event_id,
+              where:
+                is_nil(attendee.scan_eligibility) or attendee.scan_eligibility != "not_scannable",
               select: %{
                 id: attendee.id,
                 ticket_code: attendee.ticket_code,

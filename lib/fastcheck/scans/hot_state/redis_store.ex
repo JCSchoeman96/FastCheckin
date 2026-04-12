@@ -8,7 +8,7 @@ defmodule FastCheck.Scans.HotState.RedisStore do
 
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Repo
-  alias FastCheck.Scans.HotState.Keyspace
+  alias FastCheck.Scans.HotState.{DbAuthority, Keyspace}
   alias FastCheck.Scans.Ingest.ScanCommand
   alias FastCheck.Scans.Result
 
@@ -187,9 +187,34 @@ defmodule FastCheck.Scans.HotState.RedisStore do
 
   @spec process_scan(ScanCommand.t(), String.t()) :: {:ok, Result.t()} | {:error, term()}
   def process_scan(%ScanCommand{} = command, namespace) do
-    with {:ok, version} <- ensure_event_loaded(command.event_id, namespace),
-         {:ok, response} <- eval_decision(command, namespace, version) do
-      {:ok, to_result(command.event_id, command.idempotency_key, command.ticket_code, response)}
+    with {:ok, version} <- ensure_event_loaded(command.event_id, namespace) do
+      if idempotency_started?(namespace, command.event_id, command.idempotency_key) do
+        with {:ok, response} <- eval_decision(command, namespace, version) do
+          {:ok,
+           to_result(command.event_id, command.idempotency_key, command.ticket_code, response)}
+        end
+      else
+        case DbAuthority.check(command.event_id, command.ticket_code) do
+          :ok ->
+            with {:ok, response} <- eval_decision(command, namespace, version) do
+              {:ok,
+               to_result(
+                 command.event_id,
+                 command.idempotency_key,
+                 command.ticket_code,
+                 response
+               )}
+            end
+
+          {:reject, reason} ->
+            result = db_gate_result(command, version, reason)
+
+            case write_idempotency_record(command, namespace, version, result) do
+              {:ok, _} -> {:ok, result}
+              {:error, _} = err -> err
+            end
+        end
+      end
     end
   end
 
@@ -259,6 +284,8 @@ defmodule FastCheck.Scans.HotState.RedisStore do
       Repo.all(
         from attendee in Attendee,
           where: attendee.event_id == ^event_id,
+          where:
+            is_nil(attendee.scan_eligibility) or attendee.scan_eligibility != "not_scannable",
           select: %{
             attendee_id: attendee.id,
             ticket_code: attendee.ticket_code,
@@ -305,6 +332,126 @@ defmodule FastCheck.Scans.HotState.RedisStore do
   end
 
   defp await_active_version(_namespace, _event_id, _attempts_left), do: {:error, :build_timeout}
+
+  defp idempotency_started?(namespace, event_id, idempotency_key) do
+    idem_key = Keyspace.idempotency(namespace, event_id, idempotency_key)
+
+    case redis_command(["HGET", idem_key, "delivery_state"]) do
+      {:ok, val} when is_binary(val) and val != "" -> true
+      _ -> false
+    end
+  end
+
+  defp db_gate_result(%ScanCommand{} = command, version, :not_found) do
+    processed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+    scanned_at = command.scanned_at || processed_at
+
+    %Result{
+      event_id: command.event_id,
+      attendee_id: nil,
+      idempotency_key: command.idempotency_key,
+      ticket_code: command.ticket_code,
+      direction: command.direction,
+      status: "error",
+      reason_code: "INVALID",
+      message: "Ticket not found: Ticket not found",
+      entrance_name: blank_to_nil(normalize_binary(command.entrance_name, "Mobile")),
+      operator_name: blank_to_nil(normalize_binary(command.operator_name, "Mobile Scanner")),
+      scanned_at: scanned_at,
+      processed_at: processed_at,
+      delivery_state: :new_staged,
+      hot_state_version: version,
+      metadata: %{"remaining_after" => 1, "checked_in_at" => nil}
+    }
+  end
+
+  defp db_gate_result(%ScanCommand{} = command, version, {:not_scannable, attendee_id}) do
+    processed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+    scanned_at = command.scanned_at || processed_at
+
+    %Result{
+      event_id: command.event_id,
+      attendee_id: attendee_id,
+      idempotency_key: command.idempotency_key,
+      ticket_code: command.ticket_code,
+      direction: command.direction,
+      status: "error",
+      reason_code: "TICKET_NOT_SCANNABLE",
+      message: "This ticket is no longer valid for scanning",
+      entrance_name: blank_to_nil(normalize_binary(command.entrance_name, "Mobile")),
+      operator_name: blank_to_nil(normalize_binary(command.operator_name, "Mobile Scanner")),
+      scanned_at: scanned_at,
+      processed_at: processed_at,
+      delivery_state: :new_staged,
+      hot_state_version: version,
+      metadata: %{}
+    }
+  end
+
+  defp write_idempotency_record(
+         %ScanCommand{} = command,
+         namespace,
+         version,
+         %Result{} = result
+       ) do
+    idem_key = Keyspace.idempotency(namespace, command.event_id, command.idempotency_key)
+    processed_at = DateTime.to_iso8601(result.processed_at)
+    scanned_at = datetime_to_string(result.scanned_at || result.processed_at)
+
+    attendee_id_str =
+      if result.attendee_id, do: Integer.to_string(result.attendee_id), else: ""
+
+    remaining_str =
+      case Map.get(result.metadata, "remaining_after") do
+        n when is_integer(n) -> Integer.to_string(n)
+        _ -> "1"
+      end
+
+    checked_in_at_str =
+      case Map.get(result.metadata, "checked_in_at") do
+        %DateTime{} = dt -> DateTime.to_iso8601(dt)
+        s when is_binary(s) -> s
+        _ -> ""
+      end
+
+    hset = [
+      "HSET",
+      idem_key,
+      "delivery_state",
+      "pending_durability",
+      "status",
+      result.status,
+      "reason_code",
+      result.reason_code,
+      "message",
+      result.message,
+      "attendee_id",
+      attendee_id_str,
+      "ticket_code",
+      command.ticket_code,
+      "direction",
+      command.direction,
+      "entrance_name",
+      normalize_binary(command.entrance_name, "Mobile"),
+      "operator_name",
+      normalize_binary(command.operator_name, "Mobile Scanner"),
+      "processed_at",
+      processed_at,
+      "scanned_at",
+      scanned_at,
+      "hot_state_version",
+      version,
+      "remaining_after",
+      remaining_str,
+      "checked_in_at_value",
+      checked_in_at_str
+    ]
+
+    case redis_pipeline([hset, ["EXPIRE", idem_key, Integer.to_string(@idempotency_ttl_seconds)]]) do
+      {:ok, _} -> {:ok, :written}
+      {:error, _} = err -> err
+    end
+  end
 
   defp eval_decision(%ScanCommand{} = command, namespace, version) do
     processed_at = DateTime.utc_now() |> DateTime.truncate(:second)
