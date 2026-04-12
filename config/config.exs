@@ -11,6 +11,10 @@ config :fastcheck,
   ecto_repos: [FastCheck.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# `GET /api/v1/mobile/attendees`: use :repeatable_read so invalidations + attendees + version
+# share one DB snapshot. Tests use :none (Ecto Sandbox nested transactions cannot always SET TRANSACTION).
+config :fastcheck, :mobile_sync_snapshot_isolation, :repeatable_read
+
 config :fastcheck, Oban,
   repo: FastCheck.Repo,
   queues: [scan_persistence: 10],

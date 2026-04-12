@@ -96,7 +96,7 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
           processed_at,
           "error",
           "INVALID",
-          "Ticket not found: Ticket not found",
+          "Ticket not found",
           nil,
           %{}
         )
@@ -127,7 +127,7 @@ defmodule FastCheck.TestSupport.Scans.InMemoryStore do
           processed_at,
           "error",
           "INVALID",
-          "Ticket not found: Ticket not found",
+          "Ticket not found",
           nil,
           %{}
         )

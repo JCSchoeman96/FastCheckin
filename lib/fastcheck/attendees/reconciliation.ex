@@ -3,6 +3,8 @@ defmodule FastCheck.Attendees.Reconciliation do
   Authoritative Tickera snapshot reconciliation: mark absent tickets not_scannable,
   reactivate on reappearance, append invalidation events, bump `event_sync_version` once per run.
 
+  Invalidation rows are written with `Repo.insert_all/3` (batched) after listing absent attendees.
+
   Called only after a **complete** authoritative fetch (full non-incremental sync). Must run inside
   the caller's `Repo.transaction/1`.
   """
@@ -110,21 +112,24 @@ defmodule FastCheck.Attendees.Reconciliation do
 
     reason = ReasonCodes.source_missing_from_authoritative_sync()
 
-    Enum.each(absent, fn {attendee_id, ticket_code} ->
-      {:ok, _} =
-        %AttendeeInvalidationEvent{}
-        |> AttendeeInvalidationEvent.changeset(%{
-          event_id: event_id,
-          attendee_id: attendee_id,
-          ticket_code: ticket_code,
-          change_type: @change_type_ineligible,
-          reason_code: reason,
-          effective_at: now,
-          source_sync_run_id: sync_run_id
-        })
-        |> Ecto.Changeset.put_change(:inserted_at, naive_now)
-        |> Repo.insert()
-    end)
+    if absent != [] do
+      rows =
+        Enum.map(absent, fn {attendee_id, ticket_code} ->
+          %{
+            event_id: event_id,
+            attendee_id: attendee_id,
+            ticket_code: ticket_code,
+            change_type: @change_type_ineligible,
+            reason_code: reason,
+            effective_at: now,
+            source_sync_run_id: sync_run_id,
+            inserted_at: naive_now
+          }
+        end)
+
+      expected = length(rows)
+      {^expected, nil} = Repo.insert_all(AttendeeInvalidationEvent, rows)
+    end
 
     absent_ids = Enum.map(absent, fn {id, _} -> id end)
 

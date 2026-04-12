@@ -47,15 +47,41 @@ The promoted Android mobile contract remains:
 
 ## Attendee sync down (`GET /api/v1/mobile/attendees`)
 
+**Parallel `limit` (one exact sentence):** The numeric `limit` query parameter applies **in parallel** — the **attendees** sub-stream and the **invalidations** sub-stream are **independently capped** (each returns at most `limit` rows per response). It is **not** one shared row budget across both JSON arrays.
+
 Single atomic JSON per successful response. The client keeps **three** checkpoints after a successful apply:
 
 1. **`event_sync_version`** — monotonic version for the event (store after apply).
 2. **`next_cursor`** — opaque cursor for the **active attendees** sub-stream only (stable order: `updated_at`, `id`). Omit or pass through on the next request as `cursor` while continuing to drain attendees.
 3. **`invalidations_checkpoint`** — pass the next request as **`since_invalidation_id`** to page **invalidation events** (`id` ascending).
 
+**Query parameters**
+
+| Parameter | Required | Notes |
+|-----------|----------|--------|
+| `limit` | **Yes** | Positive integer, maximum **500**. |
+| `since` | No | ISO8601; invalid `since` falls back to full sync (existing behaviour). |
+| `since_invalidation_id` | No | Non-negative integer; default **0** (last `invalidations_checkpoint`). |
+| `cursor` | No | Opaque; pages **attendees** only. |
+
+**Successful JSON `data` fields** include `server_time`, `attendees`, `invalidations`, `invalidations_checkpoint`, `event_sync_version`, `next_cursor`, `sync_type`, `count`.
+
+**HTTP 400 — exact `error.code` values** (envelope: `data: null`, `error: { code, message }`)
+
+| `error.code` | Meaning |
+|----------------|---------|
+| `invalid_since` | `since` is not valid ISO8601. |
+| `invalid_since_invalidation_id` | `since_invalidation_id` is not a non-negative integer. |
+| `missing_limit` | `limit` omitted. |
+| `invalid_limit` | `limit` not a positive integer. |
+| `limit_too_large` | `limit` greater than 500. |
+| `invalid_cursor` | `cursor` cannot be decoded. |
+
 **Pagination rule:** each of the attendees list and the invalidations list is capped at **`limit`** rows per response (independent caps). The attendees stream includes **active** tickets only; revoked upstream tickets appear as **invalidation** rows, not as attendee rows.
 
 **Catch-up loop (recommended):** repeat `GET` until both **`next_cursor`** is absent (attendees drained for the current `since` scope) **and** either invalidations are empty **or** the last response returned fewer than `limit` invalidation rows (no backlog at the invalidation cap). If a response returns **`limit`** invalidation rows, issue another request with the same attendee `cursor` but an updated **`since_invalidation_id`** from **`invalidations_checkpoint`** until the invalidation stream is drained, then continue attendee paging as needed.
+
+**Apply order on the client (per response):** apply **`invalidations`** (e.g. delete local row by `ticket_code`) **before** merging **`attendees`** for that response so a tombstone is not overwritten by a stale upsert.
 
 Do not infer ticket removal from incremental attendee pages alone; apply **`invalidations`** explicitly (e.g. delete local cache row by `ticket_code`).
 

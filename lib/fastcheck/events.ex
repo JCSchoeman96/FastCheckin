@@ -61,6 +61,10 @@ defmodule FastCheck.Events do
 
   @doc """
   Increments the monotonic mobile sync version for an event (call once per transaction that changes mobile-export-visible state).
+
+  Incremental sync bumps unconditionally after each successful import for simplicity; if client
+  churn from version noise becomes measurable, revisit conditional bumps rather than spreading
+  ad-hoc guards here.
   """
   @spec bump_event_sync_version!(integer()) :: :ok
   def bump_event_sync_version!(event_id) when is_integer(event_id) do

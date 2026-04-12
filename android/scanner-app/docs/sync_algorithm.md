@@ -11,7 +11,7 @@ Attendees are synced only through:
 1. Read current session metadata to obtain active `event_id`.
 2. Read existing `sync_metadata` for the last known server timestamp, `lastInvalidationsCheckpoint`, and (optional) `lastEventSyncVersion`.
 3. Page `GET /api/v1/mobile/attendees` with `limit`, optional `since`, optional `cursor` (attendees only), and `since_invalidation_id` from the last `invalidations_checkpoint` (default `0` after a full local reconcile).
-4. For each response: **apply `invalidations` first** (remove local attendee rows by canonical `ticket_code`), then upsert `attendees`.
+4. For each response: **apply `invalidations` first** (remove local attendee rows by canonical `ticket_code`), then upsert `attendees`. Invariant is covered by `CurrentPhoenixSyncRepositoryTest.syncAppliesInvalidationsBeforeAttendeeUpsertsForSameTicketCode`.
 5. Repeat HTTP calls until **both** the attendee cursor is exhausted (`next_cursor` absent for the current `since` scope) **and** the invalidation stream has no backlog at the response cap (if the server returns `limit` invalidation rows, request again with the updated `since_invalidation_id` while holding the same attendee `cursor` if needed — see `docs/mobile_runtime_truth.md`).
 6. Update `sync_metadata` with `server_time`, sync type, attendee count, `lastInvalidationsCheckpoint`, and `lastEventSyncVersion`.
 

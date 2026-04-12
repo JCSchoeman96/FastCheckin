@@ -61,13 +61,13 @@ defmodule FastCheck.Scans.AuthoritativeResultMapperTest do
       base_result(%{
         status: "error",
         reason_code: "INVALID",
-        message: "Ticket not found: Ticket not found"
+        message: "Ticket not found"
       })
 
     assert %{
              idempotency_key: "idem-1",
              status: "error",
-             message: "Ticket not found: Ticket not found"
+             message: "Ticket not found"
            } =
              mapped = AuthoritativeResultMapper.to_api_result(result)
 

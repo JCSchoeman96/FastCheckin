@@ -76,7 +76,7 @@ defmodule FastCheck.Scans.HotState.RedisStore do
 
   if not attendee_id or attendee_id == false then
     reason_code = "INVALID"
-    message = "Ticket not found: Ticket not found"
+    message = "Ticket not found"
   elseif direction ~= "in" then
     reason_code = "NOT_IMPLEMENTED"
     message = "Check-out functionality not yet available"
@@ -354,7 +354,7 @@ defmodule FastCheck.Scans.HotState.RedisStore do
       direction: command.direction,
       status: "error",
       reason_code: "INVALID",
-      message: "Ticket not found: Ticket not found",
+      message: "Ticket not found",
       entrance_name: blank_to_nil(normalize_binary(command.entrance_name, "Mobile")),
       operator_name: blank_to_nil(normalize_binary(command.operator_name, "Mobile Scanner")),
       scanned_at: scanned_at,
