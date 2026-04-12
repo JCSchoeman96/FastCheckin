@@ -45,6 +45,20 @@ The promoted Android mobile contract remains:
 - `GET /api/v1/mobile/attendees`
 - `POST /api/v1/mobile/scans`
 
+## Attendee sync down (`GET /api/v1/mobile/attendees`)
+
+Single atomic JSON per successful response. The client keeps **three** checkpoints after a successful apply:
+
+1. **`event_sync_version`** — monotonic version for the event (store after apply).
+2. **`next_cursor`** — opaque cursor for the **active attendees** sub-stream only (stable order: `updated_at`, `id`). Omit or pass through on the next request as `cursor` while continuing to drain attendees.
+3. **`invalidations_checkpoint`** — pass the next request as **`since_invalidation_id`** to page **invalidation events** (`id` ascending).
+
+**Pagination rule:** each of the attendees list and the invalidations list is capped at **`limit`** rows per response (independent caps). The attendees stream includes **active** tickets only; revoked upstream tickets appear as **invalidation** rows, not as attendee rows.
+
+**Catch-up loop (recommended):** repeat `GET` until both **`next_cursor`** is absent (attendees drained for the current `since` scope) **and** either invalidations are empty **or** the last response returned fewer than `limit` invalidation rows (no backlog at the invalidation cap). If a response returns **`limit`** invalidation rows, issue another request with the same attendee `cursor` but an updated **`since_invalidation_id`** from **`invalidations_checkpoint`** until the invalidation stream is drained, then continue attendee paging as needed.
+
+Do not infer ticket removal from incremental attendee pages alone; apply **`invalidations`** explicitly (e.g. delete local cache row by `ticket_code`).
+
 For `POST /api/v1/mobile/scans`, the authoritative path is:
 
 `validate -> hot-state decision -> enqueue durability -> promote results -> respond`

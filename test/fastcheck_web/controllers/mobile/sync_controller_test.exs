@@ -7,6 +7,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   alias Ecto.Adapters.SQL.Sandbox
 
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.AttendeeInvalidationEvent
   alias FastCheck.Attendees.CheckIn
   alias FastCheck.Attendees.CheckInSession
   alias FastCheck.Crypto
@@ -454,6 +455,131 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
              } = json_response(final_conn, 200)
 
       assert length(attendees) == 1
+    end
+
+    test "excludes not_scannable attendees from the active feed", %{
+      conn: conn,
+      token: token,
+      attendee1: attendee1
+    } do
+      attendee1
+      |> Ecto.Changeset.change(%{
+        scan_eligibility: "not_scannable",
+        ineligibility_reason: "revoked"
+      })
+      |> Repo.update!()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
+
+      assert %{"data" => %{"attendees" => attendees}} = json_response(conn, 200)
+      refute attendee1.ticket_code in Enum.map(attendees, & &1["ticket_code"])
+    end
+
+    test "returns invalidation events and checkpoint for since_invalidation_id paging", %{
+      conn: conn,
+      token: token,
+      event: event,
+      attendee1: attendee1
+    } do
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, inv} =
+        %AttendeeInvalidationEvent{}
+        |> AttendeeInvalidationEvent.changeset(%{
+          event_id: event.id,
+          attendee_id: attendee1.id,
+          ticket_code: attendee1.ticket_code,
+          change_type: "ineligible",
+          reason_code: "revoked",
+          effective_at: now
+        })
+        |> Repo.insert()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=50&since_invalidation_id=0")
+
+      assert %{
+               "data" => %{
+                 "invalidations" => [inv_json],
+                 "invalidations_checkpoint" => checkpoint,
+                 "event_sync_version" => evs
+               }
+             } = json_response(conn, 200)
+
+      assert inv_json["id"] == inv.id
+      assert inv_json["ticket_code"] == attendee1.ticket_code
+      assert checkpoint == inv.id
+      assert is_integer(evs)
+    end
+
+    test "returns another invalidation page when backlog fills the invalidation cap", %{
+      conn: conn,
+      token: token,
+      event: event,
+      attendee1: attendee1,
+      attendee2: attendee2
+    } do
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, first} =
+        %AttendeeInvalidationEvent{}
+        |> AttendeeInvalidationEvent.changeset(%{
+          event_id: event.id,
+          attendee_id: attendee1.id,
+          ticket_code: attendee1.ticket_code,
+          change_type: "ineligible",
+          reason_code: "revoked",
+          effective_at: now
+        })
+        |> Repo.insert()
+
+      {:ok, second} =
+        %AttendeeInvalidationEvent{}
+        |> AttendeeInvalidationEvent.changeset(%{
+          event_id: event.id,
+          attendee_id: attendee2.id,
+          ticket_code: attendee2.ticket_code,
+          change_type: "ineligible",
+          reason_code: "revoked",
+          effective_at: now
+        })
+        |> Repo.insert()
+
+      assert first.id < second.id
+
+      conn1 =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&since_invalidation_id=0")
+
+      assert %{
+               "data" => %{
+                 "invalidations" => invs1,
+                 "invalidations_checkpoint" => cp1
+               }
+             } = json_response(conn1, 200)
+
+      assert length(invs1) == 2
+      assert cp1 == second.id
+
+      conn2 =
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=2&since_invalidation_id=#{cp1}")
+
+      assert %{
+               "data" => %{
+                 "invalidations" => [],
+                 "invalidations_checkpoint" => cp2
+               }
+             } = json_response(conn2, 200)
+
+      assert cp2 == cp1
     end
   end
 
