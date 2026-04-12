@@ -9,6 +9,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
@@ -176,10 +177,18 @@ class ScanDestinationPresenter(
                 ) to "No attendees are currently available in the local cache for this event. Run attendee sync before trusting scanner outcomes."
             }
             return if (isStale(currentEventSyncStatus)) {
-                StatusChipUiModel(
-                    text = "Attendee list may be old",
-                    tone = StatusTone.Warning
-                ) to "Using cached attendee data from ${currentEventSyncStatus.lastSuccessfulSyncAt ?: "an earlier sync"}."
+                if (currentEventSyncStatus.isSyncStruggling()) {
+                    StatusChipUiModel(
+                        text = "Sync delayed, scanning continues",
+                        tone = StatusTone.Warning
+                    ) to
+                        "Sync is retrying in the background; you can keep scanning using the saved attendee list."
+                } else {
+                    StatusChipUiModel(
+                        text = "Attendee list may be old",
+                        tone = StatusTone.Warning
+                    ) to "Using cached attendee data from ${currentEventSyncStatus.lastSuccessfulSyncAt ?: "an earlier sync"}."
+                }
             } else {
                 StatusChipUiModel(
                     text = "Attendee list ready",
@@ -359,10 +368,7 @@ class ScanDestinationPresenter(
                 .getOrNull()
                 ?: return false
 
-        return Duration.between(syncedAt, clock.instant()) > STALE_SYNC_THRESHOLD
-    }
-
-    private companion object {
-        val STALE_SYNC_THRESHOLD: Duration = Duration.ofMinutes(30)
+        return Duration.between(syncedAt, clock.instant()) >
+            AdmissionRuntimePolicy.ATTENDEE_CACHE_STALE_THRESHOLD
     }
 }

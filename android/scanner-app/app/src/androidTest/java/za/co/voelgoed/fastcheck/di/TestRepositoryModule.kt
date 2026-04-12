@@ -22,6 +22,7 @@ import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
+import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.AttendeeDetailRecord
@@ -71,7 +72,7 @@ object TestRepositoryModule {
     @Singleton
     fun provideSyncRepository(): SyncRepository =
         object : SyncRepository {
-            override suspend fun syncAttendees(): AttendeeSyncStatus? = null
+            override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? = null
             override suspend fun currentSyncStatus(): AttendeeSyncStatus? = null
             override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
         }

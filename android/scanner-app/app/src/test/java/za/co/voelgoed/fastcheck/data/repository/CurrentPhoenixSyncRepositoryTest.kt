@@ -9,6 +9,7 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
@@ -25,6 +26,7 @@ import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncBootstrapStateHub
 import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.remote.AttendeeDto
@@ -94,7 +96,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        val status = repository.syncAttendees()
+        val status = repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
         val attendee = database.scannerDao().findAttendee(5, "VG-100")
         val metadata = database.scannerDao().loadSyncMetadata(5)
 
@@ -110,7 +112,7 @@ class CurrentPhoenixSyncRepositoryTest {
     @Test
     fun incrementalSyncUsesStoredLastServerTimeWatermark() = runTest {
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T08:00:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
@@ -133,7 +135,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        val status = repository.syncAttendees()
+        val status = repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         assertThat(api.lastSince).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(api.syncCalls.single().limit).isEqualTo(500)
@@ -145,7 +147,7 @@ class CurrentPhoenixSyncRepositoryTest {
     fun syncAttendeesWithoutSessionReturnsNullAndDoesNotWrite() = runTest {
         repository = buildRepository(sessionRepository = noSessionRepository())
 
-        val status = repository.syncAttendees()
+        val status = repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         assertThat(status).isNull()
         assertThat(api.lastSince).isNull()
@@ -187,7 +189,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        repository.syncAttendees()
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         val attendee = database.scannerDao().findAttendee(5, "VG-ROW-12")
         val metadata = database.scannerDao().loadSyncMetadata(5)
@@ -202,7 +204,7 @@ class CurrentPhoenixSyncRepositoryTest {
     @Test
     fun incrementalSyncUpdatesAttendeeRowWhenSameServerIdReturnsUpdatedFields() = runTest {
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T08:00:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
@@ -243,7 +245,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        repository.syncAttendees()
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
         assertThat(database.scannerDao().findAttendee(5, "VG-SAME-500")?.firstName).isEqualTo("Original")
 
         api.syncResponse =
@@ -278,7 +280,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        repository.syncAttendees()
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         val row = database.scannerDao().findAttendee(5, "VG-SAME-500")
         assertThat(row?.firstName).isEqualTo("Updated")
@@ -319,7 +321,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        repository.syncAttendees()
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         assertThat(database.scannerDao().findAttendee(5, "VG-TRIM-44")?.id).isEqualTo(44)
         assertThat(database.scannerDao().findAttendee(5, " \tVG-TRIM-44\r\n")).isNull()
@@ -375,7 +377,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 )
             )
 
-        val status = repository.syncAttendees()
+        val status = repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         assertThat(api.syncCalls).hasSize(3)
         assertAllSyncCallsUsePageLimit()
@@ -401,7 +403,7 @@ class CurrentPhoenixSyncRepositoryTest {
             )
         )
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T08:00:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
@@ -438,7 +440,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 )
             )
 
-        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val failure = runCatching { repository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }.exceptionOrNull()
         val exception = failure as SyncPaginationException
         val seededAttendee = database.scannerDao().findAttendee(5, "VG-SEED-601")
         val firstPagedAttendee = database.scannerDao().findAttendee(5, "VG-PAGE-001")
@@ -455,6 +457,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(secondPagedAttendee).isNull()
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("integrity")
     }
 
     @Test
@@ -471,7 +476,7 @@ class CurrentPhoenixSyncRepositoryTest {
             )
         )
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T08:00:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
@@ -496,7 +501,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 )
             }.toMutableList()
 
-        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val failure = runCatching { repository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }.exceptionOrNull()
         val exception = failure as SyncPaginationException
         val seededAttendee = database.scannerDao().findAttendee(5, "VG-SEED-602")
         val firstPagedAttendee = database.scannerDao().findAttendee(5, "VG-MAX-001")
@@ -517,12 +522,15 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(lastPagedAttendee?.id).isEqualTo(2100)
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("integrity")
     }
 
     @Test
     fun pagedSyncKeepsEarlierPagesWhenLaterPageHasInvalidTicketCode() = runTest {
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T08:00:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
@@ -559,7 +567,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 )
             )
 
-        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val failure = runCatching { repository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }.exceptionOrNull()
         val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
 
         assertThat(failure).isInstanceOf(IllegalArgumentException::class.java)
@@ -568,6 +576,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(countAttendeesForEvent(5)).isEqualTo(1)
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("sync_failed")
     }
 
     @Test
@@ -575,7 +586,7 @@ class CurrentPhoenixSyncRepositoryTest {
         repository = buildRateLimitedRepository(retryAfterHeader = null)
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected SyncRateLimitedException")
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
@@ -588,7 +599,7 @@ class CurrentPhoenixSyncRepositoryTest {
         repository = buildRateLimitedRepository(retryAfterHeader = " 120 ")
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected SyncRateLimitedException")
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
@@ -601,7 +612,7 @@ class CurrentPhoenixSyncRepositoryTest {
         repository = buildRateLimitedRepository(retryAfterHeader = "   ")
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected SyncRateLimitedException")
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
@@ -617,7 +628,7 @@ class CurrentPhoenixSyncRepositoryTest {
             repository = buildRateLimitedRepository(retryAfterHeader = header)
 
             try {
-                repository.syncAttendees()
+                repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
                 error("Expected SyncRateLimitedException for Retry-After header: $header")
             } catch (e: Exception) {
                 assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
@@ -631,7 +642,7 @@ class CurrentPhoenixSyncRepositoryTest {
         repository = buildRateLimitedRepository(retryAfterHeader = "Fri, 13 Mar 2026 08:02:00 GMT")
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected SyncRateLimitedException")
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
@@ -645,7 +656,7 @@ class CurrentPhoenixSyncRepositoryTest {
         repository = buildRateLimitedRepository(retryAfterHeader = "Fri, 13 Mar 2026 07:59:00 GMT")
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected SyncRateLimitedException")
         } catch (e: Exception) {
             assertThat(e).isInstanceOf(SyncRateLimitedException::class.java)
@@ -685,15 +696,60 @@ class CurrentPhoenixSyncRepositoryTest {
                     ),
                 scannerDao = database.scannerDao(),
                 sessionRepository = fixedSessionRepository(),
-                clock = Clock.systemUTC()
+                clock = Clock.systemUTC(),
+                bootstrapStateHub = AttendeeSyncBootstrapStateHub()
             )
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected HttpException")
         } catch (e: Exception) {
             assertThat(e).isSameInstanceAs(expected)
         }
+    }
+
+    @Test
+    fun structuredCancellationRethrowsWithoutIncrementingSyncFailureCounters() = runTest {
+        database.scannerDao().upsertSyncMetadata(
+            metadataRow(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
+        repository =
+            CurrentPhoenixSyncRepository(
+                remoteDataSource =
+                    PhoenixMobileRemoteDataSource(
+                        object : PhoenixMobileApi {
+                            override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
+                                error("Not used in this test")
+
+                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                                throw CancellationException("caller cancelled")
+                            }
+
+                            override suspend fun uploadScans(
+                                body: UploadScansRequest
+                            ): Response<UploadScansResponse> = error("Not used in this test")
+                        }
+                    ),
+                scannerDao = database.scannerDao(),
+                sessionRepository = fixedSessionRepository(),
+                clock = Clock.systemUTC(),
+                bootstrapStateHub = AttendeeSyncBootstrapStateHub()
+            )
+
+        val failure = runCatching { repository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }.exceptionOrNull()
+        val metadataAfterFailure = database.scannerDao().loadSyncMetadata(5)
+
+        assertThat(failure).isInstanceOf(CancellationException::class.java)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.lastErrorCode).isNull()
     }
 
     @Test
@@ -710,7 +766,7 @@ class CurrentPhoenixSyncRepositoryTest {
             )
         )
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T08:00:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
@@ -749,11 +805,12 @@ class CurrentPhoenixSyncRepositoryTest {
                     ),
                 scannerDao = database.scannerDao(),
                 sessionRepository = fixedSessionRepository(),
-                clock = Clock.systemUTC()
+                clock = Clock.systemUTC(),
+                bootstrapStateHub = AttendeeSyncBootstrapStateHub()
             )
 
         try {
-            repository.syncAttendees()
+            repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
             error("Expected HttpException")
         } catch (e: Exception) {
             assertThat(e).isSameInstanceAs(expected)
@@ -766,6 +823,9 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(attendeeAfterFailure?.updatedAt).isEqualTo("2026-03-13T07:59:00Z")
         assertThat(metadataAfterFailure?.lastServerTime).isEqualTo("2026-03-13T08:00:00Z")
         assertThat(metadataAfterFailure?.attendeeCount).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveFailures).isEqualTo(1)
+        assertThat(metadataAfterFailure?.consecutiveIntegrityFailures).isEqualTo(0)
+        assertThat(metadataAfterFailure?.lastErrorCode).isEqualTo("http_500")
     }
 
     @Test
@@ -828,7 +888,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        repository.syncAttendees()
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         assertThat(database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-catch-10")).isNull()
     }
@@ -893,7 +953,7 @@ class CurrentPhoenixSyncRepositoryTest {
                 message = null
             )
 
-        repository.syncAttendees()
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         val overlay = database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-nocatch-11")
         assertThat(overlay).isNotNull()
@@ -914,7 +974,7 @@ class CurrentPhoenixSyncRepositoryTest {
             )
         )
         database.scannerDao().upsertSyncMetadata(
-            SyncMetadataEntity(
+            metadataRow(
                 eventId = 5,
                 lastServerTime = "2026-03-13T07:50:00Z",
                 lastSuccessfulSyncAt = "2026-03-13T07:50:00Z",
@@ -960,7 +1020,7 @@ class CurrentPhoenixSyncRepositoryTest {
             triggerName = "abort_sync_metadata_write"
         )
 
-        val failure = runCatching { repository.syncAttendees() }.exceptionOrNull()
+        val failure = runCatching { repository.syncAttendees(AttendeeSyncMode.INCREMENTAL) }.exceptionOrNull()
         val seededAttendee = database.scannerDao().findAttendee(5, "VG-SEED-700")
         val newAttendee = database.scannerDao().findAttendee(5, "VG-NEW-701")
         val metadata = database.scannerDao().loadSyncMetadata(5)
@@ -972,12 +1032,37 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(metadata?.attendeeCount).isEqualTo(1)
     }
 
+    private fun metadataRow(
+        eventId: Long,
+        lastServerTime: String?,
+        lastSuccessfulSyncAt: String?,
+        lastSyncType: String?,
+        attendeeCount: Int
+    ): SyncMetadataEntity =
+        SyncMetadataEntity(
+            eventId = eventId,
+            lastServerTime = lastServerTime,
+            lastSuccessfulSyncAt = lastSuccessfulSyncAt,
+            lastSyncType = lastSyncType,
+            attendeeCount = attendeeCount,
+            bootstrapCompletedAt = lastSuccessfulSyncAt,
+            lastAttemptedSyncAt = lastSuccessfulSyncAt,
+            consecutiveFailures = 0,
+            lastErrorCode = null,
+            lastErrorAt = null,
+            lastFullReconcileAt = lastSuccessfulSyncAt,
+            incrementalCyclesSinceFullReconcile = 0,
+            consecutiveIntegrityFailures = 0,
+            integrityFailuresInForegroundSession = 0
+        )
+
     private fun buildRepository(sessionRepository: SessionRepository): CurrentPhoenixSyncRepository =
         CurrentPhoenixSyncRepository(
             remoteDataSource = PhoenixMobileRemoteDataSource(api),
             scannerDao = database.scannerDao(),
             sessionRepository = sessionRepository,
-            clock = Clock.systemUTC()
+            clock = Clock.systemUTC(),
+            bootstrapStateHub = AttendeeSyncBootstrapStateHub()
         )
 
     private fun buildRateLimitedRepository(retryAfterHeader: String?): CurrentPhoenixSyncRepository {
@@ -1012,7 +1097,8 @@ class CurrentPhoenixSyncRepositoryTest {
             remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
             scannerDao = database.scannerDao(),
             sessionRepository = fixedSessionRepository(),
-            clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC)
+            clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC),
+            bootstrapStateHub = AttendeeSyncBootstrapStateHub()
         )
     }
 

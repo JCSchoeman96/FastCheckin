@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
 import za.co.voelgoed.fastcheck.data.repository.SyncRateLimitedException
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -17,6 +18,7 @@ import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 @HiltViewModel
 class SyncViewModel @Inject constructor(
     private val syncRepository: SyncRepository,
+    private val attendeeSyncOrchestrator: AttendeeSyncOrchestrator,
     private val clock: Clock
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(SyncScreenUiState())
@@ -140,9 +142,18 @@ class SyncViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            runCatching { syncRepository.syncAttendees() }
-                .onSuccess { status ->
+            runCatching { attendeeSyncOrchestrator.runSyncCycleNow() }
+                .onSuccess {
+                    val status = syncRepository.currentSyncStatus()
                     _currentEventSyncStatus.value = status
+                    val bootstrapSyncSucceeded =
+                        !isBootstrap || (bootstrapEventId != null && status?.eventId == bootstrapEventId)
+                    val successErrorMessage =
+                        if (isBootstrap && !bootstrapSyncSucceeded) {
+                            "Attendee sync failed."
+                        } else {
+                            null
+                        }
                     _uiState.update {
                         it.copy(
                             isSyncing = false,
@@ -155,12 +166,14 @@ class SyncViewModel @Inject constructor(
                                         }
                                     "Synced ${sync.attendeeCount} attendees via $syncType sync."
                                 } ?: "No active session. Login before syncing.",
-                            errorMessage = null,
+                            errorMessage = successErrorMessage,
                             isRateLimited = false,
                             nextAllowedSyncAtMillis = null,
                             bootstrapStatus =
-                                if (isBootstrap) {
+                                if (isBootstrap && bootstrapSyncSucceeded) {
                                     BootstrapSyncStatus.Succeeded
+                                } else if (isBootstrap) {
+                                    BootstrapSyncStatus.Failed
                                 } else {
                                     it.bootstrapStatus
                                 },

@@ -100,6 +100,49 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_8_9: Migration =
+        object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sync_metadata ADD COLUMN bootstrapCompletedAt TEXT")
+                db.execSQL("ALTER TABLE sync_metadata ADD COLUMN lastAttemptedSyncAt TEXT")
+                db.execSQL(
+                    "ALTER TABLE sync_metadata ADD COLUMN consecutiveFailures INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL("ALTER TABLE sync_metadata ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE sync_metadata ADD COLUMN lastErrorAt TEXT")
+                db.execSQL("ALTER TABLE sync_metadata ADD COLUMN lastFullReconcileAt TEXT")
+                db.execSQL(
+                    """
+                    ALTER TABLE sync_metadata ADD COLUMN incrementalCyclesSinceFullReconcile INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    ALTER TABLE sync_metadata ADD COLUMN consecutiveIntegrityFailures INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    ALTER TABLE sync_metadata ADD COLUMN integrityFailuresInForegroundSession INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    UPDATE sync_metadata
+                    SET bootstrapCompletedAt = lastSuccessfulSyncAt
+                    WHERE bootstrapCompletedAt IS NULL AND lastSuccessfulSyncAt IS NOT NULL
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    UPDATE sync_metadata
+                    SET lastFullReconcileAt = lastSuccessfulSyncAt
+                    WHERE lastFullReconcileAt IS NULL AND lastSuccessfulSyncAt IS NOT NULL
+                    """.trimIndent()
+                )
+            }
+        }
+
     val MIGRATION_7_8: Migration =
         object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {

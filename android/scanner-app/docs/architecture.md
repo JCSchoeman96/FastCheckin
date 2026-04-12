@@ -40,6 +40,8 @@ Repo/runtime mode truth must stay explicit:
 
 - `core.network`: Retrofit/OkHttp and current Phoenix mobile API boundary
 - `core.database`: Room database
+- `core.sync`: attendee sync orchestration (foreground periodic + triggers,
+  single-flight via repository mutex, full reconcile scheduling)
 - `core.datastore`: non-secret session metadata
 - `core.security`: secure JWT storage
 - `data.remote`: DTOs matching current Phoenix JSON payloads
@@ -91,7 +93,9 @@ Repo/runtime mode truth must stay explicit:
 - **Durable reconciliation truth** lives in queued scans, persisted flush
   outcomes, and overlay state transitions.
 - **Transient orchestration truth** lives in `AutoFlushCoordinator.state`
-  (uploading, retry scheduled metadata, auth expired signal).
+  (uploading, retry scheduled metadata, auth expired signal). This is **upload
+  queue health**, separate from **attendee cache freshness** (`AttendeeSyncStatus`
+  and scan-screen presenter copy).
 - **UI/ViewModels** are projection-only and must consume merged repository
   truth. They must not rebuild merged counts in presenters or treat local queue
   capture as server-confirmed admission.
@@ -136,6 +140,13 @@ such as `$HOME/Android/Sdk` and `/usr/lib/android-sdk`; the Windows wrapper
 prefers `ANDROID_SDK_ROOT`, `ANDROID_HOME`, then the standard `%LOCALAPPDATA%`
 and Android Studio SDK locations. This keeps validation portable across Linux,
 Windows, and multiple worktrees without committed machine-local SDK paths.
+
+## Follow-up: tombstones / invalidation feed
+
+Upsert-only attendee sync cannot observe deletions or revocations until the
+backend exposes an explicit invalidation or tombstone stream. Until then, the
+client uses periodic and integrity-triggered **full reconcile** (atomic
+per-event replace). See `docs/mobile_tombstone_invalidation_followup.md`.
 
 ## References
 

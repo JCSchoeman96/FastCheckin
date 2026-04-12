@@ -4,7 +4,8 @@ import kotlinx.coroutines.flow.Flow
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 
 interface SyncRepository {
-    suspend fun syncAttendees(): AttendeeSyncStatus?
+    suspend fun syncAttendees(mode: AttendeeSyncMode = AttendeeSyncMode.INCREMENTAL): AttendeeSyncStatus?
+
     suspend fun currentSyncStatus(): AttendeeSyncStatus?
 
     /**

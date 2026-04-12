@@ -4,10 +4,17 @@ import com.google.common.truth.Truth.assertThat
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
+import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
+import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
@@ -30,6 +37,7 @@ import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionRejectReason
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionReviewReason
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
+import za.co.voelgoed.fastcheck.domain.policy.AttendeeSyncBootstrapGate
 import za.co.voelgoed.fastcheck.domain.policy.CurrentEventAdmissionReadiness
 
 class DefaultAdmitScanUseCaseTest {
@@ -40,7 +48,8 @@ class DefaultAdmitScanUseCaseTest {
             lastServerTime = "2026-04-06T09:55:00Z",
             lastSuccessfulSyncAt = "2026-04-06T09:55:00Z",
             syncType = "full",
-            attendeeCount = 100
+            attendeeCount = 100,
+            bootstrapCompletedAt = "2026-04-06T09:55:00Z"
         )
 
     private fun baseAttendee(
@@ -78,9 +87,12 @@ class DefaultAdmitScanUseCaseTest {
         lookup: AttendeeLookupRepository,
         scannerDao: FakeScannerDao,
         session: SessionAuthGateway = FakeSessionAuthGateway(eventId = 5L, operatorName = "Op"),
-        syncStatus: AttendeeSyncStatus? = trustedSync
+        syncStatus: AttendeeSyncStatus? = trustedSync,
+        syncRepositoryOverride: SyncRepository? = null,
+        connectivityOnline: Boolean = true,
+        orchestratorOverride: AttendeeSyncOrchestrator? = null
     ): DefaultAdmitScanUseCase {
-        val syncRepo = FakeSyncRepository(syncStatus)
+        val syncRepo = syncRepositoryOverride ?: FakeSyncRepository(syncStatus)
         return DefaultAdmitScanUseCase(
             attendeeLookupRepository = lookup,
             scannerDao = scannerDao,
@@ -88,9 +100,28 @@ class DefaultAdmitScanUseCaseTest {
             syncRepository = syncRepo,
             paymentStatusRuleMapper = PaymentStatusRuleMapper(),
             currentEventAdmissionReadiness = CurrentEventAdmissionReadiness(clock),
+            attendeeSyncBootstrapGate =
+                object : AttendeeSyncBootstrapGate {
+                    override fun isInitialBootstrapSyncInProgressForEvent(eventId: Long): Boolean = false
+                },
+            connectivityMonitor =
+                object : ConnectivityMonitor {
+                    override val isOnline: StateFlow<Boolean> = MutableStateFlow(connectivityOnline)
+                },
+            attendeeSyncOrchestrator = orchestratorOverride ?: NoopOrchestrator(),
             clock = clock
         )
     }
+
+    private fun staleSyncStatus(): AttendeeSyncStatus =
+        AttendeeSyncStatus(
+            eventId = 5L,
+            lastServerTime = "2026-04-06T07:00:00Z",
+            lastSuccessfulSyncAt = "2026-04-06T07:00:00Z",
+            syncType = "incremental",
+            attendeeCount = 80,
+            bootstrapCompletedAt = "2026-04-06T07:00:00Z"
+        )
 
     @Test
     fun rejectsInvalidTicketNormalization() = runTest {
@@ -137,6 +168,148 @@ class DefaultAdmitScanUseCaseTest {
         assertThat(decision).isInstanceOf(LocalAdmissionDecision.ReviewRequired::class.java)
         assertThat((decision as LocalAdmissionDecision.ReviewRequired).reason)
             .isEqualTo(LocalAdmissionReviewReason.CacheNotTrusted)
+    }
+
+    @Test
+    fun staleMissingTicketFallsBackToReviewWhenAssistSyncThrows() = runTest {
+        val staleStatus = staleSyncStatus()
+        val throwingSyncRepository =
+            object : SyncRepository {
+                var syncCalls: Int = 0
+
+                override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
+                    syncCalls += 1
+                    throw IllegalStateException("assist failed")
+                }
+
+                override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
+
+                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+            }
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(null),
+                scannerDao = FakeScannerDao(),
+                syncStatus = staleStatus,
+                syncRepositoryOverride = throwingSyncRepository
+            )
+
+        val decision = useCase.admit("VG-404", ScanDirection.IN, "Op", "Main")
+
+        assertThat(throwingSyncRepository.syncCalls).isEqualTo(1)
+        assertThat(decision).isInstanceOf(LocalAdmissionDecision.ReviewRequired::class.java)
+        assertThat((decision as LocalAdmissionDecision.ReviewRequired).reason)
+            .isEqualTo(LocalAdmissionReviewReason.TicketNotInLocalAttendeeList)
+    }
+
+    @Test
+    fun staleMissingTicketFallsBackToReviewWhenAssistSyncTimesOut() = runTest {
+        val staleStatus = staleSyncStatus()
+        val timeoutSyncRepository =
+            object : SyncRepository {
+                var syncCalls: Int = 0
+
+                override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
+                    syncCalls += 1
+                    delay(1_000)
+                    return staleStatus
+                }
+
+                override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
+
+                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+            }
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(null),
+                scannerDao = FakeScannerDao(),
+                syncStatus = staleStatus,
+                syncRepositoryOverride = timeoutSyncRepository
+            )
+
+        val decision = useCase.admit("VG-404", ScanDirection.IN, "Op", "Main")
+
+        assertThat(timeoutSyncRepository.syncCalls).isEqualTo(1)
+        assertThat(decision).isInstanceOf(LocalAdmissionDecision.ReviewRequired::class.java)
+        assertThat((decision as LocalAdmissionDecision.ReviewRequired).reason)
+            .isEqualTo(LocalAdmissionReviewReason.TicketNotInLocalAttendeeList)
+    }
+
+    @Test
+    fun staleMissingTicketOfflineSkipsAssistSyncAndFallsBackToReview() = runTest {
+        val staleStatus = staleSyncStatus()
+        val syncRepository =
+            object : SyncRepository {
+                var syncCalls: Int = 0
+
+                override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
+                    syncCalls += 1
+                    return staleStatus
+                }
+
+                override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
+
+                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+            }
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(null),
+                scannerDao = FakeScannerDao(),
+                syncStatus = staleStatus,
+                syncRepositoryOverride = syncRepository,
+                connectivityOnline = false
+            )
+
+        val decision = useCase.admit("VG-404", ScanDirection.IN, "Op", "Main")
+
+        assertThat(syncRepository.syncCalls).isEqualTo(0)
+        assertThat(decision).isInstanceOf(LocalAdmissionDecision.ReviewRequired::class.java)
+        assertThat((decision as LocalAdmissionDecision.ReviewRequired).reason)
+            .isEqualTo(LocalAdmissionReviewReason.TicketNotInLocalAttendeeList)
+    }
+
+    @Test
+    fun staleFoundAttendeeTriggersAdvisoryRefreshWithoutBlockingAdmissionDecision() = runTest {
+        val staleStatus = staleSyncStatus()
+        val orchestrator = RecordingOrchestrator()
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(baseAttendee(ticketCode = "VG-100")),
+                scannerDao = FakeScannerDao(enqueueReturn = 77L),
+                syncStatus = staleStatus,
+                orchestratorOverride = orchestrator
+            )
+
+        val decision = useCase.admit("VG-100", ScanDirection.IN, "Op", "Main")
+
+        assertThat(decision).isInstanceOf(LocalAdmissionDecision.Accepted::class.java)
+        assertThat((decision as LocalAdmissionDecision.Accepted).localQueueId).isEqualTo(77L)
+        assertThat(orchestrator.staleRefreshAdvisories).isEqualTo(1)
+    }
+
+    @Test
+    fun staleAssistStructuredCancellationIsPropagated() = runTest {
+        val staleStatus = staleSyncStatus()
+        val cancellingRepository =
+            object : SyncRepository {
+                override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
+                    throw CancellationException("cancelled")
+                }
+
+                override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
+
+                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+            }
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(null),
+                scannerDao = FakeScannerDao(),
+                syncStatus = staleStatus,
+                syncRepositoryOverride = cancellingRepository
+            )
+
+        val failure = runCatching { useCase.admit("VG-404", ScanDirection.IN, "Op", "Main") }.exceptionOrNull()
+        assertThat(failure).isInstanceOf(CancellationException::class.java)
     }
 
     @Test
@@ -312,7 +485,7 @@ class DefaultAdmitScanUseCaseTest {
     private class FakeSyncRepository(
         private val status: AttendeeSyncStatus?
     ) : SyncRepository {
-        override suspend fun syncAttendees() = error("not used")
+        override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? = null
 
         override suspend fun currentSyncStatus(): AttendeeSyncStatus? = status
 
@@ -326,6 +499,34 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun currentEventId(): Long? = eventId
 
         override suspend fun currentOperatorName(): String? = operatorName
+    }
+
+    private class NoopOrchestrator : AttendeeSyncOrchestrator {
+        override fun start() = Unit
+
+        override fun notifyAppForeground() = Unit
+
+        override fun notifyStaleScanRefreshAdvisory() = Unit
+
+        override fun notifyConnectivityRestored() = Unit
+
+        override suspend fun runSyncCycleNow() = Unit
+    }
+
+    private class RecordingOrchestrator : AttendeeSyncOrchestrator {
+        var staleRefreshAdvisories: Int = 0
+
+        override fun start() = Unit
+
+        override fun notifyAppForeground() = Unit
+
+        override fun notifyStaleScanRefreshAdvisory() {
+            staleRefreshAdvisories += 1
+        }
+
+        override fun notifyConnectivityRestored() = Unit
+
+        override suspend fun runSyncCycleNow() = Unit
     }
 
     /**
@@ -348,6 +549,7 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun findAttendeeById(eventId: Long, attendeeId: Long): AttendeeEntity? = unused()
         override suspend fun deleteAllAttendees() = unused()
         override suspend fun deleteAttendeesForEvent(eventId: Long) = unused()
+        override suspend fun clearEventAttendeeCacheForFullReconcile(eventId: Long) = unused()
         override suspend fun upsertLocalAdmissionOverlay(overlay: LocalAdmissionOverlayEntity): Long = unused()
         override suspend fun upsertLocalAdmissionOverlays(overlays: List<LocalAdmissionOverlayEntity>) = unused()
         override suspend fun findLatestActiveOverlayForAttendee(eventId: Long, attendeeId: Long) = unused()

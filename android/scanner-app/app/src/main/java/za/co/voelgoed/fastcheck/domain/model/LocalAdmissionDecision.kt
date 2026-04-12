@@ -41,6 +41,7 @@ enum class LocalAdmissionRejectReason {
 
 enum class LocalAdmissionReviewReason {
     CacheNotTrusted,
+    TicketNotInLocalAttendeeList,
     PaymentUnknown,
     MissingSessionContext,
     LocalWriteFailed

@@ -9,48 +9,70 @@ import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 class CurrentEventAdmissionReadiness @Inject constructor(
     private val clock: Clock
 ) {
+    @Deprecated("Use evaluateReadiness for stale vs unsafe decisions.")
     fun hasTrustedCurrentEventCache(
         eventId: Long,
         syncStatus: AttendeeSyncStatus?
-    ): Boolean = evaluate(eventId, syncStatus).isTrusted
+    ): Boolean = evaluateReadiness(eventId, syncStatus, bootstrapSyncInProgress = false).readiness !=
+        AdmissionCacheReadiness.NOT_READY_UNSAFE
 
-    fun evaluate(
+    fun evaluateReadiness(
         eventId: Long,
-        syncStatus: AttendeeSyncStatus?
-    ): AdmissionReadinessResult {
+        syncStatus: AttendeeSyncStatus?,
+        bootstrapSyncInProgress: Boolean
+    ): AdmissionReadinessEvaluation {
         if (syncStatus == null) {
-            return AdmissionReadinessResult(false, AdmissionReadinessReason.MissingSyncMetadata)
+            return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.MissingSyncMetadata
+            )
         }
 
         if (syncStatus.eventId != eventId) {
-            return AdmissionReadinessResult(false, AdmissionReadinessReason.WrongEvent)
+            return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.WrongEvent
+            )
         }
 
+        if (bootstrapSyncInProgress) {
+            return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.InitialBootstrapSyncInProgress
+            )
+        }
+
+        val bootstrapAt = syncStatus.bootstrapCompletedAt ?: syncStatus.lastSuccessfulSyncAt
+        if (bootstrapAt.isNullOrBlank()) {
+            return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.BootstrapNotCompleted
+            )
+        }
+
+        runCatching { Instant.parse(bootstrapAt) }.getOrNull()
+            ?: return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.CorruptOrInconsistentSyncState
+            )
+
         val lastSuccessfulSyncAt = syncStatus.lastSuccessfulSyncAt
-            ?: return AdmissionReadinessResult(false, AdmissionReadinessReason.NeverSuccessfullySynced)
+            ?: return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.NeverSuccessfullySynced
+            )
 
         val syncedAt = runCatching { Instant.parse(lastSuccessfulSyncAt) }.getOrNull()
-            ?: return AdmissionReadinessResult(false, AdmissionReadinessReason.UnparseableSyncTimestamp)
+            ?: return AdmissionReadinessEvaluation(
+                AdmissionCacheReadiness.NOT_READY_UNSAFE,
+                AdmissionReadinessReason.UnparseableSyncTimestamp
+            )
 
         val age = Duration.between(syncedAt, clock.instant())
         return if (age > AdmissionRuntimePolicy.ATTENDEE_CACHE_STALE_THRESHOLD) {
-            AdmissionReadinessResult(false, AdmissionReadinessReason.Stale)
+            AdmissionReadinessEvaluation(AdmissionCacheReadiness.READY_STALE, AdmissionReadinessReason.ReadyStale)
         } else {
-            AdmissionReadinessResult(true, AdmissionReadinessReason.Ready)
+            AdmissionReadinessEvaluation(AdmissionCacheReadiness.READY_FRESH, AdmissionReadinessReason.ReadyFresh)
         }
     }
-}
-
-data class AdmissionReadinessResult(
-    val isTrusted: Boolean,
-    val reason: AdmissionReadinessReason
-)
-
-enum class AdmissionReadinessReason {
-    Ready,
-    MissingSyncMetadata,
-    WrongEvent,
-    NeverSuccessfullySynced,
-    UnparseableSyncTimestamp,
-    Stale
 }

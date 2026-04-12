@@ -6,6 +6,7 @@ import java.time.Instant
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
@@ -30,8 +31,8 @@ class EventDestinationPresenter(
         return EventDestinationUiState(
             headerTitle = session.eventName,
             headerSubtitle = "Event #${session.eventId}",
-            statusChip = statusChipFor(queueUiState, syncUiState, currentCacheStatus),
-            statusMessage = statusMessageFor(queueUiState, syncUiState, currentCacheStatus),
+            statusChip = statusChipFor(queueUiState, syncUiState, currentCacheStatus, currentEventSyncStatus),
+            statusMessage = statusMessageFor(queueUiState, syncUiState, currentCacheStatus, currentEventSyncStatus),
             attentionBanner =
                 attentionBannerFor(
                     queueUiState = queueUiState,
@@ -60,7 +61,8 @@ class EventDestinationPresenter(
     private fun statusChipFor(
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
-        currentCacheStatus: CurrentCacheStatus
+        currentCacheStatus: CurrentCacheStatus,
+        currentEventSyncStatus: AttendeeSyncStatus?
     ): EventStatusChipUiModel =
         when {
             requiresRelogin(queueUiState) ->
@@ -87,6 +89,10 @@ class EventDestinationPresenter(
             currentCacheStatus == CurrentCacheStatus.Unavailable ->
                 EventStatusChipUiModel("Attendee cache pending", StatusTone.Warning)
 
+            currentCacheStatus == CurrentCacheStatus.Stale &&
+                currentEventSyncStatus?.isSyncStruggling() == true ->
+                EventStatusChipUiModel("Sync delayed", StatusTone.Warning)
+
             currentCacheStatus == CurrentCacheStatus.Stale ->
                 EventStatusChipUiModel("Cache may be old", StatusTone.Warning)
 
@@ -97,7 +103,8 @@ class EventDestinationPresenter(
     private fun statusMessageFor(
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
-        currentCacheStatus: CurrentCacheStatus
+        currentCacheStatus: CurrentCacheStatus,
+        currentEventSyncStatus: AttendeeSyncStatus?
     ): String =
         when {
             requiresRelogin(queueUiState) ->
@@ -127,6 +134,10 @@ class EventDestinationPresenter(
 
             currentCacheStatus == CurrentCacheStatus.Unavailable ->
                 "This event does not have a current attendee cache yet."
+
+            currentCacheStatus == CurrentCacheStatus.Stale &&
+                currentEventSyncStatus?.isSyncStruggling() == true ->
+                "Sync delayed, scanning continues. Attendee sync is retrying in the background."
 
             currentCacheStatus == CurrentCacheStatus.Stale ->
                 "Attendee totals come from an older local sync and may not reflect the latest backend changes."
@@ -403,16 +414,13 @@ class EventDestinationPresenter(
                 .getOrNull()
                 ?: return false
 
-        return Duration.between(syncedAt, clock.instant()) > STALE_SYNC_THRESHOLD
+        return Duration.between(syncedAt, clock.instant()) >
+            AdmissionRuntimePolicy.ATTENDEE_CACHE_STALE_THRESHOLD
     }
 
     private enum class CurrentCacheStatus {
         Ready,
         Stale,
         Unavailable
-    }
-
-    private companion object {
-        val STALE_SYNC_THRESHOLD: Duration = Duration.ofMinutes(30)
     }
 }
