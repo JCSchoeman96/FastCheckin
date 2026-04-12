@@ -68,7 +68,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -147,7 +148,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -183,7 +185,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -235,7 +238,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -261,7 +265,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -288,7 +293,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -316,7 +322,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -344,7 +351,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -374,7 +382,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -1218,7 +1227,12 @@ class FastCheckDatabaseMigrationTest {
             error("Not used in this migration test")
         }
 
-        override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+        override suspend fun syncAttendees(
+            since: String?,
+            cursor: String?,
+            sinceInvalidationId: Long,
+            limit: Int
+        ): MobileSyncResponse {
             error("Not used in this migration test")
         }
 

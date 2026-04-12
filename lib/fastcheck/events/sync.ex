@@ -107,6 +107,8 @@ defmodule FastCheck.Events.Sync do
     if incremental do
       case Attendees.create_bulk(event.id, attendees_to_process, incremental: true) do
         {:ok, processed_count} ->
+          # Bump after every successful incremental sync (simple, deterministic). Revisit
+          # conditional bumps only if client churn from version noise becomes a problem.
           Events.bump_event_sync_version!(event.id)
 
           complete_sync(

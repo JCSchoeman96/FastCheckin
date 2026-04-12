@@ -549,6 +549,7 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun findAttendeeById(eventId: Long, attendeeId: Long): AttendeeEntity? = unused()
         override suspend fun deleteAllAttendees() = unused()
         override suspend fun deleteAttendeesForEvent(eventId: Long) = unused()
+        override suspend fun deleteAttendeeByTicketCode(eventId: Long, ticketCode: String) = unused()
         override suspend fun clearEventAttendeeCacheForFullReconcile(eventId: Long) = unused()
         override suspend fun upsertLocalAdmissionOverlay(overlay: LocalAdmissionOverlayEntity): Long = unused()
         override suspend fun upsertLocalAdmissionOverlays(overlays: List<LocalAdmissionOverlayEntity>) = unused()

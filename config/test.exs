@@ -48,6 +48,9 @@ config :phoenix_live_view,
 # Disable rate limiting in test environment to prevent random test failures
 config :fastcheck, :rate_limiting_enabled, false
 
+# See `:mobile_sync_snapshot_isolation` in config.exs — Sandbox savepoints conflict with SET TRANSACTION.
+config :fastcheck, :mobile_sync_snapshot_isolation, :none
+
 config :fastcheck, Oban,
   repo: FastCheck.Repo,
   queues: false,

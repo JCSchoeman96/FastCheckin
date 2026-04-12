@@ -143,6 +143,22 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_9_10: Migration =
+        object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    ALTER TABLE sync_metadata ADD COLUMN lastInvalidationsCheckpoint INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    ALTER TABLE sync_metadata ADD COLUMN lastEventSyncVersion INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
+                )
+            }
+        }
+
     val MIGRATION_7_8: Migration =
         object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {

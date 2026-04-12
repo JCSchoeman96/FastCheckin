@@ -30,6 +30,7 @@ import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncBootstrapStateHub
 import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.remote.AttendeeDto
+import za.co.voelgoed.fastcheck.data.remote.AttendeeInvalidationDto
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginResponse
@@ -107,6 +108,89 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(metadata?.lastSyncType).isEqualTo("full")
         assertThat(status?.attendeeCount).isEqualTo(1)
         assertThat(status?.syncType).isEqualTo("full")
+    }
+
+    /**
+     * Regression: invalidations must be applied before attendee upserts for a page. If the same
+     * `ticket_code` appears in both lists (tombstone + fresh row), upsert-then-delete would leave
+     * no row; delete-then-upsert preserves the server row.
+     */
+    @Test
+    fun syncAppliesInvalidationsBeforeAttendeeUpsertsForSameTicketCode() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 1L,
+                    eventId = 5,
+                    ticketCode = "T-ORDER",
+                    firstName = "Old",
+                    updatedAt = "2026-03-13T07:00:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertSyncMetadata(
+            metadataRow(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 1
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:15:00Z",
+                        invalidations =
+                            listOf(
+                                AttendeeInvalidationDto(
+                                    id = 10,
+                                    event_id = 5,
+                                    attendee_id = 1,
+                                    ticket_code = "T-ORDER",
+                                    change_type = "ineligible",
+                                    reason_code = "source_missing_from_authoritative_sync",
+                                    effective_at = "2026-03-13T08:14:00Z",
+                                    source_sync_run_id = null
+                                )
+                            ),
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 2,
+                                    event_id = 5,
+                                    ticket_code = "T-ORDER",
+                                    first_name = "New",
+                                    last_name = "Row",
+                                    email = "n@example.com",
+                                    ticket_type = "General",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 1,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = null,
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T08:14:30Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "incremental",
+                        next_cursor = null,
+                        invalidations_checkpoint = 10L,
+                        event_sync_version = 3L
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+
+        val after = database.scannerDao().findAttendee(5, "T-ORDER")
+        assertThat(after).isNotNull()
+        assertThat(after?.id).isEqualTo(2)
+        assertThat(after?.firstName).isEqualTo("New")
     }
 
     @Test
@@ -685,7 +769,12 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                            override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -728,7 +817,12 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                            override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                                 throw CancellationException("caller cancelled")
                             }
 
@@ -794,7 +888,12 @@ class CurrentPhoenixSyncRepositoryTest {
                             override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                                 error("Not used in this test")
 
-                            override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                            override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                                 throw expected
                             }
 
@@ -1071,7 +1170,12 @@ class CurrentPhoenixSyncRepositoryTest {
                 override suspend fun login(body: MobileLoginRequest): MobileLoginResponse =
                     error("Not used in this test")
 
-                override suspend fun syncAttendees(since: String?, cursor: String?, limit: Int): MobileSyncResponse {
+                override suspend fun syncAttendees(
+                            since: String?,
+                            cursor: String?,
+                            sinceInvalidationId: Long,
+                            limit: Int
+                        ): MobileSyncResponse {
                     val responseBody =
                         ResponseBody.create(
                             "application/json".toMediaType(),
@@ -1182,10 +1286,12 @@ class CurrentPhoenixSyncRepositoryTest {
         data class SyncCall(
             val since: String?,
             val cursor: String?,
+            val sinceInvalidationId: Long,
             val limit: Int
         )
 
         var lastSince: String? = null
+        var lastSinceInvalidationId: Long = 0L
         val syncCalls: MutableList<SyncCall> = mutableListOf()
         var pagedResponses: MutableList<MobileSyncResponse> = mutableListOf()
         var syncResponse: MobileSyncResponse =
@@ -1211,10 +1317,12 @@ class CurrentPhoenixSyncRepositoryTest {
         override suspend fun syncAttendees(
             since: String?,
             cursor: String?,
+            sinceInvalidationId: Long,
             limit: Int
         ): MobileSyncResponse {
             lastSince = since
-            syncCalls += SyncCall(since = since, cursor = cursor, limit = limit)
+            lastSinceInvalidationId = sinceInvalidationId
+            syncCalls += SyncCall(since = since, cursor = cursor, sinceInvalidationId = sinceInvalidationId, limit = limit)
 
             return if (pagedResponses.isNotEmpty()) {
                 pagedResponses.removeFirst()

@@ -20,6 +20,7 @@ import za.co.voelgoed.fastcheck.data.mapper.toDomain
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.mapper.withIntegrityFailure
 import za.co.voelgoed.fastcheck.data.mapper.withSyncFailure
+import za.co.voelgoed.fastcheck.data.remote.AttendeeInvalidationDto
 import za.co.voelgoed.fastcheck.data.remote.MobileSyncPayload
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncBootstrapStateHub
@@ -122,6 +123,11 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     ): AttendeeSyncStatus? {
         var cursor: String? = null
         var nextSince: String? = sinceForFirstPage
+        var sinceInvalidationId: Long =
+            when (mode) {
+                AttendeeSyncMode.FULL_RECONCILE -> 0L
+                else -> previousBeforeLoop?.lastInvalidationsCheckpoint ?: 0L
+            }
         val seenCursors = mutableSetOf<String>()
         var latestPayload: MobileSyncPayload? = null
         var totalFetched = 0
@@ -141,6 +147,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 remoteDataSource.syncAttendees(
                     since = nextSince,
                     cursor = cursor,
+                    sinceInvalidationId = sinceInvalidationId,
                     limit = SYNC_PAGE_LIMIT
                 )
             val payload =
@@ -149,6 +156,8 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
             latestPayload = payload
             val nextCursor = payload.next_cursor
+
+            applyInvalidationEvents(eventId, payload.invalidations)
 
             nextCursor?.let {
                 if (!seenCursors.add(it)) {
@@ -172,7 +181,11 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             totalFetched += attendeesForPage.size
             cursor = nextCursor
             nextSince = null
-        } while (cursor != null)
+            sinceInvalidationId = payload.invalidations_checkpoint
+        } while (
+            cursor != null ||
+                shouldFetchAnotherInvalidationPage(latestPayload, SYNC_PAGE_LIMIT)
+        )
 
         val finalPayload = requireNotNull(latestPayload) { "Sync failed" }
         val metadata =
@@ -226,7 +239,9 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 lastFullReconcileAt = previousBeforeLoop?.lastFullReconcileAt ?: nowIso,
                 incrementalCyclesSinceFullReconcile = incrementalCycles,
                 consecutiveIntegrityFailures = 0,
-                integrityFailuresInForegroundSession = previousBeforeLoop?.integrityFailuresInForegroundSession ?: 0
+                integrityFailuresInForegroundSession = previousBeforeLoop?.integrityFailuresInForegroundSession ?: 0,
+                lastInvalidationsCheckpoint = finalPayload.invalidations_checkpoint,
+                lastEventSyncVersion = finalPayload.event_sync_version
             )
 
         return when (mode) {
@@ -267,6 +282,17 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             }
         }
     }
+
+    private suspend fun applyInvalidationEvents(eventId: Long, events: List<AttendeeInvalidationDto>) {
+        for (inv in events) {
+            val normalized =
+                TicketCodeNormalizer.normalizeOrNull(inv.ticket_code) ?: continue
+            scannerDao.deleteAttendeeByTicketCode(eventId, normalized)
+        }
+    }
+
+    private fun shouldFetchAnotherInvalidationPage(payload: MobileSyncPayload, pageLimit: Int): Boolean =
+        payload.invalidations.size >= pageLimit
 }
 
 class SyncRateLimitedException(

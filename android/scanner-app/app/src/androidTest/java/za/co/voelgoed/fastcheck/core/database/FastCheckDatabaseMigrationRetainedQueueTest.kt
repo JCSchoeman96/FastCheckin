@@ -62,7 +62,8 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
                     FastCheckDatabaseMigrations.MIGRATION_5_6,
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
-                    FastCheckDatabaseMigrations.MIGRATION_8_9
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -348,6 +349,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
         override suspend fun syncAttendees(
             since: String?,
             cursor: String?,
+            sinceInvalidationId: Long,
             limit: Int
         ): MobileSyncResponse {
             error("syncAttendees is not used by this migration test")

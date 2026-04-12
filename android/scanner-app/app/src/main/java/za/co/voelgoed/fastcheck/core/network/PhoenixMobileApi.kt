@@ -19,6 +19,7 @@ interface PhoenixMobileApi {
     suspend fun syncAttendees(
         @Query("since") since: String? = null,
         @Query("cursor") cursor: String? = null,
+        @Query("since_invalidation_id") sinceInvalidationId: Long = 0L,
         @Query("limit") limit: Int
     ): MobileSyncResponse
 

@@ -27,7 +27,7 @@ import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
         RecentFlushOutcomeEntity::class,
         QuarantinedScanEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class FastCheckDatabase : RoomDatabase() {

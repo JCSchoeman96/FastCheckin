@@ -318,6 +318,8 @@ Query params:
 - optional `since`
 - `since` is parsed as ISO8601
 - invalid `since` currently falls back to a full sync
+- optional `since_invalidation_id` (integer, default `0`) — last `invalidations_checkpoint` from the prior response; drives the invalidation sub-stream
+- `limit` (required), optional `cursor` (opaque; attendees sub-stream only)
 
 Success shape:
 
@@ -326,12 +328,20 @@ Success shape:
   "data": {
     "server_time": "2026-03-13T10:00:00Z",
     "attendees": [],
+    "invalidations": [],
     "count": 0,
-    "sync_type": "full"
+    "sync_type": "full",
+    "next_cursor": null,
+    "invalidations_checkpoint": 0,
+    "event_sync_version": 0
   },
   "error": null
 }
 ```
+
+Details: `docs/mobile_runtime_truth.md` (attendee + invalidation catch-up loop).
+
+The **attendees** array lists **active** (`scan_eligibility` active) rows only. **`next_cursor`** pages the attendee stream; **`invalidations_checkpoint`** / **`since_invalidation_id`** page the invalidation stream. Each sub-stream is capped at **`limit`** rows per response (independent caps). **`event_sync_version`** is a monotonic per-event counter bumped when mobile-visible state changes.
 
 Serialized attendee fields are exactly:
 

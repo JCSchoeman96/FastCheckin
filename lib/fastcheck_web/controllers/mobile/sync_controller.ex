@@ -24,6 +24,11 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   @doc """
   Returns attendee data for the authenticated event (sync down).
+
+  Invalidations, attendees, and `event_sync_version` are loaded inside one database
+  transaction. When `:mobile_sync_snapshot_isolation` is `:repeatable_read` (default
+  outside tests), the transaction uses PostgreSQL repeatable-read semantics so those
+  reads share one snapshot and are not interleaved with concurrent reconciles.
   """
   def get_attendees(conn, params) do
     event_id = conn.assigns.current_event_id
@@ -31,11 +36,21 @@ defmodule FastCheckWeb.Mobile.SyncController do
     with {:ok, since_timestamp} <- parse_since_parameter(params),
          {:ok, since_invalidation_id} <- parse_since_invalidation_id(params),
          {:ok, page_options} <- parse_page_options(params),
-         {:ok, invalidations, invalidations_checkpoint} <-
-           fetch_invalidations(event_id, since_invalidation_id, page_options.limit),
-         {:ok, attendees, next_cursor} <-
-           fetch_attendees(event_id, since_timestamp, page_options, page_options.limit),
-         {:ok, event_sync_version} <- fetch_event_sync_version(event_id) do
+         {:ok, snapshot} <-
+           fetch_sync_down_snapshot(
+             event_id,
+             since_timestamp,
+             since_invalidation_id,
+             page_options
+           ) do
+      %{
+        invalidations: invalidations,
+        invalidations_checkpoint: invalidations_checkpoint,
+        attendees: attendees,
+        next_cursor: next_cursor,
+        event_sync_version: event_sync_version
+      } = snapshot
+
       server_time = DateTime.utc_now() |> DateTime.truncate(:second)
       sync_type = if since_timestamp, do: "incremental", else: "full"
 
@@ -252,6 +267,52 @@ defmodule FastCheckWeb.Mobile.SyncController do
   end
 
   defp parse_cursor_parameter(_params), do: {:ok, nil}
+
+  defp fetch_sync_down_snapshot(event_id, since_timestamp, since_invalidation_id, page_options) do
+    case Repo.transaction(fn ->
+           maybe_set_repeatable_read_for_sync_down!()
+
+           with {:ok, invalidations, invalidations_checkpoint} <-
+                  fetch_invalidations(event_id, since_invalidation_id, page_options.limit),
+                {:ok, attendees, next_cursor} <-
+                  fetch_attendees(
+                    event_id,
+                    since_timestamp,
+                    page_options,
+                    page_options.limit
+                  ),
+                {:ok, event_sync_version} <- fetch_event_sync_version(event_id) do
+             %{
+               invalidations: invalidations,
+               invalidations_checkpoint: invalidations_checkpoint,
+               attendees: attendees,
+               next_cursor: next_cursor,
+               event_sync_version: event_sync_version
+             }
+           else
+             {:error, reason} -> Repo.rollback({:sync_down_query, reason})
+           end
+         end) do
+      {:ok, snapshot} ->
+        {:ok, snapshot}
+
+      {:error, {:sync_down_query, reason}} ->
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp maybe_set_repeatable_read_for_sync_down! do
+    case Application.get_env(:fastcheck, :mobile_sync_snapshot_isolation, :repeatable_read) do
+      :repeatable_read ->
+        _ = Repo.query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", [])
+
+      :none ->
+        :ok
+    end
+  end
 
   defp fetch_invalidations(event_id, since_id, inv_limit)
        when is_integer(event_id) and is_integer(since_id) and is_integer(inv_limit) do
