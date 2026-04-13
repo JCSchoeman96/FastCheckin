@@ -5,7 +5,8 @@ alwaysApply: true
 
 # Plan Governance Rule
 
-This rule applies to every planning document ending in `.plan.md`.
+This rule applies to every planning document ending in `.plan.md`. 
+ALL plans MUST be created and maintained inside .cursor/plans (REPO ROOT)
 
 ## Core contract
 
