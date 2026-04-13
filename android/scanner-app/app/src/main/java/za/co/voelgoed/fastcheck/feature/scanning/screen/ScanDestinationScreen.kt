@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.feature.scanning.screen
 
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +23,8 @@ import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcDangerButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcPrimaryButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcScanResultHero
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcScannerPreviewOverlay
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
@@ -95,23 +98,40 @@ fun ScanDestinationScreen(
 
         if (uiState.showCameraPreview) {
             FcCard(modifier = Modifier.fillMaxWidth()) {
-                PreviewSurface(
-                    previewSurfaceHolder = previewSurfaceHolder,
-                    onPreviewSurfaceChanged = onPreviewSurfaceChanged,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(260.dp)
-                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    PreviewSurface(
+                        previewSurfaceHolder = previewSurfaceHolder,
+                        onPreviewSurfaceChanged = onPreviewSurfaceChanged,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(260.dp)
+                    )
+
+                    FcScannerPreviewOverlay(
+                        statusLabel = uiState.scannerStatusChip.text,
+                        statusTone = uiState.scannerStatusChip.tone,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(260.dp)
+                    )
+                }
             }
         }
 
         uiState.captureBanner?.let { banner ->
-            FcBanner(
-                title = banner.title,
-                message = banner.message,
+            val heroTitle = banner.title?.takeIf { it.isNotBlank() } ?: banner.message
+            val heroMessage =
+                banner.title
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { banner.message.takeIf { message -> message.isNotBlank() } }
+
+            FcScanResultHero(
+                title = heroTitle,
+                message = heroMessage,
                 tone = banner.tone,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 
