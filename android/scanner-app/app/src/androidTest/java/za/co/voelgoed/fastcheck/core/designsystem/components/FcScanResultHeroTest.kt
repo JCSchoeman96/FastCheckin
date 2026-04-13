@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.core.designsystem.components
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -36,17 +37,23 @@ class FcScanResultHeroTest {
 
     @Test
     fun hidesMessageWhenBlank() {
+        val message = mutableStateOf("Duplicate capture blocked")
+
         composeRule.setContent {
             FastCheckTheme {
                 FcScanResultHero(
                     title = "Duplicate",
-                    message = "",
+                    message = message.value,
                     tone = StatusTone.Duplicate,
                 )
             }
         }
 
         composeRule.onNodeWithText("DUPLICATE").assertIsDisplayed()
-        composeRule.onAllNodesWithText("Ticket check-in completed").assertCountEquals(0)
+        composeRule.onNodeWithText("Duplicate capture blocked").assertIsDisplayed()
+        composeRule.runOnUiThread {
+            message.value = " "
+        }
+        composeRule.onAllNodesWithText("Duplicate capture blocked").assertCountEquals(0)
     }
 }

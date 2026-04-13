@@ -37,16 +37,22 @@ class FcScannerPreviewOverlayTest {
 
     @Test
     fun hidesStatusLabelWhenBlank() {
+        val statusLabel = mutableStateOf("Camera ready")
+
         composeRule.setContent {
             FastCheckTheme {
                 FcScannerPreviewOverlay(
-                    statusLabel = " ",
+                    statusLabel = statusLabel.value,
                     statusTone = StatusTone.Info,
                 )
             }
         }
 
-        composeRule.onAllNodesWithText("SHOULD NOT SHOW").assertCountEquals(0)
+        composeRule.onNodeWithText("CAMERA READY").assertIsDisplayed()
+        composeRule.runOnUiThread {
+            statusLabel.value = " "
+        }
+        composeRule.onAllNodesWithText("CAMERA READY").assertCountEquals(0)
     }
 
     @Test
