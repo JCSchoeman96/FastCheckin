@@ -5,13 +5,11 @@ package za.co.voelgoed.fastcheck.core.designsystem.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,26 +57,22 @@ fun FcScanResultDetailsCard(
                         horizontalArrangement = Arrangement.spacedBy(theme.spacing.small),
                         verticalAlignment = Alignment.Top,
                     ) {
-                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                            val labelWidth = maxWidth * 0.42f
-                            val valueWidth = maxWidth - labelWidth - theme.spacing.small
-                            Text(
-                                text = item.label.uppercase(),
-                                style = theme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = theme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.width(labelWidth),
-                            )
+                        Text(
+                            text = item.label.uppercase(),
+                            style = theme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = theme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(0.42f),
+                        )
 
-                            Text(
-                                text = item.value,
-                                style = theme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = theme.colorScheme.onSurface,
-                                textAlign = TextAlign.End,
-                                modifier = Modifier.width(valueWidth),
-                            )
-                        }
+                        Text(
+                            text = item.value,
+                            style = theme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = theme.colorScheme.onSurface,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.weight(0.58f),
+                        )
                     }
 
                     if (index < items.lastIndex) {
