@@ -52,10 +52,16 @@ should use:
 - AVD name `Medium_Phone_API_36`
 - headless boot with software rendering
 - preview AVDs avoided for connected tests
+- emulator serial pinning (`ANDROID_SERIAL`) so attached USB devices do not
+  pollute connected-test target selection
 
 Do not use preview emulator targets such as `36.1` for
 `connectedDebugAndroidTest`. They may boot, but Gradle device detection can
 still reject them as unknown API levels.
+
+Physical-device runs remain useful, but treat them as a separate confidence
+track (manual smoke or non-blocking workflow), not as the deterministic
+connected-test gate used for CI and toolchain rollout decisions.
 
 Example:
 

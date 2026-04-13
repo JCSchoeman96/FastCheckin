@@ -185,6 +185,10 @@ fi
 adb -s "$SERIAL" shell input keyevent 82 >/dev/null 2>&1 || true
 
 echo "Running $GRADLE_TASK on $SERIAL (API $sdk_level)"
+# Keep connected-test execution deterministic by pinning Gradle to the emulator
+# started by this script. Without this, attached USB devices can also be picked
+# by connectedDebugAndroidTest and cause mixed-target, non-reproducible results.
+export ANDROID_SERIAL="$SERIAL"
 gradle_cmd=("./gradlew" "$GRADLE_TASK" "--no-daemon")
 if [[ -n "$TEST_CLASS" ]]; then
   gradle_cmd+=("-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS")
