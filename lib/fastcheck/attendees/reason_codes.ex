@@ -6,6 +6,8 @@ defmodule FastCheck.Attendees.ReasonCodes do
   """
 
   @source_missing_from_authoritative_sync "source_missing_from_authoritative_sync"
+  @revoked "revoked"
 
   def source_missing_from_authoritative_sync, do: @source_missing_from_authoritative_sync
+  def revoked, do: @revoked
 end

@@ -4,6 +4,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.components.SingletonComponent
 import dagger.hilt.testing.TestInstallIn
+import androidx.test.platform.app.InstrumentationRegistry
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -16,6 +17,12 @@ import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.network.VaultBackedSessionProvider
+import za.co.voelgoed.fastcheck.data.repository.CurrentAttendeeLookupRepository
+import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanRepository
+import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSessionRepository
+import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
+import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
@@ -38,6 +45,7 @@ import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.domain.usecase.AdmitScanUseCase
+import za.co.voelgoed.fastcheck.domain.usecase.DefaultAdmitScanUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 
@@ -58,66 +66,96 @@ object TestRepositoryModule {
     @Provides
     @Singleton
     fun provideSessionRepository(
-        repository: TestSessionRepository
-    ): SessionRepository = repository
-
-    @Provides
-    @Singleton
-    fun provideSessionProvider(): SessionProvider =
-        object : SessionProvider {
-            override suspend fun bearerToken(): String = "test-token"
+        testRepository: TestSessionRepository,
+        realRepository: CurrentPhoenixSessionRepository
+    ): SessionRepository =
+        if (integrationModeEnabled()) {
+            realRepository
+        } else {
+            testRepository
         }
 
     @Provides
     @Singleton
-    fun provideSyncRepository(): SyncRepository =
-        object : SyncRepository {
-            override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? = null
-            override suspend fun currentSyncStatus(): AttendeeSyncStatus? = null
-            override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
+    fun provideSessionProvider(
+        realProvider: VaultBackedSessionProvider
+    ): SessionProvider =
+        if (integrationModeEnabled()) {
+            realProvider
+        } else {
+            object : SessionProvider {
+                override suspend fun bearerToken(): String = "test-token"
+            }
         }
 
     @Provides
     @Singleton
-    fun provideMobileScanRepository(): MobileScanRepository =
-        object : MobileScanRepository {
-            override suspend fun queueScan(scan: PendingScan): QueueCreationResult =
-                QueueCreationResult.Enqueued(scan)
-
-            override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport =
-                FlushReport(executionStatus = FlushExecutionStatus.COMPLETED, uploadedCount = 0)
-
-            override suspend fun pendingQueueDepth(): Int = 0
-
-            override suspend fun latestFlushReport(): FlushReport? = null
-
-            override fun observePendingQueueDepth(): Flow<Int> = flowOf(0)
-
-            override fun observeLatestFlushReport(): Flow<FlushReport?> = flowOf(null)
-
-            override suspend fun quarantineCount(): Int = 0
-
-            override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
-
-            override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
-
-            override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
+    fun provideSyncRepository(
+        realRepository: CurrentPhoenixSyncRepository
+    ): SyncRepository =
+        if (integrationModeEnabled()) {
+            realRepository
+        } else {
+            object : SyncRepository {
+                override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? = null
+                override suspend fun currentSyncStatus(): AttendeeSyncStatus? = null
+                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
+            }
         }
 
     @Provides
     @Singleton
-    fun provideAttendeeLookupRepository(): AttendeeLookupRepository =
-        object : AttendeeLookupRepository {
-            override fun search(eventId: Long, query: String): Flow<List<AttendeeSearchRecord>> =
-                flowOf(emptyList())
+    fun provideMobileScanRepository(
+        realRepository: CurrentPhoenixMobileScanRepository
+    ): MobileScanRepository =
+        if (integrationModeEnabled()) {
+            realRepository
+        } else {
+            object : MobileScanRepository {
+                override suspend fun queueScan(scan: PendingScan): QueueCreationResult =
+                    QueueCreationResult.Enqueued(scan)
 
-            override fun observeDetail(eventId: Long, attendeeId: Long): Flow<AttendeeDetailRecord?> =
-                flowOf(null)
+                override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport =
+                    FlushReport(executionStatus = FlushExecutionStatus.COMPLETED, uploadedCount = 0)
 
-            override suspend fun findByTicketCode(
-                eventId: Long,
-                ticketCode: String
-            ): AttendeeDetailRecord? = null
+                override suspend fun pendingQueueDepth(): Int = 0
+
+                override suspend fun latestFlushReport(): FlushReport? = null
+
+                override fun observePendingQueueDepth(): Flow<Int> = flowOf(0)
+
+                override fun observeLatestFlushReport(): Flow<FlushReport?> = flowOf(null)
+
+                override suspend fun quarantineCount(): Int = 0
+
+                override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+
+                override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+
+                override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
+            }
+        }
+
+    @Provides
+    @Singleton
+    fun provideAttendeeLookupRepository(
+        realRepository: CurrentAttendeeLookupRepository
+    ): AttendeeLookupRepository =
+        if (integrationModeEnabled()) {
+            realRepository
+        } else {
+            object : AttendeeLookupRepository {
+                override fun search(eventId: Long, query: String): Flow<List<AttendeeSearchRecord>> =
+                    flowOf(emptyList())
+
+                override fun observeDetail(eventId: Long, attendeeId: Long): Flow<AttendeeDetailRecord?> =
+                    flowOf(null)
+
+                override suspend fun findByTicketCode(
+                    eventId: Long,
+                    ticketCode: String
+                ): AttendeeDetailRecord? = null
+            }
         }
 
     @Provides
@@ -145,27 +183,39 @@ object TestRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideSessionAuthGateway(): SessionAuthGateway =
-        object : SessionAuthGateway {
-            override suspend fun currentEventId(): Long = 5
-            override suspend fun currentOperatorName(): String = "Test Operator"
+    fun provideSessionAuthGateway(
+        realGateway: CurrentSessionAuthGateway
+    ): SessionAuthGateway =
+        if (integrationModeEnabled()) {
+            realGateway
+        } else {
+            object : SessionAuthGateway {
+                override suspend fun currentEventId(): Long = 5
+                override suspend fun currentOperatorName(): String = "Test Operator"
+            }
         }
 
     @Provides
     @Singleton
-    fun provideAdmitScanUseCase(): AdmitScanUseCase =
-        object : AdmitScanUseCase {
-            override suspend fun admit(
-                ticketCode: String,
-                direction: ScanDirection,
-                operatorName: String,
-                entranceName: String
-            ): LocalAdmissionDecision =
-                LocalAdmissionDecision.Rejected(
-                    reason = LocalAdmissionRejectReason.InvalidTicketCode,
-                    displayMessage = "Ticket not found in test repository.",
-                    ticketCode = ticketCode
-                )
+    fun provideAdmitScanUseCase(
+        realUseCase: DefaultAdmitScanUseCase
+    ): AdmitScanUseCase =
+        if (integrationModeEnabled()) {
+            realUseCase
+        } else {
+            object : AdmitScanUseCase {
+                override suspend fun admit(
+                    ticketCode: String,
+                    direction: ScanDirection,
+                    operatorName: String,
+                    entranceName: String
+                ): LocalAdmissionDecision =
+                    LocalAdmissionDecision.Rejected(
+                        reason = LocalAdmissionRejectReason.InvalidTicketCode,
+                        displayMessage = "Ticket not found in test repository.",
+                        ticketCode = ticketCode
+                    )
+            }
         }
 
     @Provides
@@ -197,4 +247,12 @@ object TestRepositoryModule {
 
             override fun requestFlush(trigger: AutoFlushTrigger) = Unit
         }
+
+    private fun integrationModeEnabled(): Boolean =
+        runCatching {
+            InstrumentationRegistry.getArguments()
+                .getString("fastcheck.integration", "false")
+                ?.trim()
+                ?.equals("true", ignoreCase = true) == true
+        }.getOrDefault(false)
 }

@@ -82,6 +82,19 @@ This script:
 - waits for Android boot completion
 - runs `:app:connectedDebugAndroidTest --no-daemon`
 
+### Scripted integration harness
+
+For deterministic cross-stack validation (backend boot, seed, mutate, re-sync,
+assert), use the dedicated harness runbook in
+`docs/mobile_integration_harness.md` and runner script:
+
+```bash
+bash scripts/integration/run-mobile-integration-harness.sh
+```
+
+Use this smoke runbook for operator/runtime manual checks; use the integration
+harness for scripted lifecycle regression coverage.
+
 ## Test Matrix
 
 Run the applicable rows for the environments you actually ship or support:
