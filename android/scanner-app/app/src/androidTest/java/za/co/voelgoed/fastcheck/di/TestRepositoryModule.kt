@@ -23,9 +23,11 @@ import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanReposito
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSessionRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
+import za.co.voelgoed.fastcheck.data.repository.DefaultLocalRuntimeDataCleaner
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
+import za.co.voelgoed.fastcheck.data.repository.LocalRuntimeDataCleaner
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
@@ -73,6 +75,23 @@ object TestRepositoryModule {
             realRepository
         } else {
             testRepository
+        }
+
+    @Provides
+    @Singleton
+    fun provideLocalRuntimeDataCleaner(
+        realCleaner: DefaultLocalRuntimeDataCleaner
+    ): LocalRuntimeDataCleaner =
+        if (integrationModeEnabled()) {
+            realCleaner
+        } else {
+            object : LocalRuntimeDataCleaner {
+                override suspend fun handleExplicitLogout(currentEventId: Long?) = Unit
+
+                override suspend fun handleAuthExpired(currentEventId: Long?) = Unit
+
+                override suspend fun handleCleanEventTransition(fromEventId: Long?, toEventId: Long) = Unit
+            }
         }
 
     @Provides

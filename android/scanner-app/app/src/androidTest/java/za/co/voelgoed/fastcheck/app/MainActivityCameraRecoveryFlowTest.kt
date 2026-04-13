@@ -23,6 +23,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import za.co.voelgoed.fastcheck.app.navigation.AppShellDestination
+import za.co.voelgoed.fastcheck.app.session.AppSessionRoute
 import za.co.voelgoed.fastcheck.app.session.SessionGateViewModel
 import za.co.voelgoed.fastcheck.app.shell.AppShellViewModel
 import za.co.voelgoed.fastcheck.di.TestSessionRepository
@@ -600,7 +601,15 @@ class MainActivityCameraRecoveryFlowTest {
         scenario.onActivity { activity ->
             viewModel<SessionGateViewModel>(activity).onLoginSucceeded(session)
         }
-        waitForIdle()
+        waitUntil("authenticated session route") {
+            currentSessionRoute(scenario) is AppSessionRoute.Authenticated
+        }
+        scenario.onActivity { activity ->
+            viewModel<AppShellViewModel>(activity).selectDestination(AppShellDestination.Scan)
+        }
+        waitUntil("scan destination selected") {
+            currentSelectedDestination(scenario) == AppShellDestination.Scan
+        }
     }
 
     private fun session(
@@ -660,6 +669,26 @@ class MainActivityCameraRecoveryFlowTest {
             recoveryState = viewModel<ScanningViewModel>(activity).uiState.value.scannerRecoveryState
         }
         return checkNotNull(recoveryState)
+    }
+
+    private fun currentSessionRoute(
+        scenario: ActivityScenario<MainActivity>
+    ): AppSessionRoute {
+        var route: AppSessionRoute? = null
+        scenario.onActivity { activity ->
+            route = viewModel<SessionGateViewModel>(activity).route.value
+        }
+        return checkNotNull(route)
+    }
+
+    private fun currentSelectedDestination(
+        scenario: ActivityScenario<MainActivity>
+    ): AppShellDestination {
+        var destination: AppShellDestination? = null
+        scenario.onActivity { activity ->
+            destination = viewModel<AppShellViewModel>(activity).uiState.value.selectedDestination
+        }
+        return checkNotNull(destination)
     }
 
     private inline fun <reified T : ViewModel> viewModel(activity: MainActivity): T =

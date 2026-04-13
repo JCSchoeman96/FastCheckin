@@ -1,10 +1,9 @@
 package za.co.voelgoed.fastcheck.core.designsystem.components
 
-import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -17,7 +16,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.theme.FastCheckTheme
 @RunWith(AndroidJUnit4::class)
 class FcScanResultHeroTest {
     @get:Rule
-    val composeRule = createAndroidComposeRule<ComponentActivity>()
+    val composeRule = createComposeRule()
 
     @Test
     fun rendersUppercaseTitleAndMessageWhenProvided() {

@@ -25,11 +25,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 21 (JetBrains toolchain)
+      - name: Setup Java 25 (JetBrains toolchain)
         uses: actions/setup-java@v4
         with:
           distribution: jetbrains
-          java-version: "21"
+          java-version: "25"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3

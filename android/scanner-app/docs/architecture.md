@@ -134,6 +134,15 @@ or `sdk.dir` paths. Keep `android/scanner-app/local.properties` machine-local,
 set `JAVA_HOME` per host, and verify the actual runtime with `./gradlew
 --version` or `.\gradlew.bat --version`, because `JAVA_HOME` alone can be
 misleading when the shell resolves a different Java binary via `PATH`.
+
+Local setup tip for the JetBrains JDK 25 vendor-pinned toolchain:
+
+- Install a local JetBrains JDK 25.
+- Export `JAVA_HOME` to that JDK root.
+- Export `ORG_GRADLE_JAVA_HOME="$JAVA_HOME"` so Gradle reuses the same runtime.
+- If Gradle still cannot resolve the vendor-pinned toolchain, run commands with
+  `-Dorg.gradle.java.installations.paths="$JAVA_HOME"` to force discovery.
+
 The Gradle wrappers also auto-resolve the Android SDK per host: the POSIX
 wrapper prefers `ANDROID_SDK_ROOT`, `ANDROID_HOME`, then common Linux paths
 such as `$HOME/Android/Sdk` and `/usr/lib/android-sdk`; the Windows wrapper

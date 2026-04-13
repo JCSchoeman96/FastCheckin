@@ -14,6 +14,7 @@ import dagger.hilt.android.testing.HiltAndroidTest
 import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -40,6 +41,10 @@ class MobileIntegrationHarnessFlowTest {
     @Before
     fun setUp() {
         MainActivityTestHooks.reset()
+        assumeTrue(
+            "Harness-only test requires fastcheck.eventId, fastcheck.credential, and fastcheck.ticketCode instrumentation args.",
+            hasRequiredHarnessArgs()
+        )
         hiltRule.inject()
     }
 
@@ -232,6 +237,15 @@ class MobileIntegrationHarnessFlowTest {
         val value = requiredStringArg(name).toLongOrNull()
         require(value != null && value > 0L) { "Invalid positive long instrumentation argument: $name" }
         return value
+    }
+
+    private fun hasRequiredHarnessArgs(): Boolean {
+        val args = InstrumentationRegistry.getArguments()
+        val eventId = args.getString("fastcheck.eventId")?.trim()
+        val credential = args.getString("fastcheck.credential")?.trim()
+        val ticketCode = args.getString("fastcheck.ticketCode")?.trim()
+
+        return !eventId.isNullOrBlank() && !credential.isNullOrBlank() && !ticketCode.isNullOrBlank()
     }
 
     private fun assertSyncConvergenceAfterMutation(
