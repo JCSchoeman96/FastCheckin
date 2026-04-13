@@ -1,0 +1,42 @@
+name: Mobile Harness Readiness
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "android/scanner-app/**"
+      - "scripts/integration/run-mobile-integration-harness.sh"
+      - "docs/mobile_integration_harness.md"
+      - "lib/fastcheck/load/mobile_integration_scenario.ex"
+      - "lib/mix/tasks/fastcheck.load.*"
+      - "test/fastcheck/load/mobile_integration_scenario_test.exs"
+      - ".github/workflows/mobile-harness-readiness.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  harness-readiness:
+    name: Harness Readiness (lint + androidTest compile)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21 (JetBrains toolchain)
+        uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Validate harness runner shell syntax
+        run: bash -n scripts/integration/run-mobile-integration-harness.sh
+
+      - name: Compile Android instrumentation tests
+        working-directory: android/scanner-app
+        run: ./gradlew :app:compileDebugAndroidTestKotlin --no-daemon
