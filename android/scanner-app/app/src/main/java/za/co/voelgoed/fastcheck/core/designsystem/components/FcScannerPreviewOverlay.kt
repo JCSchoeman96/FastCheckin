@@ -19,11 +19,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 import za.co.voelgoed.fastcheck.core.designsystem.tokens.StrokeTokens
+
+object FcScannerPreviewOverlayTestTags {
+    const val Reticle = "fc_scanner_preview_overlay_reticle"
+}
 
 @Composable
 fun FcScannerPreviewOverlay(
@@ -68,7 +73,8 @@ fun FcScannerPreviewOverlay(
                     Modifier
                         .align(Alignment.Center)
                         .fillMaxSize()
-                        .padding(horizontal = 40.dp, vertical = 36.dp),
+                        .padding(horizontal = 40.dp, vertical = 36.dp)
+                        .testTag(FcScannerPreviewOverlayTestTags.Reticle),
             )
         }
     }

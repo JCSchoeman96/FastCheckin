@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import za.co.voelgoed.fastcheck.app.scanning.PreviewVisibilityObserver
@@ -29,6 +30,11 @@ import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
+
+object ScanDestinationTestTags {
+    const val PreviewHost = "scan_destination_preview_host"
+    const val CaptureResultHero = "scan_destination_capture_result_hero"
+}
 
 @Composable
 fun ScanDestinationScreen(
@@ -98,7 +104,12 @@ fun ScanDestinationScreen(
 
         if (uiState.showCameraPreview) {
             FcCard(modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag(ScanDestinationTestTags.PreviewHost)
+                ) {
                     PreviewSurface(
                         previewSurfaceHolder = previewSurfaceHolder,
                         onPreviewSurfaceChanged = onPreviewSurfaceChanged,
@@ -131,7 +142,10 @@ fun ScanDestinationScreen(
                 title = heroTitle,
                 message = heroMessage,
                 tone = banner.tone,
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag(ScanDestinationTestTags.CaptureResultHero),
             )
         }
 
