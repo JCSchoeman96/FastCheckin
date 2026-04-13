@@ -43,6 +43,12 @@ Optional environment overrides:
 - `REVOKE_REASON` (default `revoked`)
 - `KEEP_SEEDED_DATA=true` to keep seeded data for manual debugging
 
+Current scripted scope:
+
+- wired: active -> revoked/not-scannable convergence
+- not yet wired in this one-command flow: payment-status mutation scenario
+  (tooling exists and can be run manually)
+
 ## Runner sequence (strict)
 
 1. boot docker services
@@ -55,6 +61,11 @@ Optional environment overrides:
 8. dump scenario state (`fastcheck.load.dump_mobile_ticket_state`)
 9. run connected phase 2 (`mutatedTicketIsRejectedAfterResync`)
 10. collect artifacts
+
+Important artifact:
+
+- post-mutation scenario dump is written to
+  `post-mutation-ticket-state.json` in the harness artifact directory.
 
 ## Scenario state dump contract
 

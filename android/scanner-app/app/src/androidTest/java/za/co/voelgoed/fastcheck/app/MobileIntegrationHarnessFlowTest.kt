@@ -11,6 +11,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
+import javax.inject.Inject
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -23,12 +25,17 @@ import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.scanning.broadcast.DataWedgeScanContract
 import za.co.voelgoed.fastcheck.feature.scanning.ui.ScanningViewModel
 import za.co.voelgoed.fastcheck.feature.sync.SyncViewModel
+import za.co.voelgoed.fastcheck.data.local.ScannerDao
+import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
 
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class MobileIntegrationHarnessFlowTest {
     @get:Rule
     var hiltRule = HiltAndroidRule(this)
+
+    @Inject
+    lateinit var scannerDao: ScannerDao
 
     @Before
     fun setUp() {
@@ -72,6 +79,28 @@ class MobileIntegrationHarnessFlowTest {
         val scenario = launchActivity()
         try {
             loginAndSync(scenario, eventId, credential)
+
+            val metadataBeforeMutationSync = runBlocking { scannerDao.loadSyncMetadata(eventId) }
+
+            scenario.onActivity { activity ->
+                viewModel<SyncViewModel>(activity).syncAttendees()
+            }
+
+            waitUntil("post-mutation sync completed") {
+                val syncState = currentSyncState(scenario)
+                !syncState.isSyncing && syncState.errorMessage == null
+            }
+
+            val metadataAfterMutationSync = runBlocking { scannerDao.loadSyncMetadata(eventId) }
+            val attendeeAfterMutationSync = runBlocking { scannerDao.findAttendee(eventId, ticketCode) }
+
+            assertSyncConvergenceAfterMutation(
+                before = metadataBeforeMutationSync,
+                after = metadataAfterMutationSync,
+                eventId = eventId,
+                ticketCode = ticketCode
+            )
+            assertThat(attendeeAfterMutationSync).isNull()
 
             sendDataWedgeCapture(ticketCode)
 
@@ -191,6 +220,25 @@ class MobileIntegrationHarnessFlowTest {
         val value = requiredStringArg(name).toLongOrNull()
         require(value != null && value > 0L) { "Invalid positive long instrumentation argument: $name" }
         return value
+    }
+
+    private fun assertSyncConvergenceAfterMutation(
+        before: SyncMetadataEntity?,
+        after: SyncMetadataEntity?,
+        eventId: Long,
+        ticketCode: String
+    ) {
+        requireNotNull(after) {
+            "Expected sync metadata after mutation for event $eventId ticket $ticketCode."
+        }
+
+        val checkpointAdvanced =
+            before == null || after.lastInvalidationsCheckpoint > before.lastInvalidationsCheckpoint
+        val versionAdvanced =
+            before == null || after.lastEventSyncVersion > before.lastEventSyncVersion
+
+        assertThat(checkpointAdvanced || versionAdvanced)
+            .isTrue()
     }
 
     private companion object {

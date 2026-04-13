@@ -77,6 +77,9 @@ echo "[harness] Seeding deterministic scenario..."
 EVENT_ID="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["event_id"])' "$MANIFEST_PATH")"
 TICKET_CODE="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["slices"]["baseline_valid"]["start_ticket"])' "$MANIFEST_PATH")"
 
+echo "[harness] Scope: active -> revoked/not_scannable convergence path is wired in this runner."
+echo "[harness] Note: payment-status mutation tooling exists but is not yet scripted in this one-command flow."
+
 echo "[harness] Starting Phoenix server..."
 (
   cd "$ROOT_DIR"
@@ -117,6 +120,7 @@ echo "[harness] Capturing scenario dump after mutation..."
     --ticket_code "$TICKET_CODE" \
     >"$ARTIFACT_DIR/post-mutation-ticket-state.json"
 )
+echo "[harness] Wrote post-mutation dump: $ARTIFACT_DIR/post-mutation-ticket-state.json"
 
 echo "[harness] Running connected test phase 2 ($PHASE_2_METHOD)..."
 run_connected_method "$PHASE_2_METHOD"
