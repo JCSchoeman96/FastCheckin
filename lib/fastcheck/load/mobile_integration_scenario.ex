@@ -35,7 +35,11 @@ defmodule FastCheck.Load.MobileIntegrationScenario do
 
   def revoke_ticket(event_id, ticket_code, opts)
       when is_integer(event_id) and is_binary(ticket_code) do
-    reason_code = Keyword.get(opts, :reason_code, ReasonCodes.revoked())
+    reason_code =
+      opts
+      |> Keyword.get(:reason_code)
+      |> normalize_reason_code()
+
     source_sync_run_id = Keyword.get(opts, :source_sync_run_id)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
@@ -192,6 +196,15 @@ defmodule FastCheck.Load.MobileIntegrationScenario do
       normalized -> normalized
     end
   end
+
+  defp normalize_reason_code(reason_code) when is_binary(reason_code) do
+    case String.trim(reason_code) do
+      "" -> ReasonCodes.revoked()
+      normalized -> normalized
+    end
+  end
+
+  defp normalize_reason_code(_), do: ReasonCodes.revoked()
 
   defp unwrap_transaction({:ok, value}), do: {:ok, value}
   defp unwrap_transaction({:error, reason}), do: {:error, reason}

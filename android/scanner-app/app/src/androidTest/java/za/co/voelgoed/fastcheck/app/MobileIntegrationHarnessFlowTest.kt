@@ -86,10 +86,7 @@ class MobileIntegrationHarnessFlowTest {
                 viewModel<SyncViewModel>(activity).syncAttendees()
             }
 
-            waitUntil("post-mutation sync completed") {
-                val syncState = currentSyncState(scenario)
-                !syncState.isSyncing && syncState.errorMessage == null
-            }
+            waitForSyncCycleCompletion(scenario, "post-mutation sync cycle")
 
             val metadataAfterMutationSync = runBlocking { scannerDao.loadSyncMetadata(eventId) }
             val attendeeAfterMutationSync = runBlocking { scannerDao.findAttendee(eventId, ticketCode) }
@@ -145,10 +142,7 @@ class MobileIntegrationHarnessFlowTest {
             viewModel<SyncViewModel>(activity).syncAttendees()
         }
 
-        waitUntil("sync completed") {
-            val syncState = currentSyncState(scenario)
-            !syncState.isSyncing && syncState.errorMessage == null
-        }
+        waitForSyncCycleCompletion(scenario, "initial sync cycle")
     }
 
     private fun sendDataWedgeCapture(ticketCode: String) {
@@ -201,6 +195,24 @@ class MobileIntegrationHarnessFlowTest {
         }
 
         throw AssertionError("Timed out waiting for $description.")
+    }
+
+    private fun waitForSyncCycleCompletion(
+        scenario: ActivityScenario<MainActivity>,
+        description: String
+    ) {
+        var sawSyncing = false
+
+        waitUntil(description) {
+            val syncState = currentSyncState(scenario)
+            if (syncState.isSyncing) {
+                sawSyncing = true
+            }
+
+            sawSyncing && !syncState.isSyncing && syncState.errorMessage == null
+        }
+
+        assertThat(sawSyncing).isTrue()
     }
 
     private fun waitForIdle() {

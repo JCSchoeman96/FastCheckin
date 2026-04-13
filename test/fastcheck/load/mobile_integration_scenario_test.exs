@@ -61,6 +61,20 @@ defmodule FastCheck.Load.MobileIntegrationScenarioTest do
     assert Repo.get!(Event, event.id).event_sync_version == 1
   end
 
+  test "revoke_ticket defaults nil reason code to revoked" do
+    event = insert_event!()
+    attendee = insert_attendee!(event.id, "SCENARIO-0004")
+
+    assert {:ok, %{attendee: updated, changed: true}} =
+             MobileIntegrationScenario.revoke_ticket(
+               event.id,
+               attendee.ticket_code,
+               reason_code: nil
+             )
+
+    assert updated.ineligibility_reason == ReasonCodes.revoked()
+  end
+
   test "dump_ticket_state returns required harness debugging fields" do
     event = insert_event!()
     attendee = insert_attendee!(event.id, "SCENARIO-0003")

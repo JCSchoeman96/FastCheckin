@@ -30,13 +30,20 @@ defmodule Mix.Tasks.Fastcheck.Load.RevokeMobileTicket do
     ticket_code = Keyword.get(opts, :ticket_code)
     reason_code = Keyword.get(opts, :reason_code)
 
+    scenario_opts =
+      if is_binary(reason_code) and String.trim(reason_code) != "" do
+        [reason_code: reason_code]
+      else
+        []
+      end
+
     with :ok <- require_event_id(event_id),
          :ok <- require_ticket_code(ticket_code),
          {:ok, result} <-
            MobileIntegrationScenario.revoke_ticket(
              event_id,
              ticket_code,
-             reason_code: reason_code
+             scenario_opts
            ) do
       Mix.shell().info("""
       Revoke scenario update
