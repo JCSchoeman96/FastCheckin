@@ -3,7 +3,6 @@ package za.co.voelgoed.fastcheck.app.shell
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,10 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -76,7 +78,15 @@ fun AuthenticatedShellScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        ShellTopAppBarTitle(title = topBarTitle)
+                        if (activeSupportRoute == null) {
+                            ShellTopLevelHeaderTitle(title = topBarTitle)
+                        } else {
+                            Text(
+                                text = topBarTitle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     },
                     navigationIcon = {
                         if (activeSupportRoute != null) {
@@ -87,8 +97,12 @@ fun AuthenticatedShellScreen(
                     },
                     actions = {
                         if (activeSupportRoute == null) {
-                            TextButton(onClick = { overflowExpanded = true }) {
-                                Text(text = "More")
+                            IconButton(onClick = { overflowExpanded = true }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreVert,
+                                    contentDescription =
+                                        stringResource(R.string.shell_overflow_content_description)
+                                )
                             }
                             DropdownMenu(
                                 expanded = overflowExpanded,
@@ -166,37 +180,31 @@ fun AuthenticatedShellScreen(
 }
 
 @Composable
-private fun ShellTopAppBarTitle(
+private fun ShellTopLevelHeaderTitle(
     title: String,
     modifier: Modifier = Modifier
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val showLogo = maxWidth >= 180.dp
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(if (showLogo) 8.dp else 0.dp)
-        ) {
-            if (showLogo) {
-                Image(
-                    painter = painterResource(id = R.drawable.fastcheck_logo),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier =
-                        Modifier
-                            .height(16.dp)
-                            .widthIn(max = 64.dp)
-                            .alpha(0.84f)
-                )
-            }
-            Text(
-                text = title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-        }
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.fastcheck_logo),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier =
+                Modifier
+                    .height(16.dp)
+                    .widthIn(max = 64.dp)
+                    .alpha(0.84f)
+        )
+        Text(
+            text = title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 

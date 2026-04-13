@@ -8,6 +8,7 @@
     <string name="top_bar_title_scan">Scan</string>
     <string name="top_bar_title_search">Search</string>
     <string name="top_bar_title_event">Event</string>
+    <string name="shell_overflow_content_description">Open more options</string>
     <string name="event_id_hint">Event ID</string>
     <string name="credential_hint">Credential</string>
     <string name="login_button_label">Login and Store Session</string>
