@@ -31,7 +31,8 @@ fun FcBanner(
 ) {
     val theme = MaterialTheme.fastCheck
     val accent = theme.statusRoles.resolve(tone)
-    val colors = resolveToneSurfaceColors(accent, containerAlpha = 0.08f, borderAlpha = 0.24f)
+    // Slightly stronger fill, softer border, no drop shadow so the banner reads as one flat surface.
+    val colors = resolveToneSurfaceColors(accent, containerAlpha = 0.12f, borderAlpha = 0.18f)
 
     Surface(
         modifier = modifier,
@@ -39,7 +40,7 @@ fun FcBanner(
         color = colors.containerColor,
         contentColor = colors.contentColor,
         border = BorderStroke(StrokeTokens.Hairline, colors.borderColor),
-        shadowElevation = theme.elevation.low,
+        shadowElevation = theme.elevation.none,
     ) {
         Row(
             modifier =
@@ -47,7 +48,7 @@ fun FcBanner(
                     .fillMaxWidth()
                     .padding(
                         horizontal = theme.spacing.medium,
-                        vertical = theme.spacing.small,
+                        vertical = theme.spacing.medium,
                     ),
             horizontalArrangement = Arrangement.spacedBy(theme.spacing.small),
             verticalAlignment = Alignment.Top,
