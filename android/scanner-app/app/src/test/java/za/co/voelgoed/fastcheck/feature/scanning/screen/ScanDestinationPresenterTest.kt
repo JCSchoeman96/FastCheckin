@@ -27,7 +27,7 @@ class ScanDestinationPresenterTest {
         )
 
     @Test
-    fun scannerAndAttendeeReadinessStaySeparate() {
+    fun scannerAndAdmissionReadinessStaySeparate() {
         val uiState =
             presenter.present(
                 scanningUiState =
@@ -46,10 +46,12 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.scannerStatusChip.text).isEqualTo("Scanner active")
-        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Sync failed - retry required")
-        assertThat(uiState.attendeeStatusMessage).contains("Retry sync before trusting green admission")
-        assertThat(uiState.healthBanner?.title).isEqualTo("Sync failed - retry required")
-        assertThat(uiState.healthBanner?.message).contains("trusted green admission")
+        assertThat(uiState.admissionSectionTitle).isEqualTo("Admission readiness")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Sync failed - retry required")
+        assertThat(uiState.admissionStatusMessage).contains("Retry sync before trusting green admission")
+        assertThat(uiState.queueUploadSectionTitle).isEqualTo("Queue & upload")
+        assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
+        assertThat(uiState.queueUploadStatusMessage).isEqualTo("No scans are waiting to upload.")
     }
 
     @Test
@@ -62,10 +64,10 @@ class ScanDestinationPresenterTest {
                 currentEventSyncStatus = null
             )
 
-        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Syncing attendee list")
-        assertThat(uiState.attendeeStatusMessage).contains("not ready for trusted green admission")
-        assertThat(uiState.healthBanner?.title).isEqualTo("Syncing attendee list")
-        assertThat(uiState.healthBanner?.message).contains("not ready for trusted green admission")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Syncing attendee list")
+        assertThat(uiState.admissionStatusMessage).contains("not ready for trusted green admission")
+        assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
+        assertThat(uiState.queueUploadStatusMessage).doesNotContain("trusted green admission")
     }
 
     @Test
@@ -85,11 +87,11 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.attendeeStatusChip.text).isEqualTo("Attendee list ready")
-        assertThat(uiState.attendeeStatusMessage).contains("latest local sync")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
+        assertThat(uiState.admissionStatusMessage).contains("latest local sync")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
         assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 20")
-        assertThat(uiState.healthBanner).isNull()
+        assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
     }
 
     @Test
@@ -109,8 +111,8 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.attendeeStatusChip.text).isEqualTo("No attendees synced")
-        assertThat(uiState.attendeeStatusMessage).contains("Run attendee sync")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("No attendees synced")
+        assertThat(uiState.admissionStatusMessage).contains("Run attendee sync")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
         assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 0")
     }
@@ -136,14 +138,17 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.healthBanner?.tone).isEqualTo(StatusTone.Offline)
+        assertThat(uiState.queueUploadStatusChip.text).isEqualTo("Uploads paused offline")
+        assertThat(uiState.queueUploadStatusChip.tone).isEqualTo(StatusTone.Offline)
+        assertThat(uiState.queueUploadStatusMessage)
+            .isEqualTo("3 scans queued locally will upload automatically when the device reconnects.")
         assertThat(uiState.retryUploadVisible).isFalse()
         assertThat(uiState.manualSyncVisible).isTrue()
         assertThat(uiState.reloginVisible).isFalse()
     }
 
     @Test
-    fun authExpiredShowsDestructiveHealthBanner() {
+    fun authExpiredShowsDestructiveQueueUploadStatus() {
         val uiState =
             presenter.present(
                 scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
@@ -163,7 +168,10 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.healthBanner?.tone).isEqualTo(StatusTone.Destructive)
+        assertThat(uiState.queueUploadStatusChip.text).isEqualTo("Re-login required")
+        assertThat(uiState.queueUploadStatusChip.tone).isEqualTo(StatusTone.Destructive)
+        assertThat(uiState.queueUploadStatusMessage)
+            .isEqualTo("2 scans queued locally cannot upload until the operator signs in again.")
         assertThat(uiState.reloginVisible).isTrue()
         assertThat(uiState.retryUploadVisible).isFalse()
     }

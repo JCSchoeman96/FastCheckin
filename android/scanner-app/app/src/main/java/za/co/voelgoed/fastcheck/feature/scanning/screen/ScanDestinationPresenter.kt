@@ -5,7 +5,6 @@ import java.time.Duration
 import java.time.Instant
 import za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
-import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -30,8 +29,9 @@ class ScanDestinationPresenter(
         currentEventSyncStatus: AttendeeSyncStatus?
     ): ScanDestinationUiState {
         val scannerStatusChip = scannerChipFor(scanningUiState)
-        val attendeeStatus = attendeeStatusFor(syncUiState, currentEventSyncStatus)
+        val admissionStatus = admissionStatusFor(syncUiState, currentEventSyncStatus)
         val uploadState = queueUiState.uploadSemanticState
+        val queueUploadStatus = queueUploadStatusFor(queueUiState)
         val primaryRecoveryAction = primaryRecoveryActionFor(scanningUiState)
 
         return ScanDestinationUiState(
@@ -41,21 +41,18 @@ class ScanDestinationPresenter(
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = scanningUiState.scannerStatus,
             scannerDiagnosticMessage = scanningUiState.scannerDebugStatus,
-            attendeeStatusChip = attendeeStatus.first,
-            attendeeStatusMessage = attendeeStatus.second,
+            admissionSectionTitle = ADMISSION_SECTION_TITLE,
+            admissionStatusChip = admissionStatus.first,
+            admissionStatusMessage = admissionStatus.second,
             showCameraPreview = scanningUiState.shouldHostPreviewSurface,
             primaryRecoveryAction = primaryRecoveryAction?.first,
             primaryRecoveryActionLabel = primaryRecoveryAction?.second,
             previewBanner = previewBannerFor(scanningUiState),
             captureBanner = captureBannerFor(scanningUiState.lastCaptureFeedback),
-            healthBanner =
-                healthBannerFor(
-                    queueUiState = queueUiState,
-                    syncUiState = syncUiState,
-                    currentEventSyncStatus = currentEventSyncStatus
-                ),
+            queueUploadSectionTitle = QUEUE_UPLOAD_SECTION_TITLE,
             queueDepthLabel = queueDepthLabel(queueUiState.localQueueDepth),
-            uploadStateLabel = uploadState.defaultLabel,
+            queueUploadStatusChip = queueUploadStatus.first,
+            queueUploadStatusMessage = queueUploadStatus.second,
             manualSyncVisible = !syncUiState.isSyncing,
             retryUploadVisible =
                 QueueUploadRecoveryVisibility.shouldShowRetryUpload(
@@ -165,7 +162,7 @@ class ScanDestinationPresenter(
         }
     }
 
-    private fun attendeeStatusFor(
+    private fun admissionStatusFor(
         syncUiState: SyncScreenUiState,
         currentEventSyncStatus: AttendeeSyncStatus?
     ): Pair<StatusChipUiModel, String> {
@@ -298,60 +295,89 @@ class ScanDestinationPresenter(
             null -> null
         }
 
-    private fun healthBannerFor(
-        queueUiState: QueueUiState,
-        syncUiState: SyncScreenUiState,
-        currentEventSyncStatus: AttendeeSyncStatus?
-    ): BannerUiModel? {
+    private fun queueUploadStatusFor(queueUiState: QueueUiState): Pair<StatusChipUiModel, String> {
         val uploadState = queueUiState.uploadSemanticState
-
-        if (currentEventSyncStatus == null) {
-            return when (syncUiState.bootstrapStatus) {
-                BootstrapSyncStatus.Syncing ->
-                    BannerUiModel(
-                        title = "Syncing attendee list",
-                        message = "Preparing the attendee cache for this event. The device is not ready for trusted green admission until sync completes.",
-                        tone = StatusTone.Info
-                    )
-
-                BootstrapSyncStatus.Failed ->
-                    BannerUiModel(
-                        title = "Sync failed - retry required",
-                        message =
-                            syncUiState.errorMessage
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { "$it Retry attendee sync before using this device for trusted green admission." }
-                                ?: "Attendee sync failed for this event. Retry attendee sync before using this device for trusted green admission.",
-                        tone = StatusTone.Destructive
-                    )
-
-                BootstrapSyncStatus.Idle,
-                BootstrapSyncStatus.Succeeded ->
-                    BannerUiModel(
-                        title = "Attendee sync required",
-                        message = "This event does not have a trusted attendee cache yet. Complete attendee sync before relying on green admission on this device.",
-                        tone = StatusTone.Warning
-                    )
-            }
-        }
+        val queueDepthLabel = queueDepthLabel(queueUiState.localQueueDepth)
 
         if (uploadState is SyncUiState.Offline && queueUiState.localQueueDepth > 0) {
-            return BannerUiModel(
-                title = "Uploads paused offline",
-                message = "${queueDepthLabel(queueUiState.localQueueDepth)} will upload automatically when the device reconnects.",
+            return StatusChipUiModel(
+                text = "Uploads paused offline",
                 tone = StatusTone.Offline
-            )
+            ) to "$queueDepthLabel will upload automatically when the device reconnects."
         }
 
         if (uploadState is SyncUiState.Failed && uploadState.reason == "Auth expired") {
-            return BannerUiModel(
-                title = "Re-login required",
-                message = "${queueDepthLabel(queueUiState.localQueueDepth)} cannot upload until the operator signs in again.",
+            return StatusChipUiModel(
+                text = "Re-login required",
                 tone = StatusTone.Destructive
-            )
+            ) to "$queueDepthLabel cannot upload until the operator signs in again."
         }
 
-        return null
+        return when (uploadState) {
+            SyncUiState.Idle ->
+                StatusChipUiModel(
+                    text = if (queueUiState.localQueueDepth > 0) "Queue waiting" else "No upload backlog",
+                    tone = if (queueUiState.localQueueDepth > 0) StatusTone.Warning else StatusTone.Neutral
+                ) to if (queueUiState.localQueueDepth > 0) {
+                    "$queueDepthLabel is waiting for the next upload attempt."
+                } else {
+                    "No scans are waiting to upload."
+                }
+
+            SyncUiState.Syncing ->
+                StatusChipUiModel(
+                    text = "Uploading scans",
+                    tone = StatusTone.Info
+                ) to "$queueDepthLabel is being uploaded to the server."
+
+            is SyncUiState.Synced ->
+                StatusChipUiModel(
+                    text = "Uploads synced",
+                    tone = StatusTone.Success
+                ) to if (queueUiState.localQueueDepth > 0) {
+                    "$queueDepthLabel remains locally queued after the latest upload result."
+                } else {
+                    "Latest upload state is synced. No scans are waiting to upload."
+                }
+
+            is SyncUiState.Partial ->
+                StatusChipUiModel(
+                    text = "Backlog remaining",
+                    tone = StatusTone.Warning
+                ) to "$queueDepthLabel still needs another upload attempt."
+
+            is SyncUiState.Failed ->
+                StatusChipUiModel(
+                    text = "Upload failed",
+                    tone = StatusTone.Destructive
+                ) to (
+                    uploadState.reason
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { "$it. $queueDepthLabel remains local until upload succeeds." }
+                        ?: "$queueDepthLabel remains local until upload succeeds."
+                    )
+
+            is SyncUiState.Offline ->
+                StatusChipUiModel(
+                    text = "Offline",
+                    tone = StatusTone.Offline
+                ) to if (queueUiState.localQueueDepth > 0) {
+                    "$queueDepthLabel will upload automatically when the device reconnects."
+                } else {
+                    "No scans are queued. Uploads will resume when the device reconnects."
+                }
+
+            is SyncUiState.RetryScheduled ->
+                StatusChipUiModel(
+                    text = "Retry scheduled",
+                    tone = StatusTone.Warning
+                ) to "$queueDepthLabel will retry automatically."
+        }
+    }
+
+    private companion object {
+        const val ADMISSION_SECTION_TITLE = "Admission readiness"
+        const val QUEUE_UPLOAD_SECTION_TITLE = "Queue & upload"
     }
 
     private fun queueDepthLabel(queueDepth: Int): String =

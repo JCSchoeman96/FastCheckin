@@ -166,18 +166,18 @@ fun ScanDestinationScreen(
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
                 Text(
-                    text = "Attendee readiness",
+                    text = uiState.admissionSectionTitle,
                     style = theme.typography.titleMedium,
                     color = scheme.onSurface,
                     fontWeight = FontWeight.SemiBold
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
                     FcStatusChip(
-                        text = uiState.attendeeStatusChip.text,
-                        tone = uiState.attendeeStatusChip.tone
+                        text = uiState.admissionStatusChip.text,
+                        tone = uiState.admissionStatusChip.tone
                     )
                     Text(
-                        text = uiState.attendeeStatusMessage,
+                        text = uiState.admissionStatusMessage,
                         style = theme.typography.bodyMedium,
                         color = scheme.onSurfaceVariant
                     )
@@ -185,22 +185,13 @@ fun ScanDestinationScreen(
             }
         }
 
-        uiState.healthBanner?.let { banner ->
-            FcBanner(
-                title = banner.title,
-                message = banner.message,
-                tone = banner.tone,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
         FcCard(modifier = Modifier.fillMaxWidth()) {
-            val hasHealthActions =
+            val hasQueueUploadActions =
                 uiState.manualSyncVisible || uiState.retryUploadVisible || uiState.reloginVisible
 
             Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
                 Text(
-                    text = "Scan health",
+                    text = uiState.queueUploadSectionTitle,
                     style = theme.typography.titleMedium,
                     color = scheme.onSurface,
                     fontWeight = FontWeight.SemiBold
@@ -212,14 +203,18 @@ fun ScanDestinationScreen(
                         style = theme.typography.bodyMedium,
                         color = scheme.onSurface
                     )
+                    FcStatusChip(
+                        text = uiState.queueUploadStatusChip.text,
+                        tone = uiState.queueUploadStatusChip.tone
+                    )
                     Text(
-                        text = uiState.uploadStateLabel,
+                        text = uiState.queueUploadStatusMessage,
                         style = theme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
                 }
 
-                if (hasHealthActions) {
+                if (hasQueueUploadActions) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(spacing.xSmall)

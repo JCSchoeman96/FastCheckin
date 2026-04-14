@@ -71,19 +71,12 @@ class ScanDestinationScreenTest {
                         message = "Camera is loading",
                         tone = StatusTone.Info,
                     ),
-                healthBanner =
-                    BannerUiModel(
-                        title = "Health",
-                        message = "Uploads paused",
-                        tone = StatusTone.Warning,
-                    ),
                 captureBanner = null,
             )
 
         render(uiState)
 
         composeRule.onNodeWithText("Preview").assertIsDisplayed()
-        composeRule.onNodeWithText("Health").assertIsDisplayed()
         composeRule.onAllNodesWithTag(ScanDestinationTestTags.CaptureResultHero).assertCountEquals(0)
     }
 
@@ -109,7 +102,7 @@ class ScanDestinationScreenTest {
     }
 
     @Test
-    fun previewAndHealthBannersRenderIndependentlyFromCaptureHero() {
+    fun previewBannerRendersIndependentlyFromCaptureHero() {
         val uiState =
             baseUiState(
                 previewBanner =
@@ -117,12 +110,6 @@ class ScanDestinationScreenTest {
                         title = "Preview status",
                         message = "Preview still independent",
                         tone = StatusTone.Info,
-                    ),
-                healthBanner =
-                    BannerUiModel(
-                        title = "Health status",
-                        message = "Health still independent",
-                        tone = StatusTone.Warning,
                     ),
                 captureBanner =
                     BannerUiModel(
@@ -135,8 +122,31 @@ class ScanDestinationScreenTest {
         render(uiState)
 
         composeRule.onNodeWithText("Preview status").assertIsDisplayed()
-        composeRule.onNodeWithText("Health status").assertIsDisplayed()
         composeRule.onNodeWithTag(ScanDestinationTestTags.CaptureResultHero).assertIsDisplayed()
+    }
+
+    @Test
+    fun scanBodyUsesTruthfulAdmissionAndQueueUploadSections() {
+        render(
+            baseUiState(
+                admissionStatusChip = StatusChipUiModel("Admission ready", StatusTone.Success),
+                admissionStatusMessage = "Trusted local attendee cache is ready.",
+                queueUploadStatusChip = StatusChipUiModel("Uploads paused offline", StatusTone.Offline),
+                queueUploadStatusMessage = "2 scans queued locally will upload automatically when the device reconnects.",
+            )
+        )
+
+        composeRule.onNodeWithText("Admission readiness").assertIsDisplayed()
+        composeRule.onNodeWithText("Admission ready").assertIsDisplayed()
+        composeRule.onNodeWithText("Trusted local attendee cache is ready.").assertIsDisplayed()
+        composeRule.onNodeWithText("Queue & upload").assertIsDisplayed()
+        composeRule.onNodeWithText("Uploads paused offline").assertIsDisplayed()
+        composeRule
+            .onNodeWithText("2 scans queued locally will upload automatically when the device reconnects.")
+            .assertIsDisplayed()
+        composeRule.onAllNodesWithText("Actions").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Attendee readiness").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Scan health").assertCountEquals(0)
     }
 
     @Test
@@ -153,6 +163,7 @@ class ScanDestinationScreenTest {
 
         render(uiState, actions::add)
 
+        composeRule.onNodeWithText("Actions").assertIsDisplayed()
         composeRule.onNodeWithText("Allow camera access").performClick()
         composeRule.onNodeWithText("Sync attendee list").performClick()
         composeRule.onNodeWithText("Retry upload").performClick()
@@ -182,10 +193,13 @@ class ScanDestinationScreenTest {
 
     private fun baseUiState(
         scannerStatusChip: StatusChipUiModel = StatusChipUiModel("Scanner active", StatusTone.Brand),
+        admissionStatusChip: StatusChipUiModel = StatusChipUiModel("Attendee list ready", StatusTone.Success),
+        admissionStatusMessage: String = "Attendees are synced",
+        queueUploadStatusChip: StatusChipUiModel = StatusChipUiModel("No upload backlog", StatusTone.Neutral),
+        queueUploadStatusMessage: String = "No scans are waiting to upload.",
         showCameraPreview: Boolean = false,
         previewBanner: BannerUiModel? = null,
         captureBanner: BannerUiModel? = null,
-        healthBanner: BannerUiModel? = null,
         primaryRecoveryAction: ScanOperatorAction? = null,
         primaryRecoveryActionLabel: String? = null,
         manualSyncVisible: Boolean = false,
@@ -199,16 +213,18 @@ class ScanDestinationScreenTest {
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = "Scanner is ready",
             scannerDiagnosticMessage = null,
-            attendeeStatusChip = StatusChipUiModel("Attendee list ready", StatusTone.Success),
-            attendeeStatusMessage = "Attendees are synced",
+            admissionSectionTitle = "Admission readiness",
+            admissionStatusChip = admissionStatusChip,
+            admissionStatusMessage = admissionStatusMessage,
             showCameraPreview = showCameraPreview,
             primaryRecoveryAction = primaryRecoveryAction,
             primaryRecoveryActionLabel = primaryRecoveryActionLabel,
             previewBanner = previewBanner,
             captureBanner = captureBanner,
-            healthBanner = healthBanner,
+            queueUploadSectionTitle = "Queue & upload",
             queueDepthLabel = "No scans queued locally",
-            uploadStateLabel = "Uploads healthy",
+            queueUploadStatusChip = queueUploadStatusChip,
+            queueUploadStatusMessage = queueUploadStatusMessage,
             manualSyncVisible = manualSyncVisible,
             retryUploadVisible = retryUploadVisible,
             reloginVisible = reloginVisible,
