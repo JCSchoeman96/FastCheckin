@@ -3,9 +3,10 @@ package za.co.voelgoed.fastcheck.feature.scanning.screen
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import za.co.voelgoed.fastcheck.app.scanning.ScannerBlockReason
 import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
-import za.co.voelgoed.fastcheck.core.designsystem.semantic.ScanUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -30,33 +31,40 @@ class ScanDestinationPresenter(
         currentEventSyncStatus: AttendeeSyncStatus?
     ): ScanDestinationUiState {
         val scannerStatusChip = scannerChipFor(scanningUiState)
-        val attendeeStatus = attendeeStatusFor(syncUiState, currentEventSyncStatus)
+        val admissionStatus = admissionStatusFor(syncUiState, currentEventSyncStatus)
         val uploadState = queueUiState.uploadSemanticState
+        val queueUploadStatus = queueUploadStatusFor(queueUiState)
+        val scannerDiagnostic = scannerDiagnosticFor(scanningUiState)
         val primaryRecoveryAction = primaryRecoveryActionFor(scanningUiState)
 
         return ScanDestinationUiState(
             activeEventLabel = activeEventLabelFor(syncUiState, currentEventSyncStatus),
-            syncedAttendeeCountLabel = syncedAttendeeCountLabelFor(currentEventSyncStatus),
-            lastSyncLabel = lastSyncLabelFor(currentEventSyncStatus),
+            factLabels =
+                listOf(
+                    syncedAttendeeCountLabelFor(currentEventSyncStatus),
+                    lastSyncLabelFor(currentEventSyncStatus)
+                ),
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = scanningUiState.scannerStatus,
-            scannerDiagnosticMessage = scanningUiState.scannerDebugStatus,
-            attendeeStatusChip = attendeeStatus.first,
-            attendeeStatusMessage = attendeeStatus.second,
+            scannerDiagnosticLabel = scannerDiagnostic?.first,
+            scannerDiagnosticMessage = scannerDiagnostic?.second,
+            admissionSectionTitle = ADMISSION_SECTION_TITLE,
+            admissionStatusChip = admissionStatus.chip,
+            admissionStatusVerdict = admissionStatus.verdict,
+            admissionStatusDetail = admissionStatus.detail,
             showCameraPreview = scanningUiState.shouldHostPreviewSurface,
             primaryRecoveryAction = primaryRecoveryAction?.first,
             primaryRecoveryActionLabel = primaryRecoveryAction?.second,
             previewBanner = previewBannerFor(scanningUiState),
             captureBanner = captureBannerFor(scanningUiState.lastCaptureFeedback),
-            healthBanner =
-                healthBannerFor(
-                    queueUiState = queueUiState,
-                    syncUiState = syncUiState,
-                    currentEventSyncStatus = currentEventSyncStatus
-                ),
+            queueUploadSectionTitle = QUEUE_UPLOAD_SECTION_TITLE,
             queueDepthLabel = queueDepthLabel(queueUiState.localQueueDepth),
-            uploadStateLabel = uploadState.defaultLabel,
-            manualSyncVisible = !syncUiState.isSyncing,
+            queueUploadStatusChip = queueUploadStatus.chip,
+            queueUploadStatusVerdict = queueUploadStatus.verdict,
+            queueUploadStatusDetail = queueUploadStatus.detail,
+            manualSyncVisible =
+                !syncUiState.isSyncing &&
+                    shouldShowManualSync(syncUiState, currentEventSyncStatus),
             retryUploadVisible =
                 QueueUploadRecoveryVisibility.shouldShowRetryUpload(
                     queueUiState.localQueueDepth,
@@ -83,8 +91,35 @@ class ScanDestinationPresenter(
             ?: "Synced attendees: unknown"
 
     private fun lastSyncLabelFor(currentEventSyncStatus: AttendeeSyncStatus?): String =
-        currentEventSyncStatus?.lastSuccessfulSyncAt?.let { "Last sync: $it" }
-            ?: "Last sync: unknown"
+        currentEventSyncStatus
+            ?.lastSuccessfulSyncAt
+            ?.let(::friendlyLastSyncLabel)
+            ?: "Last sync unknown"
+
+    private fun friendlyLastSyncLabel(timestamp: String): String {
+        val syncedAt =
+            runCatching { Instant.parse(timestamp) }
+                .getOrNull()
+                ?: return "Last sync unknown"
+        val now = clock.instant()
+        val age = Duration.between(syncedAt, now)
+
+        if (!age.isNegative && age <= Duration.ofSeconds(60)) {
+            return "Last sync just now"
+        }
+
+        val zone = clock.zone
+        val syncedDate = syncedAt.atZone(zone).toLocalDate()
+        val today = now.atZone(zone).toLocalDate()
+        val formatter =
+            if (syncedDate == today) {
+                DateTimeFormatter.ofPattern("HH:mm", Locale.US)
+            } else {
+                DateTimeFormatter.ofPattern("dd MMM HH:mm", Locale.US)
+            }
+
+        return "Last sync ${formatter.withZone(zone).format(syncedAt)}"
+    }
 
     private fun primaryRecoveryActionFor(
         uiState: ScanningUiState
@@ -116,6 +151,44 @@ class ScanDestinationPresenter(
     private fun requiresRelogin(queueUiState: QueueUiState): Boolean =
         queueUiState.localQueueDepth > 0 &&
             (queueUiState.uploadSemanticState as? SyncUiState.Failed)?.reason == "Auth expired"
+
+    private fun scannerDiagnosticFor(uiState: ScanningUiState): Pair<String, String>? =
+        when (val recoveryState = uiState.scannerRecoveryState) {
+            is ScannerRecoveryState.RequestPermission ->
+                "Diagnostics" to "Camera permission is required."
+
+            ScannerRecoveryState.OpenSystemSettings ->
+                "Diagnostics" to "Camera permission is blocked in system settings."
+
+            is ScannerRecoveryState.SourceError ->
+                "Diagnostics" to
+                    recoveryState.message
+                        .takeIf { it.isNotBlank() }
+                        ?.let { "Camera source error: $it" }
+                        .orEmpty()
+                        .ifBlank { "Camera source error." }
+
+            ScannerRecoveryState.StuckPreview ->
+                "Diagnostics" to "Camera preview is not responding."
+
+            ScannerRecoveryState.Starting ->
+                if (uiState.sessionState is ScannerSessionState.Blocked) {
+                    "Diagnostics" to uiState.scannerStatus
+                } else {
+                    null
+                }
+
+            ScannerRecoveryState.Ready ->
+                if (uiState.shouldHostPreviewSurface && !uiState.isPreviewVisible) {
+                    "Diagnostics" to "Camera preview is still becoming visible."
+                } else {
+                    null
+                }
+
+            ScannerRecoveryState.Inactive,
+            ScannerRecoveryState.CameraNotRequired ->
+                null
+        }
 
     private fun scannerChipFor(uiState: ScanningUiState): StatusChipUiModel {
         if (uiState.scannerRecoveryState == ScannerRecoveryState.StuckPreview) {
@@ -165,57 +238,103 @@ class ScanDestinationPresenter(
         }
     }
 
-    private fun attendeeStatusFor(
+    private fun admissionStatusFor(
         syncUiState: SyncScreenUiState,
         currentEventSyncStatus: AttendeeSyncStatus?
-    ): Pair<StatusChipUiModel, String> {
+    ): AdmissionStatusUi {
         if (currentEventSyncStatus != null) {
             if (currentEventSyncStatus.attendeeCount <= 0) {
-                return StatusChipUiModel(
-                    text = "No attendees synced",
-                    tone = StatusTone.Warning
-                ) to "No attendees are currently available in the local cache for this event. Run attendee sync before trusting scanner outcomes."
+                return AdmissionStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "No attendees synced",
+                            tone = StatusTone.Warning
+                        ),
+                    verdict = "Admission data missing",
+                    detail = "Sync attendees before relying on scan decisions."
+                )
             }
             return if (isStale(currentEventSyncStatus)) {
                 if (currentEventSyncStatus.isSyncStruggling()) {
-                    StatusChipUiModel(
-                        text = "Sync delayed, scanning continues",
-                        tone = StatusTone.Warning
-                    ) to
-                        "Sync is retrying in the background; you can keep scanning using the saved attendee list."
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Sync delayed",
+                                tone = StatusTone.Warning
+                            ),
+                        verdict = "Admission needs a refresh",
+                        detail = "Sync is retrying in the background; saved attendee data is still available."
+                    )
                 } else {
-                    StatusChipUiModel(
-                        text = "Attendee list may be old",
-                        tone = StatusTone.Warning
-                    ) to "Using cached attendee data from ${currentEventSyncStatus.lastSuccessfulSyncAt ?: "an earlier sync"}."
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee list may be old",
+                                tone = StatusTone.Warning
+                            ),
+                        verdict = "Admission needs a refresh",
+                        detail = "Existing attendee data is available, but a sync should run before heavy scanning."
+                    )
                 }
             } else {
-                StatusChipUiModel(
-                    text = "Attendee list ready",
-                    tone = StatusTone.Success
-                ) to "Using ${currentEventSyncStatus.attendeeCount} attendees from the latest local sync."
+                AdmissionStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Attendee list ready",
+                            tone = StatusTone.Success
+                        ),
+                    verdict = "Ready for admission",
+                    detail = "Recent attendee data is available for this event."
+                )
             }
         }
 
         return when (syncUiState.bootstrapStatus) {
             BootstrapSyncStatus.Syncing ->
-                StatusChipUiModel(
-                    text = "Syncing attendee list",
-                    tone = StatusTone.Info
-                ) to "Preparing the attendee list for this event. This device is not ready for trusted green admission until sync completes."
+                AdmissionStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Syncing attendee list",
+                            tone = StatusTone.Info
+                        ),
+                    verdict = "Preparing admission data",
+                    detail = "Attendees are syncing now."
+                )
 
             BootstrapSyncStatus.Failed ->
-                StatusChipUiModel(
-                    text = "Sync failed - retry required",
-                    tone = StatusTone.Destructive
-                ) to "Attendee sync failed for this event. Retry sync before trusting green admission on this device."
+                AdmissionStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Sync failed",
+                            tone = StatusTone.Destructive
+                        ),
+                    verdict = "Admission refresh failed",
+                    detail = "Use manual sync when connectivity is available."
+                )
 
             BootstrapSyncStatus.Succeeded,
             BootstrapSyncStatus.Idle ->
-                StatusChipUiModel(
-                    text = "Attendee list not ready",
-                    tone = StatusTone.Warning
-                ) to "A trusted attendee cache is not available for this event yet. This device is not ready for trusted green admission."
+                if (syncUiState.bootstrapEventId != null) {
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee list not ready",
+                                tone = StatusTone.Warning
+                            ),
+                        verdict = "Admission data missing",
+                        detail = "Sync attendees before relying on scan decisions."
+                    )
+                } else {
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee list not ready",
+                                tone = StatusTone.Warning
+                            ),
+                        verdict = "Admission unavailable",
+                        detail = "Sign in to an event before scanning."
+                    )
+                }
         }
     }
 
@@ -298,61 +417,186 @@ class ScanDestinationPresenter(
             null -> null
         }
 
-    private fun healthBannerFor(
-        queueUiState: QueueUiState,
-        syncUiState: SyncScreenUiState,
-        currentEventSyncStatus: AttendeeSyncStatus?
-    ): BannerUiModel? {
+    private fun queueUploadStatusFor(queueUiState: QueueUiState): QueueUploadStatusUi {
         val uploadState = queueUiState.uploadSemanticState
 
-        if (currentEventSyncStatus == null) {
-            return when (syncUiState.bootstrapStatus) {
-                BootstrapSyncStatus.Syncing ->
-                    BannerUiModel(
-                        title = "Syncing attendee list",
-                        message = "Preparing the attendee cache for this event. The device is not ready for trusted green admission until sync completes.",
-                        tone = StatusTone.Info
-                    )
-
-                BootstrapSyncStatus.Failed ->
-                    BannerUiModel(
-                        title = "Sync failed - retry required",
-                        message =
-                            syncUiState.errorMessage
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { "$it Retry attendee sync before using this device for trusted green admission." }
-                                ?: "Attendee sync failed for this event. Retry attendee sync before using this device for trusted green admission.",
-                        tone = StatusTone.Destructive
-                    )
-
-                BootstrapSyncStatus.Idle,
-                BootstrapSyncStatus.Succeeded ->
-                    BannerUiModel(
-                        title = "Attendee sync required",
-                        message = "This event does not have a trusted attendee cache yet. Complete attendee sync before relying on green admission on this device.",
-                        tone = StatusTone.Warning
-                    )
-            }
-        }
-
         if (uploadState is SyncUiState.Offline && queueUiState.localQueueDepth > 0) {
-            return BannerUiModel(
-                title = "Uploads paused offline",
-                message = "${queueDepthLabel(queueUiState.localQueueDepth)} will upload automatically when the device reconnects.",
-                tone = StatusTone.Offline
+            return QueueUploadStatusUi(
+                chip =
+                    StatusChipUiModel(
+                        text = "Uploads paused offline",
+                        tone = StatusTone.Offline
+                    ),
+                verdict = "Queued scans waiting",
+                detail = "Uploads will retry automatically when connectivity returns."
             )
         }
 
         if (uploadState is SyncUiState.Failed && uploadState.reason == "Auth expired") {
-            return BannerUiModel(
-                title = "Re-login required",
-                message = "${queueDepthLabel(queueUiState.localQueueDepth)} cannot upload until the operator signs in again.",
-                tone = StatusTone.Destructive
+            return QueueUploadStatusUi(
+                chip =
+                    StatusChipUiModel(
+                        text = "Re-login required",
+                        tone = StatusTone.Destructive
+                    ),
+                verdict = "Upload paused",
+                detail = "Sign in again to resume uploads for this event."
             )
         }
 
-        return null
+        return when (uploadState) {
+            SyncUiState.Idle ->
+                QueueUploadStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text =
+                                if (queueUiState.localQueueDepth > 0) {
+                                    "Queue waiting"
+                                } else {
+                                    "No upload backlog"
+                                },
+                            tone =
+                                if (queueUiState.localQueueDepth > 0) {
+                                    StatusTone.Warning
+                                } else {
+                                    StatusTone.Neutral
+                                }
+                        ),
+                    verdict =
+                        if (queueUiState.localQueueDepth > 0) {
+                            "Queued scans waiting"
+                        } else {
+                            "Upload queue clear"
+                        },
+                    detail =
+                        if (queueUiState.localQueueDepth > 0) {
+                            "Uploads will retry automatically when connectivity returns."
+                        } else {
+                            "New scans will still be saved locally before upload."
+                        }
+                )
+
+            SyncUiState.Syncing ->
+                QueueUploadStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Uploading scans",
+                            tone = StatusTone.Info
+                        ),
+                    verdict = "Uploading queued scans",
+                    detail = "Keep the device online while the queue is being sent."
+                )
+
+            is SyncUiState.Synced ->
+                if (queueUiState.localQueueDepth > 0) {
+                    QueueUploadStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Uploads synced",
+                                tone = StatusTone.Success
+                            ),
+                        verdict = "Queued scans waiting",
+                        detail = "Some scans remain local after the latest upload result."
+                    )
+                } else {
+                    QueueUploadStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Uploads synced",
+                                tone = StatusTone.Success
+                            ),
+                        verdict = "Upload queue clear",
+                        detail = "New scans will still be saved locally before upload."
+                    )
+                }
+
+            is SyncUiState.Partial ->
+                QueueUploadStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Backlog remaining",
+                            tone = StatusTone.Warning
+                        ),
+                    verdict = "Queued scans waiting",
+                    detail = "Uploads will retry automatically when connectivity returns."
+                )
+
+            is SyncUiState.Failed ->
+                QueueUploadStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Upload failed",
+                            tone = StatusTone.Destructive
+                        ),
+                    verdict = "Upload needs attention",
+                    detail = "Retry upload when the network is available."
+                )
+
+            is SyncUiState.Offline ->
+                QueueUploadStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Offline",
+                            tone = StatusTone.Offline
+                        ),
+                    verdict =
+                        if (queueUiState.localQueueDepth > 0) {
+                            "Queued scans waiting"
+                        } else {
+                            "Upload queue clear"
+                        },
+                    detail =
+                        if (queueUiState.localQueueDepth > 0) {
+                            "Uploads will retry automatically when connectivity returns."
+                        } else {
+                            "New scans will still be saved locally before upload."
+                        }
+                )
+
+            is SyncUiState.RetryScheduled ->
+                QueueUploadStatusUi(
+                    chip =
+                        StatusChipUiModel(
+                            text = "Retry scheduled",
+                            tone = StatusTone.Warning
+                        ),
+                    verdict = "Queued scans waiting",
+                    detail = "Uploads will retry automatically when connectivity returns."
+                )
+        }
     }
+
+    private fun shouldShowManualSync(
+        syncUiState: SyncScreenUiState,
+        currentEventSyncStatus: AttendeeSyncStatus?
+    ): Boolean {
+        val hasActiveEvent = currentEventSyncStatus != null || syncUiState.bootstrapEventId != null
+        if (!hasActiveEvent) return false
+
+        return currentEventSyncStatus == null ||
+            syncUiState.bootstrapStatus == BootstrapSyncStatus.Failed ||
+            !syncUiState.errorMessage.isNullOrBlank() ||
+            currentEventSyncStatus.attendeeCount <= 0 ||
+            isStale(currentEventSyncStatus) ||
+            currentEventSyncStatus.isSyncStruggling()
+    }
+
+    private companion object {
+        const val ADMISSION_SECTION_TITLE = "Admission readiness"
+        const val QUEUE_UPLOAD_SECTION_TITLE = "Queue & upload"
+    }
+
+    private data class AdmissionStatusUi(
+        val chip: StatusChipUiModel,
+        val verdict: String,
+        val detail: String
+    )
+
+    private data class QueueUploadStatusUi(
+        val chip: StatusChipUiModel,
+        val verdict: String,
+        val detail: String
+    )
 
     private fun queueDepthLabel(queueDepth: Int): String =
         when (queueDepth) {

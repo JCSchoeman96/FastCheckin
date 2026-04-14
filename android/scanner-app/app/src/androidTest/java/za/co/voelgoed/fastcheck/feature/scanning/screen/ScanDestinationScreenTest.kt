@@ -1,5 +1,10 @@
 package za.co.voelgoed.fastcheck.feature.scanning.screen
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -8,6 +13,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
@@ -71,19 +78,12 @@ class ScanDestinationScreenTest {
                         message = "Camera is loading",
                         tone = StatusTone.Info,
                     ),
-                healthBanner =
-                    BannerUiModel(
-                        title = "Health",
-                        message = "Uploads paused",
-                        tone = StatusTone.Warning,
-                    ),
                 captureBanner = null,
             )
 
         render(uiState)
 
         composeRule.onNodeWithText("Preview").assertIsDisplayed()
-        composeRule.onNodeWithText("Health").assertIsDisplayed()
         composeRule.onAllNodesWithTag(ScanDestinationTestTags.CaptureResultHero).assertCountEquals(0)
     }
 
@@ -109,7 +109,7 @@ class ScanDestinationScreenTest {
     }
 
     @Test
-    fun previewAndHealthBannersRenderIndependentlyFromCaptureHero() {
+    fun previewBannerRendersIndependentlyFromCaptureHero() {
         val uiState =
             baseUiState(
                 previewBanner =
@@ -117,12 +117,6 @@ class ScanDestinationScreenTest {
                         title = "Preview status",
                         message = "Preview still independent",
                         tone = StatusTone.Info,
-                    ),
-                healthBanner =
-                    BannerUiModel(
-                        title = "Health status",
-                        message = "Health still independent",
-                        tone = StatusTone.Warning,
                     ),
                 captureBanner =
                     BannerUiModel(
@@ -135,8 +129,104 @@ class ScanDestinationScreenTest {
         render(uiState)
 
         composeRule.onNodeWithText("Preview status").assertIsDisplayed()
-        composeRule.onNodeWithText("Health status").assertIsDisplayed()
         composeRule.onNodeWithTag(ScanDestinationTestTags.CaptureResultHero).assertIsDisplayed()
+    }
+
+    @Test
+    fun scanBodyUsesTruthfulAdmissionAndQueueUploadSections() {
+        render(
+            baseUiState(
+                admissionStatusChip = StatusChipUiModel("Admission ready", StatusTone.Success),
+                admissionStatusVerdict = "Ready for admission",
+                admissionStatusDetail = "Recent attendee data is available for this event.",
+                queueUploadStatusChip = StatusChipUiModel("Uploads paused offline", StatusTone.Offline),
+                queueUploadStatusVerdict = "Queued scans waiting",
+                queueUploadStatusDetail = "Uploads will retry automatically when connectivity returns.",
+            )
+        )
+
+        composeRule.onNodeWithText("Admission readiness").assertIsDisplayed()
+        composeRule.onNodeWithText("Admission ready").assertIsDisplayed()
+        composeRule.onNodeWithText("Ready for admission").assertIsDisplayed()
+        composeRule.onNodeWithText("Recent attendee data is available for this event.").assertIsDisplayed()
+        composeRule.onNodeWithText("Queue & upload").assertIsDisplayed()
+        composeRule.onNodeWithText("Uploads paused offline").assertIsDisplayed()
+        composeRule.onNodeWithText("Queued scans waiting").assertIsDisplayed()
+        composeRule.onNodeWithText("Uploads will retry automatically when connectivity returns.").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Actions").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Attendee readiness").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Scan health").assertCountEquals(0)
+    }
+
+    @Test
+    fun topSummaryUsesCompactFactsAndFriendlySyncCopy() {
+        render(
+            baseUiState(
+                factLabels = listOf("Synced attendees: 10", "Last sync 08:50"),
+            )
+        )
+
+        composeRule.onNodeWithText("Active event: #42").assertIsDisplayed()
+        composeRule.onNodeWithText("Synced attendees: 10").assertIsDisplayed()
+        composeRule.onNodeWithText("Last sync 08:50").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Last sync: 2026-03-13T08:50:00Z").assertCountEquals(0)
+    }
+
+    @Test
+    fun diagnosticsAreHiddenWhenMissing() {
+        render(baseUiState())
+
+        composeRule.onAllNodesWithText("Diagnostics").assertCountEquals(0)
+    }
+
+    @Test
+    fun diagnosticsRenderWhenProvided() {
+        render(
+            baseUiState(
+                scannerDiagnosticLabel = "Diagnostics",
+                scannerDiagnosticMessage = "Camera preview is not responding.",
+            )
+        )
+
+        composeRule.onNodeWithText("Diagnostics").assertIsDisplayed()
+        composeRule.onNodeWithText("Camera preview is not responding.").assertIsDisplayed()
+    }
+
+    @Test
+    fun actionsGroupIsHiddenWhenNoRecoveryActionIsVisible() {
+        render(baseUiState())
+
+        composeRule.onAllNodesWithText("Actions").assertCountEquals(0)
+    }
+
+    @Test
+    fun manualSyncActionRendersWithoutOtherActions() {
+        render(baseUiState(manualSyncVisible = true))
+
+        composeRule.onNodeWithText("Actions").assertIsDisplayed()
+        composeRule.onNodeWithText("Sync attendee list").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Retry upload").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Re-login").assertCountEquals(0)
+    }
+
+    @Test
+    fun narrowLargeFontSummaryKeepsCriticalFactsVisible() {
+        render(
+            uiState =
+                baseUiState(
+                    factLabels = listOf("Synced attendees: 1234", "Last sync 13 Mar 08:50"),
+                    manualSyncVisible = true,
+                ),
+            modifier = Modifier.width(240.dp),
+            fontScale = 1.45f,
+        )
+
+        composeRule.onNodeWithText("Active event: #42").assertIsDisplayed()
+        composeRule.onNodeWithText("Synced attendees: 1234").assertIsDisplayed()
+        composeRule.onNodeWithText("Last sync 13 Mar 08:50").assertIsDisplayed()
+        composeRule.onNodeWithText("Admission readiness").assertIsDisplayed()
+        composeRule.onNodeWithText("Queue & upload").assertIsDisplayed()
+        composeRule.onNodeWithText("Sync attendee list").assertIsDisplayed()
     }
 
     @Test
@@ -153,6 +243,7 @@ class ScanDestinationScreenTest {
 
         render(uiState, actions::add)
 
+        composeRule.onNodeWithText("Actions").assertIsDisplayed()
         composeRule.onNodeWithText("Allow camera access").performClick()
         composeRule.onNodeWithText("Sync attendee list").performClick()
         composeRule.onNodeWithText("Retry upload").performClick()
@@ -167,25 +258,42 @@ class ScanDestinationScreenTest {
     private fun render(
         uiState: ScanDestinationUiState,
         onOperatorAction: (ScanOperatorAction) -> Unit = {},
+        modifier: Modifier = Modifier,
+        fontScale: Float = 1.0f,
     ) {
         composeRule.setContent {
             FastCheckTheme {
-                ScanDestinationScreen(
-                    uiState = uiState,
-                    previewSurfaceHolder = ScanPreviewSurfaceHolder(),
-                    onPreviewSurfaceChanged = {},
-                    onOperatorAction = onOperatorAction,
-                )
+                val density = LocalDensity.current
+                CompositionLocalProvider(
+                    LocalDensity provides Density(density.density, fontScale)
+                ) {
+                    Box(modifier = modifier) {
+                        ScanDestinationScreen(
+                            uiState = uiState,
+                            previewSurfaceHolder = ScanPreviewSurfaceHolder(),
+                            onPreviewSurfaceChanged = {},
+                            onOperatorAction = onOperatorAction,
+                        )
+                    }
+                }
             }
         }
     }
 
     private fun baseUiState(
+        factLabels: List<String> = listOf("Synced attendees: 10", "Last sync 08:50"),
         scannerStatusChip: StatusChipUiModel = StatusChipUiModel("Scanner active", StatusTone.Brand),
+        admissionStatusChip: StatusChipUiModel = StatusChipUiModel("Attendee list ready", StatusTone.Success),
+        admissionStatusVerdict: String = "Ready for admission",
+        admissionStatusDetail: String = "Recent attendee data is available for this event.",
+        queueUploadStatusChip: StatusChipUiModel = StatusChipUiModel("No upload backlog", StatusTone.Neutral),
+        queueUploadStatusVerdict: String = "Upload queue clear",
+        queueUploadStatusDetail: String = "New scans will still be saved locally before upload.",
+        scannerDiagnosticLabel: String? = null,
+        scannerDiagnosticMessage: String? = null,
         showCameraPreview: Boolean = false,
         previewBanner: BannerUiModel? = null,
         captureBanner: BannerUiModel? = null,
-        healthBanner: BannerUiModel? = null,
         primaryRecoveryAction: ScanOperatorAction? = null,
         primaryRecoveryActionLabel: String? = null,
         manualSyncVisible: Boolean = false,
@@ -194,21 +302,25 @@ class ScanDestinationScreenTest {
     ): ScanDestinationUiState =
         ScanDestinationUiState(
             activeEventLabel = "Active event: #42",
-            syncedAttendeeCountLabel = "Synced attendees: 10",
-            lastSyncLabel = "Last sync: now",
+            factLabels = factLabels,
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = "Scanner is ready",
-            scannerDiagnosticMessage = null,
-            attendeeStatusChip = StatusChipUiModel("Attendee list ready", StatusTone.Success),
-            attendeeStatusMessage = "Attendees are synced",
+            scannerDiagnosticLabel = scannerDiagnosticLabel,
+            scannerDiagnosticMessage = scannerDiagnosticMessage,
+            admissionSectionTitle = "Admission readiness",
+            admissionStatusChip = admissionStatusChip,
+            admissionStatusVerdict = admissionStatusVerdict,
+            admissionStatusDetail = admissionStatusDetail,
             showCameraPreview = showCameraPreview,
             primaryRecoveryAction = primaryRecoveryAction,
             primaryRecoveryActionLabel = primaryRecoveryActionLabel,
             previewBanner = previewBanner,
             captureBanner = captureBanner,
-            healthBanner = healthBanner,
+            queueUploadSectionTitle = "Queue & upload",
             queueDepthLabel = "No scans queued locally",
-            uploadStateLabel = "Uploads healthy",
+            queueUploadStatusChip = queueUploadStatusChip,
+            queueUploadStatusVerdict = queueUploadStatusVerdict,
+            queueUploadStatusDetail = queueUploadStatusDetail,
             manualSyncVisible = manualSyncVisible,
             retryUploadVisible = retryUploadVisible,
             reloginVisible = reloginVisible,
