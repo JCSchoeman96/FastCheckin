@@ -1,11 +1,15 @@
 package za.co.voelgoed.fastcheck.feature.scanning.screen
 
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,6 +42,7 @@ object ScanDestinationTestTags {
     const val CaptureResultHero = "scan_destination_capture_result_hero"
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScanDestinationScreen(
     uiState: ScanDestinationUiState,
@@ -56,25 +61,16 @@ fun ScanDestinationScreen(
     ) {
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
-                Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
                     Text(
                         text = uiState.activeEventLabel,
-                        style = theme.typography.titleMedium,
+                        style = theme.typography.titleLarge,
                         color = scheme.onSurface,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = uiState.syncedAttendeeCountLabel,
-                        style = theme.typography.bodyMedium,
-                        color = scheme.onSurface
-                    )
-                    Text(
-                        text = uiState.lastSyncLabel,
-                        style = theme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant
-                    )
+                    FactCluster(factLabels = uiState.factLabels)
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
@@ -84,17 +80,25 @@ fun ScanDestinationScreen(
                     )
                     Text(
                         text = uiState.scannerStatusMessage,
-                        style = theme.typography.bodySmall,
+                        style = theme.typography.bodyMedium,
                         color = scheme.onSurfaceVariant
                     )
                 }
 
-                uiState.scannerDiagnosticMessage?.let { diagnosticMessage ->
-                    Text(
-                        text = "Diagnostics: $diagnosticMessage",
-                        style = theme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant
-                    )
+                if (uiState.scannerDiagnosticLabel != null && uiState.scannerDiagnosticMessage != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                        Text(
+                            text = uiState.scannerDiagnosticLabel,
+                            style = theme.typography.labelSmall,
+                            color = scheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = uiState.scannerDiagnosticMessage,
+                            style = theme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -177,8 +181,14 @@ fun ScanDestinationScreen(
                         tone = uiState.admissionStatusChip.tone
                     )
                     Text(
-                        text = uiState.admissionStatusMessage,
+                        text = uiState.admissionStatusVerdict,
                         style = theme.typography.bodyMedium,
+                        color = scheme.onSurface,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = uiState.admissionStatusDetail,
+                        style = theme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
                 }
@@ -208,7 +218,13 @@ fun ScanDestinationScreen(
                         tone = uiState.queueUploadStatusChip.tone
                     )
                     Text(
-                        text = uiState.queueUploadStatusMessage,
+                        text = uiState.queueUploadStatusVerdict,
+                        style = theme.typography.bodyMedium,
+                        color = scheme.onSurface,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = uiState.queueUploadStatusDetail,
                         style = theme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
@@ -217,7 +233,7 @@ fun ScanDestinationScreen(
                 if (hasQueueUploadActions) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(spacing.xSmall)
+                        verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)
                     ) {
                         Text(
                             text = "Actions",
@@ -249,6 +265,37 @@ fun ScanDestinationScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FactCluster(
+    factLabels: List<String>,
+    modifier: Modifier = Modifier
+) {
+    val theme = MaterialTheme.fastCheck
+    val spacing = theme.spacing
+
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(spacing.xSmall),
+        verticalArrangement = Arrangement.spacedBy(spacing.xSmall)
+    ) {
+        factLabels.forEach { label ->
+            Text(
+                text = label,
+                style = theme.typography.labelMedium,
+                color = theme.colorScheme.onSurfaceVariant,
+                modifier =
+                    Modifier
+                        .background(
+                            color = theme.colorScheme.surfaceContainerHighest,
+                            shape = theme.shapes.small
+                        )
+                        .padding(horizontal = spacing.xSmall, vertical = spacing.xxSmall)
+            )
         }
     }
 }

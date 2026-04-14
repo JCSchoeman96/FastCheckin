@@ -27,6 +27,21 @@ class ScanDestinationPresenterTest {
         )
 
     @Test
+    fun lastSyncLabelsUseFriendlyOperatorFormatting() {
+        val unknown = trustedSyncedUiState(lastSuccessfulSyncAt = null)
+        val justNow = trustedSyncedUiState(lastSuccessfulSyncAt = "2026-03-13T08:59:30Z")
+        val sameDay = trustedSyncedUiState(lastSuccessfulSyncAt = "2026-03-13T08:50:00Z")
+        val older = trustedSyncedUiState(lastSuccessfulSyncAt = "2026-03-12T08:50:00Z")
+        val invalid = trustedSyncedUiState(lastSuccessfulSyncAt = "not-a-timestamp")
+
+        assertThat(unknown.factLabels).contains("Last sync unknown")
+        assertThat(justNow.factLabels).contains("Last sync just now")
+        assertThat(sameDay.factLabels).contains("Last sync 08:50")
+        assertThat(older.factLabels).contains("Last sync 12 Mar 08:50")
+        assertThat(invalid.factLabels).contains("Last sync unknown")
+    }
+
+    @Test
     fun scannerAndAdmissionReadinessStaySeparate() {
         val uiState =
             presenter.present(
@@ -47,11 +62,14 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.scannerStatusChip.text).isEqualTo("Scanner active")
         assertThat(uiState.admissionSectionTitle).isEqualTo("Admission readiness")
-        assertThat(uiState.admissionStatusChip.text).isEqualTo("Sync failed - retry required")
-        assertThat(uiState.admissionStatusMessage).contains("Retry sync before trusting green admission")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Sync failed")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission refresh failed")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Use manual sync when connectivity is available.")
         assertThat(uiState.queueUploadSectionTitle).isEqualTo("Queue & upload")
         assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
-        assertThat(uiState.queueUploadStatusMessage).isEqualTo("No scans are waiting to upload.")
+        assertThat(uiState.queueUploadStatusVerdict).isEqualTo("Upload queue clear")
+        assertThat(uiState.queueUploadStatusDetail)
+            .isEqualTo("New scans will still be saved locally before upload.")
     }
 
     @Test
@@ -65,9 +83,10 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.admissionStatusChip.text).isEqualTo("Syncing attendee list")
-        assertThat(uiState.admissionStatusMessage).contains("not ready for trusted green admission")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Preparing admission data")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Attendees are syncing now.")
         assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
-        assertThat(uiState.queueUploadStatusMessage).doesNotContain("trusted green admission")
+        assertThat(uiState.queueUploadStatusDetail).doesNotContain("trusted green admission")
     }
 
     @Test
@@ -88,9 +107,10 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
-        assertThat(uiState.admissionStatusMessage).contains("latest local sync")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Ready for admission")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Recent attendee data is available for this event.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
-        assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 20")
+        assertThat(uiState.factLabels).containsExactly("Synced attendees: 20", "Last sync 08:50").inOrder()
         assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
     }
 
@@ -112,9 +132,46 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.admissionStatusChip.text).isEqualTo("No attendees synced")
-        assertThat(uiState.admissionStatusMessage).contains("Run attendee sync")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission data missing")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Sync attendees before relying on scan decisions.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
-        assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 0")
+        assertThat(uiState.factLabels).contains("Synced attendees: 0")
+    }
+
+    @Test
+    fun activeEventWithoutCacheShowsAdmissionDataMissing() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState =
+                    SyncScreenUiState(
+                        bootstrapStatus = BootstrapSyncStatus.Idle,
+                        bootstrapEventId = 5
+                    ),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission data missing")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Sync attendees before relying on scan decisions.")
+        assertThat(uiState.manualSyncVisible).isTrue()
+    }
+
+    @Test
+    fun noActiveEventShowsAdmissionUnavailable() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Idle),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.activeEventLabel).isEqualTo("Active event: unavailable")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission unavailable")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Sign in to an event before scanning.")
+        assertThat(uiState.manualSyncVisible).isFalse()
     }
 
     @Test
@@ -140,10 +197,11 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.queueUploadStatusChip.text).isEqualTo("Uploads paused offline")
         assertThat(uiState.queueUploadStatusChip.tone).isEqualTo(StatusTone.Offline)
-        assertThat(uiState.queueUploadStatusMessage)
-            .isEqualTo("3 scans queued locally will upload automatically when the device reconnects.")
+        assertThat(uiState.queueUploadStatusVerdict).isEqualTo("Queued scans waiting")
+        assertThat(uiState.queueUploadStatusDetail)
+            .isEqualTo("Uploads will retry automatically when connectivity returns.")
         assertThat(uiState.retryUploadVisible).isFalse()
-        assertThat(uiState.manualSyncVisible).isTrue()
+        assertThat(uiState.manualSyncVisible).isFalse()
         assertThat(uiState.reloginVisible).isFalse()
     }
 
@@ -170,8 +228,9 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.queueUploadStatusChip.text).isEqualTo("Re-login required")
         assertThat(uiState.queueUploadStatusChip.tone).isEqualTo(StatusTone.Destructive)
-        assertThat(uiState.queueUploadStatusMessage)
-            .isEqualTo("2 scans queued locally cannot upload until the operator signs in again.")
+        assertThat(uiState.queueUploadStatusVerdict).isEqualTo("Upload paused")
+        assertThat(uiState.queueUploadStatusDetail)
+            .isEqualTo("Sign in again to resume uploads for this event.")
         assertThat(uiState.reloginVisible).isTrue()
         assertThat(uiState.retryUploadVisible).isFalse()
     }
@@ -197,6 +256,110 @@ class ScanDestinationPresenterTest {
     }
 
     @Test
+    fun manualSyncIsRecoveryOnly() {
+        val freshStatus =
+            AttendeeSyncStatus(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:50:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                syncType = "full",
+                attendeeCount = 20
+            )
+        val failedBootstrap =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState =
+                    SyncScreenUiState(
+                        bootstrapStatus = BootstrapSyncStatus.Failed,
+                        bootstrapEventId = 5,
+                        errorMessage = "Timeout"
+                    ),
+                currentEventSyncStatus = null
+            )
+        val emptyCache =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus = freshStatus.copy(attendeeCount = 0)
+            )
+        val staleCache =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus = freshStatus.copy(lastSuccessfulSyncAt = "2026-03-13T08:00:00Z")
+            )
+        val healthyCache =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus = freshStatus
+            )
+        val noActiveEvent =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(failedBootstrap.manualSyncVisible).isTrue()
+        assertThat(emptyCache.manualSyncVisible).isTrue()
+        assertThat(staleCache.manualSyncVisible).isTrue()
+        assertThat(healthyCache.manualSyncVisible).isFalse()
+        assertThat(noActiveEvent.manualSyncVisible).isFalse()
+    }
+
+    @Test
+    fun staleSyncedEventShowsRefreshVerdict() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:00:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                        syncType = "full",
+                        attendeeCount = 20
+                    )
+            )
+
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission needs a refresh")
+        assertThat(uiState.admissionStatusDetail)
+            .isEqualTo("Existing attendee data is available, but a sync should run before heavy scanning.")
+    }
+
+    @Test
+    fun strugglingSyncedEventKeepsAdmissionUsableButDegraded() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:00:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                        syncType = "full",
+                        attendeeCount = 20,
+                        consecutiveFailures = 1
+                    )
+            )
+
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Sync delayed")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission needs a refresh")
+        assertThat(uiState.admissionStatusDetail)
+            .isEqualTo("Sync is retrying in the background; saved attendee data is still available.")
+    }
+
+    @Test
     fun retryUploadShownOnlyForRecoverableBacklog() {
         val uiState =
             presenter.present(
@@ -218,6 +381,33 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.retryUploadVisible).isTrue()
+        assertThat(uiState.queueUploadStatusVerdict).isEqualTo("Queued scans waiting")
+    }
+
+    @Test
+    fun uploadFailureUsesVerdictAndDetail() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState =
+                    QueueUiState(
+                        localQueueDepth = 4,
+                        uploadSemanticState = SyncUiState.Failed(reason = "Network timeout")
+                    ),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "full",
+                        attendeeCount = 20
+                    )
+            )
+
+        assertThat(uiState.queueUploadStatusChip.text).isEqualTo("Upload failed")
+        assertThat(uiState.queueUploadStatusVerdict).isEqualTo("Upload needs attention")
+        assertThat(uiState.queueUploadStatusDetail).isEqualTo("Retry upload when the network is available.")
     }
 
     @Test
@@ -264,6 +454,8 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.primaryRecoveryAction).isEqualTo(ScanOperatorAction.RequestCameraAccess)
         assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Allow camera access")
+        assertThat(uiState.scannerDiagnosticLabel).isEqualTo("Diagnostics")
+        assertThat(uiState.scannerDiagnosticMessage).isEqualTo("Camera permission is required.")
     }
 
     @Test
@@ -299,6 +491,8 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.primaryRecoveryAction).isNull()
         assertThat(uiState.primaryRecoveryActionLabel).isNull()
+        assertThat(uiState.scannerDiagnosticLabel).isEqualTo("Diagnostics")
+        assertThat(uiState.scannerDiagnosticMessage).contains("camera unavailable")
     }
 
     @Test
@@ -320,6 +514,8 @@ class ScanDestinationPresenterTest {
         assertThat(uiState.primaryRecoveryActionLabel).isEqualTo("Restart camera")
         assertThat(uiState.scannerStatusChip.text).isEqualTo("Camera restart required")
         assertThat(uiState.previewBanner?.title).isEqualTo("Camera preview stuck")
+        assertThat(uiState.scannerDiagnosticLabel).isEqualTo("Diagnostics")
+        assertThat(uiState.scannerDiagnosticMessage).isEqualTo("Camera preview is not responding.")
     }
 
     @Test
@@ -338,6 +534,8 @@ class ScanDestinationPresenterTest {
 
         assertThat(uiState.primaryRecoveryAction).isNull()
         assertThat(uiState.primaryRecoveryActionLabel).isNull()
+        assertThat(uiState.scannerDiagnosticLabel).isNull()
+        assertThat(uiState.scannerDiagnosticMessage).isNull()
     }
 
     @Test
@@ -500,5 +698,22 @@ class ScanDestinationPresenterTest {
         assertThat(uiState.previewBanner?.title).isEqualTo("Scanner ready")
         assertThat(uiState.previewBanner?.message)
             .isEqualTo("Scanner ready. Preview is still becoming visible in the UI.")
+        assertThat(uiState.scannerDiagnosticLabel).isEqualTo("Diagnostics")
+        assertThat(uiState.scannerDiagnosticMessage).isEqualTo("Camera preview is still becoming visible.")
     }
+
+    private fun trustedSyncedUiState(lastSuccessfulSyncAt: String?): ScanDestinationUiState =
+        presenter.present(
+            scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+            queueUiState = QueueUiState(),
+            syncUiState = SyncScreenUiState(bootstrapStatus = BootstrapSyncStatus.Succeeded),
+            currentEventSyncStatus =
+                AttendeeSyncStatus(
+                    eventId = 5,
+                    lastServerTime = lastSuccessfulSyncAt,
+                    lastSuccessfulSyncAt = lastSuccessfulSyncAt,
+                    syncType = "full",
+                    attendeeCount = 20
+                )
+        )
 }

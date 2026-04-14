@@ -5,14 +5,15 @@ import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 
 data class ScanDestinationUiState(
     val activeEventLabel: String,
-    val syncedAttendeeCountLabel: String,
-    val lastSyncLabel: String,
+    val factLabels: List<String>,
     val scannerStatusChip: StatusChipUiModel,
     val scannerStatusMessage: String,
+    val scannerDiagnosticLabel: String? = null,
     val scannerDiagnosticMessage: String? = null,
     val admissionSectionTitle: String,
     val admissionStatusChip: StatusChipUiModel,
-    val admissionStatusMessage: String,
+    val admissionStatusVerdict: String,
+    val admissionStatusDetail: String,
     val showCameraPreview: Boolean,
     val primaryRecoveryAction: ScanOperatorAction? = null,
     val primaryRecoveryActionLabel: String? = null,
@@ -21,7 +22,8 @@ data class ScanDestinationUiState(
     val queueUploadSectionTitle: String,
     val queueDepthLabel: String,
     val queueUploadStatusChip: StatusChipUiModel,
-    val queueUploadStatusMessage: String,
+    val queueUploadStatusVerdict: String,
+    val queueUploadStatusDetail: String,
     val manualSyncVisible: Boolean,
     val retryUploadVisible: Boolean,
     val reloginVisible: Boolean
