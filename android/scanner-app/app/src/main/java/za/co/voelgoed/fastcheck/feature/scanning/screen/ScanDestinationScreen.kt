@@ -16,6 +16,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import za.co.voelgoed.fastcheck.app.scanning.PreviewVisibilityObserver
@@ -44,42 +46,54 @@ fun ScanDestinationScreen(
     onOperatorAction: (ScanOperatorAction) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val spacing = MaterialTheme.fastCheck.spacing
+    val theme = MaterialTheme.fastCheck
+    val spacing = theme.spacing
+    val scheme = theme.colorScheme
 
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(spacing.medium)
     ) {
         FcCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
-                Text(
-                    text = "Scan",
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Text(
-                    text = uiState.activeEventLabel,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    text = uiState.syncedAttendeeCountLabel,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    text = uiState.lastSyncLabel,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                FcStatusChip(
-                    text = uiState.scannerStatusChip.text,
-                    tone = uiState.scannerStatusChip.tone
-                )
-                Text(
-                    text = uiState.scannerStatusMessage,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                    Text(
+                        text = uiState.activeEventLabel,
+                        style = theme.typography.titleMedium,
+                        color = scheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = uiState.syncedAttendeeCountLabel,
+                        style = theme.typography.bodyMedium,
+                        color = scheme.onSurface
+                    )
+                    Text(
+                        text = uiState.lastSyncLabel,
+                        style = theme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
+                    FcStatusChip(
+                        text = uiState.scannerStatusChip.text,
+                        tone = uiState.scannerStatusChip.tone
+                    )
+                    Text(
+                        text = uiState.scannerStatusMessage,
+                        style = theme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+
                 uiState.scannerDiagnosticMessage?.let { diagnosticMessage ->
                     Text(
                         text = "Diagnostics: $diagnosticMessage",
-                        style = MaterialTheme.typography.bodySmall
+                        style = theme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
                     )
                 }
             }
@@ -150,19 +164,24 @@ fun ScanDestinationScreen(
         }
 
         FcCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
                 Text(
                     text = "Attendee readiness",
-                    style = MaterialTheme.typography.titleMedium
+                    style = theme.typography.titleMedium,
+                    color = scheme.onSurface,
+                    fontWeight = FontWeight.SemiBold
                 )
-                FcStatusChip(
-                    text = uiState.attendeeStatusChip.text,
-                    tone = uiState.attendeeStatusChip.tone
-                )
-                Text(
-                    text = uiState.attendeeStatusMessage,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                    FcStatusChip(
+                        text = uiState.attendeeStatusChip.text,
+                        tone = uiState.attendeeStatusChip.tone
+                    )
+                    Text(
+                        text = uiState.attendeeStatusMessage,
+                        style = theme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
@@ -176,39 +195,63 @@ fun ScanDestinationScreen(
         }
 
         FcCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+            val hasHealthActions =
+                uiState.manualSyncVisible || uiState.retryUploadVisible || uiState.reloginVisible
+
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
                 Text(
                     text = "Scan health",
-                    style = MaterialTheme.typography.titleMedium
+                    style = theme.typography.titleMedium,
+                    color = scheme.onSurface,
+                    fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    text = uiState.queueDepthLabel,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    text = uiState.uploadStateLabel,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                if (uiState.manualSyncVisible) {
-                    FcSecondaryButton(
-                        text = "Sync attendee list",
-                        onClick = { onOperatorAction(ScanOperatorAction.ManualSync) },
-                        modifier = Modifier.fillMaxWidth()
+
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
+                    Text(
+                        text = uiState.queueDepthLabel,
+                        style = theme.typography.bodyMedium,
+                        color = scheme.onSurface
+                    )
+                    Text(
+                        text = uiState.uploadStateLabel,
+                        style = theme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
                     )
                 }
-                if (uiState.retryUploadVisible) {
-                    FcSecondaryButton(
-                        text = "Retry upload",
-                        onClick = { onOperatorAction(ScanOperatorAction.RetryUpload) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                if (uiState.reloginVisible) {
-                    FcDangerButton(
-                        text = "Re-login",
-                        onClick = { onOperatorAction(ScanOperatorAction.Relogin) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+
+                if (hasHealthActions) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(spacing.xSmall)
+                    ) {
+                        Text(
+                            text = "Actions",
+                            style = theme.typography.labelMedium,
+                            color = scheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (uiState.manualSyncVisible) {
+                            FcSecondaryButton(
+                                text = "Sync attendee list",
+                                onClick = { onOperatorAction(ScanOperatorAction.ManualSync) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (uiState.retryUploadVisible) {
+                            FcSecondaryButton(
+                                text = "Retry upload",
+                                onClick = { onOperatorAction(ScanOperatorAction.RetryUpload) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (uiState.reloginVisible) {
+                            FcDangerButton(
+                                text = "Re-login",
+                                onClick = { onOperatorAction(ScanOperatorAction.Relogin) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
                 }
             }
         }
