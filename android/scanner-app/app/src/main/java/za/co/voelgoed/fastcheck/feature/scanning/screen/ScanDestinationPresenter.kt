@@ -273,7 +273,7 @@ class ScanDestinationPresenter(
                                 text = "Attendee cache current",
                                 tone = StatusTone.Info
                             ),
-                        verdict = "Ready for admission",
+                        verdict = "Admission state current",
                         detail = "The attendee cache is synced for this event and currently contains no attendees."
                     )
                 } else {
