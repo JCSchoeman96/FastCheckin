@@ -266,15 +266,27 @@ class ScanDestinationPresenter(
                     )
                 }
             } else {
-                AdmissionStatusUi(
-                    chip =
-                        StatusChipUiModel(
-                            text = "Attendee list ready",
-                            tone = StatusTone.Success
-                        ),
-                    verdict = "Ready for admission",
-                    detail = "Recent attendee data is available for this event."
-                )
+                if (currentEventSyncStatus.attendeeCount == 0) {
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee cache current",
+                                tone = StatusTone.Info
+                            ),
+                        verdict = "Ready for admission",
+                        detail = "The attendee cache is synced for this event and currently contains no attendees."
+                    )
+                } else {
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee list ready",
+                                tone = StatusTone.Success
+                            ),
+                        verdict = "Ready for admission",
+                        detail = "Recent attendee data is available for this event."
+                    )
+                }
             }
         }
 

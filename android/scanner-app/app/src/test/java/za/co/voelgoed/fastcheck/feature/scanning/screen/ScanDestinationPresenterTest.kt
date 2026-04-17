@@ -131,9 +131,10 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee cache current")
         assertThat(uiState.admissionStatusVerdict).isEqualTo("Ready for admission")
-        assertThat(uiState.admissionStatusDetail).isEqualTo("Recent attendee data is available for this event.")
+        assertThat(uiState.admissionStatusDetail)
+            .isEqualTo("The attendee cache is synced for this event and currently contains no attendees.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
         assertThat(uiState.factLabels).contains("Synced attendees: 0")
         assertThat(uiState.manualSyncVisible).isFalse()
