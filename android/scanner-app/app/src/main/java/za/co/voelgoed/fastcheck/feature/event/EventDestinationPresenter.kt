@@ -222,17 +222,18 @@ class EventDestinationPresenter(
     ): EventSectionUiModel {
         if (currentCacheStatus == CurrentCacheStatus.Ready || currentCacheStatus == CurrentCacheStatus.Stale) {
             val syncStatus = requireNotNull(currentEventSyncStatus)
+            val totalAttendees = attendeeMetrics?.cachedAttendeeCount ?: syncStatus.attendeeCount
             return EventSectionUiModel(
                 title = "Attendee cache",
                 supportingText =
                     if (attendeeMetrics == null) {
                         "Using ${syncStatus.attendeeCount} attendees from the latest local sync. Derived counts are still loading from the local attendee cache."
                     } else {
-                        "Using ${syncStatus.attendeeCount} attendees from the latest server sync. Derived counts below come from merged local gate truth, including unresolved admission overlays."
+                        "Using $totalAttendees attendees from the local attendee cache. Derived counts below come from merged local gate truth, including unresolved admission overlays."
                     },
                 metrics =
                     listOf(
-                        EventMetricUiModel("Total attendees", syncStatus.attendeeCount.toString()),
+                        EventMetricUiModel("Total attendees", totalAttendees.toString()),
                         EventMetricUiModel(
                             "Currently inside",
                             attendeeMetrics?.currentlyInsideCount?.toString() ?: "Unavailable"

@@ -57,6 +57,37 @@ class EventDestinationPresenterTest {
     }
 
     @Test
+    fun attendeeTotalsPreferCachedMetricsOverSyncMetadataCount() {
+        val uiState =
+            presenter.present(
+                session = session(),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:50:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:50:00Z",
+                        syncType = "incremental",
+                        attendeeCount = 0
+                    ),
+                attendeeMetrics =
+                    EventAttendeeCacheMetrics(
+                        cachedAttendeeCount = 525,
+                        currentlyInsideCount = 280,
+                        attendeesWithRemainingCheckinsCount = 245,
+                        activeOverlayCount = 2,
+                        unresolvedConflictCount = 0
+                    )
+            )
+
+        assertThat(uiState.attendeeSection.metrics.map { it.value })
+            .containsExactly("525", "280", "245", "2", "0")
+            .inOrder()
+        assertThat(uiState.attendeeSection.supportingText).contains("Using 525 attendees from the local attendee cache")
+    }
+
+    @Test
     fun noCurrentEventCacheKeepsAttendeeMetricsUnavailable() {
         val uiState =
             presenter.present(

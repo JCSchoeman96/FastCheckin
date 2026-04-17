@@ -32,6 +32,9 @@ interface ScannerDao {
     @Query("DELETE FROM attendees WHERE eventId = :eventId AND ticketCode = :ticketCode")
     suspend fun deleteAttendeeByTicketCode(eventId: Long, ticketCode: String)
 
+    @Query("SELECT COUNT(*) FROM attendees WHERE eventId = :eventId")
+    suspend fun countAttendeesForEvent(eventId: Long): Int
+
     /**
      * Clears local attendee rows and sync metadata for an event before a full reconcile pull.
      * Scanning must remain gated until a coherent metadata commit completes.

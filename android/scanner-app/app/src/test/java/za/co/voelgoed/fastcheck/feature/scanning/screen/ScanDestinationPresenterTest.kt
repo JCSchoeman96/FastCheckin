@@ -115,7 +115,7 @@ class ScanDestinationPresenterTest {
     }
 
     @Test
-    fun zeroSyncedAttendeesIsShownAsBlocker() {
+    fun zeroSyncedAttendeesDoesNotOverrideReadyAdmissionState() {
         val uiState =
             presenter.present(
                 scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
@@ -131,11 +131,12 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.admissionStatusChip.text).isEqualTo("No attendees synced")
-        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission data missing")
-        assertThat(uiState.admissionStatusDetail).isEqualTo("Sync attendees before relying on scan decisions.")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Ready for admission")
+        assertThat(uiState.admissionStatusDetail).isEqualTo("Recent attendee data is available for this event.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
         assertThat(uiState.factLabels).contains("Synced attendees: 0")
+        assertThat(uiState.manualSyncVisible).isFalse()
     }
 
     @Test
