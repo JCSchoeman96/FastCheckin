@@ -103,7 +103,6 @@ fun SearchDestinationScreen(
             AttendeeDetailScreen(
                 uiState = uiState.detailUiState,
                 onBack = onBack,
-                onClear = onClear,
                 onManualAdmit = onManualAdmit,
                 modifier = Modifier.fillMaxWidth()
             )

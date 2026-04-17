@@ -5,11 +5,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcBanner
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcPrimaryButton
+import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
 import za.co.voelgoed.fastcheck.feature.search.detail.model.AttendeeDetailUiState
@@ -18,7 +19,6 @@ import za.co.voelgoed.fastcheck.feature.search.detail.model.AttendeeDetailUiStat
 fun AttendeeDetailScreen(
     uiState: AttendeeDetailUiState,
     onBack: () -> Unit,
-    onClear: () -> Unit,
     onManualAdmit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -65,11 +65,18 @@ fun AttendeeDetailScreen(
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
                 Text(text = "Actions", style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = onBack) { Text(text = "Back to results") }
-                TextButton(onClick = onClear) { Text(text = "Clear search") }
-                TextButton(onClick = onManualAdmit, enabled = !uiState.manualActionUiState.isRunning) {
-                    Text(text = if (uiState.manualActionUiState.isRunning) "Admitting..." else "Admit attendee")
-                }
+                FcPrimaryButton(
+                    text = if (uiState.manualActionUiState.isRunning) "Checking in..." else "Check in attendee",
+                    onClick = onManualAdmit,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.manualActionUiState.isRunning
+                )
+                FcSecondaryButton(
+                    text = "Back to results",
+                    onClick = onBack,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.manualActionUiState.isRunning
+                )
             }
         }
     }
