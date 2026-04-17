@@ -23,6 +23,7 @@ fun AttendeeDetailScreen(
     modifier: Modifier = Modifier
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
+    val isManualActionRunning = uiState.manualActionUiState.isRunning
 
     Column(
         modifier = modifier,
@@ -66,16 +67,15 @@ fun AttendeeDetailScreen(
             Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
                 Text(text = "Actions", style = MaterialTheme.typography.titleMedium)
                 FcPrimaryButton(
-                    text = if (uiState.manualActionUiState.isRunning) "Checking in..." else "Check in attendee",
+                    text = if (isManualActionRunning) "Checking in..." else "Check in attendee",
                     onClick = onManualAdmit,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !uiState.manualActionUiState.isRunning
+                    enabled = !isManualActionRunning
                 )
                 FcSecondaryButton(
                     text = "Back to results",
                     onClick = onBack,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !uiState.manualActionUiState.isRunning
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
