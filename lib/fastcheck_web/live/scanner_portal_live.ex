@@ -1216,7 +1216,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
     do: "Camera unsupported. Use manual entry."
 
   defp camera_permission_default_message(_),
-    do: "Camera ready."
+    do: "Enable camera to start scanning."
 
   defp normalize_camera_permission_status("granted"), do: :granted
   defp normalize_camera_permission_status("denied"), do: :denied

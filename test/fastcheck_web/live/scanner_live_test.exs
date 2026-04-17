@@ -151,6 +151,8 @@ defmodule FastCheckWeb.ScannerLiveTest do
       assert has_element?(view, "#reconnect-camera-scan")
       assert has_element?(view, "#camera-recheck-button")
       assert has_element?(view, "#camera-runtime-status")
+      assert render(view) =~ "Camera permission needed"
+      assert render(view) =~ "Enable camera to start scanning."
     end
 
     test "updates permission and runtime state from hook payloads", %{conn: conn} do

@@ -370,14 +370,14 @@ defmodule FastCheckWeb.Components.ScannerComponents do
   defp camera_permission_status_label(:denied), do: "Camera blocked"
   defp camera_permission_status_label(:error), do: "Camera error"
   defp camera_permission_status_label(:unsupported), do: "Camera unsupported"
-  defp camera_permission_status_label(_), do: "Camera ready"
+  defp camera_permission_status_label(_), do: "Camera permission needed"
 
   defp camera_permission_message(%{message: message}) when is_binary(message) and message != "",
     do: message
 
   defp camera_permission_message(%{status: :denied}), do: "Enable camera access in the browser."
   defp camera_permission_message(%{status: :unsupported}), do: "Use manual scan entry."
-  defp camera_permission_message(_), do: "Ready for scanning."
+  defp camera_permission_message(_), do: "Enable camera to start scanning."
 
   defp camera_runtime_status_label(:starting), do: "Camera starting"
   defp camera_runtime_status_label(:running), do: "Camera running"

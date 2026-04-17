@@ -39,6 +39,8 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       assert has_element?(view, "#scanner-portal-start-camera-button")
       assert has_element?(view, "#scanner-portal-scan-form")
       assert has_element?(view, "#scanner-ticket-code")
+      assert render(view) =~ "Camera permission needed"
+      assert render(view) =~ "Enable camera to start scanning."
 
       refute has_element?(view, "#scanner-tab-button-overview")
       refute has_element?(view, "#scanner-tab-button-camera")

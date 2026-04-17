@@ -670,7 +670,7 @@ defmodule FastCheckWeb.ScannerLive do
                       Camera scanner
                     </h2>
                     <p class="mt-2 text-sm text-fc-text-secondary">
-                      Camera ready state and recovery controls.
+                      Camera permission and recovery controls.
                     </p>
                   </div>
 
@@ -1740,13 +1740,13 @@ defmodule FastCheckWeb.ScannerLive do
     do: "Camera unsupported. Use manual entry."
 
   defp camera_permission_default_message(_),
-    do: "Camera ready."
+    do: "Enable camera to start scanning."
 
   defp camera_permission_status_label(:granted), do: "Camera ready"
   defp camera_permission_status_label(:denied), do: "Camera blocked"
   defp camera_permission_status_label(:error), do: "Camera error"
   defp camera_permission_status_label(:unsupported), do: "Camera unsupported"
-  defp camera_permission_status_label(_), do: "Camera ready"
+  defp camera_permission_status_label(_), do: "Camera permission needed"
 
   defp camera_permission_badge_color(:granted), do: "success"
   defp camera_permission_badge_color(status) when status in [:denied, :error], do: "danger"
