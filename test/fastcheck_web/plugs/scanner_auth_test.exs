@@ -45,7 +45,7 @@ defmodule FastCheckWeb.Plugs.ScannerAuthTest do
         })
         |> get(~p"/scanner/#{event.id}")
 
-      assert html_response(conn, 200) =~ "Scanner portal"
+      assert html_response(conn, 200) =~ "Field scanner"
     end
 
     test "redirects when event is archived", %{conn: conn} do

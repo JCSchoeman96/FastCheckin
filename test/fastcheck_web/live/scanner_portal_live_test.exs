@@ -176,7 +176,10 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       conn: conn,
       event: event
     } do
-      event = event |> Ecto.Changeset.change(status: "archived") |> Repo.update!()
+      event =
+        event
+        |> Ecto.Changeset.change(tickera_api_key_encrypted: "invalid-ciphertext")
+        |> Repo.update!()
 
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
