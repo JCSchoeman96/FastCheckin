@@ -47,6 +47,7 @@ class SearchDestinationPresenter(
                     else ->
                         ""
                 },
+            manualActionUiState = manualActionUiState,
             detailUiState = selectedDetail?.let { detailPresenter.present(it, manualActionUiState) }
         )
     }

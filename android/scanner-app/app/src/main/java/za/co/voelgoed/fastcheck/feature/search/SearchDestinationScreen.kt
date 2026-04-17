@@ -99,11 +99,21 @@ fun SearchDestinationScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
+        if (!uiState.isShowingDetail) {
+            uiState.manualActionUiState.feedbackMessage?.let { message ->
+                FcBanner(
+                    title = uiState.manualActionUiState.feedbackTitle,
+                    message = message,
+                    tone = uiState.manualActionUiState.feedbackTone ?: uiState.localTruthTone,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
         if (uiState.isShowingDetail && uiState.detailUiState != null) {
             AttendeeDetailScreen(
                 uiState = uiState.detailUiState,
                 onBack = onBack,
-                onClear = onClear,
                 onManualAdmit = onManualAdmit,
                 modifier = Modifier.fillMaxWidth()
             )

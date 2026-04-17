@@ -56,4 +56,27 @@ class SearchDestinationPresenterTest {
         assertThat(state.localTruthMessage).contains("not trusted")
         assertThat(state.localTruthTone).isEqualTo(StatusTone.Warning)
     }
+
+    @Test
+    fun manualActionFeedbackStaysAvailableAfterReturningToResults() {
+        val feedback =
+            ManualActionUiState(
+                feedbackTitle = "Invalid scan",
+                feedbackMessage = "Ticket already inside.",
+                feedbackTone = StatusTone.Warning
+            )
+
+        val state =
+            presenter.present(
+                eventId = 42L,
+                query = "jane",
+                results = emptyList(),
+                selectedDetail = null,
+                syncStatus = null,
+                manualActionUiState = feedback
+            )
+
+        assertThat(state.isShowingDetail).isFalse()
+        assertThat(state.manualActionUiState).isEqualTo(feedback)
+    }
 }
