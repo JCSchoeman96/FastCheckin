@@ -8,6 +8,7 @@ defmodule FastCheckWeb.ScannerLive do
   alias FastCheck.{Attendees, Events}
   alias Phoenix.LiveView.JS
   alias Phoenix.PubSub
+  import FastCheckWeb.Components.ScannerComponents
   require Logger
 
   @default_camera_permission %{status: :unknown, remembered: false, message: nil}
@@ -15,7 +16,7 @@ defmodule FastCheckWeb.ScannerLive do
     state: :idle,
     recoverable: true,
     desired_active: false,
-    message: "Camera is idle. Start scanning when ready."
+    message: "Camera idle."
   }
   @default_stats_reconcile_ms 30_000
   @default_force_refresh_every_n_scans 20
@@ -408,9 +409,8 @@ defmodule FastCheckWeb.ScannerLive do
             }
 
           {:error, error_code, message} ->
-            # Normalize error code to lowercase atom for consistent status matching
-            # Error codes from Attendees.check_in_advanced are uppercase strings like "LIMIT_EXCEEDED"
-            # but scan_status_color/icon functions expect lowercase atoms like :limit_exceeded
+            # Normalize error code to lowercase atom for consistent scan history display.
+            # Error codes from Attendees.check_in_advanced are uppercase strings like "LIMIT_EXCEEDED".
             # Use normalize_error_code/1 to safely convert to known atoms only
             normalized_status = normalize_error_code(error_code)
 
@@ -480,40 +480,15 @@ defmodule FastCheckWeb.ScannerLive do
         phx-hook="ScannerKeyboardShortcuts"
         class="min-h-screen space-y-6 sm:space-y-8 bg-scanner-dark"
       >
-        <.card
-          variant="outline"
-          color="natural"
-          rounded="large"
-          padding="large"
-          class="glass-card glass-sheen glass-card-deep glass-card-elevated"
-        >
-          <.card_content>
-            <p
-              style="font-size: var(--fc-text-xs)"
-              class="uppercase tracking-[0.35em] text-fc-text-muted"
-            >
-              Event check-in
-            </p>
-
-            <h1 style="font-size: var(--fc-text-3xl)" class="mt-3 font-semibold text-fc-text-primary">
-              {@event.name}
-            </h1>
-
-            <div class="mt-6 flex flex-wrap items-center gap-3">
-              <.badge color="secondary" variant="bordered" rounded="full">
-                {entrance_label(@event.entrance_name)}
-              </.badge>
-
-              <.badge
-                color={scanner_lifecycle_badge_color(@event_lifecycle_state)}
-                variant="bordered"
-                rounded="full"
-              >
-                {scanner_lifecycle_label(@event_lifecycle_state)}
-              </.badge>
-            </div>
-          </.card_content>
-        </.card>
+        <.scanner_header
+          id="admin-scanner-header"
+          event_name={@event.name}
+          entrance_label={entrance_label(@event.entrance_name)}
+          lifecycle_label={scanner_lifecycle_label(@event_lifecycle_state)}
+          lifecycle_color={scanner_lifecycle_badge_color(@event_lifecycle_state)}
+          label="Supervisor scanner"
+          class="glass-card glass-sheen"
+        />
 
         <.alert
           :if={@scans_disabled?}
@@ -551,46 +526,12 @@ defmodule FastCheckWeb.ScannerLive do
                 </p>
               </div>
 
-              <.button_group
+              <.scanner_mode_toggle
                 id="check-in-type-group"
-                color="natural"
-                rounded="large"
-                class="w-full cq-card:flex-row"
-              >
-                <.button
-                  id="entry-mode-button"
-                  type="button"
-                  phx-click="set_check_in_type"
-                  phx-value-type="entry"
-                  data-check-in-type="entry"
-                  aria-pressed={@check_in_type == "entry"}
-                  color={if(@check_in_type == "entry", do: "success", else: "natural")}
-                  variant={if(@check_in_type == "entry", do: "shadow", else: "bordered")}
-                  class="w-full"
-                  disabled={@scans_disabled?}
-                >
-                  <span class="inline-flex items-center gap-2">
-                    <.icon name="hero-arrow-right-circle" class="size-4" /> Entry
-                  </span>
-                </.button>
-
-                <.button
-                  id="exit-mode-button"
-                  type="button"
-                  phx-click="set_check_in_type"
-                  phx-value-type="exit"
-                  data-check-in-type="exit"
-                  aria-pressed={@check_in_type == "exit"}
-                  color={if(@check_in_type == "exit", do: "warning", else: "natural")}
-                  variant={if(@check_in_type == "exit", do: "shadow", else: "bordered")}
-                  class="w-full"
-                  disabled={@scans_disabled?}
-                >
-                  <span class="inline-flex items-center gap-2">
-                    <.icon name="hero-arrow-left-circle" class="size-4" /> Exit
-                  </span>
-                </.button>
-              </.button_group>
+                check_in_type={@check_in_type}
+                disabled={@scans_disabled?}
+                class="cq-card:flex-row"
+              />
 
               <.card variant="base" color="secondary" rounded="large" padding="large">
                 <.card_content>
@@ -687,58 +628,18 @@ defmodule FastCheckWeb.ScannerLive do
           </.card>
         </section>
 
-        <.card
+        <.scan_result_banner
           :if={@last_scan_status}
           id="scan-result"
           data-test="scan-status"
-          variant="base"
-          color={scan_result_color(@last_scan_status, @check_in_type)}
-          rounded="large"
-          padding="large"
-          class="fc-scan-pulse"
+          status={@last_scan_status}
+          check_in_type={@check_in_type}
+          message={@last_scan_result}
+          reason={@last_scan_reason}
+          checkins_used={@last_scan_checkins_used}
+          checkins_allowed={@last_scan_checkins_allowed}
           phx-remove={JS.add_class("opacity-0", transition: "transition-opacity duration-300")}
-        >
-          <.card_content>
-            <div class="flex items-start gap-4">
-              <div class="shrink-0 rounded-2xl bg-white/10 p-3">
-                <.icon name={scan_result_icon(@last_scan_status, @check_in_type)} class="size-8" />
-              </div>
-              <div class="space-y-2 min-w-0">
-                <p class="text-xs uppercase tracking-[0.3em] opacity-80">
-                  {scan_result_title(@last_scan_status, @check_in_type)}
-                </p>
-
-                <p style="font-size: var(--fc-text-2xl)" class="font-semibold">
-                  {@last_scan_result}
-                </p>
-
-                <p :if={@last_scan_reason} class="text-sm opacity-85">
-                  {@last_scan_reason}
-                </p>
-
-                <div
-                  :if={@last_scan_status == :success and @last_scan_checkins_allowed > 1}
-                  class="space-y-2"
-                >
-                  <p class="text-sm opacity-90">
-                    Check-ins used: {@last_scan_checkins_used} of {@last_scan_checkins_allowed}
-                  </p>
-                  <.progress
-                    value={
-                      checkins_used_percentage(@last_scan_checkins_used, @last_scan_checkins_allowed)
-                    }
-                    color={scan_result_color(@last_scan_status, @check_in_type)}
-                    size="small"
-                  />
-                </div>
-
-                <p class="text-sm opacity-85">
-                  Current occupancy: {@current_occupancy} inside
-                </p>
-              </div>
-            </div>
-          </.card_content>
-        </.card>
+        />
 
         <section
           id="camera-permission-hook"
@@ -766,11 +667,10 @@ defmodule FastCheckWeb.ScannerLive do
                       style="font-size: var(--fc-text-2xl)"
                       class="mt-2 font-semibold text-fc-text-primary"
                     >
-                      Ready the QR scanner
+                      Camera scanner
                     </h2>
                     <p class="mt-2 text-sm text-fc-text-secondary">
-                      Browser permission is checked live, and this tab can restore the camera if it
-                      was already running.
+                      Camera ready state and recovery controls.
                     </p>
                   </div>
 
@@ -783,20 +683,13 @@ defmodule FastCheckWeb.ScannerLive do
                   </.badge>
                 </div>
 
-                <.alert
-                  kind={camera_permission_alert_kind(@camera_permission.status)}
-                  variant="bordered"
-                  rounded="large"
+                <.camera_status_strip
+                  id="admin-scanner-camera-status"
+                  runtime_id="camera-runtime-status"
+                  permission={@camera_permission}
+                  runtime={@camera_runtime}
                   class="mt-6"
-                >
-                  <p class="font-semibold">
-                    {camera_permission_status_label(@camera_permission.status)}
-                  </p>
-                  <p class="mt-1 text-sm">
-                    {@camera_permission.message ||
-                      camera_permission_default_message(@camera_permission.status)}
-                  </p>
-                </.alert>
+                />
 
                 <div class="mt-6 flex flex-wrap items-center gap-3">
                   <.button
@@ -819,14 +712,14 @@ defmodule FastCheckWeb.ScannerLive do
                     color="natural"
                     disabled={@camera_permission.status == :unsupported}
                   >
-                    Re-check permission
+                    Check permission
                   </.button>
 
                   <p class="text-xs text-fc-text-muted">
                     {if @camera_permission.remembered do
-                      "Last camera check is saved as a browser hint, but the scanner still verifies permission live."
+                      "Saved camera hint. Live permission still verified."
                     else
-                      "Permission is verified live whenever the scanner reconnects."
+                      "Permission is checked during reconnect."
                     end}
                   </p>
                 </div>
@@ -854,7 +747,7 @@ defmodule FastCheckWeb.ScannerLive do
                       Live QR camera scan
                     </h3>
                     <p class="mt-2 text-sm text-fc-text-secondary">
-                      Start the camera to decode QR codes directly in-browser.
+                      Start camera scanning.
                     </p>
                   </div>
 
@@ -863,27 +756,10 @@ defmodule FastCheckWeb.ScannerLive do
                   </.badge>
                 </div>
 
-                <.alert
-                  id="camera-runtime-status"
-                  kind={camera_runtime_alert_kind(@camera_runtime.state)}
-                  variant="bordered"
-                  rounded="large"
-                  class="mt-5"
-                  data-test="camera-runtime-status"
-                >
-                  <p class="font-semibold">
-                    {camera_runtime_status_label(@camera_runtime.state)}
-                  </p>
-                  <p class="mt-1 text-sm">
-                    {@camera_runtime.message ||
-                      camera_runtime_default_message(@camera_runtime.state)}
-                  </p>
-                </.alert>
-
                 <div
                   id="qr-camera-preview-shell"
                   phx-update="ignore"
-                  class="mt-5 overflow-hidden rounded-2xl border border-fc-border bg-black"
+                  class="mt-5 overflow-hidden rounded-lg border border-fc-border bg-black"
                 >
                   <video
                     id="qr-camera-preview"
@@ -898,61 +774,19 @@ defmodule FastCheckWeb.ScannerLive do
                 </div>
 
                 <p data-qr-status class="mt-3 text-sm text-fc-text-secondary">
-                  Camera is idle. Start scanning when ready.
+                  Camera idle.
                 </p>
                 <p data-qr-last class="mt-1 text-xs text-fc-text-muted"></p>
 
-                <div class="mt-4 grid gap-2 cq-sm:grid-cols-3">
-                  <.button
-                    id="start-camera-scan"
-                    type="button"
-                    data-qr-start
-                    color={
-                      if(camera_runtime_needs_reconnect?(@camera_runtime.state),
-                        do: "natural",
-                        else: "success"
-                      )
-                    }
-                    variant={
-                      if(camera_runtime_needs_reconnect?(@camera_runtime.state),
-                        do: "bordered",
-                        else: "shadow"
-                      )
-                    }
-                    full_width
-                    disabled={@scans_disabled?}
-                  >
-                    Start camera scan
-                  </.button>
-
-                  <.button
-                    id="reconnect-camera-scan"
-                    type="button"
-                    data-qr-reconnect
-                    color={camera_reconnect_button_color(@camera_runtime.state)}
-                    variant={camera_reconnect_button_variant(@camera_runtime.state)}
-                    full_width
-                    disabled={!@camera_runtime.recoverable or @scans_disabled?}
-                  >
-                    Reconnect camera
-                  </.button>
-
-                  <.button
-                    id="stop-camera-scan"
-                    type="button"
-                    data-qr-stop
-                    variant="bordered"
-                    color="natural"
-                    full_width
-                    disabled
-                  >
-                    Stop camera
-                  </.button>
-                </div>
-
-                <p class="mt-3 text-xs text-fc-text-muted">
-                  {camera_runtime_support_copy(@camera_runtime)}
-                </p>
+                <.camera_action_row
+                  start_id="start-camera-scan"
+                  reconnect_id="reconnect-camera-scan"
+                  stop_id="stop-camera-scan"
+                  runtime={@camera_runtime}
+                  scans_disabled={@scans_disabled?}
+                  start_label="Start camera scan"
+                  class="mt-4"
+                />
               </.card_content>
             </.card>
           </div>
@@ -1228,7 +1062,6 @@ defmodule FastCheckWeb.ScannerLive do
         </.card>
 
         <.card
-          :if={@scan_history != []}
           variant="outline"
           color="natural"
           rounded="large"
@@ -1236,61 +1069,11 @@ defmodule FastCheckWeb.ScannerLive do
           class="glass-card glass-sheen"
         >
           <.card_content>
-            <div class="flex items-center justify-between">
-              <h2 class="text-lg font-semibold text-fc-text-primary">Recent scans</h2>
-
-              <.button
-                id="clear-scan-history-button"
-                type="button"
-                phx-click="clear_scan_history"
-                variant="bordered"
-                color="natural"
-                size="extra_small"
-              >
-                Clear
-              </.button>
-            </div>
-
-            <div class="mt-4 max-h-64 space-y-2 overflow-y-auto">
-              <.card
-                :for={scan <- @scan_history}
-                variant="bordered"
-                color="natural"
-                rounded="medium"
-                padding="small"
-              >
-                <.card_content>
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2">
-                        <.icon
-                          name={scan_status_icon(scan.status)}
-                          class="size-4 text-fc-text-secondary"
-                        />
-                        <p class="truncate text-sm font-medium text-fc-text-primary">
-                          {scan.name || scan.ticket_code}
-                        </p>
-                        <p class="text-xs text-fc-text-muted">{format_scan_time(scan.scanned_at)}</p>
-                      </div>
-                      <p class="mt-1 truncate text-xs text-fc-text-secondary">{scan.message}</p>
-                    </div>
-
-                    <div class="flex flex-col items-end gap-1">
-                      <.badge
-                        color={scan_status_color(scan.status)}
-                        variant="bordered"
-                        size="extra_small"
-                      >
-                        {scan_status_label(scan.status)}
-                      </.badge>
-                      <span class="text-xs uppercase text-fc-text-muted">
-                        {String.upcase(scan.check_in_type)}
-                      </span>
-                    </div>
-                  </div>
-                </.card_content>
-              </.card>
-            </div>
+            <.compact_recent_scans
+              id="admin-scanner-recent-scans"
+              scans={@scan_history}
+              clear_event="clear_scan_history"
+            />
           </.card_content>
         </.card>
 
@@ -1522,112 +1305,6 @@ defmodule FastCheckWeb.ScannerLive do
     # Keep only last 10 scans (FIFO)
     [entry | history] |> Enum.take(10)
   end
-
-  defp format_scan_time(datetime) do
-    now = DateTime.utc_now()
-    diff_seconds = DateTime.diff(now, datetime, :second)
-
-    cond do
-      diff_seconds < 60 -> "#{diff_seconds}s ago"
-      diff_seconds < 3600 -> "#{div(diff_seconds, 60)}m ago"
-      diff_seconds < 86_400 -> "#{div(diff_seconds, 3600)}h ago"
-      true -> Calendar.strftime(datetime, "%H:%M:%S")
-    end
-  end
-
-  defp scan_status_color(:success), do: "success"
-  defp scan_status_color(:duplicate_today), do: "warning"
-  defp scan_status_color(:limit_exceeded), do: "danger"
-  defp scan_status_color(:not_yet_valid), do: "danger"
-  defp scan_status_color(:expired), do: "danger"
-  defp scan_status_color(:invalid), do: "danger"
-  defp scan_status_color(:error), do: "danger"
-  defp scan_status_color(:not_found), do: "danger"
-  defp scan_status_color(:already_inside), do: "warning"
-  defp scan_status_color(:not_checked_in), do: "danger"
-  defp scan_status_color(:archived), do: "natural"
-  defp scan_status_color(:invalid_code), do: "danger"
-  defp scan_status_color(:invalid_ticket), do: "danger"
-  defp scan_status_color(:invalid_entrance), do: "danger"
-  defp scan_status_color(:invalid_type), do: "danger"
-  defp scan_status_color(:payment_invalid), do: "danger"
-  defp scan_status_color(_), do: "natural"
-
-  defp scan_status_label(:success), do: "Success"
-  defp scan_status_label(:duplicate_today), do: "Duplicate"
-  defp scan_status_label(:limit_exceeded), do: "Limit exceeded"
-  defp scan_status_label(:not_yet_valid), do: "Not valid yet"
-  defp scan_status_label(:expired), do: "Expired"
-  defp scan_status_label(:invalid), do: "Invalid"
-  defp scan_status_label(:error), do: "Error"
-  defp scan_status_label(:not_found), do: "Not found"
-  defp scan_status_label(:already_inside), do: "Already inside"
-  defp scan_status_label(:not_checked_in), do: "Not checked in"
-  defp scan_status_label(:archived), do: "Archived"
-  defp scan_status_label(:invalid_code), do: "Invalid code"
-  defp scan_status_label(:invalid_ticket), do: "Invalid ticket"
-  defp scan_status_label(:invalid_entrance), do: "Invalid entrance"
-  defp scan_status_label(:invalid_type), do: "Invalid type"
-  defp scan_status_label(:payment_invalid), do: "Payment invalid"
-  defp scan_status_label(_), do: "Unknown"
-
-  defp scan_status_icon(:success), do: "hero-check-circle"
-  defp scan_status_icon(:duplicate_today), do: "hero-exclamation-triangle"
-  defp scan_status_icon(:limit_exceeded), do: "hero-x-circle"
-  defp scan_status_icon(:not_yet_valid), do: "hero-clock"
-  defp scan_status_icon(:expired), do: "hero-x-circle"
-  defp scan_status_icon(:invalid), do: "hero-x-circle"
-  defp scan_status_icon(:error), do: "hero-x-circle"
-  defp scan_status_icon(:not_found), do: "hero-x-circle"
-  defp scan_status_icon(:already_inside), do: "hero-exclamation-triangle"
-  defp scan_status_icon(:not_checked_in), do: "hero-x-circle"
-  defp scan_status_icon(:archived), do: "hero-pause-circle"
-  defp scan_status_icon(:invalid_code), do: "hero-x-circle"
-  defp scan_status_icon(:invalid_ticket), do: "hero-x-circle"
-  defp scan_status_icon(:invalid_entrance), do: "hero-x-circle"
-  defp scan_status_icon(:invalid_type), do: "hero-x-circle"
-  defp scan_status_icon(:payment_invalid), do: "hero-x-circle"
-  defp scan_status_icon(_), do: "hero-question-mark-circle"
-
-  defp scan_result_color(:success, "entry"), do: "success"
-  defp scan_result_color(:success, "exit"), do: "warning"
-  defp scan_result_color(:duplicate_today, _), do: "warning"
-  defp scan_result_color(:not_checked_in, _), do: "danger"
-  defp scan_result_color(:archived, _), do: "natural"
-  defp scan_result_color(:invalid, _), do: "danger"
-  defp scan_result_color(:limit_exceeded, _), do: "danger"
-  defp scan_result_color(:not_yet_valid, _), do: "danger"
-  defp scan_result_color(:expired, _), do: "danger"
-  defp scan_result_color(:error, _), do: "danger"
-  defp scan_result_color(_, _), do: "natural"
-
-  defp scan_result_title(:success, "entry"), do: "Entry confirmed"
-  defp scan_result_title(:success, "exit"), do: "Exit confirmed"
-  defp scan_result_title(:duplicate_today, _), do: "Duplicate scan"
-  defp scan_result_title(:not_checked_in, _), do: "Cannot check out"
-  defp scan_result_title(:limit_exceeded, _), do: "Check-in limit reached"
-  defp scan_result_title(:not_yet_valid, _), do: "Ticket not yet valid"
-  defp scan_result_title(:expired, _), do: "Ticket expired"
-  defp scan_result_title(:invalid, _), do: "Invalid ticket"
-  defp scan_result_title(:archived, _), do: "Scanning unavailable"
-  defp scan_result_title(:error, _), do: "Scan error"
-  defp scan_result_title(_, _), do: "Scan status"
-
-  defp scan_result_icon(:success, "entry"), do: "hero-check-circle"
-  defp scan_result_icon(:success, "exit"), do: "hero-arrow-left-circle"
-  defp scan_result_icon(:duplicate_today, _), do: "hero-exclamation-triangle"
-  defp scan_result_icon(:not_checked_in, _), do: "hero-x-circle"
-  defp scan_result_icon(:limit_exceeded, _), do: "hero-no-symbol"
-  defp scan_result_icon(:invalid, _), do: "hero-x-circle"
-  defp scan_result_icon(:error, _), do: "hero-x-circle"
-  defp scan_result_icon(_, _), do: "hero-question-mark-circle"
-
-  defp checkins_used_percentage(used, allowed)
-       when is_integer(used) and is_integer(allowed) and allowed > 0 do
-    trunc(min(used * 100 / allowed, 100))
-  end
-
-  defp checkins_used_percentage(_, _), do: 0
 
   # Safely normalize error codes to known atoms without using String.to_atom/1
   # This avoids atom table exhaustion from arbitrary strings
@@ -2051,97 +1728,46 @@ defmodule FastCheckWeb.ScannerLive do
   defp truthy?(_), do: false
 
   defp camera_permission_default_message(:granted),
-    do: "Camera access granted. You're ready to scan codes."
+    do: "Camera ready."
 
   defp camera_permission_default_message(:denied),
-    do: "Camera access was denied. Update your browser permissions to scan QR codes."
+    do: "Camera blocked. Check browser permission."
 
   defp camera_permission_default_message(:error),
-    do: "Something went wrong while trying to access the camera."
+    do: "Camera error."
 
   defp camera_permission_default_message(:unsupported),
-    do: "This device doesn't expose the camera features required for scanning."
+    do: "Camera unsupported. Use manual entry."
 
   defp camera_permission_default_message(_),
-    do: "Enable the device camera so the QR scanner can stay ready."
+    do: "Camera ready."
 
-  defp camera_permission_status_label(:granted), do: "Camera access granted"
-  defp camera_permission_status_label(:denied), do: "Camera access denied"
+  defp camera_permission_status_label(:granted), do: "Camera ready"
+  defp camera_permission_status_label(:denied), do: "Camera blocked"
   defp camera_permission_status_label(:error), do: "Camera error"
   defp camera_permission_status_label(:unsupported), do: "Camera unsupported"
-  defp camera_permission_status_label(_), do: "Awaiting camera choice"
+  defp camera_permission_status_label(_), do: "Camera ready"
 
   defp camera_permission_badge_color(:granted), do: "success"
   defp camera_permission_badge_color(status) when status in [:denied, :error], do: "danger"
   defp camera_permission_badge_color(:unsupported), do: "warning"
   defp camera_permission_badge_color(_), do: "natural"
 
-  defp camera_permission_alert_kind(:granted), do: :success
-  defp camera_permission_alert_kind(status) when status in [:denied, :error], do: :danger
-  defp camera_permission_alert_kind(:unsupported), do: :warning
-  defp camera_permission_alert_kind(_), do: :natural
-
   defp camera_runtime_default_message(:starting),
-    do: "Starting the camera for this scanner tab."
+    do: "Starting camera."
 
   defp camera_runtime_default_message(:running),
-    do: "Camera is live and ready to decode QR codes."
+    do: "Camera running."
 
   defp camera_runtime_default_message(:paused),
-    do: "Camera is paused. Return to this page or reconnect to continue scanning."
+    do: "Camera paused."
 
   defp camera_runtime_default_message(:recovering),
-    do: "Camera is reconnecting after the browser changed state."
+    do: "Reconnect camera."
 
   defp camera_runtime_default_message(:error),
-    do: "Camera recovery failed. Reconnect the camera or re-check permission."
+    do: "Reconnect camera."
 
   defp camera_runtime_default_message(_),
-    do: "Camera is idle. Start scanning when ready."
-
-  defp camera_runtime_status_label(:starting), do: "Camera starting"
-  defp camera_runtime_status_label(:running), do: "Camera running"
-  defp camera_runtime_status_label(:paused), do: "Camera paused"
-  defp camera_runtime_status_label(:recovering), do: "Camera reconnecting"
-  defp camera_runtime_status_label(:error), do: "Camera needs attention"
-  defp camera_runtime_status_label(_), do: "Camera idle"
-
-  defp camera_runtime_alert_kind(:running), do: :success
-  defp camera_runtime_alert_kind(:paused), do: :warning
-  defp camera_runtime_alert_kind(:recovering), do: :info
-  defp camera_runtime_alert_kind(:error), do: :danger
-  defp camera_runtime_alert_kind(:starting), do: :info
-  defp camera_runtime_alert_kind(_), do: :natural
-
-  defp camera_runtime_needs_reconnect?(state) when state in [:paused, :recovering, :error],
-    do: true
-
-  defp camera_runtime_needs_reconnect?(_), do: false
-
-  defp camera_reconnect_button_color(state) when state in [:paused, :recovering, :error],
-    do: "success"
-
-  defp camera_reconnect_button_color(_), do: "natural"
-
-  defp camera_reconnect_button_variant(state) when state in [:paused, :recovering, :error],
-    do: "shadow"
-
-  defp camera_reconnect_button_variant(_), do: "bordered"
-
-  defp camera_runtime_support_copy(%{state: state, desired_active: true})
-       when state in [:paused, :recovering] do
-    "The scanner will try to restore this camera session automatically when the page becomes active again."
-  end
-
-  defp camera_runtime_support_copy(%{state: :error}) do
-    "If the preview goes black or freezes, reconnect the camera first. Re-check permission if the browser blocked access."
-  end
-
-  defp camera_runtime_support_copy(%{desired_active: true}) do
-    "This tab will keep trying to restore the camera while the scanner session stays active."
-  end
-
-  defp camera_runtime_support_copy(_runtime) do
-    "Start scanning when you need the camera. Stop or leave the page to release it cleanly."
-  end
+    do: "Camera idle."
 end

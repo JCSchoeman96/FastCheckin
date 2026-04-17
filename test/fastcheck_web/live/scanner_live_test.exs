@@ -28,6 +28,40 @@ defmodule FastCheckWeb.ScannerLiveTest do
   }
 
   describe "search_attendees event" do
+    test "supervisor route exposes stats, search, bulk, history, and camera recovery", %{
+      conn: conn
+    } do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      assert has_element?(view, "#admin-scanner-root")
+      assert render(view) =~ "Current occupancy"
+      assert render(view) =~ "Total tickets"
+      assert has_element?(view, "form#attendee-search-form")
+      assert has_element?(view, "#bulk-mode-toggle")
+      assert has_element?(view, "#admin-scanner-recent-scans")
+      assert has_element?(view, "#reconnect-camera-scan")
+      assert has_element?(view, "#camera-recheck-button")
+    end
+
+    test "preserves keyboard and manual scan fallback form", %{conn: conn} do
+      event = insert_event()
+      attendee = insert_attendee(event, @valid_attendee_attrs)
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      assert has_element?(view, "#scanner-form")
+      assert has_element?(view, "#scanner-ticket-code")
+      assert has_element?(view, "#scanner-keyboard-shortcuts")
+
+      view
+      |> form("#scanner-form", %{ticket_code: attendee.ticket_code})
+      |> render_submit()
+
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert refreshed.checked_in_at
+      assert has_element?(view, "[data-test=\"scan-status\"]")
+    end
+
     test "updates results with matches", %{conn: conn} do
       event = insert_event()
       attendee = insert_attendee(event, @valid_attendee_attrs)
@@ -127,26 +161,25 @@ defmodule FastCheckWeb.ScannerLiveTest do
       |> element("#camera-permission-hook")
       |> render_hook("camera_permission_sync", %{
         status: "denied",
-        message: "Camera access is blocked in the browser.",
+        message: "Camera blocked. Check browser permission.",
         remembered: true
       })
 
-      assert render(view) =~ "Camera access denied"
-      assert render(view) =~ "Camera access is blocked in the browser."
+      assert render(view) =~ "Camera blocked"
+      assert render(view) =~ "Camera blocked. Check browser permission."
 
       view
       |> element("#qr-camera-scanner")
       |> render_hook("camera_runtime_sync", %{
         state: "recovering",
-        message: "Restoring camera after returning to the scanner...",
+        message: "Reconnect camera.",
         recoverable: true,
         desired_active: true
       })
 
       html = render(view)
       assert html =~ "Camera reconnecting"
-      assert html =~ "Restoring camera after returning to the scanner..."
-      assert html =~ "The scanner will try to restore this camera session automatically"
+      assert html =~ "Reconnect camera."
     end
   end
 

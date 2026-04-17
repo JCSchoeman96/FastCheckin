@@ -184,10 +184,7 @@ const CameraPermission = {
 
   async syncPermissionState() {
     if (!this.cameraSupported()) {
-      this.reportStatus(
-        "unsupported",
-        "This browser doesn't support the camera features required for scanning.",
-      );
+      this.reportStatus("unsupported", "Camera unavailable. Use manual entry.");
       return;
     }
 
@@ -195,13 +192,10 @@ const CameraPermission = {
 
     switch (state) {
       case "granted":
-        this.reportStatus("granted", "Camera access is available for this scanner tab.");
+        this.reportStatus("granted", "Camera ready.");
         return;
       case "denied":
-        this.reportStatus(
-          "denied",
-          "Camera access is blocked in the browser. Update the site permission and try again.",
-        );
+        this.reportStatus("denied", "Camera blocked. Check browser permission.");
         return;
       case "prompt":
         this.pushPromptStatus();
@@ -264,17 +258,9 @@ const CameraPermission = {
     const hint = this.readStoredStatus();
 
     if (hint?.status === "granted") {
-      this.pushStatus(
-        "unknown",
-        "Camera was previously enabled on this browser tab. Re-check permission if scanning does not start.",
-        true,
-      );
+      this.pushStatus("unknown", "Camera ready. Recheck permission if needed.", true);
     } else if (hint?.status === "denied") {
-      this.pushStatus(
-        "unknown",
-        "Camera access was previously blocked here. Re-check permission after updating browser settings.",
-        true,
-      );
+      this.pushStatus("unknown", "Camera blocked. Check browser permission.", true);
     } else {
       this.pushStatus("unknown", null, false);
     }
@@ -290,9 +276,9 @@ const CameraPermission = {
 
     const fallbackMessage =
       hint.status === "granted"
-        ? "Camera was previously enabled on this browser. Re-check permission before scanning."
+        ? "Camera ready. Recheck permission if needed."
         : hint.status === "denied"
-          ? "Camera was previously blocked on this browser. Re-check permission after updating browser settings."
+          ? "Camera blocked. Check browser permission."
           : this.defaultMessage(hint.status);
 
     this.pushStatus(hint.status === "unsupported" ? "unsupported" : "unknown", fallbackMessage, true);
@@ -311,10 +297,7 @@ const CameraPermission = {
 
   async requestCameraPermission(syncFirst = false) {
     if (!this.cameraSupported()) {
-      this.reportStatus(
-        "unsupported",
-        "This browser doesn't support the camera features required for scanning.",
-      );
+      this.reportStatus("unsupported", "Camera unavailable. Use manual entry.");
       return;
     }
 
@@ -329,7 +312,7 @@ const CameraPermission = {
       });
 
       stream.getTracks().forEach((track) => track.stop());
-      this.reportStatus("granted", "Camera access granted. You can start scanning.");
+      this.reportStatus("granted", "Camera ready.");
       window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-granted"));
       window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-refresh"));
     } catch (error) {
@@ -337,8 +320,8 @@ const CameraPermission = {
       const status = deniedErrors.includes(error?.name) ? "denied" : "error";
       const fallback =
         status === "denied"
-          ? "Camera access was denied. Enable it in your browser settings."
-          : "Something went wrong while attempting to access the camera.";
+          ? "Camera blocked. Check browser permission."
+          : "Camera error.";
 
       this.reportStatus(status, error?.message || fallback);
       window.dispatchEvent(new CustomEvent("fastcheck:camera-permission-refresh"));
@@ -405,15 +388,15 @@ const CameraPermission = {
   defaultMessage(status) {
     switch (status) {
       case "granted":
-        return "Camera access is available for this scanner tab.";
+        return "Camera ready.";
       case "denied":
-        return "Camera access is blocked in the browser. Update the site permission and try again.";
+        return "Camera blocked. Check browser permission.";
       case "error":
-        return "Something went wrong while attempting to access the camera.";
+        return "Camera error.";
       case "unsupported":
-        return "This browser doesn't support the camera features required for scanning.";
+        return "Camera unavailable. Use manual entry.";
       default:
-        return "Re-check camera permission before scanning if the preview does not recover.";
+        return "Check camera permission.";
     }
   },
 };
