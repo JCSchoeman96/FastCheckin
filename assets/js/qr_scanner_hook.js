@@ -49,18 +49,10 @@ export const QrCameraScanner = {
     window.addEventListener("phx:page-loading-start", this.handlePageLoadingStart);
 
     if (!this.cameraSupported) {
-      this.setRuntimeState(
-        "error",
-        "Camera scanning is unavailable in this browser. Manual code entry is still available.",
-        false,
-      );
+      this.setRuntimeState("error", "Camera unavailable. Use manual entry.", false);
     } else if (this.desiredActive) {
-      this.setRuntimeState(
-        "paused",
-        "Camera was previously active. The scanner will reconnect when this page is ready.",
-        true,
-      );
-      this.attemptResume("Restoring the camera session...");
+      this.setRuntimeState("paused", "Reconnect camera.", true);
+      this.attemptResume("Reconnect camera.");
     } else {
       this.setRuntimeState("idle", this.idleMessage(), true);
     }
@@ -77,18 +69,18 @@ export const QrCameraScanner = {
       this.scansDisabled = nextDisabled;
 
       if (this.scansDisabled) {
-        this.stopScanner("Scanning is disabled for archived events.", {
+        this.stopScanner("Scanning disabled.", {
           clearDesiredActive: true,
           runtimeState: "error",
           recoverable: false,
         });
       } else if (this.desiredActive) {
-        this.attemptResume("Restoring the camera session...");
+        this.attemptResume("Reconnect camera.");
       }
     }
 
     if (!this.scansDisabled && this.desiredActive && !this.running && !this.starting) {
-      this.attemptResume("Restoring the camera session...");
+      this.attemptResume("Reconnect camera.");
     }
 
     this.syncButtonState();
@@ -170,12 +162,12 @@ export const QrCameraScanner = {
   handleReconnectClick(event) {
     event.preventDefault();
     this.setDesiredActive(true);
-    this.restartScanner("Reconnecting the camera...");
+    this.restartScanner("Reconnect camera.");
   },
 
   handleStopClick(event) {
     event.preventDefault();
-    this.stopScanner("Camera stopped. Start scanning again when you’re ready.", {
+    this.stopScanner("Camera stopped.", {
       clearDesiredActive: true,
       runtimeState: "idle",
       recoverable: true,
@@ -188,40 +180,40 @@ export const QrCameraScanner = {
     }
 
     if (this.desiredActive) {
-      this.attemptResume("Camera permission is available again. Reconnecting...");
+      this.attemptResume("Reconnect camera.");
       return;
     }
 
     if (!this.running && !this.starting) {
-      this.setRuntimeState("idle", "Camera permission is available. Start scanning when ready.", true);
+      this.setRuntimeState("idle", "Camera ready.", true);
     }
   },
 
   handleVisibilityChange() {
     if (document.hidden) {
       if (this.running || this.starting || this.desiredActive) {
-        this.pauseScanner("Camera paused while the browser was in the background.");
+        this.pauseScanner("Camera paused.");
       }
 
       return;
     }
 
-    this.attemptResume("Restoring camera after returning to the scanner...");
+    this.attemptResume("Reconnect camera.");
   },
 
   handlePageHide() {
     if (this.running || this.starting || this.desiredActive) {
-      this.pauseScanner("Camera paused while this page was hidden.");
+      this.pauseScanner("Camera paused.");
     }
   },
 
   handlePageShow() {
-    this.attemptResume("Restoring camera after returning to the page...");
+    this.attemptResume("Reconnect camera.");
   },
 
   handlePageLoadingStart() {
     if (this.running || this.starting || this.desiredActive) {
-      this.pauseScanner("Camera paused while changing screens.");
+      this.pauseScanner("Camera paused.");
     }
   },
 
@@ -249,14 +241,14 @@ export const QrCameraScanner = {
 
   idleMessage() {
     if (!this.cameraSupported) {
-      return "Camera scanning is unavailable in this browser. Manual code entry is still available.";
+      return "Camera unavailable. Use manual entry.";
     }
 
     if (!this.barcodeDetectorSupported) {
-      return "Camera ready with jsQR fallback decoder. Start scanning when ready.";
+      return "Camera ready.";
     }
 
-    return "Camera is idle. Start scanning when ready.";
+    return "Camera idle.";
   },
 
   syncButtonState() {
@@ -313,11 +305,7 @@ export const QrCameraScanner = {
     }
 
     if (!this.pageCanUseCamera()) {
-      this.setRuntimeState(
-        "paused",
-        "Camera will reconnect when this scanner page becomes active again.",
-        true,
-      );
+      this.setRuntimeState("paused", "Reconnect camera.", true);
       return;
     }
 
@@ -337,20 +325,12 @@ export const QrCameraScanner = {
     }
 
     if (!this.cameraSupported) {
-      this.setRuntimeState(
-        "error",
-        "Camera scanning is unavailable in this browser. Manual code entry is still available.",
-        false,
-      );
+      this.setRuntimeState("error", "Camera unavailable. Use manual entry.", false);
       return;
     }
 
     if (!this.pageCanUseCamera()) {
-      this.setRuntimeState(
-        "paused",
-        "Camera will reconnect when this scanner page becomes active again.",
-        true,
-      );
+      this.setRuntimeState("paused", "Reconnect camera.", true);
       return;
     }
 
@@ -358,7 +338,7 @@ export const QrCameraScanner = {
     this.starting = true;
     this.setRuntimeState(
       recoveryTrigger ? "recovering" : "starting",
-      preflightMessage || (recoveryTrigger ? "Reconnecting the camera..." : "Starting camera..."),
+      preflightMessage || (recoveryTrigger ? "Reconnect camera." : "Starting camera."),
       true,
     );
 
@@ -377,7 +357,7 @@ export const QrCameraScanner = {
       this.starting = false;
       this.setRuntimeState(
         "error",
-        "Camera preview was not found on the page. Reopen the scanner tab and try reconnecting.",
+        "Camera preview missing. Reopen scanner.",
         true,
       );
       return;
@@ -395,7 +375,7 @@ export const QrCameraScanner = {
       this.teardownStream();
       this.setRuntimeState(
         "error",
-        "Camera stream started but playback was blocked. Reconnect the camera to try again.",
+        "Camera playback blocked. Reconnect camera.",
         true,
       );
       return;
@@ -408,7 +388,7 @@ export const QrCameraScanner = {
       this.teardownStream();
       this.setRuntimeState(
         "error",
-        "Camera opened, but no preview frames arrived. Reconnect the camera or re-check permission.",
+        "No camera preview. Reconnect camera.",
         true,
       );
       return;
@@ -418,18 +398,9 @@ export const QrCameraScanner = {
     this.running = true;
     this.starting = false;
 
-    const decoderName = this.detector ? "BarcodeDetector" : "jsQR fallback";
-    this.setRuntimeState(
-      "running",
-      `Camera running with ${decoderName}. Point the QR code at the preview.`,
-      true,
-    );
-    this.updateLastScan("Waiting for first code...");
-    this.pushPermissionStatus(
-      "granted",
-      "Camera access granted. Live QR scanning is active in this scanner tab.",
-      true,
-    );
+    this.setRuntimeState("running", "Camera running.", true);
+    this.updateLastScan("Ready for code.");
+    this.pushPermissionStatus("granted", "Camera ready.", true);
 
     this.runDetectionLoop();
   },
@@ -440,16 +411,14 @@ export const QrCameraScanner = {
     if (denied) {
       this.pushPermissionStatus(
         "denied",
-        "Camera permission denied. Update your browser settings, then re-check permission.",
+        "Camera blocked. Check browser permission.",
         true,
       );
     }
 
     this.setRuntimeState(
       "error",
-      denied
-        ? "Camera permission is blocked. Re-check permission after updating browser settings."
-        : this.cameraStartErrorMessage(error, recoveryTrigger),
+      denied ? "Camera blocked. Check browser permission." : this.cameraStartErrorMessage(error, recoveryTrigger),
       true,
     );
   },
@@ -494,21 +463,19 @@ export const QrCameraScanner = {
     switch (error?.name) {
       case "NotReadableError":
       case "TrackStartError":
-        return recoveryTrigger
-          ? "The camera is busy in another app or tab. Close the other camera session, then reconnect."
-          : "Camera is already in use by another app or tab. Close it and try again.";
+        return "Camera busy. Close other camera apps.";
       case "OverconstrainedError":
       case "ConstraintNotSatisfiedError":
-        return "This device could not satisfy the camera profile. Reconnect the camera to try again.";
+        return "Camera profile failed. Reconnect camera.";
       case "NotFoundError":
       case "DevicesNotFoundError":
         return "No camera was found on this device.";
       case "AbortError":
-        return "Camera startup was interrupted. Reconnect the camera to continue scanning.";
+        return "Camera interrupted. Reconnect camera.";
       default:
         return recoveryTrigger
-          ? "Camera reconnect failed. Re-check permission or reconnect again."
-          : "Could not start the camera. Check browser permissions and try again.";
+          ? "Reconnect failed. Check permission."
+          : "Camera blocked. Check browser permission.";
     }
   },
 
@@ -575,14 +542,14 @@ export const QrCameraScanner = {
 
     const handleUnexpectedStop = () => {
       if (document.hidden) {
-        this.pauseScanner("Camera paused while the browser was in the background.");
+        this.pauseScanner("Camera paused.");
         return;
       }
 
       if (this.desiredActive) {
-        this.restartScanner("Camera feed was interrupted. Reconnecting...");
+        this.restartScanner("Reconnect camera.");
       } else {
-        this.stopScanner("Camera feed ended. Reconnect the camera to continue scanning.", {
+        this.stopScanner("Camera stopped. Reconnect camera.", {
           clearDesiredActive: false,
           runtimeState: "error",
           recoverable: true,
@@ -713,7 +680,7 @@ export const QrCameraScanner = {
     }
 
     this.pushEvent("scan_camera_decoded", { ticket_code: ticketCode });
-    this.updateStatus(`Scanned ${ticketCode}. Ready for next code.`);
+    this.updateStatus(`Scanned ${ticketCode}. Ready.`);
     this.updateLastScan(`Last: ${ticketCode}`);
   },
 

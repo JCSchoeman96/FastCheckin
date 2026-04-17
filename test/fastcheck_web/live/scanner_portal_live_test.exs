@@ -26,22 +26,87 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
     %{conn: conn, event: event}
   end
 
-  describe "scanner portal tabs" do
-    test "opens on camera tab by default", %{conn: conn, event: event} do
+  describe "field scanner screen" do
+    test "opens on camera-first field scanner without bottom tabs or secondary content", %{
+      conn: conn,
+      event: event
+    } do
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
-      assert has_element?(view, "[data-test=\"scanner-tab-camera\"]")
-      assert has_element?(view, "#scanner-tab-button-camera")
+      assert has_element?(view, "#scanner-portal-header")
+      assert has_element?(view, "#scanner-portal-check-in-type-group")
+      assert has_element?(view, "#scanner-field-camera")
+      assert has_element?(view, "#scanner-portal-start-camera-button")
+      assert has_element?(view, "#scanner-portal-scan-form")
+      assert has_element?(view, "#scanner-ticket-code")
+      assert render(view) =~ "Camera permission needed"
+      assert render(view) =~ "Enable camera to start scanning."
+
+      refute has_element?(view, "#scanner-tab-button-overview")
+      refute has_element?(view, "#scanner-tab-button-camera")
+      refute has_element?(view, "#scanner-tab-button-attendees")
+      refute has_element?(view, "[data-test=\"scanner-tab-overview\"]")
+      refute has_element?(view, "[data-test=\"scanner-tab-attendees\"]")
+      refute has_element?(view, "#scanner-portal-search-form")
+      refute has_element?(view, "#scanner-drawer-history")
+      refute has_element?(view, "#scanner-menu-sync-action")
     end
 
-    test "switches between bottom tabs", %{conn: conn, event: event} do
+    test "hidden manual scan fallback can submit a code", %{conn: conn, event: event} do
+      attendee =
+        insert_attendee(event, %{
+          ticket_code: "WEDGE-001",
+          first_name: "Keyboard",
+          last_name: "Guest",
+          checkins_remaining: 1,
+          is_currently_inside: false
+        })
+
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
-      view |> element("#scanner-tab-button-overview") |> render_click()
-      assert has_element?(view, "[data-test=\"scanner-tab-overview\"]")
+      view
+      |> form("#scanner-portal-scan-form", %{ticket_code: attendee.ticket_code})
+      |> render_submit()
 
-      view |> element("#scanner-tab-button-attendees") |> render_click()
-      assert has_element?(view, "[data-test=\"scanner-tab-attendees\"]")
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert refreshed.checked_in_at
+      assert refreshed.is_currently_inside == true
+      assert has_element?(view, "#scanner-portal-scan-result")
+      assert render(view) =~ "Ticket valid"
+    end
+
+    test "scan result banner appears for rejected scans", %{conn: conn, event: event} do
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view
+      |> form("#scanner-portal-scan-form", %{ticket_code: "MISSING-001"})
+      |> render_submit()
+
+      assert has_element?(view, "#scanner-portal-scan-result")
+      assert render(view) =~ "Not valid"
+    end
+
+    test "menu drawer exposes one secondary section at a time", %{conn: conn, event: event} do
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view |> element("#scanner-menu-toggle") |> render_click()
+      assert has_element?(view, "#scanner-menu-panel")
+
+      open_portal_drawer(view, "sync")
+      assert has_element?(view, "#scanner-drawer-sync")
+      refute has_element?(view, "#scanner-drawer-attendees")
+
+      open_portal_drawer(view, "attendees")
+      assert has_element?(view, "#scanner-drawer-attendees")
+      refute has_element?(view, "#scanner-drawer-sync")
+
+      open_portal_drawer(view, "history")
+      assert has_element?(view, "#scanner-drawer-history")
+      refute has_element?(view, "#scanner-drawer-attendees")
+
+      view |> element("#scanner-menu-toggle") |> render_click()
+      refute has_element?(view, "#scanner-menu-panel")
+      refute has_element?(view, "#scanner-drawer-history")
     end
   end
 
@@ -58,7 +123,7 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
-      view |> element("#scanner-tab-button-attendees") |> render_click()
+      open_portal_drawer(view, "attendees")
 
       view
       |> element("#scanner-portal-search-form")
@@ -92,7 +157,7 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
       view |> element("#scanner-portal-exit-mode-button") |> render_click()
-      view |> element("#scanner-tab-button-attendees") |> render_click()
+      open_portal_drawer(view, "attendees")
 
       view
       |> element("#scanner-portal-search-form")
@@ -109,16 +174,26 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
   end
 
   describe "incremental sync menu" do
-    test "sync action is hidden until burger menu opens and receives status updates", %{
+    test "sync drawer starts incremental sync and renders compact status", %{
       conn: conn,
       event: event
     } do
+      event =
+        event
+        |> Ecto.Changeset.change(tickera_api_key_encrypted: "invalid-ciphertext")
+        |> Repo.update!()
+
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
       refute has_element?(view, "#scanner-menu-panel")
       view |> element("#scanner-menu-toggle") |> render_click()
       assert has_element?(view, "#scanner-menu-panel")
       assert has_element?(view, "#scanner-menu-sync")
+
+      open_portal_drawer(view, "sync")
+      assert has_element?(view, "#scanner-menu-sync-action")
+      view |> element("#scanner-menu-sync-action") |> render_click()
+      assert has_element?(view, "#scanner-sync-status")
 
       send(view.pid, {:scanner_sync_progress, 1, 2, 10})
       assert has_element?(view, "#scanner-sync-status")
@@ -127,16 +202,22 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       assert has_element?(view, "#scanner-sync-status")
     end
 
-    test "operator change control is available in burger menu", %{conn: conn, event: event} do
+    test "operator drawer shows and submits the operator form", %{conn: conn, event: event} do
       {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
 
       refute has_element?(view, "#scanner-menu-operator-form")
-      view |> element("#scanner-menu-toggle") |> render_click()
-      assert has_element?(view, "#scanner-menu-change-operator")
-
-      view |> element("#scanner-menu-change-operator") |> render_click()
+      open_portal_drawer(view, "operator")
       assert has_element?(view, "#scanner-menu-operator-form")
       assert has_element?(view, "#scanner-menu-operator-save")
+
+      conn =
+        post(conn, ~p"/scanner/#{event.id}/operator", %{
+          "operator_name" => "Gate Lead",
+          "redirect_to" => ~p"/scanner/#{event.id}"
+        })
+
+      assert get_session(conn, :scanner_operator_name) == "Gate Lead"
+      assert redirected_to(conn) == ~p"/scanner/#{event.id}"
     end
   end
 
@@ -159,7 +240,7 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
 
       assert has_element?(view, "#scanner-portal-reconnect-camera-button")
       assert has_element?(view, "#scanner-portal-camera-recheck-button")
-      assert has_element?(view, "#scanner-portal-camera-sync-button")
+      refute has_element?(view, "#scanner-portal-camera-sync-button")
     end
 
     test "updates camera runtime and permission state from hook payloads", %{
@@ -172,26 +253,48 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       |> element("#scanner-portal-camera-permission-hook")
       |> render_hook("camera_permission_sync", %{
         status: "denied",
-        message: "Camera access was denied. Enable it in your browser settings.",
+        message: "Camera blocked. Check browser permission.",
         remembered: true
       })
 
       assert render(view) =~ "Camera blocked"
-      assert render(view) =~ "Camera access was denied. Enable it in your browser settings."
+      assert render(view) =~ "Camera blocked. Check browser permission."
 
       view
       |> element("#scanner-portal-qr-camera")
       |> render_hook("camera_runtime_sync", %{
         state: "error",
-        message: "Camera recovery failed. Reconnect the camera or re-check permission.",
+        message: "Reconnect camera.",
         recoverable: true,
         desired_active: false
       })
 
       html = render(view)
-      assert html =~ "Camera needs attention"
-      assert html =~ "Reconnect the camera or re-check permission."
-      assert html =~ "Run incremental sync"
+      assert html =~ "Reconnect camera"
+      refute html =~ "Run incremental sync"
+    end
+
+    test "history drawer shows compact recent scans after scans occur", %{
+      conn: conn,
+      event: event
+    } do
+      attendee =
+        insert_attendee(event, %{
+          ticket_code: "HISTORY-001",
+          first_name: "Recent",
+          last_name: "Guest"
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view
+      |> form("#scanner-portal-scan-form", %{ticket_code: attendee.ticket_code})
+      |> render_submit()
+
+      open_portal_drawer(view, "history")
+
+      assert has_element?(view, "#scanner-portal-recent-scans")
+      assert render(view) =~ "Recent Guest"
     end
   end
 
@@ -249,5 +352,19 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       entrance_name: entrance_name || "Main Entrance"
     })
     |> Repo.insert!()
+  end
+
+  defp open_portal_drawer(view, section) do
+    unless has_element?(view, "#scanner-menu-panel") do
+      view |> element("#scanner-menu-toggle") |> render_click()
+    end
+
+    button_id =
+      case section do
+        "operator" -> "scanner-menu-change-operator"
+        other -> "scanner-menu-#{other}"
+      end
+
+    view |> element("##{button_id}") |> render_click()
   end
 end

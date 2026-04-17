@@ -7,6 +7,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   alias FastCheck.{Attendees, Events}
   alias Phoenix.PubSub
+  import FastCheckWeb.Components.ScannerComponents
 
   require Logger
 
@@ -15,9 +16,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
     state: :idle,
     recoverable: true,
     desired_active: false,
-    message: "Camera is idle. Start scanning when ready."
+    message: "Camera idle."
   }
-  @valid_tabs ~w(overview camera attendees)
   @default_stats_reconcile_ms 30_000
   @default_force_refresh_every_n_scans 20
   @error_status_map %{
@@ -36,7 +36,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
   }
 
   @impl true
-  def mount(%{"event_id" => event_id_param} = params, session, socket) do
+  def mount(%{"event_id" => event_id_param}, session, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
          :ok <- ensure_scanner_session_event(session, event_id),
          {:ok, event} <- fetch_event(event_id) do
@@ -44,7 +44,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
       occupancy = Attendees.get_occupancy_breakdown(event_id)
       current_occupancy = Map.get(occupancy, :currently_inside, 0)
       occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
-      active_tab = normalize_tab(Map.get(params, "tab"))
       operator_name = session_value(session, :scanner_operator_name) || "Scanner"
       stats_reconcile_ms = scanner_stats_reconcile_ms()
       force_refresh_every_n_scans = scanner_force_refresh_every_n_scans()
@@ -55,9 +54,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
           event: event,
           event_id: event_id,
           operator_name: operator_name,
-          active_tab: active_tab,
           menu_open: false,
-          operator_form_open: false,
+          drawer_section: nil,
           check_in_type: "entry",
           ticket_code: "",
           last_scan_status: nil,
@@ -107,33 +105,33 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   @impl true
-  def handle_event("set_tab", %{"tab" => tab}, socket) do
-    {:noreply,
-     socket
-     |> assign(:active_tab, normalize_tab(tab))
-     |> assign(:menu_open, false)
-     |> assign(:operator_form_open, false)}
-  end
-
-  def handle_event("set_tab", _params, socket), do: {:noreply, socket}
-
-  @impl true
   def handle_event("toggle_menu", _params, socket) do
     menu_open = !socket.assigns.menu_open
 
     {:noreply,
      socket
      |> assign(:menu_open, menu_open)
-     |> assign(
-       :operator_form_open,
-       if(menu_open, do: socket.assigns.operator_form_open, else: false)
-     )}
+     |> assign(:drawer_section, if(menu_open, do: socket.assigns.drawer_section, else: nil))}
   end
 
   @impl true
-  def handle_event("toggle_operator_form", _params, socket) do
-    {:noreply, assign(socket, :operator_form_open, !socket.assigns.operator_form_open)}
+  def handle_event("set_drawer_section", %{"section" => section}, socket) do
+    next_section = normalize_drawer_section(section)
+
+    drawer_section =
+      if socket.assigns.drawer_section == next_section do
+        nil
+      else
+        next_section
+      end
+
+    {:noreply,
+     socket
+     |> assign(:menu_open, true)
+     |> assign(:drawer_section, drawer_section)}
   end
+
+  def handle_event("set_drawer_section", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("close_sync_status", _params, socket) do
@@ -415,204 +413,222 @@ defmodule FastCheckWeb.ScannerPortalLive do
     <Layouts.app
       flash={@flash}
       show_nav={false}
-      main_class="mx-auto w-full max-w-screen-md px-4 pb-28 pt-4"
+      main_class="mx-auto w-full max-w-screen-md px-4 pb-6 pt-4"
     >
-      <div id="scanner-portal" class="space-y-4 bg-scanner-dark">
-        <.card
-          variant="outline"
-          color="natural"
-          rounded="large"
-          padding="medium"
-          class="glass-card glass-sheen glass-card-deep glass-card-elevated"
-        >
-          <.card_content>
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <p
-                  style="font-size: var(--fc-text-xs)"
-                  class="uppercase tracking-[0.35em] text-fc-text-muted"
-                >
-                  Scanner portal
-                </p>
-                <h1 class="mt-2 truncate text-xl font-semibold text-fc-text-primary">
-                  {@event.name}
-                </h1>
-                <p class="mt-1 text-xs text-fc-text-secondary">
-                  Code {@event.scanner_login_code || "------"} - {@operator_name}
-                </p>
-              </div>
+      <div id="scanner-portal" class="scanner-field-shell">
+        <.scanner_header
+          id="scanner-portal-header"
+          event_name={@event.name}
+          operator_name={@operator_name}
+          entrance_label={entrance_label(@event.entrance_name)}
+          lifecycle_label={scanner_lifecycle_label(@event_lifecycle_state)}
+          lifecycle_color={scanner_lifecycle_badge_color(@event_lifecycle_state)}
+          label="Field scanner"
+          menu
+        />
 
-              <div
-                x-data="{pressed:false}"
-                x-on:click="pressed = true; setTimeout(() => pressed = false, 140)"
-                x-bind:class="pressed ? 'scale-95' : ''"
-                class="transition-transform"
-              >
-                <.button
-                  id="scanner-menu-toggle"
-                  type="button"
-                  phx-click="toggle_menu"
-                  variant="bordered"
-                  color="natural"
-                  size="small"
-                >
-                  <.icon name="hero-bars-3" class="size-4" />
-                </.button>
-              </div>
-            </div>
+        <.scanner_mode_toggle
+          id="scanner-portal-check-in-type-group"
+          check_in_type={@check_in_type}
+          entry_id="scanner-portal-entry-mode-button"
+          exit_id="scanner-portal-exit-mode-button"
+          disabled={@scans_disabled?}
+        />
 
-            <div class="mt-4 flex flex-wrap items-center gap-2">
-              <.badge color="secondary" variant="bordered" rounded="full">
-                {entrance_label(@event.entrance_name)}
-              </.badge>
+        <aside :if={@menu_open} id="scanner-menu-panel" class="scanner-drawer">
+          <div class="scanner-drawer-nav">
+            <.button
+              id="scanner-menu-sync"
+              type="button"
+              phx-click="set_drawer_section"
+              phx-value-section="sync"
+              variant={if(@drawer_section == :sync, do: "shadow", else: "bordered")}
+              color={if(@drawer_section == :sync, do: "secondary", else: "natural")}
+              full_width
+            >
+              Sync
+            </.button>
 
-              <.badge color={scanner_lifecycle_badge_color(@event_lifecycle_state)} variant="bordered">
-                {scanner_lifecycle_label(@event_lifecycle_state)}
-              </.badge>
-            </div>
-
-            <.button_group
-              id="scanner-portal-check-in-type-group"
+            <.button
+              id="scanner-menu-change-operator"
+              type="button"
+              phx-click="set_drawer_section"
+              phx-value-section="operator"
+              variant={if(@drawer_section == :operator, do: "shadow", else: "bordered")}
               color="natural"
-              rounded="large"
-              class="mt-4 w-full"
+              full_width
             >
-              <.button
-                id="scanner-portal-entry-mode-button"
-                type="button"
-                phx-click="set_check_in_type"
-                phx-value-type="entry"
-                data-check-in-type="entry"
-                aria-pressed={@check_in_type == "entry"}
-                color={if(@check_in_type == "entry", do: "success", else: "natural")}
-                variant={if(@check_in_type == "entry", do: "shadow", else: "bordered")}
-                class="w-full"
-                disabled={@scans_disabled?}
-              >
-                Entry
-              </.button>
+              Operator
+            </.button>
 
-              <.button
-                id="scanner-portal-exit-mode-button"
-                type="button"
-                phx-click="set_check_in_type"
-                phx-value-type="exit"
-                data-check-in-type="exit"
-                aria-pressed={@check_in_type == "exit"}
-                color={if(@check_in_type == "exit", do: "warning", else: "natural")}
-                variant={if(@check_in_type == "exit", do: "shadow", else: "bordered")}
-                class="w-full"
-                disabled={@scans_disabled?}
-              >
-                Exit
-              </.button>
-            </.button_group>
-          </.card_content>
-        </.card>
-
-        <.card
-          :if={@menu_open}
-          id="scanner-menu-panel"
-          variant="outline"
-          color="natural"
-          rounded="large"
-          padding="small"
-          class="glass-card glass-sheen"
-        >
-          <.card_content>
-            <div
-              class="space-y-2"
-              x-data="{pendingAction: null, mark(action){ this.pendingAction = action }}"
+            <.button
+              id="scanner-menu-attendees"
+              type="button"
+              phx-click="set_drawer_section"
+              phx-value-section="attendees"
+              variant={if(@drawer_section == :attendees, do: "shadow", else: "bordered")}
+              color="natural"
+              full_width
             >
-              <div
-                x-on:click="mark('sync')"
-                x-bind:class="pendingAction === 'sync' ? 'opacity-70' : ''"
-                class="transition-opacity"
-              >
-                <.button
-                  id="scanner-menu-sync"
-                  type="button"
-                  phx-click="start_incremental_sync"
-                  variant="bordered"
-                  color="secondary"
-                  full_width
-                  disabled={@syncing}
-                >
-                  <span :if={!@syncing} x-show="pendingAction !== 'sync'">Run incremental sync</span>
-                  <span :if={!@syncing} x-show="pendingAction === 'sync'">Starting...</span>
-                  <span :if={@syncing}>Syncing...</span>
-                </.button>
-              </div>
+              Find attendee
+            </.button>
 
-              <div
-                x-on:click="mark('operator')"
-                x-bind:class="pendingAction === 'operator' ? 'opacity-70' : ''"
-                class="transition-opacity"
-              >
-                <.button
-                  id="scanner-menu-change-operator"
-                  type="button"
-                  phx-click="toggle_operator_form"
-                  variant="bordered"
-                  color="natural"
-                  full_width
-                >
-                  {if(@operator_form_open, do: "Cancel operator change", else: "Change operator")}
-                </.button>
-              </div>
+            <.button
+              id="scanner-menu-history"
+              type="button"
+              phx-click="set_drawer_section"
+              phx-value-section="history"
+              variant={if(@drawer_section == :history, do: "shadow", else: "bordered")}
+              color="natural"
+              full_width
+            >
+              Recent scans
+            </.button>
+          </div>
 
-              <.form
-                :if={@operator_form_open}
-                id="scanner-menu-operator-form"
-                for={@operator_form}
-                action={~p"/scanner/#{@event_id}/operator"}
-                method="post"
-                class="space-y-2 rounded-xl border border-fc-border-default p-3"
+          <div :if={@drawer_section == :sync} id="scanner-drawer-sync" class="scanner-drawer-section">
+            <div class="scanner-drawer-heading">
+              <h2>Sync attendees</h2>
+              <p>{if(@syncing, do: "Sync running", else: "Update local attendee data")}</p>
+            </div>
+
+            <.button
+              id="scanner-menu-sync-action"
+              type="button"
+              phx-click="start_incremental_sync"
+              variant="bordered"
+              color="secondary"
+              full_width
+              disabled={@syncing}
+            >
+              {if(@syncing, do: "Syncing", else: "Run sync")}
+            </.button>
+
+            <div :if={@sync_status} id="scanner-sync-status" class="scanner-inline-status">
+              <p>{@sync_status}</p>
+              <.button
+                type="button"
+                size="extra_small"
+                variant="transparent"
+                color="natural"
+                phx-click="close_sync_status"
               >
-                <input
-                  type="hidden"
-                  name="redirect_to"
-                  value={~p"/scanner/#{@event_id}?tab=#{@active_tab}"}
-                />
-                <.input
-                  id="scanner-menu-operator-name"
-                  field={@operator_form[:operator_name]}
-                  type="text"
-                  label="Operator name"
-                  autocomplete="name"
-                  required
-                />
-                <div x-data="{saving:false}" x-on:click="saving = true" class="transition-opacity">
-                  <.button
-                    id="scanner-menu-operator-save"
-                    type="submit"
-                    color="primary"
-                    variant="shadow"
-                    full_width
-                  >
-                    <span x-show="!saving">Save operator</span>
-                    <span x-show="saving">Saving...</span>
-                  </.button>
+                <.icon name="hero-x-mark" class="size-4" />
+              </.button>
+            </div>
+          </div>
+
+          <.form
+            :if={@drawer_section == :operator}
+            id="scanner-menu-operator-form"
+            for={@operator_form}
+            action={~p"/scanner/#{@event_id}/operator"}
+            method="post"
+            class="scanner-drawer-section"
+          >
+            <div class="scanner-drawer-heading">
+              <h2>Operator</h2>
+              <p>Change the name recorded with scans.</p>
+            </div>
+            <input type="hidden" name="redirect_to" value={~p"/scanner/#{@event_id}"} />
+            <.input
+              id="scanner-menu-operator-name"
+              field={@operator_form[:operator_name]}
+              type="text"
+              label="Operator name"
+              autocomplete="name"
+              required
+            />
+            <.button
+              id="scanner-menu-operator-save"
+              type="submit"
+              color="primary"
+              variant="shadow"
+              full_width
+            >
+              Save operator
+            </.button>
+          </.form>
+
+          <div
+            :if={@drawer_section == :attendees}
+            id="scanner-drawer-attendees"
+            class="scanner-drawer-section"
+          >
+            <div class="scanner-drawer-heading">
+              <h2>Find attendee</h2>
+              <p>Search by name or ticket code.</p>
+            </div>
+
+            <.form id="scanner-portal-search-form" for={@search_form} phx-change="search_attendees">
+              <.input
+                id="scanner-portal-search-input"
+                field={@search_form[:query]}
+                type="search"
+                placeholder="Name, email, or ticket code"
+                autocomplete="off"
+                phx-debounce="300"
+              />
+            </.form>
+
+            <p :if={@search_error} class="text-sm text-danger-light dark:text-danger-dark">
+              {@search_error}
+            </p>
+
+            <p :if={@search_loading} class="scanner-inline-status">Searching</p>
+
+            <div :if={@search_results != []} class="scanner-search-results">
+              <div :for={attendee <- @search_results} class="scanner-search-result">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold text-fc-text-primary">
+                    {attendee.first_name} {attendee.last_name}
+                  </p>
+                  <p class="truncate text-xs text-fc-text-secondary">{attendee.ticket_code}</p>
                 </div>
-              </.form>
 
-              <div
-                x-on:click="mark('logout')"
-                x-bind:class="pendingAction === 'logout' ? 'opacity-70' : ''"
-                class="transition-opacity"
-              >
-                <.link
-                  id="scanner-menu-logout"
-                  href={~p"/scanner/logout"}
-                  method="delete"
-                  class="inline-flex w-full items-center justify-center rounded-xl border border-fc-border-default px-4 py-2 text-sm font-medium text-fc-text-primary transition hover:bg-fc-surface-raised"
+                <.button
+                  type="button"
+                  phx-click="manual_scan"
+                  phx-value-ticket_code={attendee.ticket_code}
+                  color={manual_action_color(@check_in_type)}
+                  variant="bordered"
+                  size="small"
+                  disabled={!attendee_actionable?(attendee, @check_in_type) || @scans_disabled?}
+                  data-test={"manual-check-in-#{attendee.ticket_code}"}
                 >
-                  Log out
-                </.link>
+                  {manual_action_label(@check_in_type)}
+                </.button>
               </div>
             </div>
-          </.card_content>
-        </.card>
+
+            <p
+              :if={
+                @search_results == [] and @search_query != "" and not @search_loading and
+                  is_nil(@search_error)
+              }
+              class="scanner-empty-state"
+            >
+              No attendees found.
+            </p>
+          </div>
+
+          <div
+            :if={@drawer_section == :history}
+            id="scanner-drawer-history"
+            class="scanner-drawer-section"
+          >
+            <.compact_recent_scans id="scanner-portal-recent-scans" scans={@scan_history} />
+          </div>
+
+          <.link
+            id="scanner-menu-logout"
+            href={~p"/scanner/logout"}
+            method="delete"
+            class="scanner-logout-link"
+          >
+            Log out
+          </.link>
+        </aside>
 
         <.alert
           :if={@scans_disabled?}
@@ -624,501 +640,129 @@ defmodule FastCheckWeb.ScannerPortalLive do
           {@scans_disabled_message || "Event archived, scanning disabled"}
         </.alert>
 
-        <div
-          :if={@sync_status}
-          id="scanner-sync-status"
-          x-data="{open: true}"
-          x-show="open"
-          x-transition:enter="transition ease-out duration-200"
-          x-transition:enter-start="opacity-0 translate-y-1"
-          x-transition:enter-end="opacity-100 translate-y-0"
-          x-transition:leave="transition ease-in duration-150"
-          x-transition:leave-start="opacity-100"
-          x-transition:leave-end="opacity-0"
-        >
-          <.alert kind={@sync_status_kind} variant="bordered" rounded="large">
-            <div class="flex items-start justify-between gap-3">
-              <p class="text-sm">{@sync_status}</p>
-              <div x-on:click="open = false">
-                <.button
-                  type="button"
-                  size="extra_small"
-                  variant="transparent"
-                  color="natural"
-                  phx-click="close_sync_status"
-                >
-                  <.icon name="hero-x-mark" class="size-4" />
-                </.button>
-              </div>
-            </div>
-          </.alert>
-        </div>
-
-        <.card
+        <.scan_result_banner
           :if={@last_scan_status}
           id="scanner-portal-scan-result"
-          variant="base"
-          color={scan_result_color(@last_scan_status, @check_in_type)}
-          rounded="large"
-          padding="medium"
-          class="fc-scan-pulse"
+          status={@last_scan_status}
+          check_in_type={@check_in_type}
+          message={@last_scan_result}
+          reason={@last_scan_reason}
+          size={:compact}
           data-test="scan-status"
+        />
+
+        <section
+          id="scanner-field-camera"
+          class="scanner-camera-stack"
+          data-test="scanner-field-camera"
         >
-          <.card_content>
-            <div class="flex items-start gap-3">
-              <div class="shrink-0 rounded-xl bg-white/10 p-2">
-                <.icon name={scan_result_icon(@last_scan_status, @check_in_type)} class="size-6" />
-              </div>
-              <div class="min-w-0">
-                <p class="text-xs uppercase tracking-[0.3em] opacity-80">
-                  {scan_result_title(@last_scan_status, @check_in_type)}
-                </p>
-                <p class="mt-1 text-base font-semibold">{@last_scan_result}</p>
-                <p :if={@last_scan_reason} class="mt-1 text-xs opacity-85">{@last_scan_reason}</p>
-              </div>
-            </div>
-          </.card_content>
-        </.card>
-
-        <%= case @active_tab do %>
-          <% "overview" -> %>
-            <section id="scanner-tab-overview" class="space-y-3" data-test="scanner-tab-overview">
-              <div class="grid grid-cols-2 gap-3">
-                <.card
-                  variant="outline"
-                  color="natural"
-                  rounded="large"
-                  padding="medium"
-                  class="glass-card"
-                >
-                  <.card_content>
-                    <div class="flex items-center gap-2">
-                      <.icon name="hero-ticket" class="size-4 text-fc-text-muted" />
-                      <p class="text-xs uppercase tracking-[0.3em] text-fc-text-muted">Total</p>
-                    </div>
-                    <p class="mt-2 text-2xl font-semibold text-fc-text-primary">{@stats.total}</p>
-                  </.card_content>
-                </.card>
-
-                <.card
-                  variant="outline"
-                  color="success"
-                  rounded="large"
-                  padding="medium"
-                  class="glass-card"
-                >
-                  <.card_content>
-                    <div class="flex items-center gap-2">
-                      <.icon name="hero-check-circle" class="size-4" />
-                      <p class="text-xs uppercase tracking-[0.3em] opacity-80">Checked in</p>
-                    </div>
-                    <p class="mt-2 text-2xl font-semibold">{@stats.checked_in}</p>
-                  </.card_content>
-                </.card>
-
-                <.card
-                  variant="outline"
-                  color="warning"
-                  rounded="large"
-                  padding="medium"
-                  class="glass-card"
-                >
-                  <.card_content>
-                    <div class="flex items-center gap-2">
-                      <.icon name="hero-clock" class="size-4" />
-                      <p class="text-xs uppercase tracking-[0.3em] opacity-80">Remaining</p>
-                    </div>
-                    <p class="mt-2 text-2xl font-semibold">{@stats.pending}</p>
-                  </.card_content>
-                </.card>
-
-                <.card
-                  variant="outline"
-                  color="secondary"
-                  rounded="large"
-                  padding="medium"
-                  class="glass-card"
-                >
-                  <.card_content>
-                    <div class="flex items-center gap-2">
-                      <.icon name="hero-user-group" class="size-4" />
-                      <p class="text-xs uppercase tracking-[0.3em] opacity-80">Inside</p>
-                    </div>
-                    <p class="mt-2 text-2xl font-semibold">{@current_occupancy}</p>
-                  </.card_content>
-                </.card>
-              </div>
-
-              <.card
-                variant="outline"
-                color="natural"
-                rounded="large"
-                padding="medium"
-                class="glass-card"
-              >
-                <.card_content>
-                  <div class="flex items-center justify-between">
-                    <p class="text-sm text-fc-text-secondary">Crowd load</p>
-                    <p class="text-sm font-semibold text-fc-text-primary">
-                      {format_percentage(@occupancy_percentage)}%
-                    </p>
-                  </div>
-                  <.progress
-                    value={trunc(min(@occupancy_percentage, 100))}
-                    color={occupancy_status_color(@occupancy_percentage)}
-                    size="small"
-                    class="mt-3"
-                  />
-                </.card_content>
-              </.card>
-            </section>
-          <% "camera" -> %>
-            <section id="scanner-tab-camera" class="space-y-3" data-test="scanner-tab-camera">
-              <div
-                id="scanner-portal-camera-permission-hook"
-                phx-hook="CameraPermission"
-                data-storage-key={"fastcheck:camera-permission:event-#{@event_id}:portal"}
-                class="space-y-2"
-              >
-                <.alert
-                  kind={camera_permission_alert_kind(@camera_permission.status)}
-                  variant="bordered"
-                >
-                  <p class="font-semibold">
-                    {camera_permission_status_label(@camera_permission.status)}
-                  </p>
-                  <p class="mt-1 text-xs">
-                    {@camera_permission.message ||
-                      camera_permission_default_message(@camera_permission.status)}
-                  </p>
-                </.alert>
-
-                <div class="flex flex-wrap gap-2">
-                  <.button
-                    :if={@camera_permission.status != :granted}
-                    id="scanner-portal-camera-enable-button"
-                    type="button"
-                    data-camera-request
-                    color="success"
-                    disabled={@camera_permission.status == :unsupported}
-                  >
-                    Enable camera
-                  </.button>
-
-                  <.button
-                    id="scanner-portal-camera-recheck-button"
-                    type="button"
-                    data-camera-recheck
-                    variant="bordered"
-                    color="natural"
-                    disabled={@camera_permission.status == :unsupported}
-                  >
-                    Re-check permission
-                  </.button>
-                </div>
-
-                <p class="text-xs text-fc-text-muted">
-                  {if @camera_permission.remembered do
-                    "Last camera check is saved as a browser hint, but permission is verified live whenever recovery runs."
-                  else
-                    "Permission is verified live whenever the scanner reconnects."
-                  end}
-                </p>
-              </div>
-
-              <.card
-                id="scanner-portal-qr-camera"
-                phx-hook="QrCameraScanner"
-                data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
-                data-resume-key={"fastcheck:camera-runtime:event-#{@event_id}:portal"}
-                variant="outline"
-                color="natural"
-                rounded="large"
-                padding="medium"
-                class="glass-card glass-sheen"
-              >
-                <.card_content>
-                  <.alert
-                    id="scanner-portal-camera-runtime-status"
-                    kind={camera_runtime_alert_kind(@camera_runtime.state)}
-                    variant="bordered"
-                    rounded="large"
-                    data-test="camera-runtime-status"
-                  >
-                    <p class="font-semibold">
-                      {camera_runtime_status_label(@camera_runtime.state)}
-                    </p>
-                    <p class="mt-1 text-xs">
-                      {@camera_runtime.message ||
-                        camera_runtime_default_message(@camera_runtime.state)}
-                    </p>
-                  </.alert>
-
-                  <div
-                    id="scanner-portal-camera-preview-shell"
-                    phx-update="ignore"
-                    class="mt-3 overflow-hidden rounded-2xl border border-fc-border bg-black"
-                  >
-                    <video
-                      id="scanner-portal-camera-preview"
-                      data-qr-video
-                      class="h-[62vh] w-full object-cover"
-                      autoplay
-                      muted
-                      playsinline
-                    >
-                    </video>
-                    <canvas data-qr-canvas class="hidden"></canvas>
-                  </div>
-
-                  <p data-qr-status class="mt-3 text-sm text-fc-text-secondary">
-                    Camera is idle. Start scanning when ready.
-                  </p>
-                  <p data-qr-last class="mt-1 text-xs text-fc-text-muted"></p>
-
-                  <.form
-                    id="scanner-portal-scan-form"
-                    for={@scan_form}
-                    phx-submit="scan"
-                    phx-change="update_code"
-                    class="hidden"
-                  >
-                    <.input
-                      id="scanner-ticket-code"
-                      field={@scan_form[:ticket_code]}
-                      type="text"
-                      autocomplete="off"
-                    />
-                  </.form>
-
-                  <div class="mt-4 grid grid-cols-3 gap-2">
-                    <.button
-                      id="scanner-portal-start-camera-button"
-                      type="button"
-                      data-qr-start
-                      color={
-                        if(camera_runtime_needs_reconnect?(@camera_runtime.state),
-                          do: "natural",
-                          else: "success"
-                        )
-                      }
-                      variant={
-                        if(camera_runtime_needs_reconnect?(@camera_runtime.state),
-                          do: "bordered",
-                          else: "shadow"
-                        )
-                      }
-                      full_width
-                      disabled={@scans_disabled?}
-                    >
-                      Start
-                    </.button>
-
-                    <.button
-                      id="scanner-portal-reconnect-camera-button"
-                      type="button"
-                      data-qr-reconnect
-                      color={camera_reconnect_button_color(@camera_runtime.state)}
-                      variant={camera_reconnect_button_variant(@camera_runtime.state)}
-                      full_width
-                      disabled={!@camera_runtime.recoverable or @scans_disabled?}
-                    >
-                      Reconnect
-                    </.button>
-
-                    <.button
-                      id="scanner-portal-stop-camera-button"
-                      type="button"
-                      data-qr-stop
-                      variant="bordered"
-                      color="natural"
-                      full_width
-                      disabled
-                    >
-                      Stop
-                    </.button>
-                  </div>
-
-                  <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <.button
-                      id="scanner-portal-camera-sync-button"
-                      type="button"
-                      phx-click="start_incremental_sync"
-                      color="secondary"
-                      variant="bordered"
-                      full_width
-                      disabled={@syncing}
-                    >
-                      {if @syncing, do: "Syncing attendees...", else: "Run incremental sync"}
-                    </.button>
-
-                    <p class="rounded-xl border border-fc-border-default px-3 py-2 text-xs text-fc-text-muted">
-                      {camera_runtime_support_copy(@camera_runtime)}
-                    </p>
-                  </div>
-                </.card_content>
-              </.card>
-            </section>
-          <% "attendees" -> %>
-            <section id="scanner-tab-attendees" class="space-y-3" data-test="scanner-tab-attendees">
-              <.card
-                variant="outline"
-                color="natural"
-                rounded="large"
-                padding="medium"
-                class="glass-card glass-sheen"
-              >
-                <.card_content>
-                  <.form
-                    id="scanner-portal-search-form"
-                    for={@search_form}
-                    phx-change="search_attendees"
-                  >
-                    <.input
-                      id="scanner-portal-search-input"
-                      field={@search_form[:query]}
-                      type="search"
-                      placeholder="Search by name, email, or ticket code"
-                      autocomplete="off"
-                      phx-debounce="300"
-                    />
-                  </.form>
-
-                  <p :if={@search_error} class="mt-3 text-sm text-danger-light dark:text-danger-dark">
-                    {@search_error}
-                  </p>
-
-                  <div :if={@search_loading} class="mt-4 space-y-2">
-                    <div :for={_ <- 1..3} class="glass-card-recessed rounded-xl px-4 py-3">
-                      <div class="flex items-center justify-between gap-3">
-                        <div class="space-y-2">
-                          <div class="h-4 w-32 rounded fc-skeleton-shimmer"></div>
-                          <div class="h-3 w-20 rounded fc-skeleton-shimmer"></div>
-                        </div>
-                        <div class="h-8 w-16 rounded-lg fc-skeleton-shimmer"></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div :if={@search_results != []} class="mt-4 space-y-2">
-                    <.card
-                      :for={attendee <- @search_results}
-                      variant="outline"
-                      color="natural"
-                      rounded="medium"
-                      padding="small"
-                    >
-                      <.card_content>
-                        <div class="flex items-center justify-between gap-3">
-                          <div class="min-w-0">
-                            <p class="truncate text-sm font-semibold text-fc-text-primary">
-                              {attendee.first_name} {attendee.last_name}
-                            </p>
-                            <p class="truncate text-xs text-fc-text-secondary">
-                              {attendee.ticket_code}
-                            </p>
-                          </div>
-
-                          <.button
-                            type="button"
-                            phx-click="manual_scan"
-                            phx-value-ticket_code={attendee.ticket_code}
-                            color={manual_action_color(@check_in_type)}
-                            variant="bordered"
-                            size="small"
-                            disabled={
-                              !attendee_actionable?(attendee, @check_in_type) || @scans_disabled?
-                            }
-                            data-test={"manual-check-in-#{attendee.ticket_code}"}
-                          >
-                            {manual_action_label(@check_in_type)}
-                          </.button>
-                        </div>
-                      </.card_content>
-                    </.card>
-                  </div>
-
-                  <div
-                    :if={
-                      @search_results == [] and @search_query != "" and not @search_loading and
-                        is_nil(@search_error)
-                    }
-                    class="mt-6 flex flex-col items-center text-center"
-                  >
-                    <div class="rounded-2xl glass-card-recessed p-4 mb-3">
-                      <.icon name="hero-user-minus" class="size-8 text-fc-text-muted" />
-                    </div>
-                    <p class="text-sm text-fc-text-secondary">
-                      No attendees found for &ldquo;{@search_query}&rdquo;.
-                    </p>
-                  </div>
-                </.card_content>
-              </.card>
-            </section>
-        <% end %>
-      </div>
-
-      <nav
-        id="scanner-bottom-nav"
-        class="fixed inset-x-0 bottom-0 border-t border-fc-border-default dark:border-glass-border bg-fc-surface-raised/95 dark:bg-[rgba(15,23,42,0.92)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 glass-blur-md"
-      >
-        <div class="mx-auto grid max-w-screen-md grid-cols-3 items-end gap-3">
-          <.button
-            id="scanner-tab-button-overview"
-            type="button"
-            phx-click="set_tab"
-            phx-value-tab="overview"
-            color={if(@active_tab == "overview", do: "primary", else: "natural")}
-            variant={if(@active_tab == "overview", do: "shadow", else: "bordered")}
-            size="small"
-            full_width
+          <div
+            id="scanner-portal-camera-permission-hook"
+            phx-hook="CameraPermission"
+            data-storage-key={"fastcheck:camera-permission:event-#{@event_id}:portal"}
           >
-            <span class="inline-flex flex-col items-center gap-0.5">
-              <.icon name="hero-chart-bar-mini" class="size-4" />
-              <span class="text-[10px]">Overview</span>
-            </span>
-          </.button>
+            <.camera_status_strip
+              id="scanner-portal-camera-status"
+              runtime_id="scanner-portal-camera-runtime-status"
+              permission={@camera_permission}
+              runtime={@camera_runtime}
+            />
 
-          <div class="flex justify-center">
-            <div
-              x-data="{pressed:false}"
-              x-on:click="pressed = true; setTimeout(() => pressed = false, 160)"
-              x-bind:class="pressed ? 'scale-95' : ''"
-              class="transition-transform"
-            >
+            <div class="scanner-permission-actions">
               <.button
-                id="scanner-tab-button-camera"
+                :if={@camera_permission.status != :granted}
+                id="scanner-portal-camera-enable-button"
                 type="button"
-                phx-click="set_tab"
-                phx-value-tab="camera"
-                color={if(@active_tab == "camera", do: "primary", else: "secondary")}
-                variant={if(@active_tab == "camera", do: "shadow", else: "base")}
-                rounded="full"
-                class="h-14 w-14 -translate-y-2 shadow-lg"
+                data-camera-request
+                color="success"
+                disabled={@camera_permission.status == :unsupported}
               >
-                <.icon name="hero-camera" class="size-6" />
-                <span class="sr-only">Camera</span>
+                Enable camera
+              </.button>
+
+              <.button
+                id="scanner-portal-camera-recheck-button"
+                type="button"
+                data-camera-recheck
+                variant="bordered"
+                color="natural"
+                disabled={@camera_permission.status == :unsupported}
+              >
+                Check permission
               </.button>
             </div>
           </div>
 
-          <.button
-            id="scanner-tab-button-attendees"
-            type="button"
-            phx-click="set_tab"
-            phx-value-tab="attendees"
-            color={if(@active_tab == "attendees", do: "primary", else: "natural")}
-            variant={if(@active_tab == "attendees", do: "shadow", else: "bordered")}
-            size="small"
-            full_width
+          <div
+            id="scanner-portal-qr-camera"
+            phx-hook="QrCameraScanner"
+            data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
+            data-resume-key={"fastcheck:camera-runtime:event-#{@event_id}:portal"}
+            class="scanner-camera-panel"
           >
-            <span class="inline-flex flex-col items-center gap-0.5">
-              <.icon name="hero-users-mini" class="size-4" />
-              <span class="text-[10px]">Attendees</span>
-            </span>
-          </.button>
-        </div>
-      </nav>
+            <div
+              id="scanner-portal-camera-preview-shell"
+              phx-update="ignore"
+              class="scanner-camera-preview"
+            >
+              <video
+                id="scanner-portal-camera-preview"
+                data-qr-video
+                class="scanner-camera-video"
+                autoplay
+                muted
+                playsinline
+              >
+              </video>
+              <canvas data-qr-canvas class="hidden"></canvas>
+            </div>
+
+            <p data-qr-status class="scanner-camera-status-text">Camera idle</p>
+            <p data-qr-last class="scanner-camera-last-text"></p>
+
+            <.form
+              id="scanner-portal-scan-form"
+              for={@scan_form}
+              phx-submit="scan"
+              phx-change="update_code"
+              class="scanner-manual-form"
+            >
+              <.input
+                id="scanner-ticket-code"
+                field={@scan_form[:ticket_code]}
+                type="text"
+                label="Manual code"
+                placeholder="Ticket code"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                inputmode="text"
+                disabled={@scans_disabled?}
+              />
+              <.button
+                id="scanner-portal-manual-scan-button"
+                type="submit"
+                color="success"
+                variant="bordered"
+                full_width
+                disabled={@scans_disabled?}
+              >
+                Process scan
+              </.button>
+            </.form>
+
+            <.camera_action_row
+              start_id="scanner-portal-start-camera-button"
+              reconnect_id="scanner-portal-reconnect-camera-button"
+              stop_id="scanner-portal-stop-camera-button"
+              runtime={@camera_runtime}
+              scans_disabled={@scans_disabled?}
+              start_label="Start scanning"
+            />
+          </div>
+        </section>
+      </div>
     </Layouts.app>
     """
   end
@@ -1288,42 +932,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp scan_reason(:not_checked_in), do: "Attendee is not currently inside"
   defp scan_reason(_), do: nil
 
-  defp scan_result_color(:success, "entry"), do: "success"
-  defp scan_result_color(:success, "exit"), do: "warning"
-  defp scan_result_color(:duplicate_today, _), do: "warning"
-  defp scan_result_color(:already_inside, _), do: "warning"
-  defp scan_result_color(:archived, _), do: "natural"
-  defp scan_result_color(:invalid, _), do: "danger"
-  defp scan_result_color(:limit_exceeded, _), do: "danger"
-  defp scan_result_color(:not_checked_in, _), do: "danger"
-  defp scan_result_color(:not_yet_valid, _), do: "danger"
-  defp scan_result_color(:expired, _), do: "danger"
-  defp scan_result_color(:error, _), do: "danger"
-  defp scan_result_color(_, _), do: "natural"
-
-  defp scan_result_title(:success, "entry"), do: "Entry confirmed"
-  defp scan_result_title(:success, "exit"), do: "Exit confirmed"
-  defp scan_result_title(:duplicate_today, _), do: "Duplicate scan"
-  defp scan_result_title(:already_inside, _), do: "Already inside"
-  defp scan_result_title(:limit_exceeded, _), do: "Check-in limit reached"
-  defp scan_result_title(:not_checked_in, _), do: "Cannot check out"
-  defp scan_result_title(:not_yet_valid, _), do: "Ticket not yet valid"
-  defp scan_result_title(:expired, _), do: "Ticket expired"
-  defp scan_result_title(:invalid, _), do: "Invalid ticket"
-  defp scan_result_title(:archived, _), do: "Scanning unavailable"
-  defp scan_result_title(:error, _), do: "Scan error"
-  defp scan_result_title(_, _), do: "Scan status"
-
-  defp scan_result_icon(:success, "entry"), do: "hero-check-circle"
-  defp scan_result_icon(:success, "exit"), do: "hero-arrow-left-circle"
-  defp scan_result_icon(:duplicate_today, _), do: "hero-exclamation-triangle"
-  defp scan_result_icon(:already_inside, _), do: "hero-exclamation-triangle"
-  defp scan_result_icon(:not_checked_in, _), do: "hero-x-circle"
-  defp scan_result_icon(:limit_exceeded, _), do: "hero-no-symbol"
-  defp scan_result_icon(:invalid, _), do: "hero-x-circle"
-  defp scan_result_icon(:error, _), do: "hero-x-circle"
-  defp scan_result_icon(_, _), do: "hero-question-mark-circle"
-
   defp normalize_error_code(code) do
     code
     |> to_string()
@@ -1411,8 +1019,15 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp default_camera_permission, do: @default_camera_permission
 
-  defp normalize_tab(value) when value in @valid_tabs, do: value
-  defp normalize_tab(_), do: "camera"
+  defp normalize_drawer_section("sync"), do: :sync
+  defp normalize_drawer_section("operator"), do: :operator
+  defp normalize_drawer_section("attendees"), do: :attendees
+  defp normalize_drawer_section("history"), do: :history
+
+  defp normalize_drawer_section(value) when value in [:sync, :operator, :attendees, :history],
+    do: value
+
+  defp normalize_drawer_section(_), do: nil
 
   defp normalize_check_in_type(value) when value in ["entry", "exit"], do: value
 
@@ -1528,8 +1143,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
     |> assign(:sync_progress, {0, 0, 0})
     |> assign(:sync_status, "Starting incremental sync...")
     |> assign(:sync_status_kind, :info)
-    |> assign(:menu_open, false)
-    |> assign(:operator_form_open, false)
+    |> assign(:menu_open, true)
+    |> assign(:drawer_section, :sync)
   end
 
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value
@@ -1548,15 +1163,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp sanitize_non_neg_integer(value) when is_integer(value) and value >= 0, do: value
   defp sanitize_non_neg_integer(value) when is_float(value) and value >= 0, do: trunc(value)
   defp sanitize_non_neg_integer(_), do: 0
-
-  defp format_percentage(value) when is_number(value),
-    do: :erlang.float_to_binary(value, decimals: 1)
-
-  defp format_percentage(_), do: "0.0"
-
-  defp occupancy_status_color(percentage) when percentage >= 95, do: "danger"
-  defp occupancy_status_color(percentage) when percentage > 75, do: "warning"
-  defp occupancy_status_color(_), do: "success"
 
   defp scanner_lifecycle_badge_color(:archived), do: "danger"
   defp scanner_lifecycle_badge_color(:grace), do: "warning"
@@ -1597,32 +1203,20 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp default_camera_runtime, do: @default_camera_runtime
 
-  defp camera_permission_alert_kind(:granted), do: :success
-  defp camera_permission_alert_kind(:denied), do: :danger
-  defp camera_permission_alert_kind(:error), do: :danger
-  defp camera_permission_alert_kind(:unsupported), do: :warning
-  defp camera_permission_alert_kind(_), do: :info
-
-  defp camera_permission_status_label(:granted), do: "Camera enabled"
-  defp camera_permission_status_label(:denied), do: "Camera blocked"
-  defp camera_permission_status_label(:error), do: "Camera error"
-  defp camera_permission_status_label(:unsupported), do: "Camera unsupported"
-  defp camera_permission_status_label(_), do: "Camera ready"
-
   defp camera_permission_default_message(:granted),
-    do: "Camera access granted. You can start scanning."
+    do: "Camera ready."
 
   defp camera_permission_default_message(:denied),
-    do: "Camera access was denied. Enable it in your browser settings."
+    do: "Camera blocked. Enable it in your browser settings."
 
   defp camera_permission_default_message(:error),
-    do: "Something went wrong while accessing the camera."
+    do: "Camera error."
 
   defp camera_permission_default_message(:unsupported),
-    do: "This browser does not support camera scanning."
+    do: "Camera unsupported. Use manual entry."
 
   defp camera_permission_default_message(_),
-    do: "Enable camera access to scan QR codes faster."
+    do: "Enable camera to start scanning."
 
   defp normalize_camera_permission_status("granted"), do: :granted
   defp normalize_camera_permission_status("denied"), do: :denied
@@ -1657,68 +1251,22 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp truthy?(_), do: false
 
   defp camera_runtime_default_message(:starting),
-    do: "Starting the camera for this scanner tab."
+    do: "Camera starting."
 
   defp camera_runtime_default_message(:running),
-    do: "Camera is live and ready to decode QR codes."
+    do: "Camera running."
 
   defp camera_runtime_default_message(:paused),
-    do: "Camera is paused. Return to this page or reconnect to continue scanning."
+    do: "Camera paused."
 
   defp camera_runtime_default_message(:recovering),
-    do: "Camera is reconnecting after the browser changed state."
+    do: "Camera reconnecting."
 
   defp camera_runtime_default_message(:error),
-    do: "Camera recovery failed. Reconnect the camera or re-check permission."
+    do: "Reconnect camera."
 
   defp camera_runtime_default_message(_),
-    do: "Camera is idle. Start scanning when ready."
-
-  defp camera_runtime_status_label(:starting), do: "Camera starting"
-  defp camera_runtime_status_label(:running), do: "Camera running"
-  defp camera_runtime_status_label(:paused), do: "Camera paused"
-  defp camera_runtime_status_label(:recovering), do: "Camera reconnecting"
-  defp camera_runtime_status_label(:error), do: "Camera needs attention"
-  defp camera_runtime_status_label(_), do: "Camera idle"
-
-  defp camera_runtime_alert_kind(:running), do: :success
-  defp camera_runtime_alert_kind(:paused), do: :warning
-  defp camera_runtime_alert_kind(:recovering), do: :info
-  defp camera_runtime_alert_kind(:error), do: :danger
-  defp camera_runtime_alert_kind(:starting), do: :info
-  defp camera_runtime_alert_kind(_), do: :info
-
-  defp camera_runtime_needs_reconnect?(state) when state in [:paused, :recovering, :error],
-    do: true
-
-  defp camera_runtime_needs_reconnect?(_), do: false
-
-  defp camera_reconnect_button_color(state) when state in [:paused, :recovering, :error],
-    do: "success"
-
-  defp camera_reconnect_button_color(_), do: "natural"
-
-  defp camera_reconnect_button_variant(state) when state in [:paused, :recovering, :error],
-    do: "shadow"
-
-  defp camera_reconnect_button_variant(_), do: "bordered"
-
-  defp camera_runtime_support_copy(%{state: state, desired_active: true})
-       when state in [:paused, :recovering] do
-    "The scanner will try to restore this camera session automatically when the page becomes active again."
-  end
-
-  defp camera_runtime_support_copy(%{state: :error}) do
-    "If the preview goes black or freezes, reconnect the camera first. Re-check permission if the browser blocked access."
-  end
-
-  defp camera_runtime_support_copy(%{desired_active: true}) do
-    "This tab will keep trying to restore the camera while the scanner session stays active."
-  end
-
-  defp camera_runtime_support_copy(_runtime) do
-    "Start scanning when you need the camera. Stop or leave the page to release it cleanly."
-  end
+    do: "Camera idle."
 
   defp apply_optimistic_scan_metrics(socket, mode) do
     current_stats = socket.assigns.stats || %{total: 0, checked_in: 0, pending: 0}
