@@ -74,6 +74,41 @@ defmodule FastCheckWeb.ScannerLiveTest do
 
       assert has_element?(view, "[data-test=\"manual-check-in-#{attendee.ticket_code}\"]")
     end
+
+    test "bulk scan textarea blur enables processing", %{conn: conn} do
+      event = insert_event()
+      attendee = insert_attendee(event, @valid_attendee_attrs)
+
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("#bulk-mode-toggle")
+      |> render_click()
+
+      assert has_element?(view, "#process-bulk-button[disabled]")
+
+      view
+      |> element("#bulk-scan-form textarea")
+      |> render_blur(%{"value" => attendee.ticket_code})
+
+      refute has_element?(view, "#process-bulk-button[disabled]")
+      assert render(view) =~ attendee.ticket_code
+    end
+
+    test "bulk scan empty submit renders an error result", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("#bulk-mode-toggle")
+      |> render_click()
+
+      view
+      |> form("#bulk-scan-form", %{codes: ""})
+      |> render_submit()
+
+      assert render(view) =~ "No ticket codes provided."
+    end
   end
 
   describe "manual_check_in event" do

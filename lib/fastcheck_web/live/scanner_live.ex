@@ -206,8 +206,7 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   def handle_event("update_bulk_codes", params, socket) when is_map(params) do
-    # Handle case where codes might be in different format
-    codes = Map.get(params, "codes", socket.assigns.bulk_codes)
+    codes = Map.get(params, "codes") || Map.get(params, "value") || socket.assigns.bulk_codes
     {:noreply, assign(socket, :bulk_codes, codes)}
   end
 
@@ -227,7 +226,9 @@ defmodule FastCheckWeb.ScannerLive do
     if Enum.empty?(codes) do
       {:noreply,
        socket
-       |> assign(:bulk_results, [%{status: :error, message: "No ticket codes provided."}])}
+       |> assign(:bulk_results, [
+         %{code: "", status: :error, message: "No ticket codes provided."}
+       ])}
     else
       # Start async processing
       send(self(), {:process_bulk_codes_async, codes})
@@ -895,6 +896,7 @@ defmodule FastCheckWeb.ScannerLive do
                     field={@bulk_form[:codes]}
                     type="textarea"
                     rows="10"
+                    value={@bulk_codes}
                     phx-blur="update_bulk_codes"
                     phx-debounce="300"
                     placeholder="Paste ticket codes here, one per line"
