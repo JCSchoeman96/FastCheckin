@@ -107,7 +107,7 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
-        assertThat(uiState.admissionStatusVerdict).isEqualTo("Ready for admission")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission state current")
         assertThat(uiState.admissionStatusDetail).isEqualTo("Recent attendee data is available for this event.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
         assertThat(uiState.factLabels).containsExactly("Synced attendees: 20", "Last sync 08:50").inOrder()

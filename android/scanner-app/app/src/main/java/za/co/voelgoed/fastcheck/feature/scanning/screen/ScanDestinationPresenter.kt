@@ -283,7 +283,7 @@ class ScanDestinationPresenter(
                                 text = "Attendee list ready",
                                 tone = StatusTone.Success
                             ),
-                        verdict = "Ready for admission",
+                        verdict = "Admission state current",
                         detail = "Recent attendee data is available for this event."
                     )
                 }
