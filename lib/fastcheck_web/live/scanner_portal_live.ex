@@ -648,6 +648,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           <div
             id="scanner-portal-qr-camera"
             phx-hook="QrCameraScanner"
+            data-variant="field"
             data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
             data-resume-key={"fastcheck:camera-runtime:event-#{@event_id}:portal"}
             class="scanner-camera-panel"

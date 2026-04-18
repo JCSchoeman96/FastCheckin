@@ -23,6 +23,7 @@ export const QrCameraScanner = {
     this.cooldownMs = 1500;
     this.scansDisabled = this.el.dataset.scansDisabled === "true";
     this.resumeKey = this.el.dataset.resumeKey || `${this.el.id}:desired-active`;
+    this.variant = this.el.dataset.variant || "default";
     this.desiredActive = this.readDesiredActive();
     this.runtimeState = "idle";
     this.runtimeMessage = null;
@@ -253,11 +254,14 @@ export const QrCameraScanner = {
 
   syncButtonState() {
     const busy = this.running || this.starting;
+    
     const reconnectAllowed =
       this.recoverable &&
       this.cameraSupported &&
       !this.scansDisabled &&
-      ["paused", "recovering", "error"].includes(this.runtimeState);
+      (this.variant === "field"
+        ? ["paused", "recovering", "error"].includes(this.runtimeState)
+        : true);
 
     this.el.dataset.qrRuntimeState = this.runtimeState;
 

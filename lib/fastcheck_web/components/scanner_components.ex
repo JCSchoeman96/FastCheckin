@@ -271,7 +271,14 @@ defmodule FastCheckWeb.Components.ScannerComponents do
     start =
       camera_start_action(field_variant?, runtime_state, desired_active, assigns.scans_disabled)
 
-    reconnect = camera_reconnect_action(recoverable, reconnect_needed?, assigns.scans_disabled)
+    reconnect =
+      camera_reconnect_action(
+        field_variant?,
+        recoverable,
+        reconnect_needed?,
+        assigns.scans_disabled
+      )
+
     stop = camera_stop_action(field_variant?, runtime_state, assigns.scans_disabled)
 
     assigns =
@@ -507,21 +514,28 @@ defmodule FastCheckWeb.Components.ScannerComponents do
   defp camera_start_action(field_variant?, runtime_state, desired_active, scans_disabled) do
     running? = runtime_state in [:starting, :running]
     reconnect_needed? = camera_runtime_needs_reconnect?(runtime_state)
-    disabled? = scans_disabled or (field_variant? and (running? or desired_active))
+    disabled? = scans_disabled or running? or desired_active
     primary? = field_variant? and not disabled? and not reconnect_needed?
 
     camera_action_config(primary?, disabled?, primary_color: "success")
   end
 
-  defp camera_reconnect_action(recoverable, reconnect_needed?, scans_disabled) do
+  defp camera_reconnect_action(field_variant?, recoverable, reconnect_needed?, scans_disabled) do
     primary? = recoverable and reconnect_needed? and not scans_disabled
 
-    camera_action_config(primary?, not primary?, primary_color: "warning")
+    disabled? =
+      if field_variant? do
+        not primary?
+      else
+        not recoverable or scans_disabled
+      end
+
+    camera_action_config(primary?, disabled?, primary_color: "warning")
   end
 
   defp camera_stop_action(field_variant?, runtime_state, scans_disabled) do
     running? = runtime_state in [:starting, :running]
-    disabled? = if(field_variant?, do: scans_disabled or not running?, else: true)
+    disabled? = scans_disabled or not running?
     primary? = field_variant? and not disabled?
 
     camera_action_config(primary?, disabled?, primary_color: "danger")
