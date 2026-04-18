@@ -21,18 +21,19 @@ defmodule FastCheckWeb.ScannerPortalLive do
   @default_stats_reconcile_ms 30_000
   @default_force_refresh_every_n_scans 20
   @error_status_map %{
-    "duplicate_today" => :duplicate_today,
-    "duplicate" => :duplicate_today,
+    "duplicate_today" => :already_used,
+    "duplicate" => :already_used,
     "already_inside" => :already_inside,
     "limit_exceeded" => :limit_exceeded,
     "not_checked_in" => :not_checked_in,
-    "not_yet_valid" => :not_yet_valid,
-    "expired" => :expired,
-    "invalid" => :invalid,
-    "invalid_ticket" => :invalid,
-    "not_found" => :invalid,
-    "archived_event" => :archived,
-    "scans_disabled" => :archived
+    "payment_invalid" => :payment_invalid,
+    "invalid" => :invalid_ticket,
+    "invalid_ticket" => :invalid_ticket,
+    "not_found" => :invalid_ticket,
+    "event_not_found" => :invalid_ticket,
+    "ticket_in_use_elsewhere" => :busy_retry,
+    "archived_event" => :scanner_closed,
+    "scans_disabled" => :scanner_closed
   }
 
   @impl true
@@ -174,9 +175,10 @@ defmodule FastCheckWeb.ScannerPortalLive do
       {:noreply,
        socket
        |> assign(:ticket_code, "")
-       |> assign(:last_scan_status, :invalid)
+       |> assign(:last_scan_status, :invalid_ticket)
        |> assign(:last_scan_result, "No ticket detected. Please try again.")
-       |> assign(:last_scan_reason, nil)}
+       |> assign(:last_scan_reason, nil)
+       |> push_scan_result(:invalid_ticket)}
     else
       process_scan(code, socket)
     end
@@ -435,20 +437,64 @@ defmodule FastCheckWeb.ScannerPortalLive do
           disabled={@scans_disabled?}
         />
 
+        <section id="scanner-primary-search" class="scanner-primary-search">
+          <.form id="scanner-portal-search-form" for={@search_form} phx-change="search_attendees">
+            <.input
+              id="scanner-portal-search-input"
+              field={@search_form[:query]}
+              type="search"
+              placeholder="Find attendee or ticket"
+              autocomplete="off"
+              phx-debounce="300"
+            />
+          </.form>
+
+          <p :if={@search_error} class="text-sm text-danger-light dark:text-danger-dark">
+            {@search_error}
+          </p>
+
+          <p :if={@search_loading} class="scanner-inline-status">Searching</p>
+
+          <div
+            :if={@search_results != [] and String.trim(@search_query || "") != ""}
+            class="scanner-search-results"
+          >
+            <div :for={attendee <- Enum.take(@search_results, 3)} class="scanner-search-result">
+              <div class="min-w-0">
+                <p class="truncate text-sm font-semibold text-fc-text-primary">
+                  {attendee.first_name} {attendee.last_name}
+                </p>
+                <p class="truncate text-xs text-fc-text-secondary">{attendee.ticket_code}</p>
+              </div>
+
+              <.button
+                type="button"
+                phx-click="manual_scan"
+                phx-value-ticket_code={attendee.ticket_code}
+                color={manual_action_color(@check_in_type)}
+                variant="bordered"
+                size="small"
+                disabled={!attendee_actionable?(attendee, @check_in_type) || @scans_disabled?}
+                data-test={"manual-check-in-#{attendee.ticket_code}"}
+              >
+                {manual_action_label(@check_in_type)}
+              </.button>
+            </div>
+          </div>
+
+          <p
+            :if={
+              @search_results == [] and @search_query != "" and not @search_loading and
+                is_nil(@search_error)
+            }
+            class="scanner-empty-state"
+          >
+            No attendees found.
+          </p>
+        </section>
+
         <aside :if={@menu_open} id="scanner-menu-panel" class="scanner-drawer">
           <div class="scanner-drawer-nav">
-            <.button
-              id="scanner-menu-sync"
-              type="button"
-              phx-click="set_drawer_section"
-              phx-value-section="sync"
-              variant={if(@drawer_section == :sync, do: "shadow", else: "bordered")}
-              color={if(@drawer_section == :sync, do: "secondary", else: "natural")}
-              full_width
-            >
-              Sync
-            </.button>
-
             <.button
               id="scanner-menu-change-operator"
               type="button"
@@ -462,18 +508,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
             </.button>
 
             <.button
-              id="scanner-menu-attendees"
-              type="button"
-              phx-click="set_drawer_section"
-              phx-value-section="attendees"
-              variant={if(@drawer_section == :attendees, do: "shadow", else: "bordered")}
-              color="natural"
-              full_width
-            >
-              Find attendee
-            </.button>
-
-            <.button
               id="scanner-menu-history"
               type="button"
               phx-click="set_drawer_section"
@@ -484,38 +518,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
             >
               Recent scans
             </.button>
-          </div>
-
-          <div :if={@drawer_section == :sync} id="scanner-drawer-sync" class="scanner-drawer-section">
-            <div class="scanner-drawer-heading">
-              <h2>Sync attendees</h2>
-              <p>{if(@syncing, do: "Sync running", else: "Update local attendee data")}</p>
-            </div>
-
-            <.button
-              id="scanner-menu-sync-action"
-              type="button"
-              phx-click="start_incremental_sync"
-              variant="bordered"
-              color="secondary"
-              full_width
-              disabled={@syncing}
-            >
-              {if(@syncing, do: "Syncing", else: "Run sync")}
-            </.button>
-
-            <div :if={@sync_status} id="scanner-sync-status" class="scanner-inline-status">
-              <p>{@sync_status}</p>
-              <.button
-                type="button"
-                size="extra_small"
-                variant="transparent"
-                color="natural"
-                phx-click="close_sync_status"
-              >
-                <.icon name="hero-x-mark" class="size-4" />
-              </.button>
-            </div>
           </div>
 
           <.form
@@ -551,68 +553,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
           </.form>
 
           <div
-            :if={@drawer_section == :attendees}
-            id="scanner-drawer-attendees"
-            class="scanner-drawer-section"
-          >
-            <div class="scanner-drawer-heading">
-              <h2>Find attendee</h2>
-              <p>Search by name or ticket code.</p>
-            </div>
-
-            <.form id="scanner-portal-search-form" for={@search_form} phx-change="search_attendees">
-              <.input
-                id="scanner-portal-search-input"
-                field={@search_form[:query]}
-                type="search"
-                placeholder="Name, email, or ticket code"
-                autocomplete="off"
-                phx-debounce="300"
-              />
-            </.form>
-
-            <p :if={@search_error} class="text-sm text-danger-light dark:text-danger-dark">
-              {@search_error}
-            </p>
-
-            <p :if={@search_loading} class="scanner-inline-status">Searching</p>
-
-            <div :if={@search_results != []} class="scanner-search-results">
-              <div :for={attendee <- @search_results} class="scanner-search-result">
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-semibold text-fc-text-primary">
-                    {attendee.first_name} {attendee.last_name}
-                  </p>
-                  <p class="truncate text-xs text-fc-text-secondary">{attendee.ticket_code}</p>
-                </div>
-
-                <.button
-                  type="button"
-                  phx-click="manual_scan"
-                  phx-value-ticket_code={attendee.ticket_code}
-                  color={manual_action_color(@check_in_type)}
-                  variant="bordered"
-                  size="small"
-                  disabled={!attendee_actionable?(attendee, @check_in_type) || @scans_disabled?}
-                  data-test={"manual-check-in-#{attendee.ticket_code}"}
-                >
-                  {manual_action_label(@check_in_type)}
-                </.button>
-              </div>
-            </div>
-
-            <p
-              :if={
-                @search_results == [] and @search_query != "" and not @search_loading and
-                  is_nil(@search_error)
-              }
-              class="scanner-empty-state"
-            >
-              No attendees found.
-            </p>
-          </div>
-
-          <div
             :if={@drawer_section == :history}
             id="scanner-drawer-history"
             class="scanner-drawer-section"
@@ -630,36 +570,145 @@ defmodule FastCheckWeb.ScannerPortalLive do
           </.link>
         </aside>
 
-        <.alert
-          :if={@scans_disabled?}
-          kind={:danger}
-          variant="bordered"
-          rounded="large"
-          title="Scanning disabled"
-        >
-          {@scans_disabled_message || "Event archived, scanning disabled"}
-        </.alert>
-
-        <.scan_result_banner
-          :if={@last_scan_status}
-          id="scanner-portal-scan-result"
-          status={@last_scan_status}
-          check_in_type={@check_in_type}
-          message={@last_scan_result}
-          reason={@last_scan_reason}
-          size={:compact}
-          data-test="scan-status"
-        />
-
         <section
-          id="scanner-field-camera"
+          id="scanner-primary-scan-block"
           class="scanner-camera-stack"
           data-test="scanner-field-camera"
         >
           <div
+            id="scanner-portal-qr-camera"
+            phx-hook="QrCameraScanner"
+            data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
+            data-resume-key={"fastcheck:camera-runtime:event-#{@event_id}:portal"}
+            class="scanner-camera-panel"
+          >
+            <.camera_action_row
+              start_id="scanner-portal-start-camera-button"
+              reconnect_id="scanner-portal-reconnect-camera-button"
+              stop_id="scanner-portal-stop-camera-button"
+              runtime={@camera_runtime}
+              scans_disabled={@scans_disabled?}
+              start_label="Start scanning"
+              variant={:field}
+            />
+
+            <p data-qr-status class="scanner-camera-status-text">Camera idle</p>
+            <p data-qr-last class="scanner-camera-last-text"></p>
+
+            <div
+              id="scanner-portal-camera-preview-shell"
+              phx-update="ignore"
+              class="scanner-camera-preview"
+            >
+              <video
+                id="scanner-portal-camera-preview"
+                data-qr-video
+                class="scanner-camera-video"
+                autoplay
+                muted
+                playsinline
+              >
+              </video>
+              <canvas data-qr-canvas class="hidden"></canvas>
+            </div>
+
+            <div class="scanner-result-slot">
+              <.scan_result_banner
+                :if={@last_scan_status || @scans_disabled?}
+                id="scanner-portal-scan-result"
+                status={@last_scan_status || :scanner_closed}
+                check_in_type={@check_in_type}
+                message={
+                  @last_scan_result ||
+                    @scans_disabled_message ||
+                    "Scanning is closed for this event."
+                }
+                reason={@last_scan_reason}
+                size={:field}
+                data-test="scan-status"
+              />
+
+              <div
+                :if={!@last_scan_status && !@scans_disabled?}
+                id="scanner-portal-scan-result-placeholder"
+                class="scanner-result-placeholder"
+                aria-hidden="true"
+              >
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="scanner-secondary-tools" class="scanner-secondary-tools">
+          <.form
+            id="scanner-portal-scan-form"
+            for={@scan_form}
+            phx-submit="scan"
+            phx-change="update_code"
+            class="scanner-manual-form"
+          >
+            <.input
+              id="scanner-ticket-code"
+              field={@scan_form[:ticket_code]}
+              type="text"
+              label="Manual code"
+              placeholder="Ticket code"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              inputmode="text"
+              disabled={@scans_disabled?}
+            />
+            <.button
+              id="scanner-portal-manual-scan-button"
+              type="submit"
+              color="success"
+              variant="bordered"
+              full_width
+              disabled={@scans_disabled?}
+            >
+              Process scan
+            </.button>
+          </.form>
+
+          <section id="scanner-secondary-sync" class="scanner-secondary-panel">
+            <div class="scanner-drawer-heading">
+              <h2>Sync attendees</h2>
+              <p>{if(@syncing, do: "Sync running", else: "Update attendee data")}</p>
+            </div>
+
+            <.button
+              id="scanner-menu-sync-action"
+              type="button"
+              phx-click="start_incremental_sync"
+              variant="bordered"
+              color="secondary"
+              full_width
+              disabled={@syncing}
+            >
+              {if(@syncing, do: "Syncing", else: "Run sync")}
+            </.button>
+
+            <div :if={@sync_status} id="scanner-sync-status" class="scanner-inline-status">
+              <p>{@sync_status}</p>
+              <.button
+                type="button"
+                size="extra_small"
+                variant="transparent"
+                color="natural"
+                phx-click="close_sync_status"
+              >
+                <.icon name="hero-x-mark" class="size-4" />
+              </.button>
+            </div>
+          </section>
+
+          <section
             id="scanner-portal-camera-permission-hook"
             phx-hook="CameraPermission"
             data-storage-key={"fastcheck:camera-permission:event-#{@event_id}:portal"}
+            class="scanner-secondary-panel"
           >
             <.camera_status_strip
               id="scanner-portal-camera-status"
@@ -691,76 +740,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 Check permission
               </.button>
             </div>
-          </div>
-
-          <div
-            id="scanner-portal-qr-camera"
-            phx-hook="QrCameraScanner"
-            data-scans-disabled={if(@scans_disabled?, do: "true", else: "false")}
-            data-resume-key={"fastcheck:camera-runtime:event-#{@event_id}:portal"}
-            class="scanner-camera-panel"
-          >
-            <div
-              id="scanner-portal-camera-preview-shell"
-              phx-update="ignore"
-              class="scanner-camera-preview"
-            >
-              <video
-                id="scanner-portal-camera-preview"
-                data-qr-video
-                class="scanner-camera-video"
-                autoplay
-                muted
-                playsinline
-              >
-              </video>
-              <canvas data-qr-canvas class="hidden"></canvas>
-            </div>
-
-            <p data-qr-status class="scanner-camera-status-text">Camera idle</p>
-            <p data-qr-last class="scanner-camera-last-text"></p>
-
-            <.form
-              id="scanner-portal-scan-form"
-              for={@scan_form}
-              phx-submit="scan"
-              phx-change="update_code"
-              class="scanner-manual-form"
-            >
-              <.input
-                id="scanner-ticket-code"
-                field={@scan_form[:ticket_code]}
-                type="text"
-                label="Manual code"
-                placeholder="Ticket code"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="characters"
-                spellcheck="false"
-                inputmode="text"
-                disabled={@scans_disabled?}
-              />
-              <.button
-                id="scanner-portal-manual-scan-button"
-                type="submit"
-                color="success"
-                variant="bordered"
-                full_width
-                disabled={@scans_disabled?}
-              >
-                Process scan
-              </.button>
-            </.form>
-
-            <.camera_action_row
-              start_id="scanner-portal-start-camera-button"
-              reconnect_id="scanner-portal-reconnect-camera-button"
-              stop_id="scanner-portal-stop-camera-button"
-              runtime={@camera_runtime}
-              scans_disabled={@scans_disabled?}
-              start_label="Start scanning"
-            />
-          </div>
+          </section>
         </section>
       </div>
     </Layouts.app>
@@ -773,10 +753,11 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
       {:noreply,
        socket
-       |> assign(:last_scan_status, :archived)
+       |> assign(:last_scan_status, :scanner_closed)
        |> assign(:last_scan_result, message)
        |> assign(:last_scan_reason, nil)
-       |> assign(:ticket_code, "")}
+       |> assign(:ticket_code, "")
+       |> push_scan_result(:scanner_closed)}
     else
       do_process_scan(code, socket)
     end
@@ -810,7 +791,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           build_scan_history_entry(
             sanitized_code,
             attendee,
-            :success,
+            :accepted,
             success_message(attendee, mode),
             mode
           )
@@ -818,7 +799,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
         socket =
           socket
           |> assign(
-            last_scan_status: :success,
+            last_scan_status: :accepted,
             last_scan_result: success_message(attendee, mode),
             last_scan_reason: nil,
             ticket_code: "",
@@ -826,7 +807,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           )
           |> apply_optimistic_scan_metrics(mode)
           |> maybe_force_scan_reconcile()
-          |> push_event("scan_result", %{status: "success"})
+          |> push_scan_result(:accepted)
 
         {:noreply, socket}
 
@@ -852,7 +833,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
             scan_history: add_to_scan_history(socket.assigns.scan_history, entry)
           )
           |> maybe_disable_scanning(error_code, message)
-          |> push_event("scan_result", %{status: "error"})
+          |> push_scan_result(normalized_status)
 
         {:noreply, socket}
     end
@@ -926,10 +907,12 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp add_to_scan_history(history, entry), do: [entry | history] |> Enum.take(10)
 
-  defp scan_reason(:duplicate_today), do: "Already scanned"
+  defp scan_reason(:already_used), do: "Already scanned"
   defp scan_reason(:already_inside), do: "Attendee already inside"
   defp scan_reason(:limit_exceeded), do: "No check-ins remaining"
   defp scan_reason(:not_checked_in), do: "Attendee is not currently inside"
+  defp scan_reason(:payment_invalid), do: "Order status is not completed"
+  defp scan_reason(:busy_retry), do: "Ticket is being processed"
   defp scan_reason(_), do: nil
 
   defp normalize_error_code(code) do
@@ -938,8 +921,22 @@ defmodule FastCheckWeb.ScannerPortalLive do
     |> String.trim()
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9]+/, "_")
-    |> then(&Map.get(@error_status_map, &1, :error))
+    |> then(&Map.get(@error_status_map, &1, :system_error))
   end
+
+  defp push_scan_result(socket, status) do
+    push_event(socket, "scan_result", %{
+      status: Atom.to_string(status),
+      sound: scan_sound(status)
+    })
+  end
+
+  defp scan_sound(:accepted), do: "success"
+
+  defp scan_sound(status) when status in [:already_used, :already_inside, :busy_retry],
+    do: "warning"
+
+  defp scan_sound(_), do: "error"
 
   defp success_message(attendee, "exit"),
     do: "Exit confirmed for #{attendee_first_name(attendee)}."
@@ -1019,12 +1016,10 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   defp default_camera_permission, do: @default_camera_permission
 
-  defp normalize_drawer_section("sync"), do: :sync
   defp normalize_drawer_section("operator"), do: :operator
-  defp normalize_drawer_section("attendees"), do: :attendees
   defp normalize_drawer_section("history"), do: :history
 
-  defp normalize_drawer_section(value) when value in [:sync, :operator, :attendees, :history],
+  defp normalize_drawer_section(value) when value in [:operator, :history],
     do: value
 
   defp normalize_drawer_section(_), do: nil
@@ -1143,8 +1138,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
     |> assign(:sync_progress, {0, 0, 0})
     |> assign(:sync_status, "Starting incremental sync...")
     |> assign(:sync_status_kind, :info)
-    |> assign(:menu_open, true)
-    |> assign(:drawer_section, :sync)
   end
 
   defp normalize_capacity(value) when is_integer(value) and value > 0, do: value

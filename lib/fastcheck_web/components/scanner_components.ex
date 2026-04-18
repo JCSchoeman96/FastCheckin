@@ -121,6 +121,8 @@ defmodule FastCheckWeb.Components.ScannerComponents do
       |> assign(:color, scan_result_color(assigns.status, assigns.check_in_type))
       |> assign(:icon, scan_result_icon(assigns.status, assigns.check_in_type))
       |> assign(:title, scan_result_title(assigns.status, assigns.check_in_type))
+      |> assign(:padding, scan_result_padding(assigns.size))
+      |> assign(:icon_class, scan_result_icon_class(assigns.size))
 
     ~H"""
     <.card
@@ -128,14 +130,20 @@ defmodule FastCheckWeb.Components.ScannerComponents do
       variant="base"
       color={@color}
       rounded="large"
-      padding={if(@size == :compact, do: "medium", else: "large")}
-      class={class_join(["scanner-result-banner fc-scan-pulse", @class])}
+      padding={@padding}
+      class={
+        class_join([
+          "scanner-result-banner fc-scan-pulse",
+          @size == :field && "scanner-result-banner--field",
+          @class
+        ])
+      }
       {@rest}
     >
       <.card_content>
         <div class="scanner-result-content">
           <div class="scanner-result-icon">
-            <.icon name={@icon} class={if(@size == :compact, do: "size-6", else: "size-8")} />
+            <.icon name={@icon} class={@icon_class} />
           </div>
 
           <div class="min-w-0">
@@ -148,7 +156,10 @@ defmodule FastCheckWeb.Components.ScannerComponents do
             </p>
             <p :if={@reason} class="scanner-result-reason">{@reason}</p>
 
-            <div :if={@status == :success and @checkins_allowed > 1} class="mt-3 space-y-2">
+            <div
+              :if={@status in [:accepted, :success] and @checkins_allowed > 1}
+              class="mt-3 space-y-2"
+            >
               <p class="text-sm opacity-90">
                 Check-ins used: {@checkins_used} of {@checkins_allowed}
               </p>
@@ -212,16 +223,19 @@ defmodule FastCheckWeb.Components.ScannerComponents do
   attr :runtime, :map, required: true
   attr :scans_disabled, :boolean, default: false
   attr :start_label, :string, default: "Start scanning"
+  attr :variant, :atom, default: :default
   attr :class, :string, default: nil
 
   def camera_action_row(assigns) do
     runtime_state = Map.get(assigns.runtime, :state, :idle)
     recoverable = Map.get(assigns.runtime, :recoverable, true)
+    field_variant? = assigns.variant == :field
 
     assigns =
       assigns
       |> assign(:runtime_state, runtime_state)
       |> assign(:recoverable, recoverable)
+      |> assign(:field_variant?, field_variant?)
       |> assign(
         :start_color,
         if(camera_runtime_needs_reconnect?(runtime_state), do: "natural", else: "success")
@@ -232,15 +246,23 @@ defmodule FastCheckWeb.Components.ScannerComponents do
       )
       |> assign(:reconnect_color, camera_reconnect_button_color(runtime_state))
       |> assign(:reconnect_variant, camera_reconnect_button_variant(runtime_state))
+      |> assign(:stop_color, if(field_variant?, do: "danger", else: "natural"))
+      |> assign(:stop_variant, if(field_variant?, do: "shadow", else: "bordered"))
+      |> assign(:stop_disabled, if(field_variant?, do: assigns.scans_disabled, else: true))
 
     ~H"""
-    <div class={["scanner-camera-actions", @class]}>
+    <div class={[
+      "scanner-camera-actions",
+      @field_variant? && "scanner-camera-actions--field",
+      @class
+    ]}>
       <.button
         id={@start_id}
         type="button"
         data-qr-start
         color={@start_color}
         variant={@start_variant}
+        class={@field_variant? && "scanner-camera-action scanner-camera-action--start"}
         full_width
         disabled={@scans_disabled}
       >
@@ -253,6 +275,8 @@ defmodule FastCheckWeb.Components.ScannerComponents do
         data-qr-reconnect
         color={@reconnect_color}
         variant={@reconnect_variant}
+        size={if(@field_variant?, do: "small", else: "large")}
+        class={@field_variant? && "scanner-camera-action scanner-camera-action--reconnect"}
         full_width
         disabled={!@recoverable or @scans_disabled}
       >
@@ -263,12 +287,13 @@ defmodule FastCheckWeb.Components.ScannerComponents do
         id={@stop_id}
         type="button"
         data-qr-stop
-        variant="bordered"
-        color="natural"
+        variant={@stop_variant}
+        color={@stop_color}
+        class={@field_variant? && "scanner-camera-action scanner-camera-action--stop"}
         full_width
-        disabled
+        disabled={@stop_disabled}
       >
-        Stop
+        Stop scanning
       </.button>
     </div>
     """
@@ -323,41 +348,69 @@ defmodule FastCheckWeb.Components.ScannerComponents do
     """
   end
 
+  defp scan_result_color(:accepted, _), do: "success"
   defp scan_result_color(:success, "entry"), do: "success"
   defp scan_result_color(:success, "exit"), do: "warning"
+  defp scan_result_color(:already_used, _), do: "warning"
   defp scan_result_color(:duplicate_today, _), do: "warning"
   defp scan_result_color(:already_inside, _), do: "warning"
+  defp scan_result_color(:busy_retry, _), do: "warning"
+  defp scan_result_color(:scanner_closed, _), do: "natural"
   defp scan_result_color(:archived, _), do: "natural"
+  defp scan_result_color(:invalid_ticket, _), do: "danger"
+  defp scan_result_color(:payment_invalid, _), do: "danger"
   defp scan_result_color(:invalid, _), do: "danger"
   defp scan_result_color(:limit_exceeded, _), do: "danger"
   defp scan_result_color(:not_checked_in, _), do: "danger"
   defp scan_result_color(:not_yet_valid, _), do: "danger"
   defp scan_result_color(:expired, _), do: "danger"
+  defp scan_result_color(:system_error, _), do: "danger"
   defp scan_result_color(:error, _), do: "danger"
   defp scan_result_color(_, _), do: "natural"
 
+  defp scan_result_title(:accepted, _), do: "Accepted"
+  defp scan_result_title(:already_used, _), do: "Already used"
   defp scan_result_title(:success, "entry"), do: "Ticket valid"
   defp scan_result_title(:success, "exit"), do: "Exit confirmed"
   defp scan_result_title(:duplicate_today, _), do: "Already scanned"
   defp scan_result_title(:already_inside, _), do: "Already inside"
   defp scan_result_title(:limit_exceeded, _), do: "No check-ins left"
-  defp scan_result_title(:not_checked_in, _), do: "Cannot check out"
+  defp scan_result_title(:not_checked_in, _), do: "Not checked in"
+  defp scan_result_title(:payment_invalid, _), do: "Payment issue"
+  defp scan_result_title(:invalid_ticket, _), do: "Invalid ticket"
+  defp scan_result_title(:busy_retry, _), do: "Try again"
+  defp scan_result_title(:scanner_closed, _), do: "Scanner closed"
   defp scan_result_title(:not_yet_valid, _), do: "Not valid yet"
   defp scan_result_title(:expired, _), do: "Ticket expired"
   defp scan_result_title(:invalid, _), do: "Not valid"
   defp scan_result_title(:archived, _), do: "Scanner closed"
+  defp scan_result_title(:system_error, _), do: "System error"
   defp scan_result_title(:error, _), do: "Scan error"
   defp scan_result_title(_, _), do: "Scan status"
 
+  defp scan_result_icon(:accepted, _), do: "hero-check-circle"
   defp scan_result_icon(:success, "entry"), do: "hero-check-circle"
   defp scan_result_icon(:success, "exit"), do: "hero-arrow-left-circle"
+  defp scan_result_icon(:already_used, _), do: "hero-exclamation-triangle"
   defp scan_result_icon(:duplicate_today, _), do: "hero-exclamation-triangle"
   defp scan_result_icon(:already_inside, _), do: "hero-exclamation-triangle"
   defp scan_result_icon(:not_checked_in, _), do: "hero-x-circle"
+  defp scan_result_icon(:payment_invalid, _), do: "hero-credit-card"
   defp scan_result_icon(:limit_exceeded, _), do: "hero-no-symbol"
+  defp scan_result_icon(:invalid_ticket, _), do: "hero-x-circle"
+  defp scan_result_icon(:busy_retry, _), do: "hero-arrow-path"
+  defp scan_result_icon(:scanner_closed, _), do: "hero-pause-circle"
   defp scan_result_icon(:invalid, _), do: "hero-x-circle"
+  defp scan_result_icon(:system_error, _), do: "hero-x-circle"
   defp scan_result_icon(:error, _), do: "hero-x-circle"
   defp scan_result_icon(_, _), do: "hero-question-mark-circle"
+
+  defp scan_result_padding(:compact), do: "medium"
+  defp scan_result_padding(_), do: "large"
+
+  defp scan_result_icon_class(:compact), do: "size-6"
+  defp scan_result_icon_class(:field), do: "size-10"
+  defp scan_result_icon_class(_), do: "size-8"
 
   defp checkins_used_percentage(used, allowed)
        when is_integer(used) and is_integer(allowed) and allowed > 0 do
@@ -415,10 +468,13 @@ defmodule FastCheckWeb.Components.ScannerComponents do
 
   defp camera_reconnect_button_variant(_), do: "bordered"
 
-  defp scan_status_color(:success), do: "success"
-  defp scan_status_color(:duplicate_today), do: "warning"
-  defp scan_status_color(:already_inside), do: "warning"
-  defp scan_status_color(:archived), do: "natural"
+  defp scan_status_color(status) when status in [:accepted, :success], do: "success"
+
+  defp scan_status_color(status)
+       when status in [:already_used, :duplicate_today, :already_inside, :busy_retry],
+       do: "warning"
+
+  defp scan_status_color(status) when status in [:scanner_closed, :archived], do: "natural"
 
   defp scan_status_color(status)
        when status in [
@@ -426,20 +482,23 @@ defmodule FastCheckWeb.Components.ScannerComponents do
               :not_yet_valid,
               :expired,
               :invalid,
+              :invalid_ticket,
+              :payment_invalid,
+              :system_error,
               :error,
               :not_found,
               :not_checked_in,
               :invalid_code,
-              :invalid_ticket,
               :invalid_entrance,
-              :invalid_type,
-              :payment_invalid
+              :invalid_type
             ],
        do: "danger"
 
   defp scan_status_color(_), do: "natural"
 
+  defp scan_status_label(:accepted), do: "Accepted"
   defp scan_status_label(:success), do: "Valid"
+  defp scan_status_label(:already_used), do: "Used"
   defp scan_status_label(:duplicate_today), do: "Duplicate"
   defp scan_status_label(:already_inside), do: "Inside"
   defp scan_status_label(:limit_exceeded), do: "Limit"
@@ -448,30 +507,41 @@ defmodule FastCheckWeb.Components.ScannerComponents do
   defp scan_status_label(:invalid), do: "Invalid"
   defp scan_status_label(:not_found), do: "Missing"
   defp scan_status_label(:not_checked_in), do: "Not inside"
+  defp scan_status_label(:scanner_closed), do: "Closed"
+  defp scan_status_label(:busy_retry), do: "Retry"
+  defp scan_status_label(:system_error), do: "Error"
   defp scan_status_label(:archived), do: "Closed"
   defp scan_status_label(:payment_invalid), do: "Payment"
   defp scan_status_label(:error), do: "Error"
   defp scan_status_label(_), do: "Status"
 
-  defp scan_status_icon(:success), do: "hero-check-circle"
-  defp scan_status_icon(:duplicate_today), do: "hero-exclamation-triangle"
+  defp scan_status_icon(status) when status in [:accepted, :success], do: "hero-check-circle"
+
+  defp scan_status_icon(status) when status in [:already_used, :duplicate_today],
+    do: "hero-exclamation-triangle"
+
   defp scan_status_icon(:not_yet_valid), do: "hero-clock"
   defp scan_status_icon(:already_inside), do: "hero-exclamation-triangle"
-  defp scan_status_icon(:archived), do: "hero-pause-circle"
+
+  defp scan_status_icon(status) when status in [:scanner_closed, :archived],
+    do: "hero-pause-circle"
+
+  defp scan_status_icon(:busy_retry), do: "hero-arrow-path"
 
   defp scan_status_icon(status)
        when status in [
               :limit_exceeded,
               :expired,
               :invalid,
+              :invalid_ticket,
+              :payment_invalid,
+              :system_error,
               :error,
               :not_found,
               :not_checked_in,
               :invalid_code,
-              :invalid_ticket,
               :invalid_entrance,
-              :invalid_type,
-              :payment_invalid
+              :invalid_type
             ],
        do: "hero-x-circle"
 
