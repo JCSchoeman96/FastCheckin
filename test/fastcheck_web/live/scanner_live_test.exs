@@ -218,6 +218,67 @@ defmodule FastCheckWeb.ScannerLiveTest do
       assert html =~ "Camera reconnecting"
       assert html =~ "Reconnect camera."
     end
+
+    test "admin scanner handles camera controls outside field mode restrictions", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      # 1. Idle state
+      view
+      |> element("#qr-camera-scanner")
+      |> render_hook("camera_runtime_sync", %{
+        state: "idle",
+        message: "Camera idle.",
+        recoverable: true,
+        desired_active: false
+      })
+
+      # Reconnect should be available (not disabled)
+      assert has_element?(
+               view,
+               "#reconnect-camera-scan:not([disabled])"
+             )
+
+      # Start should be available
+      assert has_element?(
+               view,
+               "#start-camera-scan:not([disabled])"
+             )
+
+      # Stop should be disabled (not running)
+      assert has_element?(
+               view,
+               "#stop-camera-scan[disabled]"
+             )
+
+      # 2. Running state
+      view
+      |> element("#qr-camera-scanner")
+      |> render_hook("camera_runtime_sync", %{
+        state: "running",
+        message: "Camera running.",
+        recoverable: true,
+        desired_active: true
+      })
+
+      # Reconnect should STILL be available for the admin scanner
+      assert has_element?(
+               view,
+               "#reconnect-camera-scan:not([disabled])"
+             )
+
+      # Start should now be disabled (already running)
+      assert has_element?(
+               view,
+               "#start-camera-scan[disabled]"
+             )
+
+      # Stop should now be available (is running)
+      assert has_element?(
+               view,
+               "#stop-camera-scan:not([disabled])"
+             )
+    end
   end
 
   defp insert_event(attrs \\ %{}) do

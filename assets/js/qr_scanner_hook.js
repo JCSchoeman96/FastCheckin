@@ -23,6 +23,7 @@ export const QrCameraScanner = {
     this.cooldownMs = 1500;
     this.scansDisabled = this.el.dataset.scansDisabled === "true";
     this.resumeKey = this.el.dataset.resumeKey || `${this.el.id}:desired-active`;
+    this.variant = this.el.dataset.variant || "default";
     this.desiredActive = this.readDesiredActive();
     this.runtimeState = "idle";
     this.runtimeMessage = null;
@@ -253,23 +254,49 @@ export const QrCameraScanner = {
 
   syncButtonState() {
     const busy = this.running || this.starting;
+    
     const reconnectAllowed =
       this.recoverable &&
       this.cameraSupported &&
       !this.scansDisabled &&
-      ["paused", "recovering", "error"].includes(this.runtimeState);
+      (this.variant === "field"
+        ? ["paused", "recovering", "error"].includes(this.runtimeState)
+        : true);
+
+    this.el.dataset.qrRuntimeState = this.runtimeState;
 
     if (this.startButton) {
       this.startButton.disabled = this.scansDisabled || !this.cameraSupported || busy || this.desiredActive;
+      this.setControlState(this.startButton, this.startButton.disabled ? "disabled" : "primary");
     }
 
     if (this.reconnectButton) {
-      this.reconnectButton.disabled = !reconnectAllowed || busy;
+      const reconnectNeedsAction = ["paused", "recovering", "error"].includes(this.runtimeState);
+      const reconnectBusyBlocked = this.variant === "field" ? busy : false;
+      const reconnectDisabled = !reconnectAllowed || reconnectBusyBlocked;
+      const reconnectPrimary = reconnectAllowed && reconnectNeedsAction && !reconnectBusyBlocked;
+
+      this.reconnectButton.disabled = reconnectDisabled;
+
+      this.setControlState(
+        this.reconnectButton,
+        reconnectPrimary ? "primary" : reconnectDisabled ? "disabled" : "secondary"
+      );
     }
 
     if (this.stopButton) {
-      this.stopButton.disabled = !busy && this.runtimeState !== "running";
+      const stopAllowed = busy || this.runtimeState === "running";
+      this.stopButton.disabled = !stopAllowed || this.scansDisabled;
+      this.setControlState(this.stopButton, this.stopButton.disabled ? "disabled" : "primary");
     }
+  },
+
+  setControlState(element, state) {
+    if (!element) {
+      return;
+    }
+
+    element.dataset.controlState = state;
   },
 
   setRuntimeState(state, message, recoverable = true) {

@@ -447,6 +447,14 @@ const SoundFeedback = {
     if (!this.enabled) return;
     this.playTone(800, 0.1, 0.2); // 800Hz, 0.1s duration, 0.2s fade
   },
+
+  playWarning() {
+    if (!this.enabled) return;
+    this.playTone(520, 0.12, 0.08);
+    setTimeout(() => {
+      this.playTone(520, 0.12, 0.08);
+    }, 150);
+  },
   
   playError() {
     if (!this.enabled) return;
@@ -552,8 +560,21 @@ const liveSocket = new LiveSocket("/live", Socket, {
 // Listen for scan results to play sounds
 liveSocket.on("phx:event", (event) => {
   if (event.detail && event.detail.type === "scan_result") {
-    if (event.detail.status === "success") {
+    if (event.detail.sound === "success") {
       SoundFeedback.playSuccess();
+    } else if (event.detail.sound === "warning") {
+      SoundFeedback.playWarning();
+    } else if (event.detail.sound === "error") {
+      SoundFeedback.playError();
+    } else if (event.detail.status === "success" || event.detail.status === "accepted") {
+      SoundFeedback.playSuccess();
+    } else if (
+      event.detail.status === "warning" ||
+      event.detail.status === "already_used" ||
+      event.detail.status === "already_inside" ||
+      event.detail.status === "busy_retry"
+    ) {
+      SoundFeedback.playWarning();
     } else if (event.detail.status === "error" || event.detail.status === "invalid") {
       SoundFeedback.playError();
     }
