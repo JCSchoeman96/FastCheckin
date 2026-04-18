@@ -20,6 +20,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
   }
   @default_stats_reconcile_ms 30_000
   @default_force_refresh_every_n_scans 20
+  @scan_feedback_clear_ms 5_000
+  @search_row_success_ms 1_200
   @error_status_map %{
     "duplicate_today" => :already_used,
     "duplicate" => :already_used,
@@ -62,6 +64,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
           last_scan_status: nil,
           last_scan_result: nil,
           last_scan_reason: nil,
+          scan_feedback: nil,
+          scan_feedback_ref: 0,
           scan_history: [],
           stats: stats,
           current_occupancy: current_occupancy,
@@ -71,6 +75,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
           force_refresh_every_n_scans: force_refresh_every_n_scans,
           search_query: "",
           search_results: [],
+          search_row_actions: %{},
+          search_row_action_ref: 0,
           search_loading: false,
           search_error: nil,
           camera_permission: default_camera_permission(),
@@ -155,6 +161,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
             :search_results,
             apply_mode_filter(socket.assigns.search_results, normalized_type)
           )
+          |> assign(:search_row_actions, %{})
 
         if trimmed_query == "" do
           {:noreply, socket}
@@ -178,6 +185,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
        |> assign(:last_scan_status, :invalid_ticket)
        |> assign(:last_scan_result, "No ticket detected. Please try again.")
        |> assign(:last_scan_reason, nil)
+       |> assign_scan_feedback(:invalid_ticket, "No ticket detected. Please try again.", nil)
        |> push_scan_result(:invalid_ticket)}
     else
       process_scan(code, socket)
@@ -215,6 +223,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
       socket
       |> assign(:search_query, query)
       |> assign(:search_error, nil)
+      |> assign(:search_row_actions, %{})
 
     if trimmed_query == "" do
       {:noreply,
@@ -231,7 +240,29 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
   @impl true
   def handle_event("manual_scan", %{"ticket_code" => ticket_code}, socket) do
-    process_scan(ticket_code, socket)
+    ticket_code = ticket_code |> to_string() |> String.trim()
+
+    if ticket_code == "" do
+      {:noreply, socket}
+    else
+      mode = socket.assigns.check_in_type
+
+      {socket, action_ref} = begin_search_row_action(socket, ticket_code, mode)
+      {socket, status, result} = apply_scan(ticket_code, socket)
+
+      socket =
+        case result do
+          {:ok, attendee} when status == :accepted ->
+            socket
+            |> update_search_result_attendee(ticket_code, attendee, mode)
+            |> mark_search_row_action_succeeded(ticket_code, mode, action_ref)
+
+          _ ->
+            clear_search_row_action(socket, ticket_code)
+        end
+
+      {:noreply, socket}
+    end
   end
 
   def handle_event("manual_scan", _params, socket), do: {:noreply, socket}
@@ -305,7 +336,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
       {:noreply,
        socket
        |> assign(:search_results, results)
-       |> assign(:search_loading, false)}
+       |> assign(:search_loading, false)
+       |> prune_search_row_actions()}
     else
       {:noreply, socket}
     end
@@ -318,6 +350,34 @@ defmodule FastCheckWeb.ScannerPortalLive do
        |> assign(:search_results, [])
        |> assign(:search_loading, false)
        |> assign(:search_error, "Unable to search attendees right now.")}
+  end
+
+  def handle_info({:clear_scan_feedback, ref}, socket) do
+    case socket.assigns.scan_feedback do
+      %{ref: ^ref, persistent?: false} ->
+        {:noreply, assign(socket, :scan_feedback, nil)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info({:settle_search_action, ticket_code, ref}, socket) do
+    current_action = Map.get(socket.assigns.search_row_actions, ticket_code)
+
+    socket =
+      case current_action do
+        %{ref: ^ref, state: :just_succeeded} = action ->
+          assign(socket, :search_row_actions, %{
+            socket.assigns.search_row_actions
+            | ticket_code => %{action | state: :settled_non_actionable}
+          })
+
+        _ ->
+          socket
+      end
+
+    {:noreply, socket}
   end
 
   def handle_info({:event_stats_updated, event_id, stats}, socket) do
@@ -460,6 +520,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
             class="scanner-search-results"
           >
             <div :for={attendee <- Enum.take(@search_results, 3)} class="scanner-search-result">
+              <% row_action = search_row_action(@search_row_actions, attendee, @check_in_type) %>
               <div class="min-w-0">
                 <p class="truncate text-sm font-semibold text-fc-text-primary">
                   {attendee.first_name} {attendee.last_name}
@@ -471,13 +532,22 @@ defmodule FastCheckWeb.ScannerPortalLive do
                 type="button"
                 phx-click="manual_scan"
                 phx-value-ticket_code={attendee.ticket_code}
-                color={manual_action_color(@check_in_type)}
-                variant="bordered"
+                color={manual_action_color(@check_in_type, row_action)}
+                variant={manual_action_variant(row_action)}
                 size="small"
-                disabled={!attendee_actionable?(attendee, @check_in_type) || @scans_disabled?}
+                class={manual_action_class(row_action)}
+                phx-disable-with={manual_action_pending_label(@check_in_type)}
+                disabled={
+                  manual_action_disabled?(attendee, @check_in_type, row_action, @scans_disabled?)
+                }
                 data-test={"manual-check-in-#{attendee.ticket_code}"}
               >
-                {manual_action_label(@check_in_type)}
+                <.icon
+                  :if={manual_action_icon(row_action)}
+                  name={manual_action_icon(row_action)}
+                  class="size-4"
+                />
+                {manual_action_label(@check_in_type, row_action)}
               </.button>
             </div>
           </div>
@@ -595,6 +665,31 @@ defmodule FastCheckWeb.ScannerPortalLive do
             <p data-qr-status class="scanner-camera-status-text">Camera idle</p>
             <p data-qr-last class="scanner-camera-last-text"></p>
 
+            <div class="scanner-result-slot scanner-result-slot--above">
+              <.scan_result_banner
+                :if={@scan_feedback}
+                id="scanner-portal-scan-result"
+                status={@scan_feedback.status}
+                check_in_type={@check_in_type}
+                message={@scan_feedback.message}
+                reason={@scan_feedback.reason}
+                size={:field}
+                presentation={:field_filled}
+                data-test="scan-status"
+              />
+
+              <.scan_result_banner
+                :if={!@scan_feedback && @scans_disabled?}
+                id="scanner-portal-scan-result"
+                status={:scanner_closed}
+                check_in_type={@check_in_type}
+                message={@scans_disabled_message || "Scanning is closed for this event."}
+                size={:field}
+                presentation={:field_filled}
+                data-test="scan-status"
+              />
+            </div>
+
             <div
               id="scanner-portal-camera-preview-shell"
               phx-update="ignore"
@@ -610,31 +705,6 @@ defmodule FastCheckWeb.ScannerPortalLive do
               >
               </video>
               <canvas data-qr-canvas class="hidden"></canvas>
-            </div>
-
-            <div class="scanner-result-slot">
-              <.scan_result_banner
-                :if={@last_scan_status || @scans_disabled?}
-                id="scanner-portal-scan-result"
-                status={@last_scan_status || :scanner_closed}
-                check_in_type={@check_in_type}
-                message={
-                  @last_scan_result ||
-                    @scans_disabled_message ||
-                    "Scanning is closed for this event."
-                }
-                reason={@last_scan_reason}
-                size={:field}
-                data-test="scan-status"
-              />
-
-              <div
-                :if={!@last_scan_status && !@scans_disabled?}
-                id="scanner-portal-scan-result-placeholder"
-                class="scanner-result-placeholder"
-                aria-hidden="true"
-              >
-              </div>
             </div>
           </div>
         </section>
@@ -748,16 +818,24 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   defp process_scan(code, socket) do
+    {socket, _status, _result} = apply_scan(code, socket)
+    {:noreply, socket}
+  end
+
+  defp apply_scan(code, socket) do
     if socket.assigns.scans_disabled? do
       message = socket.assigns.scans_disabled_message || "Scanning is disabled for this event."
 
-      {:noreply,
-       socket
-       |> assign(:last_scan_status, :scanner_closed)
-       |> assign(:last_scan_result, message)
-       |> assign(:last_scan_reason, nil)
-       |> assign(:ticket_code, "")
-       |> push_scan_result(:scanner_closed)}
+      socket =
+        socket
+        |> assign(:last_scan_status, :scanner_closed)
+        |> assign(:last_scan_result, message)
+        |> assign(:last_scan_reason, nil)
+        |> assign(:ticket_code, "")
+        |> assign_scan_feedback(:scanner_closed, message, nil, persistent?: true)
+        |> push_scan_result(:scanner_closed)
+
+      {socket, :scanner_closed, {:error, :scanner_closed}}
     else
       do_process_scan(code, socket)
     end
@@ -805,11 +883,12 @@ defmodule FastCheckWeb.ScannerPortalLive do
             ticket_code: "",
             scan_history: add_to_scan_history(socket.assigns.scan_history, entry)
           )
+          |> assign_scan_feedback(:accepted, success_message(attendee, mode), nil)
           |> apply_optimistic_scan_metrics(mode)
           |> maybe_force_scan_reconcile()
           |> push_scan_result(:accepted)
 
-        {:noreply, socket}
+        {socket, :accepted, {:ok, attendee}}
 
       {:error, error_code, message} ->
         normalized_status = normalize_error_code(error_code)
@@ -833,9 +912,15 @@ defmodule FastCheckWeb.ScannerPortalLive do
             scan_history: add_to_scan_history(socket.assigns.scan_history, entry)
           )
           |> maybe_disable_scanning(error_code, message)
+          |> assign_scan_feedback(
+            normalized_status,
+            message,
+            scan_reason(normalized_status),
+            persistent?: normalized_status == :scanner_closed
+          )
           |> push_scan_result(normalized_status)
 
-        {:noreply, socket}
+        {socket, normalized_status, {:error, error_code}}
     end
   end
 
@@ -847,6 +932,113 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   defp maybe_disable_scanning(socket, _error_code, _message), do: socket
+
+  defp assign_scan_feedback(socket, status, message, reason, opts \\ []) do
+    ref = socket.assigns.scan_feedback_ref + 1
+    persistent? = Keyword.get(opts, :persistent?, false)
+
+    feedback = %{
+      ref: ref,
+      status: status,
+      message: message,
+      reason: reason,
+      persistent?: persistent?
+    }
+
+    if connected?(socket) and not persistent? do
+      Process.send_after(self(), {:clear_scan_feedback, ref}, @scan_feedback_clear_ms)
+    end
+
+    assign(socket, scan_feedback: feedback, scan_feedback_ref: ref)
+  end
+
+  defp begin_search_row_action(socket, ticket_code, mode) do
+    ref = socket.assigns.search_row_action_ref + 1
+
+    actions =
+      Map.put(socket.assigns.search_row_actions, ticket_code, %{
+        ref: ref,
+        mode: mode,
+        state: :pending
+      })
+
+    socket =
+      assign(socket,
+        search_row_actions: actions,
+        search_row_action_ref: ref
+      )
+
+    {socket, ref}
+  end
+
+  defp mark_search_row_action_succeeded(socket, ticket_code, mode, ref) do
+    action = %{ref: ref, mode: mode, state: :just_succeeded}
+
+    if connected?(socket) do
+      Process.send_after(
+        self(),
+        {:settle_search_action, ticket_code, ref},
+        @search_row_success_ms
+      )
+    end
+
+    assign(
+      socket,
+      :search_row_actions,
+      Map.put(socket.assigns.search_row_actions, ticket_code, action)
+    )
+  end
+
+  defp clear_search_row_action(socket, ticket_code) do
+    assign(
+      socket,
+      :search_row_actions,
+      Map.delete(socket.assigns.search_row_actions, ticket_code)
+    )
+  end
+
+  defp prune_search_row_actions(socket) do
+    visible_codes =
+      socket.assigns.search_results
+      |> Enum.map(&Map.get(&1, :ticket_code))
+      |> MapSet.new()
+
+    mode = socket.assigns.check_in_type
+
+    actions =
+      Map.filter(socket.assigns.search_row_actions, fn {ticket_code, action} ->
+        MapSet.member?(visible_codes, ticket_code) and Map.get(action, :mode) == mode
+      end)
+
+    assign(socket, :search_row_actions, actions)
+  end
+
+  defp update_search_result_attendee(socket, ticket_code, attendee, mode) do
+    results =
+      Enum.map(socket.assigns.search_results, fn result ->
+        if Map.get(result, :ticket_code) == ticket_code do
+          apply_attendee_scan_state(result, attendee, mode)
+        else
+          result
+        end
+      end)
+
+    assign(socket, :search_results, results)
+  end
+
+  defp apply_attendee_scan_state(result, attendee, "exit") do
+    %{result | is_currently_inside: false, checked_out_at: Map.get(attendee, :checked_out_at)}
+  end
+
+  defp apply_attendee_scan_state(result, attendee, _mode) do
+    checkins_remaining =
+      case Map.get(attendee, :checkins_remaining) do
+        value when is_integer(value) -> value
+        _ -> max(current_checkins_remaining(result) - 1, 0)
+      end
+
+    %{result | is_currently_inside: true, checkins_remaining: checkins_remaining}
+  end
 
   defp refresh_stats(socket) do
     event_id = socket.assigns.event_id
@@ -995,24 +1187,72 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp attendee_actionable?(attendee, _), do: entry_actionable?(attendee)
 
   defp entry_actionable?(attendee) do
-    remaining =
-      attendee
-      |> Map.get(:checkins_remaining)
-      |> case do
-        value when is_integer(value) -> value
-        _ -> Map.get(attendee, :allowed_checkins) || 0
-      end
-
-    remaining > 0 and Map.get(attendee, :is_currently_inside) != true
+    current_checkins_remaining(attendee) > 0 and Map.get(attendee, :is_currently_inside) != true
   end
 
   defp exit_actionable?(attendee), do: Map.get(attendee, :is_currently_inside) == true
 
-  defp manual_action_label("exit"), do: "Check out"
-  defp manual_action_label(_), do: "Check in"
+  defp current_checkins_remaining(attendee) do
+    attendee
+    |> Map.get(:checkins_remaining)
+    |> case do
+      value when is_integer(value) -> value
+      _ -> Map.get(attendee, :allowed_checkins) || 0
+    end
+  end
 
-  defp manual_action_color("exit"), do: "warning"
-  defp manual_action_color(_), do: "success"
+  defp search_row_action(actions, attendee, mode) do
+    ticket_code = Map.get(attendee, :ticket_code)
+
+    case Map.get(actions, ticket_code) do
+      %{mode: ^mode} = action -> action
+      _ -> %{state: :idle, mode: mode}
+    end
+  end
+
+  defp manual_action_label("exit", %{state: :pending}), do: "Checking out..."
+  defp manual_action_label("exit", %{state: :just_succeeded}), do: "Checked out"
+  defp manual_action_label("exit", %{state: :settled_non_actionable}), do: "Not inside"
+  defp manual_action_label("exit", _action), do: "Check out"
+  defp manual_action_label(_mode, %{state: :pending}), do: "Checking in..."
+  defp manual_action_label(_mode, %{state: :just_succeeded}), do: "Checked in"
+  defp manual_action_label(_mode, %{state: :settled_non_actionable}), do: "Already inside"
+  defp manual_action_label(_mode, _action), do: "Check in"
+
+  defp manual_action_pending_label("exit"), do: "Checking out..."
+  defp manual_action_pending_label(_), do: "Checking in..."
+
+  defp manual_action_color(_mode, %{state: state}) when state in [:pending, :just_succeeded],
+    do: "success"
+
+  defp manual_action_color("exit", %{state: :settled_non_actionable}), do: "natural"
+  defp manual_action_color(_mode, %{state: :settled_non_actionable}), do: "warning"
+  defp manual_action_color("exit", _action), do: "warning"
+  defp manual_action_color(_mode, _action), do: "success"
+
+  defp manual_action_variant(%{state: state}) when state in [:pending, :just_succeeded],
+    do: "shadow"
+
+  defp manual_action_variant(_action), do: "bordered"
+
+  defp manual_action_class(%{state: state}) when state in [:pending, :just_succeeded],
+    do: "scanner-search-action scanner-search-action--active"
+
+  defp manual_action_class(%{state: :settled_non_actionable}),
+    do: "scanner-search-action scanner-search-action--settled"
+
+  defp manual_action_class(_action), do: "scanner-search-action"
+
+  defp manual_action_icon(%{state: :just_succeeded}), do: "hero-check-circle"
+  defp manual_action_icon(_action), do: nil
+
+  defp manual_action_disabled?(_attendee, _mode, %{state: state}, _scans_disabled?)
+       when state in [:pending, :just_succeeded, :settled_non_actionable],
+       do: true
+
+  defp manual_action_disabled?(attendee, mode, _action, scans_disabled?) do
+    scans_disabled? or not attendee_actionable?(attendee, mode)
+  end
 
   defp default_camera_permission, do: @default_camera_permission
 

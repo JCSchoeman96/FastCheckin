@@ -259,17 +259,34 @@ export const QrCameraScanner = {
       !this.scansDisabled &&
       ["paused", "recovering", "error"].includes(this.runtimeState);
 
+    this.el.dataset.qrRuntimeState = this.runtimeState;
+
     if (this.startButton) {
       this.startButton.disabled = this.scansDisabled || !this.cameraSupported || busy || this.desiredActive;
+      this.setControlState(this.startButton, this.startButton.disabled ? "disabled" : "primary");
     }
 
     if (this.reconnectButton) {
       this.reconnectButton.disabled = !reconnectAllowed || busy;
+      this.setControlState(
+        this.reconnectButton,
+        reconnectAllowed && !busy ? "primary" : this.reconnectButton.disabled ? "disabled" : "secondary",
+      );
     }
 
     if (this.stopButton) {
-      this.stopButton.disabled = !busy && this.runtimeState !== "running";
+      const stopAllowed = busy || this.runtimeState === "running";
+      this.stopButton.disabled = !stopAllowed || this.scansDisabled;
+      this.setControlState(this.stopButton, this.stopButton.disabled ? "disabled" : "primary");
     }
+  },
+
+  setControlState(element, state) {
+    if (!element) {
+      return;
+    }
+
+    element.dataset.controlState = state;
   },
 
   setRuntimeState(state, message, recoverable = true) {

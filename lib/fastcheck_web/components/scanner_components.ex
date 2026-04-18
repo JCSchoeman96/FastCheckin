@@ -112,6 +112,7 @@ defmodule FastCheckWeb.Components.ScannerComponents do
   attr :checkins_used, :integer, default: 0
   attr :checkins_allowed, :integer, default: 0
   attr :size, :atom, default: :default
+  attr :presentation, :atom, default: :card
   attr :class, :string, default: nil
   attr :rest, :global
 
@@ -123,9 +124,43 @@ defmodule FastCheckWeb.Components.ScannerComponents do
       |> assign(:title, scan_result_title(assigns.status, assigns.check_in_type))
       |> assign(:padding, scan_result_padding(assigns.size))
       |> assign(:icon_class, scan_result_icon_class(assigns.size))
+      |> assign(:filled?, assigns.presentation == :field_filled)
 
     ~H"""
+    <div
+      :if={@filled?}
+      id={@id}
+      class={
+        class_join([
+          "scanner-result-banner scanner-result-banner--filled fc-scan-pulse",
+          @size == :field && "scanner-result-banner--field",
+          "scanner-result-banner--#{@color}",
+          @class
+        ])
+      }
+      data-tone={@color}
+      {@rest}
+    >
+      <div class="scanner-result-content">
+        <div class="scanner-result-icon">
+          <.icon name={@icon} class={@icon_class} />
+        </div>
+
+        <div class="min-w-0">
+          <p class="scanner-result-title">{@title}</p>
+          <p class={[
+            "scanner-result-message",
+            @size == :compact && "scanner-result-message--compact"
+          ]}>
+            {@message}
+          </p>
+          <p :if={@reason} class="scanner-result-reason">{@reason}</p>
+        </div>
+      </div>
+    </div>
+
     <.card
+      :if={!@filled?}
       id={@id}
       variant="base"
       color={@color}
@@ -229,26 +264,34 @@ defmodule FastCheckWeb.Components.ScannerComponents do
   def camera_action_row(assigns) do
     runtime_state = Map.get(assigns.runtime, :state, :idle)
     recoverable = Map.get(assigns.runtime, :recoverable, true)
+    desired_active = Map.get(assigns.runtime, :desired_active, false)
     field_variant? = assigns.variant == :field
+    reconnect_needed? = camera_runtime_needs_reconnect?(runtime_state)
+
+    start =
+      camera_start_action(field_variant?, runtime_state, desired_active, assigns.scans_disabled)
+
+    reconnect = camera_reconnect_action(recoverable, reconnect_needed?, assigns.scans_disabled)
+    stop = camera_stop_action(field_variant?, runtime_state, assigns.scans_disabled)
 
     assigns =
       assigns
       |> assign(:runtime_state, runtime_state)
       |> assign(:recoverable, recoverable)
+      |> assign(:desired_active, desired_active)
       |> assign(:field_variant?, field_variant?)
-      |> assign(
-        :start_color,
-        if(camera_runtime_needs_reconnect?(runtime_state), do: "natural", else: "success")
-      )
-      |> assign(
-        :start_variant,
-        if(camera_runtime_needs_reconnect?(runtime_state), do: "bordered", else: "shadow")
-      )
-      |> assign(:reconnect_color, camera_reconnect_button_color(runtime_state))
-      |> assign(:reconnect_variant, camera_reconnect_button_variant(runtime_state))
-      |> assign(:stop_color, if(field_variant?, do: "danger", else: "natural"))
-      |> assign(:stop_variant, if(field_variant?, do: "shadow", else: "bordered"))
-      |> assign(:stop_disabled, if(field_variant?, do: assigns.scans_disabled, else: true))
+      |> assign(:start_color, start.color)
+      |> assign(:start_variant, start.variant)
+      |> assign(:start_disabled, start.disabled?)
+      |> assign(:start_control_state, start.control_state)
+      |> assign(:reconnect_color, reconnect.color)
+      |> assign(:reconnect_variant, reconnect.variant)
+      |> assign(:reconnect_disabled, reconnect.disabled?)
+      |> assign(:reconnect_control_state, reconnect.control_state)
+      |> assign(:stop_color, stop.color)
+      |> assign(:stop_variant, stop.variant)
+      |> assign(:stop_disabled, stop.disabled?)
+      |> assign(:stop_control_state, stop.control_state)
 
     ~H"""
     <div class={[
@@ -260,11 +303,12 @@ defmodule FastCheckWeb.Components.ScannerComponents do
         id={@start_id}
         type="button"
         data-qr-start
+        data-control-state={@start_control_state}
         color={@start_color}
         variant={@start_variant}
         class={@field_variant? && "scanner-camera-action scanner-camera-action--start"}
         full_width
-        disabled={@scans_disabled}
+        disabled={@start_disabled}
       >
         {@start_label}
       </.button>
@@ -273,12 +317,13 @@ defmodule FastCheckWeb.Components.ScannerComponents do
         id={@reconnect_id}
         type="button"
         data-qr-reconnect
+        data-control-state={@reconnect_control_state}
         color={@reconnect_color}
         variant={@reconnect_variant}
         size={if(@field_variant?, do: "small", else: "large")}
         class={@field_variant? && "scanner-camera-action scanner-camera-action--reconnect"}
         full_width
-        disabled={!@recoverable or @scans_disabled}
+        disabled={@reconnect_disabled}
       >
         Reconnect
       </.button>
@@ -287,6 +332,7 @@ defmodule FastCheckWeb.Components.ScannerComponents do
         id={@stop_id}
         type="button"
         data-qr-stop
+        data-control-state={@stop_control_state}
         variant={@stop_variant}
         color={@stop_color}
         class={@field_variant? && "scanner-camera-action scanner-camera-action--stop"}
@@ -458,15 +504,43 @@ defmodule FastCheckWeb.Components.ScannerComponents do
 
   defp camera_runtime_needs_reconnect?(_), do: false
 
-  defp camera_reconnect_button_color(state) when state in [:paused, :recovering, :error],
-    do: "success"
+  defp camera_start_action(field_variant?, runtime_state, desired_active, scans_disabled) do
+    running? = runtime_state in [:starting, :running]
+    reconnect_needed? = camera_runtime_needs_reconnect?(runtime_state)
+    disabled? = scans_disabled or (field_variant? and (running? or desired_active))
+    primary? = field_variant? and not disabled? and not reconnect_needed?
 
-  defp camera_reconnect_button_color(_), do: "natural"
+    camera_action_config(primary?, disabled?, primary_color: "success")
+  end
 
-  defp camera_reconnect_button_variant(state) when state in [:paused, :recovering, :error],
-    do: "shadow"
+  defp camera_reconnect_action(recoverable, reconnect_needed?, scans_disabled) do
+    primary? = recoverable and reconnect_needed? and not scans_disabled
 
-  defp camera_reconnect_button_variant(_), do: "bordered"
+    camera_action_config(primary?, not primary?, primary_color: "warning")
+  end
+
+  defp camera_stop_action(field_variant?, runtime_state, scans_disabled) do
+    running? = runtime_state in [:starting, :running]
+    disabled? = if(field_variant?, do: scans_disabled or not running?, else: true)
+    primary? = field_variant? and not disabled?
+
+    camera_action_config(primary?, disabled?, primary_color: "danger")
+  end
+
+  defp camera_action_config(primary?, disabled?, opts) do
+    primary_color = Keyword.fetch!(opts, :primary_color)
+
+    %{
+      color: if(primary?, do: primary_color, else: "natural"),
+      variant: if(primary?, do: "shadow", else: "bordered"),
+      disabled?: disabled?,
+      control_state: control_state(primary?, disabled?)
+    }
+  end
+
+  defp control_state(true, false), do: "primary"
+  defp control_state(false, true), do: "disabled"
+  defp control_state(_, _), do: "secondary"
 
   defp scan_status_color(status) when status in [:accepted, :success], do: "success"
 
