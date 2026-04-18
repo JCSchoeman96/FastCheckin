@@ -6,8 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
@@ -17,6 +16,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -179,41 +179,43 @@ fun SearchDestinationScreen(
             }
 
             else -> {
-                LazyColumn(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(spacing.xSmall)
                 ) {
-                    items(uiState.results, key = SearchResultRowUiModel::attendeeId) { row ->
-                        FcCard(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onSelectAttendee(row.attendeeId) }
-                        ) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)
+                    uiState.results.forEach { row ->
+                        key(row.attendeeId) {
+                            FcCard(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onSelectAttendee(row.attendeeId) }
                             ) {
-                                Text(
-                                    text = row.displayName,
-                                    style = theme.typography.titleMedium,
-                                    color = scheme.onSurface,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = row.supportingText,
-                                    style = theme.typography.bodySmall,
-                                    color = scheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                FcStatusChip(
-                                    text = row.statusText,
-                                    tone = row.statusTone,
-                                    modifier = Modifier.padding(top = spacing.xxSmall)
-                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)
+                                ) {
+                                    Text(
+                                        text = row.displayName,
+                                        style = theme.typography.titleMedium,
+                                        color = scheme.onSurface,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = row.supportingText,
+                                        style = theme.typography.bodySmall,
+                                        color = scheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    FcStatusChip(
+                                        text = row.statusText,
+                                        tone = row.statusTone,
+                                        modifier = Modifier.padding(top = spacing.xxSmall)
+                                    )
+                                }
                             }
                         }
                     }
