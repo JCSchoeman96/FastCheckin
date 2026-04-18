@@ -271,10 +271,16 @@ export const QrCameraScanner = {
     }
 
     if (this.reconnectButton) {
-      this.reconnectButton.disabled = !reconnectAllowed || busy;
+      const reconnectNeedsAction = ["paused", "recovering", "error"].includes(this.runtimeState);
+      const reconnectBusyBlocked = this.variant === "field" ? busy : false;
+      
+      this.reconnectButton.disabled = !reconnectAllowed || reconnectBusyBlocked;
+      
+      const isPrimary = reconnectAllowed && reconnectNeedsAction && !reconnectBusyBlocked;
+      
       this.setControlState(
         this.reconnectButton,
-        reconnectAllowed && !busy ? "primary" : this.reconnectButton.disabled ? "disabled" : "secondary",
+        isPrimary ? "primary" : this.reconnectButton.disabled ? "disabled" : "secondary"
       );
     }
 
