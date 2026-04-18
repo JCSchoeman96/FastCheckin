@@ -107,7 +107,7 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
-        assertThat(uiState.admissionStatusVerdict).isEqualTo("Ready for admission")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission state current")
         assertThat(uiState.admissionStatusDetail).isEqualTo("Recent attendee data is available for this event.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
         assertThat(uiState.factLabels).containsExactly("Synced attendees: 20", "Last sync 08:50").inOrder()
@@ -115,7 +115,7 @@ class ScanDestinationPresenterTest {
     }
 
     @Test
-    fun zeroSyncedAttendeesIsShownAsBlocker() {
+    fun zeroSyncedAttendeesDoesNotOverrideReadyAdmissionState() {
         val uiState =
             presenter.present(
                 scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
@@ -131,11 +131,13 @@ class ScanDestinationPresenterTest {
                     )
             )
 
-        assertThat(uiState.admissionStatusChip.text).isEqualTo("No attendees synced")
-        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission data missing")
-        assertThat(uiState.admissionStatusDetail).isEqualTo("Sync attendees before relying on scan decisions.")
+        assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee cache current")
+        assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission state current")
+        assertThat(uiState.admissionStatusDetail)
+            .isEqualTo("The attendee cache is synced for this event and currently contains no attendees.")
         assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
         assertThat(uiState.factLabels).contains("Synced attendees: 0")
+        assertThat(uiState.manualSyncVisible).isFalse()
     }
 
     @Test
@@ -307,7 +309,7 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(failedBootstrap.manualSyncVisible).isTrue()
-        assertThat(emptyCache.manualSyncVisible).isTrue()
+        assertThat(emptyCache.manualSyncVisible).isFalse()
         assertThat(staleCache.manualSyncVisible).isTrue()
         assertThat(healthyCache.manualSyncVisible).isFalse()
         assertThat(noActiveEvent.manualSyncVisible).isFalse()

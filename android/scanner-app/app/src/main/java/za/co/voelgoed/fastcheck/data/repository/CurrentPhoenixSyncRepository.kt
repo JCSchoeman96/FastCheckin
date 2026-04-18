@@ -130,7 +130,6 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             }
         val seenCursors = mutableSetOf<String>()
         var latestPayload: MobileSyncPayload? = null
-        var totalFetched = 0
         var pagesFetched = 0
 
         do {
@@ -178,7 +177,6 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 scannerDao.upsertAttendees(attendeesForPage)
             }
 
-            totalFetched += attendeesForPage.size
             cursor = nextCursor
             nextSince = null
             sinceInvalidationId = payload.invalidations_checkpoint
@@ -188,11 +186,12 @@ class CurrentPhoenixSyncRepository @Inject constructor(
         )
 
         val finalPayload = requireNotNull(latestPayload) { "Sync failed" }
+        val cachedAttendeeCount = scannerDao.countAttendeesForEvent(eventId)
         val metadata =
             buildSuccessMetadata(
                 eventId = eventId,
                 finalPayload = finalPayload,
-                totalFetched = totalFetched,
+                cachedAttendeeCount = cachedAttendeeCount,
                 previousBeforeLoop = previousBeforeLoop,
                 mode = mode
             )
@@ -206,7 +205,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     private fun buildSuccessMetadata(
         eventId: Long,
         finalPayload: MobileSyncPayload,
-        totalFetched: Int,
+        cachedAttendeeCount: Int,
         previousBeforeLoop: SyncMetadataEntity?,
         mode: AttendeeSyncMode
     ): SyncMetadataEntity {
@@ -230,7 +229,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 lastServerTime = finalPayload.server_time,
                 lastSuccessfulSyncAt = finalPayload.server_time,
                 lastSyncType = finalPayload.sync_type,
-                attendeeCount = totalFetched,
+                attendeeCount = cachedAttendeeCount,
                 bootstrapCompletedAt = bootstrapCompletedAt,
                 lastAttemptedSyncAt = nowIso,
                 consecutiveFailures = 0,

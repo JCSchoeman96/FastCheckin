@@ -2,6 +2,8 @@ package za.co.voelgoed.fastcheck.app.shell
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -225,7 +227,8 @@ private fun ShellContent(
             Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(horizontal = spacing.medium, vertical = spacing.small),
+                .padding(horizontal = spacing.medium, vertical = spacing.small)
+                .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(spacing.medium)
     ) {
         when (uiState.activeSupportRoute) {

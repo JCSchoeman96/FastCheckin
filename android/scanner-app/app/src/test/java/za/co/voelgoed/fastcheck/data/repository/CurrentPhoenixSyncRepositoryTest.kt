@@ -228,6 +228,48 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     @Test
+    fun incrementalSyncWithNoFetchedRowsKeepsCachedAttendeeCount() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(id = 1001, eventId = 5, ticketCode = "VG-CACHED-001"),
+                attendeeEntity(id = 1002, eventId = 5, ticketCode = "VG-CACHED-002"),
+                attendeeEntity(id = 1003, eventId = 5, ticketCode = "VG-CACHED-003")
+            )
+        )
+        database.scannerDao().upsertSyncMetadata(
+            metadataRow(
+                eventId = 5,
+                lastServerTime = "2026-03-13T08:00:00Z",
+                lastSuccessfulSyncAt = "2026-03-13T08:00:00Z",
+                lastSyncType = "full",
+                attendeeCount = 3
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:22:00Z",
+                        attendees = emptyList(),
+                        count = 0,
+                        sync_type = "incremental",
+                        next_cursor = null,
+                        invalidations = emptyList(),
+                        invalidations_checkpoint = 0L,
+                        event_sync_version = 4L
+                    ),
+                error = null,
+                message = null
+            )
+
+        val status = repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+
+        assertThat(status?.attendeeCount).isEqualTo(3)
+        assertThat(database.scannerDao().loadSyncMetadata(5)?.attendeeCount).isEqualTo(3)
+    }
+
+    @Test
     fun syncAttendeesWithoutSessionReturnsNullAndDoesNotWrite() = runTest {
         repository = buildRepository(sessionRepository = noSessionRepository())
 
@@ -1245,8 +1287,8 @@ class CurrentPhoenixSyncRepositoryTest {
         id: Long,
         eventId: Long,
         ticketCode: String,
-        firstName: String,
-        updatedAt: String
+        firstName: String = "Cached",
+        updatedAt: String = "2026-03-13T08:00:00Z"
     ) = AttendeeDto(
         id = id,
         event_id = eventId,

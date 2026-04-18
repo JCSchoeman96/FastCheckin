@@ -2,6 +2,8 @@ package za.co.voelgoed.fastcheck.feature.scanning.screen
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -204,7 +207,7 @@ class ScanDestinationScreenTest {
         render(baseUiState(manualSyncVisible = true))
 
         composeRule.onNodeWithText("Actions").assertIsDisplayed()
-        composeRule.onNodeWithText("Sync attendee list").assertIsDisplayed()
+        composeRule.onNodeWithText("Sync attendee list").performScrollTo().assertIsDisplayed()
         composeRule.onAllNodesWithText("Retry upload").assertCountEquals(0)
         composeRule.onAllNodesWithText("Re-login").assertCountEquals(0)
     }
@@ -226,7 +229,7 @@ class ScanDestinationScreenTest {
         composeRule.onNodeWithText("Last sync 13 Mar 08:50").assertIsDisplayed()
         composeRule.onNodeWithText("Admission readiness").assertIsDisplayed()
         composeRule.onNodeWithText("Queue & upload").assertIsDisplayed()
-        composeRule.onNodeWithText("Sync attendee list").assertIsDisplayed()
+        composeRule.onNodeWithText("Sync attendee list").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -243,11 +246,11 @@ class ScanDestinationScreenTest {
 
         render(uiState, actions::add)
 
-        composeRule.onNodeWithText("Actions").assertIsDisplayed()
-        composeRule.onNodeWithText("Allow camera access").performClick()
-        composeRule.onNodeWithText("Sync attendee list").performClick()
-        composeRule.onNodeWithText("Retry upload").performClick()
-        composeRule.onNodeWithText("Re-login").performClick()
+        composeRule.onNodeWithText("Actions").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Allow camera access").performScrollTo().performClick()
+        composeRule.onNodeWithText("Sync attendee list").performScrollTo().performClick()
+        composeRule.onNodeWithText("Retry upload").performScrollTo().performClick()
+        composeRule.onNodeWithText("Re-login").performScrollTo().performClick()
 
         assertThat(actions).contains(ScanOperatorAction.RequestCameraAccess)
         assertThat(actions).contains(ScanOperatorAction.ManualSync)
@@ -267,7 +270,7 @@ class ScanDestinationScreenTest {
                 CompositionLocalProvider(
                     LocalDensity provides Density(density.density, fontScale)
                 ) {
-                    Box(modifier = modifier) {
+                    Box(modifier = modifier.verticalScroll(rememberScrollState())) {
                         ScanDestinationScreen(
                             uiState = uiState,
                             previewSurfaceHolder = ScanPreviewSurfaceHolder(),

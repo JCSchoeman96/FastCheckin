@@ -243,17 +243,6 @@ class ScanDestinationPresenter(
         currentEventSyncStatus: AttendeeSyncStatus?
     ): AdmissionStatusUi {
         if (currentEventSyncStatus != null) {
-            if (currentEventSyncStatus.attendeeCount <= 0) {
-                return AdmissionStatusUi(
-                    chip =
-                        StatusChipUiModel(
-                            text = "No attendees synced",
-                            tone = StatusTone.Warning
-                        ),
-                    verdict = "Admission data missing",
-                    detail = "Sync attendees before relying on scan decisions."
-                )
-            }
             return if (isStale(currentEventSyncStatus)) {
                 if (currentEventSyncStatus.isSyncStruggling()) {
                     AdmissionStatusUi(
@@ -277,15 +266,27 @@ class ScanDestinationPresenter(
                     )
                 }
             } else {
-                AdmissionStatusUi(
-                    chip =
-                        StatusChipUiModel(
-                            text = "Attendee list ready",
-                            tone = StatusTone.Success
-                        ),
-                    verdict = "Ready for admission",
-                    detail = "Recent attendee data is available for this event."
-                )
+                if (currentEventSyncStatus.attendeeCount == 0) {
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee cache current",
+                                tone = StatusTone.Info
+                            ),
+                        verdict = "Admission state current",
+                        detail = "The attendee cache is synced for this event and currently contains no attendees."
+                    )
+                } else {
+                    AdmissionStatusUi(
+                        chip =
+                            StatusChipUiModel(
+                                text = "Attendee list ready",
+                                tone = StatusTone.Success
+                            ),
+                        verdict = "Admission state current",
+                        detail = "Recent attendee data is available for this event."
+                    )
+                }
             }
         }
 
@@ -576,7 +577,6 @@ class ScanDestinationPresenter(
         return currentEventSyncStatus == null ||
             syncUiState.bootstrapStatus == BootstrapSyncStatus.Failed ||
             !syncUiState.errorMessage.isNullOrBlank() ||
-            currentEventSyncStatus.attendeeCount <= 0 ||
             isStale(currentEventSyncStatus) ||
             currentEventSyncStatus.isSyncStruggling()
     }

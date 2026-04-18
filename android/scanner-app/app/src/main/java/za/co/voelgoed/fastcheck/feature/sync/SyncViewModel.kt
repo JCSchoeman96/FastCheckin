@@ -164,7 +164,7 @@ class SyncViewModel @Inject constructor(
                                             null -> "unknown"
                                             else -> if (value.isBlank()) "unknown" else value
                                         }
-                                    "Synced ${sync.attendeeCount} attendees via $syncType sync."
+                                    "Local attendee cache now has ${sync.attendeeCount} attendees after $syncType sync."
                                 } ?: "No active session. Login before syncing.",
                             errorMessage = successErrorMessage,
                             isRateLimited = false,
