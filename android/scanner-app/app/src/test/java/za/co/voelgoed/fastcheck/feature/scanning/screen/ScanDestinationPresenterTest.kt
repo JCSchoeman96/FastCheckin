@@ -309,7 +309,7 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(failedBootstrap.manualSyncVisible).isTrue()
-        assertThat(emptyCache.manualSyncVisible).isTrue()
+        assertThat(emptyCache.manualSyncVisible).isFalse()
         assertThat(staleCache.manualSyncVisible).isTrue()
         assertThat(healthyCache.manualSyncVisible).isFalse()
         assertThat(noActiveEvent.manualSyncVisible).isFalse()

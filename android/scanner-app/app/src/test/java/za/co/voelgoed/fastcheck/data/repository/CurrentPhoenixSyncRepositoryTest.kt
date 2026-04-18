@@ -1287,8 +1287,8 @@ class CurrentPhoenixSyncRepositoryTest {
         id: Long,
         eventId: Long,
         ticketCode: String,
-        firstName: String,
-        updatedAt: String
+        firstName: String = "Cached",
+        updatedAt: String = "2026-03-13T08:00:00Z"
     ) = AttendeeDto(
         id = id,
         event_id = eventId,
