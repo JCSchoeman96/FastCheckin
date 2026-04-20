@@ -70,6 +70,36 @@ defmodule FastCheck.Events.SyncTest do
       assert Repo.get!(Event, event.id).total_tickets == 137
     end
 
+    test "does not warn when Tickera sold tickets matches fetched tickets_info rows" do
+      event = create_event(%{total_tickets: 2})
+
+      mock_tickera_sync_requests(
+        event_total: 2,
+        attendees: [unchanged_remote_attendee("MATCH-1"), unchanged_remote_attendee("MATCH-2")]
+      )
+
+      assert {:ok, message} = Events.sync_event(event.id)
+
+      assert message == "Synced 2 attendees"
+      refute message =~ "Warning:"
+    end
+
+    test "warns when Tickera sold tickets exceeds fetched tickets_info rows" do
+      event = create_event(%{total_tickets: 2})
+
+      mock_tickera_sync_requests(
+        event_total: 2,
+        attendees: [unchanged_remote_attendee("VISIBLE-1")]
+      )
+
+      assert {:ok, message} = Events.sync_event(event.id)
+
+      assert message =~ "Synced 1 attendees"
+      assert message =~ "Warning: Tickera reports 2 sold tickets"
+      assert message =~ "tickets_info returned 1 rows"
+      assert message =~ "1 ticket(s) may be hidden by cache or upstream ticket visibility rules"
+    end
+
     test "updates total_tickets after incremental sync with zero attendee upserts" do
       last_sync_at = DateTime.utc_now() |> DateTime.truncate(:second)
       event = create_event(%{total_tickets: 10, last_sync_at: last_sync_at})
@@ -83,6 +113,37 @@ defmodule FastCheck.Events.SyncTest do
       assert {:ok, message} = Events.sync_event(event.id, nil, incremental: true)
       assert message =~ "0 new/updated out of 1 total"
       assert Repo.get!(Event, event.id).total_tickets == 42
+    end
+
+    test "warns on incremental sync when Tickera sold tickets exceeds fetched tickets_info rows" do
+      last_sync_at = DateTime.utc_now() |> DateTime.truncate(:second)
+      event = create_event(%{total_tickets: 2, last_sync_at: last_sync_at})
+      existing_attendee = create_attendee(event, %{ticket_code: "UNCHANGED-1"})
+
+      mock_tickera_sync_requests(
+        event_total: 2,
+        attendees: [unchanged_remote_attendee(existing_attendee.ticket_code)]
+      )
+
+      assert {:ok, message} = Events.sync_event(event.id, nil, incremental: true)
+
+      assert message =~ "Incremental sync: 0 new/updated out of 1 total"
+      assert message =~ "Warning: Tickera reports 2 sold tickets"
+      assert message =~ "tickets_info returned 1 rows"
+    end
+
+    test "does not warn when Tickera sold tickets cannot be normalized" do
+      event = create_event(%{total_tickets: 10})
+
+      mock_tickera_sync_requests(
+        event_total: "unknown",
+        attendees: [unchanged_remote_attendee("UNKNOWN-SOLD-1")]
+      )
+
+      assert {:ok, message} = Events.sync_event(event.id)
+
+      assert message == "Synced 1 attendees"
+      refute message =~ "Warning:"
     end
 
     test "leaves total_tickets untouched when sync fails" do

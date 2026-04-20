@@ -215,7 +215,15 @@ defmodule FastCheck.Events.Sync do
             do: "Incremental sync: #{count_message}",
             else: "Synced #{count_message} attendees"
 
-        {:ok, sync_message}
+        warning =
+          build_ticket_visibility_warning(
+            event.id,
+            pending_total_tickets,
+            total_count,
+            incremental
+          )
+
+        {:ok, append_sync_warning(sync_message, warning)}
 
       {:error, reason} ->
         log_sync_failure(sync_log_id, event.id, reason)
@@ -232,6 +240,38 @@ defmodule FastCheck.Events.Sync do
   defp build_sync_count_message(false, processed_count, attendees, total_count) do
     resolve_synced_count(processed_count, attendees, total_count)
   end
+
+  defp build_ticket_visibility_warning(_event_id, nil, _fetched_count, _incremental), do: nil
+
+  defp build_ticket_visibility_warning(event_id, sold_count, fetched_count, incremental)
+       when is_integer(sold_count) and sold_count >= 0 and is_integer(fetched_count) and
+              fetched_count >= 0 do
+    if sold_count > fetched_count do
+      missing_count = sold_count - fetched_count
+      sync_type = if incremental, do: "incremental", else: "full"
+
+      warning =
+        "Warning: Tickera reports #{sold_count} sold tickets, but tickets_info returned " <>
+          "#{fetched_count} rows. #{missing_count} ticket(s) may be hidden by cache or " <>
+          "upstream ticket visibility rules and will not scan until tickets_info exposes them."
+
+      Logger.warning(warning,
+        event_id: event_id,
+        tickera_sold_tickets: sold_count,
+        tickets_info_rows: fetched_count,
+        missing_ticket_count: missing_count,
+        sync_type: sync_type
+      )
+
+      warning
+    end
+  end
+
+  defp build_ticket_visibility_warning(_event_id, _sold_count, _fetched_count, _incremental),
+    do: nil
+
+  defp append_sync_warning(message, nil), do: message
+  defp append_sync_warning(message, warning), do: message <> "\n" <> warning
 
   defp current_sync_pages(event_id) do
     case SyncState.get_state(event_id) do

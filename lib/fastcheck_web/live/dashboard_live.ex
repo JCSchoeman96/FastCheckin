@@ -521,15 +521,15 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info({:sync_complete, run_ref}, socket)
+  def handle_info({:sync_complete, run_ref, message}, socket)
       when run_ref == socket.assigns.sync_run_ref do
     refreshed_events = Events.list_events()
 
     final_status =
       case socket.assigns.sync_status do
-        nil -> "Sync complete!"
+        nil -> message || "Sync complete!"
         "Sync failed" <> _rest -> socket.assigns.sync_status
-        _ -> "Sync complete!"
+        _ -> message || "Sync complete!"
       end
 
     {:noreply,
@@ -540,6 +540,17 @@ defmodule FastCheckWeb.DashboardLive do
      |> reset_sync_runtime()
      |> assign(:sync_status, final_status)
      |> assign(:selected_event_id, nil)}
+  end
+
+  @impl true
+  def handle_info({:sync_complete, _run_ref, _message}, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:sync_complete, run_ref}, socket)
+      when run_ref == socket.assigns.sync_run_ref do
+    handle_info({:sync_complete, run_ref, "Sync complete!"}, socket)
   end
 
   @impl true
@@ -1602,8 +1613,8 @@ defmodule FastCheckWeb.DashboardLive do
          attempt_timeout_ms
        ) do
     case run_sync_attempt(event_id, incremental, parent, run_ref, attempt_timeout_ms) do
-      {:ok, _message} ->
-        send(parent, {:sync_complete, run_ref})
+      {:ok, message} ->
+        send(parent, {:sync_complete, run_ref, message})
 
       {:error, reason} when attempt < max_attempts ->
         Events.force_reset_sync(event_id, {:retrying_after_error, reason})
