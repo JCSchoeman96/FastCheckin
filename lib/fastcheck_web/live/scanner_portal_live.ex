@@ -74,9 +74,11 @@ defmodule FastCheckWeb.ScannerPortalLive do
           stats_reconcile_ms: stats_reconcile_ms,
           force_refresh_every_n_scans: force_refresh_every_n_scans,
           search_query: "",
+          search_raw_results: [],
           search_results: [],
           search_row_actions: %{},
           search_row_action_ref: 0,
+          search_truncated?: false,
           search_loading: false,
           search_error: nil,
           camera_permission: default_camera_permission(),
@@ -159,7 +161,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
           |> assign(:check_in_type, normalized_type)
           |> assign(
             :search_results,
-            apply_mode_filter(socket.assigns.search_results, normalized_type)
+            apply_mode_filter(socket.assigns.search_raw_results, normalized_type)
           )
           |> assign(:search_row_actions, %{})
 
@@ -228,7 +230,9 @@ defmodule FastCheckWeb.ScannerPortalLive do
     if trimmed_query == "" do
       {:noreply,
        socket
+       |> assign(:search_raw_results, [])
        |> assign(:search_results, [])
+       |> assign(:search_truncated?, false)
        |> assign(:search_loading, false)}
     else
       send(self(), {:perform_attendee_search, trimmed_query})
@@ -328,14 +332,16 @@ defmodule FastCheckWeb.ScannerPortalLive do
     current_query = socket.assigns.search_query |> to_string() |> String.trim()
 
     if current_query == query do
-      results =
-        socket.assigns.event_id
-        |> Attendees.search_event_attendees(query, 20)
-        |> apply_mode_filter(socket.assigns.check_in_type)
+      %{rows: raw_results, truncated?: truncated?} =
+        Attendees.search_event_attendees_with_meta(socket.assigns.event_id, query, 50)
+
+      results = apply_mode_filter(raw_results, socket.assigns.check_in_type)
 
       {:noreply,
        socket
+       |> assign(:search_raw_results, raw_results)
        |> assign(:search_results, results)
+       |> assign(:search_truncated?, truncated?)
        |> assign(:search_loading, false)
        |> prune_search_row_actions()}
     else
@@ -347,7 +353,9 @@ defmodule FastCheckWeb.ScannerPortalLive do
 
       {:noreply,
        socket
+       |> assign(:search_raw_results, [])
        |> assign(:search_results, [])
+       |> assign(:search_truncated?, false)
        |> assign(:search_loading, false)
        |> assign(:search_error, "Unable to search attendees right now.")}
   end
@@ -519,47 +527,71 @@ defmodule FastCheckWeb.ScannerPortalLive do
             :if={@search_results != [] and String.trim(@search_query || "") != ""}
             class="scanner-search-results"
           >
-            <div :for={attendee <- Enum.take(@search_results, 3)} class="scanner-search-result">
-              <% row_action = search_row_action(@search_row_actions, attendee, @check_in_type) %>
-              <div class="min-w-0">
-                <p class="truncate text-sm font-semibold text-fc-text-primary">
-                  {attendee.first_name} {attendee.last_name}
-                </p>
-                <p class="truncate text-xs text-fc-text-secondary">{attendee.ticket_code}</p>
-              </div>
+            <p :if={@search_truncated?} class="mb-2 text-sm text-fc-text-secondary">
+              More matches exist for this search. Keep typing to narrow the list.
+            </p>
 
-              <.button
-                type="button"
-                phx-click="manual_scan"
-                phx-value-ticket_code={attendee.ticket_code}
-                color={manual_action_color(@check_in_type, row_action)}
-                variant={manual_action_variant(row_action)}
-                size="small"
-                class={manual_action_class(row_action)}
-                phx-disable-with={manual_action_pending_label(@check_in_type)}
-                disabled={
-                  manual_action_disabled?(attendee, @check_in_type, row_action, @scans_disabled?)
-                }
-                data-test={"manual-check-in-#{attendee.ticket_code}"}
-              >
-                <.icon
-                  :if={manual_action_icon(row_action)}
-                  name={manual_action_icon(row_action)}
-                  class="size-4"
-                />
-                {manual_action_label(@check_in_type, row_action)}
-              </.button>
+            <div
+              id="scanner-portal-search-results"
+              class="max-h-[32rem] overflow-y-auto pr-1"
+            >
+              <div :for={attendee <- @search_results} class="scanner-search-result">
+                <% row_action = search_row_action(@search_row_actions, attendee, @check_in_type) %>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold text-fc-text-primary">
+                    {attendee.first_name} {attendee.last_name}
+                  </p>
+                  <p class="truncate text-xs text-fc-text-secondary">{attendee.ticket_code}</p>
+                </div>
+
+                <.button
+                  type="button"
+                  phx-click="manual_scan"
+                  phx-value-ticket_code={attendee.ticket_code}
+                  color={manual_action_color(@check_in_type, row_action)}
+                  variant={manual_action_variant(row_action)}
+                  size="small"
+                  class={manual_action_class(row_action)}
+                  phx-disable-with={manual_action_pending_label(@check_in_type)}
+                  disabled={
+                    manual_action_disabled?(
+                      attendee,
+                      @check_in_type,
+                      row_action,
+                      @scans_disabled?
+                    )
+                  }
+                  data-test={"manual-check-in-#{attendee.ticket_code}"}
+                >
+                  <.icon
+                    :if={manual_action_icon(row_action)}
+                    name={manual_action_icon(row_action)}
+                    class="size-4"
+                  />
+                  {manual_action_label(@check_in_type, row_action)}
+                </.button>
+              </div>
             </div>
           </div>
 
           <p
             :if={
               @search_results == [] and @search_query != "" and not @search_loading and
-                is_nil(@search_error)
+                is_nil(@search_error) and @search_raw_results == []
             }
             class="scanner-empty-state"
           >
             No attendees found.
+          </p>
+
+          <p
+            :if={
+              @search_results == [] and @search_query != "" and not @search_loading and
+                is_nil(@search_error) and @search_raw_results != []
+            }
+            class="scanner-empty-state"
+          >
+            {no_actionable_search_results_copy(@check_in_type)}
           </p>
         </section>
 
@@ -1219,6 +1251,12 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp manual_action_label(_mode, %{state: :just_succeeded}), do: "Checked in"
   defp manual_action_label(_mode, %{state: :settled_non_actionable}), do: "Already inside"
   defp manual_action_label(_mode, _action), do: "Check in"
+
+  defp no_actionable_search_results_copy("exit"),
+    do: "Matching attendees were found, but none can be checked out right now."
+
+  defp no_actionable_search_results_copy(_),
+    do: "Matching attendees were found, but none can be checked in right now."
 
   defp manual_action_pending_label("exit"), do: "Checking out..."
   defp manual_action_pending_label(_), do: "Checking in..."

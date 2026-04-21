@@ -75,6 +75,62 @@ defmodule FastCheckWeb.ScannerLiveTest do
       assert has_element?(view, "[data-test=\"manual-check-in-#{attendee.ticket_code}\"]")
     end
 
+    test "renders purchaser-linked group results beyond the old 10-result cap", %{conn: conn} do
+      event = insert_event()
+
+      attendees =
+        for index <- 1..12 do
+          insert_attendee(event, %{
+            ticket_code: "GROUP-#{index}",
+            first_name: "Guest#{index}",
+            last_name: "Member",
+            email: "guest#{index}@example.com",
+            custom_fields: %{
+              "buyer_first" => "Pat",
+              "buyer_last" => "Johnson",
+              "buyer_email" => "pat.johnson@example.com"
+            }
+          })
+        end
+
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("form#attendee-search-form")
+      |> render_change(%{"query" => "pat.johnson@example.com"})
+
+      Enum.each(attendees, fn attendee ->
+        assert has_element?(view, "[data-test=\"manual-check-in-#{attendee.ticket_code}\"]")
+      end)
+    end
+
+    test "shows truncation helper only when more than 50 raw matches exist", %{conn: conn} do
+      event = insert_event()
+
+      for index <- 1..51 do
+        insert_attendee(event, %{
+          ticket_code: "TRUNC-#{index}",
+          first_name: "Guest#{index}",
+          last_name: "Overflow",
+          custom_fields: %{"buyer_email" => "overflow@example.com"}
+        })
+      end
+
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("form#attendee-search-form")
+      |> render_change(%{"query" => "overflow@example.com"})
+
+      html = render(view)
+      assert html =~ "Showing the first 50 matches. Keep typing to narrow the list."
+      assert has_element?(view, "#attendee-search-results")
+      assert has_element?(view, "[data-test=\"manual-check-in-TRUNC-1\"]")
+
+      assert Regex.scan(~r/data-test="manual-check-in-TRUNC-\d+"/, html)
+             |> length() == 50
+    end
+
     test "bulk scan textarea blur enables processing", %{conn: conn} do
       event = insert_event()
       attendee = insert_attendee(event, @valid_attendee_attrs)
