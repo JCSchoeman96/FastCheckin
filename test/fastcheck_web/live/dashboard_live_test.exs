@@ -233,6 +233,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       html = render(view)
       assert html =~ event.name
       assert html =~ "137"
+      assert html =~ "Warning: Tickera reports 137 sold tickets"
+      assert html =~ "tickets_info returned 0 rows"
     end
 
     test "cancelling an in-flight sync leaves Tickets unchanged", %{conn: conn} do
@@ -455,7 +457,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
     html = render(view)
 
     cond do
-      html =~ "Sync complete!" ->
+      html =~ "Sync complete!" or html =~ "Synced " ->
         :ok
 
       html =~ "Sync failed:" ->
