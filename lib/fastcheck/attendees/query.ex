@@ -123,7 +123,7 @@ defmodule FastCheck.Attendees.Query do
   Performs a debounced attendee search scoped to a single event.
 
   Supports case-insensitive matches across first/last name, email, and
-  ticket code fields.
+  ticket code fields, plus purchaser metadata stored in `custom_fields`.
 
   ## Parameters
   - `event_id` - The event to search within
@@ -142,20 +142,7 @@ defmodule FastCheck.Attendees.Query do
     if trimmed == "" do
       []
     else
-      safe_limit = normalize_limit(limit)
-      pattern = "%#{escape_like(trimmed)}%"
-
-      from(a in Attendee,
-        where: a.event_id == ^event_id,
-        where:
-          ilike(a.first_name, ^pattern) or
-            ilike(a.last_name, ^pattern) or
-            ilike(a.email, ^pattern) or
-            ilike(a.ticket_code, ^pattern),
-        order_by: [asc: a.last_name, asc: a.first_name, asc: a.id],
-        limit: ^safe_limit
-      )
-      |> Repo.all()
+      do_search_event_attendees(event_id, trimmed, normalize_limit(limit))
     end
   rescue
     exception ->
@@ -167,6 +154,43 @@ defmodule FastCheck.Attendees.Query do
   end
 
   def search_event_attendees(_, _, _), do: []
+
+  @doc """
+  Performs scanner-focused attendee search with truncation metadata.
+
+  Returns the first `limit` attendees plus a boolean indicating whether more
+  matches existed beyond the visible result cap.
+  """
+  @spec search_event_attendees_with_meta(integer(), String.t() | nil, pos_integer()) :: %{
+          rows: [Attendee.t()],
+          truncated?: boolean()
+        }
+  def search_event_attendees_with_meta(event_id, query, limit \\ 50)
+
+  def search_event_attendees_with_meta(event_id, query, limit) when is_integer(event_id) do
+    trimmed = sanitize_query(query)
+
+    if trimmed == "" do
+      %{rows: [], truncated?: false}
+    else
+      safe_limit = normalize_limit(limit)
+      fetched_rows = do_search_event_attendees(event_id, trimmed, safe_limit + 1)
+
+      %{
+        rows: Enum.take(fetched_rows, safe_limit),
+        truncated?: length(fetched_rows) > safe_limit
+      }
+    end
+  rescue
+    exception ->
+      Logger.error(
+        "Scanner attendee search failed for event #{event_id}: #{Exception.message(exception)}"
+      )
+
+      %{rows: [], truncated?: false}
+  end
+
+  def search_event_attendees_with_meta(_, _, _), do: %{rows: [], truncated?: false}
 
   @doc """
   Computes the real-time occupancy breakdown for a given event.
@@ -323,6 +347,39 @@ defmodule FastCheck.Attendees.Query do
 
   defp normalize_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, 50)
   defp normalize_limit(_limit), do: 20
+
+  defp do_search_event_attendees(event_id, trimmed_query, limit) do
+    pattern = "%#{escape_like(trimmed_query)}%"
+
+    from(a in Attendee,
+      where: a.event_id == ^event_id,
+      where: ^search_pattern_match(pattern),
+      order_by: [asc: a.last_name, asc: a.first_name, asc: a.id],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  defp search_pattern_match(pattern) do
+    dynamic(
+      [a],
+      ilike(a.first_name, ^pattern) or
+        ilike(a.last_name, ^pattern) or
+        ilike(a.email, ^pattern) or
+        ilike(a.ticket_code, ^pattern) or
+        fragment("coalesce(?->>?, '') ILIKE ?", a.custom_fields, "buyer_first", ^pattern) or
+        fragment("coalesce(?->>?, '') ILIKE ?", a.custom_fields, "buyer_last", ^pattern) or
+        fragment("coalesce(?->>?, '') ILIKE ?", a.custom_fields, "buyer_email", ^pattern) or
+        fragment(
+          "trim(concat_ws(' ', coalesce(?->>?, ''), coalesce(?->>?, ''))) ILIKE ?",
+          a.custom_fields,
+          "buyer_first",
+          a.custom_fields,
+          "buyer_last",
+          ^pattern
+        )
+    )
+  end
 
   defp escape_like(term) when is_binary(term) do
     term

@@ -291,6 +291,66 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
       assert render(view) =~ "Check in"
       refute render(view) =~ "Checked in"
     end
+
+    test "renders purchaser-linked results beyond the old 3-visible-result cap", %{
+      conn: conn,
+      event: event
+    } do
+      attendees =
+        for index <- 1..6 do
+          insert_attendee(event, %{
+            ticket_code: "GROUP-#{index}",
+            first_name: "Guest#{index}",
+            last_name: "Member",
+            email: "guest#{index}@example.com",
+            custom_fields: %{
+              "buyer_first" => "Pat",
+              "buyer_last" => "Johnson",
+              "buyer_email" => "pat.johnson@example.com"
+            }
+          })
+        end
+
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view
+      |> element("#scanner-portal-search-form")
+      |> render_change(%{"query" => "pat johnson"})
+
+      assert has_element?(view, "#scanner-portal-search-results")
+
+      Enum.each(attendees, fn attendee ->
+        assert has_element?(view, "[data-test=\"manual-check-in-#{attendee.ticket_code}\"]")
+      end)
+    end
+
+    test "shows the portal truncation helper only when more raw matches exist", %{
+      conn: conn,
+      event: event
+    } do
+      for index <- 1..51 do
+        insert_attendee(event, %{
+          ticket_code: "TRUNC-#{index}",
+          first_name: "Guest#{index}",
+          last_name: "Overflow",
+          custom_fields: %{"buyer_email" => "overflow@example.com"}
+        })
+      end
+
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view
+      |> element("#scanner-portal-search-form")
+      |> render_change(%{"query" => "overflow@example.com"})
+
+      html = render(view)
+      assert html =~ "More matches exist for this search. Keep typing to narrow the list."
+      assert has_element?(view, "#scanner-portal-search-results")
+      assert has_element?(view, "[data-test=\"manual-check-in-TRUNC-1\"]")
+
+      assert Regex.scan(~r/data-test="manual-check-in-TRUNC-\d+"/, html)
+             |> length() == 50
+    end
   end
 
   describe "field result states" do
