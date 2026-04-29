@@ -153,6 +153,22 @@ fun ScanDestinationScreen(
             color = scheme.onSurfaceVariant
         )
 
+        if (uiState.scannerDiagnosticLabel != null && uiState.scannerDiagnosticMessage != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                Text(
+                    text = uiState.scannerDiagnosticLabel,
+                    style = theme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = uiState.scannerDiagnosticMessage,
+                    style = theme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
+
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
                 Text(

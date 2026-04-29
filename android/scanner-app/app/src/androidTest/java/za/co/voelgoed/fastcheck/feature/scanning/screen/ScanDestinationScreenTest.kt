@@ -191,6 +191,7 @@ class ScanDestinationScreenTest {
     fun topSummaryUsesCompactFactsAndFriendlySyncCopy() {
         render(
             baseUiState(
+                showCameraPreview = true,
                 scannerOverlaySyncLabel = "Last sync 08:50",
             )
         )
@@ -243,6 +244,7 @@ class ScanDestinationScreenTest {
         render(
             uiState =
                 baseUiState(
+                    showCameraPreview = true,
                     syncedAttendeeCountLabel = "Synced attendees: 1234",
                     scannerOverlaySyncLabel = "Last sync 13 Mar 08:50",
                     manualSyncVisible = true,
