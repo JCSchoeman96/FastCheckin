@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +77,7 @@ fun ScanDestinationScreen(
                 Surface(
                     modifier =
                         Modifier
+                            .align(Alignment.TopCenter)
                             .fillMaxWidth()
                             .padding(spacing.small),
                     shape = theme.shapes.medium,
@@ -119,6 +121,7 @@ fun ScanDestinationScreen(
                         tone = banner.tone,
                         modifier =
                             Modifier
+                                .align(Alignment.Center)
                                 .fillMaxWidth()
                                 .padding(spacing.small)
                                 .testTag(ScanDestinationTestTags.CaptureResultHero),
