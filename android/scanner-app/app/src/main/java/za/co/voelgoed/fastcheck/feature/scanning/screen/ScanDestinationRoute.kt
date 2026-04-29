@@ -30,7 +30,7 @@ fun ScanDestinationRoute(
 
     val presenter = remember { ScanDestinationPresenter() }
     val uiState =
-        remember(scanningUiState, queueUiState, syncUiState, currentEventSyncStatus) {
+        remember(session, scanningUiState, queueUiState, syncUiState, currentEventSyncStatus) {
             presenter.present(
                 session = session,
                 scanningUiState = scanningUiState,

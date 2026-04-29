@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +77,7 @@ fun ScanDestinationScreen(
                 Surface(
                     modifier =
                         Modifier
+                            .align(Alignment.TopCenter)
                             .fillMaxWidth()
                             .padding(spacing.small),
                     shape = theme.shapes.medium,
@@ -119,6 +121,7 @@ fun ScanDestinationScreen(
                         tone = banner.tone,
                         modifier =
                             Modifier
+                                .align(Alignment.Center)
                                 .fillMaxWidth()
                                 .padding(spacing.small)
                                 .testTag(ScanDestinationTestTags.CaptureResultHero),
@@ -150,6 +153,21 @@ fun ScanDestinationScreen(
             color = scheme.onSurfaceVariant
         )
 
+        if (uiState.scannerDiagnosticLabel != null && uiState.scannerDiagnosticMessage != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                Text(
+                    text = uiState.scannerDiagnosticLabel,
+                    style = theme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = uiState.scannerDiagnosticMessage,
+                    style = theme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
                 Text(

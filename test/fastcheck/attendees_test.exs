@@ -176,6 +176,31 @@ defmodule FastCheck.AttendeesTest do
       assert ids_for_search(event.id, "vip-001") == [matched.id]
     end
 
+    test "matches purchaser metadata and full purchaser name across a group", %{event: event} do
+      group =
+        for index <- 1..4 do
+          create_attendee_record(event, %{
+            ticket_code: "GROUP-#{index}",
+            first_name: "Guest#{index}",
+            last_name: "Member",
+            email: "guest#{index}@example.com",
+            custom_fields: %{
+              "buyer_first" => "Pat",
+              "buyer_last" => "Johnson",
+              "buyer_email" => "pat.johnson@example.com"
+            }
+          })
+        end
+
+      expected_ids = Enum.map(group, & &1.id) |> Enum.sort()
+
+      assert ids_for_search(event.id, "pat") == expected_ids
+      assert ids_for_search(event.id, "JOHNSON") == expected_ids
+      assert ids_for_search(event.id, "PAT.JOHNSON@EXAMPLE.COM") == expected_ids
+      assert ids_for_search(event.id, "pat johnson") == expected_ids
+      assert is_list(Attendees.search_event_attendees(event.id, "pat johnson"))
+    end
+
     test "scopes results to the provided event", %{event: event, other_event: other_event} do
       create_attendee_record(event, %{
         ticket_code: "VIP-123",
@@ -202,6 +227,34 @@ defmodule FastCheck.AttendeesTest do
       assert Attendees.search_event_attendees(event.id, nil) == []
       assert Attendees.search_event_attendees(event.id, "   ") == []
       assert length(ids_for_search(event.id, "  code-9  ")) == 1
+    end
+
+    test "returns scanner truncation metadata only when raw matches exceed 50", %{event: event} do
+      for index <- 1..50 do
+        create_attendee_record(event, %{
+          ticket_code: "TRUNC-#{index}",
+          first_name: "Guest#{index}",
+          last_name: "Truncation",
+          custom_fields: %{"buyer_email" => "group-cap@example.com"}
+        })
+      end
+
+      exact_cap =
+        Attendees.search_event_attendees_with_meta(event.id, "group-cap@example.com", 50)
+
+      assert length(exact_cap.rows) == 50
+      refute exact_cap.truncated?
+
+      create_attendee_record(event, %{
+        ticket_code: "TRUNC-51",
+        first_name: "Guest51",
+        last_name: "Truncation",
+        custom_fields: %{"buyer_email" => "group-cap@example.com"}
+      })
+
+      over_cap = Attendees.search_event_attendees_with_meta(event.id, "group-cap@example.com", 50)
+      assert length(over_cap.rows) == 50
+      assert over_cap.truncated?
     end
   end
 

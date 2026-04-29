@@ -139,6 +139,29 @@ class ScanDestinationScreenTest {
     }
 
     @Test
+    fun previewOverlayKeepsSingleLastSyncWhileHeroAndSyncedCountAreVisible() {
+        val uiState =
+            baseUiState(
+                showCameraPreview = true,
+                scannerOverlaySyncLabel = "Last sync 08:50",
+                syncedAttendeeCountLabel = "Synced attendees: 123",
+                captureBanner =
+                    BannerUiModel(
+                        title = "Accepted",
+                        message = "Welcome, Pieter",
+                        tone = StatusTone.Success,
+                    ),
+            )
+
+        render(uiState)
+
+        composeRule.onNodeWithTag(ScanDestinationTestTags.PreviewHost).assertIsDisplayed()
+        composeRule.onNodeWithTag(ScanDestinationTestTags.CaptureResultHero).assertIsDisplayed()
+        composeRule.onAllNodesWithText("Last sync 08:50").assertCountEquals(1)
+        composeRule.onNodeWithText("Synced attendees: 123").assertIsDisplayed()
+    }
+
+    @Test
     fun scanBodyUsesTruthfulAdmissionAndQueueUploadSections() {
         render(
             baseUiState(
@@ -168,6 +191,7 @@ class ScanDestinationScreenTest {
     fun topSummaryUsesCompactFactsAndFriendlySyncCopy() {
         render(
             baseUiState(
+                showCameraPreview = true,
                 scannerOverlaySyncLabel = "Last sync 08:50",
             )
         )
@@ -220,6 +244,7 @@ class ScanDestinationScreenTest {
         render(
             uiState =
                 baseUiState(
+                    showCameraPreview = true,
                     syncedAttendeeCountLabel = "Synced attendees: 1234",
                     scannerOverlaySyncLabel = "Last sync 13 Mar 08:50",
                     manualSyncVisible = true,

@@ -52,6 +52,7 @@ defmodule FastCheckWeb.ScannerLive do
           force_refresh_every_n_scans: force_refresh_every_n_scans,
           search_query: "",
           search_results: [],
+          search_truncated?: false,
           search_loading: false,
           search_error: nil,
           camera_permission: default_camera_permission(),
@@ -154,6 +155,7 @@ defmodule FastCheckWeb.ScannerLive do
       {:noreply,
        socket
        |> assign(:search_results, [])
+       |> assign(:search_truncated?, false)
        |> assign(:search_loading, false)}
     else
       send(self(), {:perform_attendee_search, trimmed})
@@ -333,11 +335,13 @@ defmodule FastCheckWeb.ScannerLive do
     current_query = socket.assigns.search_query |> to_string() |> String.trim()
 
     if current_query == query do
-      results = Attendees.search_event_attendees(socket.assigns.event_id, query, 10)
+      %{rows: rows, truncated?: truncated?} =
+        Attendees.search_event_attendees_with_meta(socket.assigns.event_id, query, 50)
 
       {:noreply,
        socket
-       |> assign(:search_results, results)
+       |> assign(:search_results, rows)
+       |> assign(:search_truncated?, truncated?)
        |> assign(:search_loading, false)}
     else
       {:noreply, socket}
@@ -349,6 +353,7 @@ defmodule FastCheckWeb.ScannerLive do
       {:noreply,
        socket
        |> assign(:search_results, [])
+       |> assign(:search_truncated?, false)
        |> assign(:search_loading, false)
        |> assign(:search_error, "Unable to search attendees right now.")}
   end
@@ -1009,39 +1014,45 @@ defmodule FastCheckWeb.ScannerLive do
             </p>
 
             <div :if={@search_results != []} class="mt-6 space-y-3">
-              <.card
-                :for={attendee <- @search_results}
-                variant="outline"
-                color="natural"
-                rounded="medium"
-                padding="medium"
-                class="fc-card-container"
-              >
-                <.card_content>
-                  <div class="flex flex-col gap-3 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
-                    <div>
-                      <p class="font-semibold text-fc-text-primary">
-                        {attendee.first_name} {attendee.last_name}
-                      </p>
-                      <p class="text-sm text-fc-text-secondary">{attendee.ticket_code}</p>
-                      <p class="text-xs text-fc-text-muted">{attendee.ticket_type}</p>
-                    </div>
+              <p :if={@search_truncated?} class="text-sm text-fc-text-secondary">
+                Showing the first 50 matches. Keep typing to narrow the list.
+              </p>
 
-                    <.button
-                      type="button"
-                      phx-click="manual_check_in"
-                      phx-value-ticket_code={attendee.ticket_code}
-                      data-test={"manual-check-in-#{attendee.ticket_code}"}
-                      color="success"
-                      variant="bordered"
-                      size="small"
-                      disabled={@scans_disabled?}
-                    >
-                      Check in
-                    </.button>
-                  </div>
-                </.card_content>
-              </.card>
+              <div id="attendee-search-results" class="max-h-[36rem] space-y-3 overflow-y-auto pr-1">
+                <.card
+                  :for={attendee <- @search_results}
+                  variant="outline"
+                  color="natural"
+                  rounded="medium"
+                  padding="medium"
+                  class="fc-card-container"
+                >
+                  <.card_content>
+                    <div class="flex flex-col gap-3 cq-sm:flex-row cq-sm:items-center cq-sm:justify-between">
+                      <div>
+                        <p class="font-semibold text-fc-text-primary">
+                          {attendee.first_name} {attendee.last_name}
+                        </p>
+                        <p class="text-sm text-fc-text-secondary">{attendee.ticket_code}</p>
+                        <p class="text-xs text-fc-text-muted">{attendee.ticket_type}</p>
+                      </div>
+
+                      <.button
+                        type="button"
+                        phx-click="manual_check_in"
+                        phx-value-ticket_code={attendee.ticket_code}
+                        data-test={"manual-check-in-#{attendee.ticket_code}"}
+                        color="success"
+                        variant="bordered"
+                        size="small"
+                        disabled={@scans_disabled?}
+                      >
+                        Check in
+                      </.button>
+                    </div>
+                  </.card_content>
+                </.card>
+              </div>
             </div>
 
             <p

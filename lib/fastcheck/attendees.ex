@@ -316,6 +316,19 @@ defmodule FastCheck.Attendees do
   end
 
   @doc """
+  Performs scanner-focused attendee search with truncation metadata.
+
+  Delegates to `FastCheck.Attendees.Query.search_event_attendees_with_meta/3`.
+  """
+  @spec search_event_attendees_with_meta(integer(), String.t() | nil, pos_integer()) :: %{
+          rows: [Attendee.t()],
+          truncated?: boolean()
+        }
+  def search_event_attendees_with_meta(event_id, query, limit \\ 50) do
+    Query.search_event_attendees_with_meta(event_id, query, limit)
+  end
+
+  @doc """
   Computes the real-time occupancy breakdown for a given event.
 
   This function orchestrates caching and computation of occupancy metrics.
