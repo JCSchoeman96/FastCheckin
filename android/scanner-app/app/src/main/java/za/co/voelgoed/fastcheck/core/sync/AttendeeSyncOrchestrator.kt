@@ -15,6 +15,10 @@ interface AttendeeSyncOrchestrator {
 
     fun notifyConnectivityRestored()
 
+    fun notifyScanDestinationActive()
+
+    fun notifyScanDestinationInactive()
+
     /**
      * Runs one sync cycle now (same mode resolution as background triggers). Use for operator
      * manual sync and bootstrap flows that must await completion.

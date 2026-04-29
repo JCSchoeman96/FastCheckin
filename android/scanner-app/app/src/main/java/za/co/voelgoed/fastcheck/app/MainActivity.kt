@@ -272,6 +272,7 @@ class MainActivity : ComponentActivity() {
                                 if (wasAuthenticated) {
                                     scannerSourceBinding.stop()
                                 }
+                                attendeeSyncOrchestrator.notifyScanDestinationInactive()
                             }
 
                             is AppSessionRoute.Authenticated -> {
@@ -296,6 +297,9 @@ class MainActivity : ComponentActivity() {
                                 }
                                 shouldEvaluateAutoRequestOnScanEntry =
                                     isScanDestinationActive && (becameAuthenticated || sessionChanged)
+                                if (isScanDestinationActive) {
+                                    attendeeSyncOrchestrator.notifyScanDestinationActive()
+                                }
                             }
                         }
                         val decision = syncScannerBindingState()
@@ -313,8 +317,12 @@ class MainActivity : ComponentActivity() {
                             activeSupportRoute = state.activeSupportRoute
                         )
                         val enteredScan = !wasScanDestinationActive && isScanDestinationActive
+                        val exitedScan = wasScanDestinationActive && !isScanDestinationActive
                         if (enteredScan) {
                             hasAutoRequestedCameraPermissionThisScanEntry = false
+                            attendeeSyncOrchestrator.notifyScanDestinationActive()
+                        } else if (exitedScan) {
+                            attendeeSyncOrchestrator.notifyScanDestinationInactive()
                         }
                         val decision = syncScannerBindingState()
                         if (enteredScan) {
@@ -382,6 +390,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        attendeeSyncOrchestrator.notifyScanDestinationInactive()
         scanningViewModel.onActivationDecision(
             ScannerSourceActivationDecision(
                 shouldStartBinding = false,

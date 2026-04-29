@@ -26,10 +26,14 @@ data class ScanDestinationUiState(
     val queueUploadStatusChip: StatusChipUiModel,
     val queueUploadStatusVerdict: String,
     val queueUploadStatusDetail: String,
-    val manualSyncVisible: Boolean,
+    val scanRefreshUiModel: ScanRefreshUiModel? = null,
     val retryUploadVisible: Boolean,
     val reloginVisible: Boolean
-)
+) {
+    // Compatibility helper while call sites migrate to ScanRefreshUiModel.
+    val manualSyncVisible: Boolean
+        get() = scanRefreshUiModel?.buttonVisible == true
+}
 
 data class StatusChipUiModel(
     val text: String,

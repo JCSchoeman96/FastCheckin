@@ -510,6 +510,10 @@ class DefaultAdmitScanUseCaseTest {
 
         override fun notifyConnectivityRestored() = Unit
 
+        override fun notifyScanDestinationActive() = Unit
+
+        override fun notifyScanDestinationInactive() = Unit
+
         override suspend fun runSyncCycleNow() = Unit
     }
 
@@ -525,6 +529,10 @@ class DefaultAdmitScanUseCaseTest {
         }
 
         override fun notifyConnectivityRestored() = Unit
+
+        override fun notifyScanDestinationActive() = Unit
+
+        override fun notifyScanDestinationInactive() = Unit
 
         override suspend fun runSyncCycleNow() = Unit
     }

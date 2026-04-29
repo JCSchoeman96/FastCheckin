@@ -153,6 +153,22 @@ fun ScanDestinationScreen(
             color = scheme.onSurfaceVariant
         )
 
+        uiState.scanRefreshUiModel?.let { refreshUi ->
+            FcBanner(
+                message = refreshUi.message,
+                tone = refreshUi.tone,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (refreshUi.buttonVisible) {
+                FcSecondaryButton(
+                    text = refreshUi.buttonLabel,
+                    onClick = { onOperatorAction(ScanOperatorAction.ManualSync) },
+                    enabled = refreshUi.buttonEnabled,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
         if (uiState.scannerDiagnosticLabel != null && uiState.scannerDiagnosticMessage != null) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
                 Text(
@@ -198,7 +214,7 @@ fun ScanDestinationScreen(
 
         FcCard(modifier = Modifier.fillMaxWidth()) {
             val hasQueueUploadActions =
-                uiState.manualSyncVisible || uiState.retryUploadVisible || uiState.reloginVisible
+                uiState.retryUploadVisible || uiState.reloginVisible
 
             Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
                 Text(
@@ -242,13 +258,6 @@ fun ScanDestinationScreen(
                             color = scheme.onSurfaceVariant,
                             fontWeight = FontWeight.SemiBold
                         )
-                        if (uiState.manualSyncVisible) {
-                            FcSecondaryButton(
-                                text = "Sync attendee list",
-                                onClick = { onOperatorAction(ScanOperatorAction.ManualSync) },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
                         if (uiState.retryUploadVisible) {
                             FcSecondaryButton(
                                 text = "Retry upload",

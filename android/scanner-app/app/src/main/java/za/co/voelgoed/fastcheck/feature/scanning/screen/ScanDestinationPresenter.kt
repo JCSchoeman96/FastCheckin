@@ -25,6 +25,8 @@ import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
 class ScanDestinationPresenter(
     private val clock: Clock = Clock.systemUTC()
 ) {
+    private val freshnessPolicy = AttendeeCacheFreshnessPolicy(clock = clock)
+
     fun present(
         session: ScannerSession? = null,
         scanningUiState: ScanningUiState,
@@ -38,6 +40,7 @@ class ScanDestinationPresenter(
         val queueUploadStatus = queueUploadStatusFor(queueUiState)
         val scannerDiagnostic = scannerDiagnosticFor(scanningUiState)
         val primaryRecoveryAction = primaryRecoveryActionFor(scanningUiState)
+        val scanRefreshUiModel = scanRefreshUiModelFor(syncUiState, currentEventSyncStatus, queueUiState)
 
         return ScanDestinationUiState(
             scannerOverlayTitle = "Scanner active",
@@ -62,9 +65,7 @@ class ScanDestinationPresenter(
             queueUploadStatusChip = queueUploadStatus.chip,
             queueUploadStatusVerdict = queueUploadStatus.verdict,
             queueUploadStatusDetail = queueUploadStatus.detail,
-            manualSyncVisible =
-                !syncUiState.isSyncing &&
-                    shouldShowManualSync(syncUiState, currentEventSyncStatus),
+            scanRefreshUiModel = scanRefreshUiModel,
             retryUploadVisible =
                 QueueUploadRecoveryVisibility.shouldShowRetryUpload(
                     queueUiState.localQueueDepth,
@@ -88,6 +89,90 @@ class ScanDestinationPresenter(
             "Active Event: #$eventId"
         } else {
             "Active Event: unavailable"
+        }
+    }
+
+    private fun scanRefreshUiModelFor(
+        syncUiState: SyncScreenUiState,
+        currentEventSyncStatus: AttendeeSyncStatus?,
+        queueUiState: QueueUiState
+    ): ScanRefreshUiModel? {
+        val isOnline = queueUiState.uploadSemanticState !is SyncUiState.Offline
+        val decision =
+            freshnessPolicy.evaluate(
+                syncUiState = syncUiState,
+                currentEventSyncStatus = currentEventSyncStatus,
+                isOnline = isOnline
+            )
+
+        return when (decision.state) {
+            ScanRefreshState.Fresh -> null
+            ScanRefreshState.Aging ->
+                ScanRefreshUiModel(
+                    message = decision.age?.let { "Last refreshed ${it.toMinutes()} min ago" } ?: "Last refresh age unknown",
+                    tone = StatusTone.Info,
+                    buttonVisible = false,
+                    buttonEnabled = false
+                )
+            ScanRefreshState.Stale ->
+                ScanRefreshUiModel(
+                    message =
+                        if (decision.isUnsafe) {
+                            "Attendee list is stale. Refresh before heavy scanning."
+                        } else {
+                            "Attendee list may be old"
+                        },
+                    tone = StatusTone.Warning,
+                    buttonVisible = true,
+                    buttonEnabled = decision.hasActionableRefresh
+                )
+            ScanRefreshState.Missing ->
+                ScanRefreshUiModel(
+                    message = "Attendee list is missing. Refresh before scanning.",
+                    tone = StatusTone.Warning,
+                    buttonVisible = true,
+                    buttonEnabled = decision.hasActionableRefresh
+                )
+            ScanRefreshState.Syncing ->
+                ScanRefreshUiModel(
+                    message = "Refreshing attendee list...",
+                    tone = StatusTone.Info,
+                    buttonVisible = false,
+                    buttonEnabled = false
+                )
+            ScanRefreshState.Failed ->
+                ScanRefreshUiModel(
+                    message = "Last refresh failed. Try again when the network is stable.",
+                    tone = StatusTone.Warning,
+                    buttonVisible = true,
+                    buttonEnabled = decision.hasActionableRefresh
+                )
+            ScanRefreshState.OfflineStale ->
+                ScanRefreshUiModel(
+                    message = "Attendee list may be old. Reconnect to refresh.",
+                    tone = StatusTone.Warning,
+                    buttonVisible = true,
+                    buttonEnabled = false
+                )
+            ScanRefreshState.RateLimited ->
+                ScanRefreshUiModel(
+                    message = rateLimitMessage(syncUiState),
+                    tone = StatusTone.Warning,
+                    buttonVisible = false,
+                    buttonEnabled = false
+                )
+        }
+    }
+
+    private fun rateLimitMessage(syncUiState: SyncScreenUiState): String {
+        val waitForMillis =
+            syncUiState.nextAllowedSyncAtMillis?.minus(clock.millis())
+                ?.coerceAtLeast(0L)
+        val waitMinutes = waitForMillis?.let { Duration.ofMillis(it).toMinutes() }
+        return if (waitMinutes != null && waitMinutes > 0) {
+            "Refresh temporarily rate-limited. Try again in about ${waitMinutes} min."
+        } else {
+            "Refresh temporarily rate-limited. Please wait before trying again."
         }
     }
 
@@ -570,20 +655,6 @@ class ScanDestinationPresenter(
                     detail = "Uploads will retry automatically when connectivity returns."
                 )
         }
-    }
-
-    private fun shouldShowManualSync(
-        syncUiState: SyncScreenUiState,
-        currentEventSyncStatus: AttendeeSyncStatus?
-    ): Boolean {
-        val hasActiveEvent = currentEventSyncStatus != null || syncUiState.bootstrapEventId != null
-        if (!hasActiveEvent) return false
-
-        return currentEventSyncStatus == null ||
-            syncUiState.bootstrapStatus == BootstrapSyncStatus.Failed ||
-            !syncUiState.errorMessage.isNullOrBlank() ||
-            isStale(currentEventSyncStatus) ||
-            currentEventSyncStatus.isSyncStruggling()
     }
 
     private companion object {

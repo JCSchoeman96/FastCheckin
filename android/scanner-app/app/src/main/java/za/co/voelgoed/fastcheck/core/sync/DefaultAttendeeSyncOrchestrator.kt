@@ -51,6 +51,7 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
 
     private var consumerJob: Job? = null
     private var periodicJob: Job? = null
+    private var scanActivePeriodicJob: Job? = null
     private var connectivityJob: Job? = null
     private var retryJob: Job? = null
 
@@ -114,6 +115,16 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
         enqueueSyncRequest()
     }
 
+    override fun notifyScanDestinationActive() {
+        enqueueSyncRequest()
+        ensureScanActivePeriodicJob()
+    }
+
+    override fun notifyScanDestinationInactive() {
+        scanActivePeriodicJob?.cancel()
+        scanActivePeriodicJob = null
+    }
+
     override suspend fun runSyncCycleNow() {
         try {
             runOneSyncCycle(failIfOffline = true)
@@ -127,6 +138,20 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
 
     private fun enqueueSyncRequest() {
         syncRequests.trySend(Unit)
+    }
+
+    private fun ensureScanActivePeriodicJob() {
+        if (scanActivePeriodicJob?.isActive == true) {
+            return
+        }
+        scanActivePeriodicJob =
+            scope.launch {
+                while (isActive) {
+                    val jitter = Random.nextLong(0, config.scanActivePeriodicJitterMaxMs + 1)
+                    delay(config.scanActivePeriodicBaseMs + jitter)
+                    enqueueSyncRequest()
+                }
+            }
     }
 
     private suspend fun runBackgroundSyncCycle() {

@@ -231,10 +231,21 @@ class ScanDestinationScreenTest {
 
     @Test
     fun manualSyncActionRendersWithoutOtherActions() {
-        render(baseUiState(manualSyncVisible = true))
+        render(
+            baseUiState(
+                scanRefreshUiModel =
+                    ScanRefreshUiModel(
+                        message = "Attendee list may be old",
+                        tone = StatusTone.Warning,
+                        buttonVisible = true,
+                        buttonEnabled = true
+                    )
+            )
+        )
 
-        composeRule.onNodeWithText("Actions").assertIsDisplayed()
-        composeRule.onNodeWithText("Sync attendee list").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Attendee list may be old").assertIsDisplayed()
+        composeRule.onNodeWithText("Refresh attendee list").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Actions").assertCountEquals(0)
         composeRule.onAllNodesWithText("Retry upload").assertCountEquals(0)
         composeRule.onAllNodesWithText("Re-login").assertCountEquals(0)
     }
@@ -247,7 +258,13 @@ class ScanDestinationScreenTest {
                     showCameraPreview = true,
                     syncedAttendeeCountLabel = "Synced attendees: 1234",
                     scannerOverlaySyncLabel = "Last sync 13 Mar 08:50",
-                    manualSyncVisible = true,
+                    scanRefreshUiModel =
+                        ScanRefreshUiModel(
+                            message = "Attendee list may be old",
+                            tone = StatusTone.Warning,
+                            buttonVisible = true,
+                            buttonEnabled = true
+                        ),
                 ),
             modifier = Modifier.width(240.dp),
             fontScale = 1.45f,
@@ -258,7 +275,7 @@ class ScanDestinationScreenTest {
         composeRule.onNodeWithText("Last sync 13 Mar 08:50").assertIsDisplayed()
         composeRule.onNodeWithText("Admission readiness").assertIsDisplayed()
         composeRule.onNodeWithText("Queue & upload").assertIsDisplayed()
-        composeRule.onNodeWithText("Sync attendee list").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Refresh attendee list").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -268,7 +285,13 @@ class ScanDestinationScreenTest {
             baseUiState(
                 primaryRecoveryAction = ScanOperatorAction.RequestCameraAccess,
                 primaryRecoveryActionLabel = "Allow camera access",
-                manualSyncVisible = true,
+                scanRefreshUiModel =
+                    ScanRefreshUiModel(
+                        message = "Refresh needed",
+                        tone = StatusTone.Warning,
+                        buttonVisible = true,
+                        buttonEnabled = true
+                    ),
                 retryUploadVisible = true,
                 reloginVisible = true,
             )
@@ -277,7 +300,7 @@ class ScanDestinationScreenTest {
 
         composeRule.onNodeWithText("Actions").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Allow camera access").performScrollTo().performClick()
-        composeRule.onNodeWithText("Sync attendee list").performScrollTo().performClick()
+        composeRule.onNodeWithText("Refresh attendee list").performScrollTo().performClick()
         composeRule.onNodeWithText("Retry upload").performScrollTo().performClick()
         composeRule.onNodeWithText("Re-login").performScrollTo().performClick()
 
@@ -331,7 +354,7 @@ class ScanDestinationScreenTest {
         captureBanner: BannerUiModel? = null,
         primaryRecoveryAction: ScanOperatorAction? = null,
         primaryRecoveryActionLabel: String? = null,
-        manualSyncVisible: Boolean = false,
+        scanRefreshUiModel: ScanRefreshUiModel? = null,
         retryUploadVisible: Boolean = false,
         reloginVisible: Boolean = false,
     ): ScanDestinationUiState =
@@ -358,7 +381,7 @@ class ScanDestinationScreenTest {
             queueUploadStatusChip = queueUploadStatusChip,
             queueUploadStatusVerdict = queueUploadStatusVerdict,
             queueUploadStatusDetail = queueUploadStatusDetail,
-            manualSyncVisible = manualSyncVisible,
+            scanRefreshUiModel = scanRefreshUiModel,
             retryUploadVisible = retryUploadVisible,
             reloginVisible = reloginVisible,
         )

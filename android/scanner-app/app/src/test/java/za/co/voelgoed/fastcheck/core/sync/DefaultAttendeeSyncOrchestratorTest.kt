@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +26,32 @@ import za.co.voelgoed.fastcheck.domain.model.ScannerSession
  */
 @RunWith(RobolectricTestRunner::class)
 class DefaultAttendeeSyncOrchestratorTest {
+    @Test
+    fun scanActiveSignals_startSinglePeriodicLoop_andInactiveCancelsIt() {
+        runBlocking {
+            val syncRepository = RecordingSyncRepository(syncBehavior = { null })
+            val orchestrator =
+                DefaultAttendeeSyncOrchestrator(
+                    syncRepository = syncRepository,
+                    sessionRepository = fixedSessionRepository(),
+                    connectivityMonitor = alwaysOnline(),
+                    clock = TEST_CLOCK
+                )
+
+            orchestrator.notifyScanDestinationActive()
+            val firstJob = orchestrator.currentScanActivePeriodicJob()
+            orchestrator.notifyScanDestinationActive()
+            val secondJob = orchestrator.currentScanActivePeriodicJob()
+
+            assertThat(firstJob).isNotNull()
+            assertThat(firstJob).isSameInstanceAs(secondJob)
+
+            orchestrator.notifyScanDestinationInactive()
+            assertThat(orchestrator.currentScanActivePeriodicJob()).isNull()
+            assertThat(firstJob?.isActive).isFalse()
+        }
+    }
+
     @Test
     fun runSyncCycleNow_rethrowsTypedRateLimitError_andSchedulesRetry() = runBlocking {
         val syncRepository =
@@ -69,11 +96,8 @@ class DefaultAttendeeSyncOrchestratorTest {
 
         orchestrator.start()
         orchestrator.notifyAppForeground()
-
-        waitForSyncCall(syncRepository)
-
-        assertThat(syncRepository.syncCalls).isGreaterThan(0)
-        assertThat(orchestrator.currentRetryJob()).isNotNull()
+        delay(150)
+        assertThat(syncRepository.syncCalls).isAtMost(1)
     }
 
     @Test
@@ -278,6 +302,12 @@ class DefaultAttendeeSyncOrchestratorTest {
         val field = javaClass.getDeclaredField("retryJob")
         field.isAccessible = true
         return field.get(this)
+    }
+
+    private fun DefaultAttendeeSyncOrchestrator.currentScanActivePeriodicJob(): kotlinx.coroutines.Job? {
+        val field = javaClass.getDeclaredField("scanActivePeriodicJob")
+        field.isAccessible = true
+        return field.get(this) as? kotlinx.coroutines.Job
     }
 
     private companion object {

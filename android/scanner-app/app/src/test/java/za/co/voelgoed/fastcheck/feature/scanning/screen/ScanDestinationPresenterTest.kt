@@ -257,6 +257,7 @@ class ScanDestinationPresenterTest {
             )
 
         assertThat(uiState.manualSyncVisible).isFalse()
+        assertThat(uiState.scanRefreshUiModel?.message).isEqualTo("Refreshing attendee list...")
     }
 
     @Test
@@ -315,6 +316,32 @@ class ScanDestinationPresenterTest {
         assertThat(staleCache.manualSyncVisible).isTrue()
         assertThat(healthyCache.manualSyncVisible).isFalse()
         assertThat(noActiveEvent.manualSyncVisible).isFalse()
+    }
+
+    @Test
+    fun rateLimitedRefreshHidesButtonAndShowsWaitMessage() {
+        val uiState =
+            presenter.present(
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState =
+                    SyncScreenUiState(
+                        isRateLimited = true,
+                        nextAllowedSyncAtMillis = Clock.systemUTC().millis() + 60_000,
+                        bootstrapEventId = 5L
+                    ),
+                currentEventSyncStatus =
+                    AttendeeSyncStatus(
+                        eventId = 5,
+                        lastServerTime = "2026-03-13T08:30:00Z",
+                        lastSuccessfulSyncAt = "2026-03-13T08:30:00Z",
+                        syncType = "full",
+                        attendeeCount = 20
+                    )
+            )
+
+        assertThat(uiState.manualSyncVisible).isFalse()
+        assertThat(uiState.scanRefreshUiModel?.message).contains("rate-limited")
     }
 
     @Test
