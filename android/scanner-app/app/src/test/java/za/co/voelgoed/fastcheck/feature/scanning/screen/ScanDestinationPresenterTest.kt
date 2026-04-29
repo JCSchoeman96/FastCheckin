@@ -742,4 +742,26 @@ class ScanDestinationPresenterTest {
         assertThat(uiState.scannerOverlayEventLabel)
             .isEqualTo("Active Event: Voelgoed Fees Conference Long Name")
     }
+
+    @Test
+    fun prefersSessionEventShortnameWhenAvailable() {
+        val uiState =
+            presenter.present(
+                session =
+                    ScannerSession(
+                        eventId = 123,
+                        eventName = "Voelgoed Fees Conference Long Name",
+                        eventShortname = "VG Fees",
+                        expiresInSeconds = 3600,
+                        authenticatedAtEpochMillis = 1L,
+                        expiresAtEpochMillis = 2L
+                    ),
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.scannerOverlayEventLabel).isEqualTo("Active Event: VG Fees")
+    }
 }

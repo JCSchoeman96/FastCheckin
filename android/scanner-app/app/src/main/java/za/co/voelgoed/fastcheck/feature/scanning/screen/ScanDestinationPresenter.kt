@@ -79,7 +79,9 @@ class ScanDestinationPresenter(
         syncUiState: SyncScreenUiState,
         currentEventSyncStatus: AttendeeSyncStatus?
     ): String {
-        val sessionName = session?.eventName?.trim().orEmpty()
+        val sessionName =
+            session?.eventShortname?.trim()?.takeIf { it.isNotBlank() }
+                ?: session?.eventName?.trim().orEmpty()
         if (sessionName.isNotBlank()) {
             return "Active Event: $sessionName"
         }
