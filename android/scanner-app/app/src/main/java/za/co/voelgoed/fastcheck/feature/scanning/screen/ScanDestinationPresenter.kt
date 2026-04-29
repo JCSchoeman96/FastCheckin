@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
@@ -25,6 +26,7 @@ class ScanDestinationPresenter(
     private val clock: Clock = Clock.systemUTC()
 ) {
     fun present(
+        session: ScannerSession? = null,
         scanningUiState: ScanningUiState,
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
@@ -38,12 +40,10 @@ class ScanDestinationPresenter(
         val primaryRecoveryAction = primaryRecoveryActionFor(scanningUiState)
 
         return ScanDestinationUiState(
-            activeEventLabel = activeEventLabelFor(syncUiState, currentEventSyncStatus),
-            factLabels =
-                listOf(
-                    syncedAttendeeCountLabelFor(currentEventSyncStatus),
-                    lastSyncLabelFor(currentEventSyncStatus)
-                ),
+            scannerOverlayTitle = "Scanner active",
+            scannerOverlayEventLabel = activeEventLabelFor(session, syncUiState, currentEventSyncStatus),
+            scannerOverlaySyncLabel = lastSyncLabelFor(currentEventSyncStatus),
+            syncedAttendeeCountLabel = syncedAttendeeCountLabelFor(currentEventSyncStatus),
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = scanningUiState.scannerStatus,
             scannerDiagnosticLabel = scannerDiagnostic?.first,
@@ -75,14 +75,19 @@ class ScanDestinationPresenter(
     }
 
     private fun activeEventLabelFor(
+        session: ScannerSession?,
         syncUiState: SyncScreenUiState,
         currentEventSyncStatus: AttendeeSyncStatus?
     ): String {
+        val sessionName = session?.eventName?.trim().orEmpty()
+        if (sessionName.isNotBlank()) {
+            return "Active Event: $sessionName"
+        }
         val eventId = currentEventSyncStatus?.eventId ?: syncUiState.bootstrapEventId
         return if (eventId != null) {
-            "Active event: #$eventId"
+            "Active Event: #$eventId"
         } else {
-            "Active event: unavailable"
+            "Active Event: unavailable"
         }
     }
 

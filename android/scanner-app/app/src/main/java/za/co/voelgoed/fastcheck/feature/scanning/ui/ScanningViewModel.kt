@@ -424,8 +424,8 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         )
 
                     is CaptureHandoffResult.Rejected ->
-                        CaptureFeedbackState.Warning(
-                            title = "Invalid scan",
+                        CaptureFeedbackState.Error(
+                            title = "Rejected",
                             message = result.reason
                         )
 
@@ -439,11 +439,9 @@ class ScanningViewModel @Inject constructor() : ViewModel() {
                         current.lastCaptureFeedback
 
                     is CaptureHandoffResult.Failed -> {
-                        val message =
-                            result.reason.takeIf { it.isNotBlank() } ?: "Could not queue scan"
-                        CaptureFeedbackState.Error(
-                            title = "Scan failed",
-                            message = message
+                        CaptureFeedbackState.Warning(
+                            title = "Scan error",
+                            message = "Scan again or go to supervisor"
                         )
                     }
                 }
