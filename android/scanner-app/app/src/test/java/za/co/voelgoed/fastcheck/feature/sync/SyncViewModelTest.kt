@@ -78,6 +78,10 @@ class SyncViewModelTest {
 
         override fun notifyConnectivityRestored() = Unit
 
+        override fun notifyScanDestinationActive() = Unit
+
+        override fun notifyScanDestinationInactive() = Unit
+
         override suspend fun runSyncCycleNow() {
             runNowCalls += 1
             repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
