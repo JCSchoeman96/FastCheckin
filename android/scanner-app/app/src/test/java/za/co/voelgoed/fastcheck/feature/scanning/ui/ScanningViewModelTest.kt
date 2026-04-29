@@ -14,6 +14,7 @@ import za.co.voelgoed.fastcheck.feature.scanning.analysis.DecodeDiagnostic
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
+import za.co.voelgoed.fastcheck.feature.scanning.ui.model.CaptureFeedbackState
 import za.co.voelgoed.fastcheck.feature.scanning.ui.model.ScannerRecoveryState
 import za.co.voelgoed.fastcheck.feature.scanning.usecase.CaptureHandoffResult
 
@@ -296,12 +297,39 @@ class ScanningViewModelTest {
             )
         )
         assertThat(viewModel.uiState.value.captureSemanticState).isEqualTo(ScanUiState.AcceptedLocal)
+        val acceptedFeedback = viewModel.uiState.value.lastCaptureFeedback as CaptureFeedbackState.Success
+        assertThat(acceptedFeedback.title).isEqualTo("Accepted")
 
         viewModel.clearCaptureFeedback()
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.SuppressedByCooldown)
         assertThat(viewModel.uiState.value.captureSemanticState).isNull()
 
+        viewModel.onCaptureHandoffResult(
+            CaptureHandoffResult.Rejected(
+                reason = "Ticket invalid",
+                ticketCode = "VG-404"
+            )
+        )
+        assertThat(viewModel.uiState.value.lastCaptureFeedback)
+            .isEqualTo(CaptureFeedbackState.Error(title = "Rejected", message = "Ticket invalid"))
+
+        viewModel.onCaptureHandoffResult(
+            CaptureHandoffResult.ReviewRequired(
+                reason = "Supervisor check",
+                ticketCode = "VG-405"
+            )
+        )
+        assertThat(viewModel.uiState.value.lastCaptureFeedback)
+            .isEqualTo(CaptureFeedbackState.Warning(title = "Manual review", message = "Supervisor check"))
+
         viewModel.onCaptureHandoffResult(CaptureHandoffResult.Failed("Queue failed"))
+        assertThat(viewModel.uiState.value.lastCaptureFeedback)
+            .isEqualTo(
+                CaptureFeedbackState.Warning(
+                    title = "Scan error",
+                    message = "Scan again or go to supervisor"
+                )
+            )
         assertThat(viewModel.uiState.value.captureSemanticState)
             .isEqualTo(ScanUiState.Failed("Queue failed"))
     }

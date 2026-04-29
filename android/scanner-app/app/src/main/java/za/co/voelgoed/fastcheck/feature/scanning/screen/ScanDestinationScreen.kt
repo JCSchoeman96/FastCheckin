@@ -5,12 +5,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -18,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -31,7 +31,6 @@ import za.co.voelgoed.fastcheck.core.designsystem.components.FcCard
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcDangerButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcPrimaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcScanResultHero
-import za.co.voelgoed.fastcheck.core.designsystem.components.FcScannerPreviewOverlay
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcSecondaryButton
 import za.co.voelgoed.fastcheck.core.designsystem.components.FcStatusChip
 import za.co.voelgoed.fastcheck.core.designsystem.theme.fastCheck
@@ -42,7 +41,6 @@ object ScanDestinationTestTags {
     const val CaptureResultHero = "scan_destination_capture_result_hero"
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScanDestinationScreen(
     uiState: ScanDestinationUiState,
@@ -59,46 +57,75 @@ fun ScanDestinationScreen(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(spacing.medium)
     ) {
-        FcCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
-                Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
-                    Text(
-                        text = uiState.activeEventLabel,
-                        style = theme.typography.titleLarge,
-                        color = scheme.onSurface,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    FactCluster(factLabels = uiState.factLabels)
-                }
+        if (uiState.showCameraPreview) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                        .testTag(ScanDestinationTestTags.PreviewHost)
+            ) {
+                PreviewSurface(
+                    previewSurfaceHolder = previewSurfaceHolder,
+                    onPreviewSurfaceChanged = onPreviewSurfaceChanged,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                )
 
-                Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
-                    FcStatusChip(
-                        text = uiState.scannerStatusChip.text,
-                        tone = uiState.scannerStatusChip.tone
-                    )
-                    Text(
-                        text = uiState.scannerStatusMessage,
-                        style = theme.typography.bodyMedium,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
-
-                if (uiState.scannerDiagnosticLabel != null && uiState.scannerDiagnosticMessage != null) {
-                    Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                Surface(
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(spacing.small),
+                    shape = theme.shapes.medium,
+                    color = scheme.scrim.copy(alpha = 0.62f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(spacing.small),
+                        verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)
+                    ) {
                         Text(
-                            text = uiState.scannerDiagnosticLabel,
-                            style = theme.typography.labelSmall,
-                            color = scheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
+                            text = uiState.scannerOverlayTitle,
+                            style = theme.typography.labelMedium,
+                            color = scheme.onPrimary,
+                            fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = uiState.scannerDiagnosticMessage,
+                            text = uiState.scannerOverlayEventLabel,
+                            style = theme.typography.bodyMedium,
+                            color = scheme.onPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = uiState.scannerOverlaySyncLabel,
                             style = theme.typography.bodySmall,
-                            color = scheme.onSurfaceVariant
+                            color = scheme.onPrimary
                         )
                     }
+                }
+
+                uiState.captureBanner?.let { banner ->
+                    val heroTitle = banner.title?.takeIf { it.isNotBlank() } ?: banner.message
+                    val heroMessage =
+                        banner.title
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { banner.message.takeIf { message -> message.isNotBlank() } }
+
+                    FcScanResultHero(
+                        title = heroTitle,
+                        message = heroMessage,
+                        tone = banner.tone,
+                        modifier =
+                            Modifier
+                                .align(Alignment.Center)
+                                .fillMaxWidth()
+                                .padding(spacing.small)
+                                .testTag(ScanDestinationTestTags.CaptureResultHero),
+                    )
                 }
             }
         }
@@ -120,51 +147,26 @@ fun ScanDestinationScreen(
             )
         }
 
-        if (uiState.showCameraPreview) {
-            FcCard(modifier = Modifier.fillMaxWidth()) {
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag(ScanDestinationTestTags.PreviewHost)
-                ) {
-                    PreviewSurface(
-                        previewSurfaceHolder = previewSurfaceHolder,
-                        onPreviewSurfaceChanged = onPreviewSurfaceChanged,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(260.dp)
-                    )
+        Text(
+            text = uiState.syncedAttendeeCountLabel,
+            style = theme.typography.bodyMedium,
+            color = scheme.onSurfaceVariant
+        )
 
-                    FcScannerPreviewOverlay(
-                        statusLabel = uiState.scannerStatusChip.text,
-                        statusTone = uiState.scannerStatusChip.tone,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(260.dp)
-                    )
-                }
+        if (uiState.scannerDiagnosticLabel != null && uiState.scannerDiagnosticMessage != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.xxSmall)) {
+                Text(
+                    text = uiState.scannerDiagnosticLabel,
+                    style = theme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = uiState.scannerDiagnosticMessage,
+                    style = theme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
             }
-        }
-
-        uiState.captureBanner?.let { banner ->
-            val heroTitle = banner.title?.takeIf { it.isNotBlank() } ?: banner.message
-            val heroMessage =
-                banner.title
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { banner.message.takeIf { message -> message.isNotBlank() } }
-
-            FcScanResultHero(
-                title = heroTitle,
-                message = heroMessage,
-                tone = banner.tone,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag(ScanDestinationTestTags.CaptureResultHero),
-            )
         }
 
         FcCard(modifier = Modifier.fillMaxWidth()) {
@@ -265,37 +267,6 @@ fun ScanDestinationScreen(
                     }
                 }
             }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun FactCluster(
-    factLabels: List<String>,
-    modifier: Modifier = Modifier
-) {
-    val theme = MaterialTheme.fastCheck
-    val spacing = theme.spacing
-
-    FlowRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(spacing.xSmall),
-        verticalArrangement = Arrangement.spacedBy(spacing.xSmall)
-    ) {
-        factLabels.forEach { label ->
-            Text(
-                text = label,
-                style = theme.typography.labelMedium,
-                color = theme.colorScheme.onSurfaceVariant,
-                modifier =
-                    Modifier
-                        .background(
-                            color = theme.colorScheme.surfaceContainerHighest,
-                            shape = theme.shapes.small
-                        )
-                        .padding(horizontal = spacing.xSmall, vertical = spacing.xxSmall)
-            )
         }
     }
 }

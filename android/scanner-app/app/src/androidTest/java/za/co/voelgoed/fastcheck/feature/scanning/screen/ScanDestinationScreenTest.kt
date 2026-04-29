@@ -37,6 +37,7 @@ class ScanDestinationScreenTest {
     fun captureHeroRendersWhenCaptureBannerExists() {
         val uiState =
             baseUiState(
+                showCameraPreview = true,
                 captureBanner =
                     BannerUiModel(
                         title = "Accepted",
@@ -56,6 +57,7 @@ class ScanDestinationScreenTest {
     fun captureHeroUsesMessageAsTitleWhenBannerTitleMissing() {
         val uiState =
             baseUiState(
+                showCameraPreview = true,
                 captureBanner =
                     BannerUiModel(
                         title = null,
@@ -92,17 +94,17 @@ class ScanDestinationScreenTest {
 
     @Test
     fun previewOverlayContainerAndStatusRenderWhenPreviewShown() {
-        val scannerStatusText = "Camera ready"
+        val scannerStatusText = "Scanner active"
         val uiState =
             baseUiState(
                 showCameraPreview = true,
-                scannerStatusChip = StatusChipUiModel(text = scannerStatusText, tone = StatusTone.Info),
+                scannerOverlayTitle = scannerStatusText,
             )
 
         render(uiState)
 
         composeRule.onNodeWithTag(ScanDestinationTestTags.PreviewHost).assertIsDisplayed()
-        composeRule.onNodeWithText(scannerStatusText.uppercase()).assertIsDisplayed()
+        composeRule.onNodeWithText(scannerStatusText).assertIsDisplayed()
     }
 
     @Test
@@ -127,12 +129,36 @@ class ScanDestinationScreenTest {
                         message = "Captured",
                         tone = StatusTone.Success,
                     ),
+                showCameraPreview = true,
             )
 
         render(uiState)
 
         composeRule.onNodeWithText("Preview status").assertIsDisplayed()
         composeRule.onNodeWithTag(ScanDestinationTestTags.CaptureResultHero).assertIsDisplayed()
+    }
+
+    @Test
+    fun previewOverlayKeepsSingleLastSyncWhileHeroAndSyncedCountAreVisible() {
+        val uiState =
+            baseUiState(
+                showCameraPreview = true,
+                scannerOverlaySyncLabel = "Last sync 08:50",
+                syncedAttendeeCountLabel = "Synced attendees: 123",
+                captureBanner =
+                    BannerUiModel(
+                        title = "Accepted",
+                        message = "Welcome, Pieter",
+                        tone = StatusTone.Success,
+                    ),
+            )
+
+        render(uiState)
+
+        composeRule.onNodeWithTag(ScanDestinationTestTags.PreviewHost).assertIsDisplayed()
+        composeRule.onNodeWithTag(ScanDestinationTestTags.CaptureResultHero).assertIsDisplayed()
+        composeRule.onAllNodesWithText("Last sync 08:50").assertCountEquals(1)
+        composeRule.onNodeWithText("Synced attendees: 123").assertIsDisplayed()
     }
 
     @Test
@@ -165,13 +191,14 @@ class ScanDestinationScreenTest {
     fun topSummaryUsesCompactFactsAndFriendlySyncCopy() {
         render(
             baseUiState(
-                factLabels = listOf("Synced attendees: 10", "Last sync 08:50"),
+                showCameraPreview = true,
+                scannerOverlaySyncLabel = "Last sync 08:50",
             )
         )
 
-        composeRule.onNodeWithText("Active event: #42").assertIsDisplayed()
+        composeRule.onNodeWithText("Active Event: Example Event").assertIsDisplayed()
         composeRule.onNodeWithText("Synced attendees: 10").assertIsDisplayed()
-        composeRule.onNodeWithText("Last sync 08:50").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Last sync 08:50").assertCountEquals(1)
         composeRule.onAllNodesWithText("Last sync: 2026-03-13T08:50:00Z").assertCountEquals(0)
     }
 
@@ -217,14 +244,16 @@ class ScanDestinationScreenTest {
         render(
             uiState =
                 baseUiState(
-                    factLabels = listOf("Synced attendees: 1234", "Last sync 13 Mar 08:50"),
+                    showCameraPreview = true,
+                    syncedAttendeeCountLabel = "Synced attendees: 1234",
+                    scannerOverlaySyncLabel = "Last sync 13 Mar 08:50",
                     manualSyncVisible = true,
                 ),
             modifier = Modifier.width(240.dp),
             fontScale = 1.45f,
         )
 
-        composeRule.onNodeWithText("Active event: #42").assertIsDisplayed()
+        composeRule.onNodeWithText("Active Event: Example Event").assertIsDisplayed()
         composeRule.onNodeWithText("Synced attendees: 1234").assertIsDisplayed()
         composeRule.onNodeWithText("Last sync 13 Mar 08:50").assertIsDisplayed()
         composeRule.onNodeWithText("Admission readiness").assertIsDisplayed()
@@ -284,7 +313,10 @@ class ScanDestinationScreenTest {
     }
 
     private fun baseUiState(
-        factLabels: List<String> = listOf("Synced attendees: 10", "Last sync 08:50"),
+        scannerOverlayTitle: String = "Scanner active",
+        scannerOverlayEventLabel: String = "Active Event: Example Event",
+        scannerOverlaySyncLabel: String = "Last sync 08:50",
+        syncedAttendeeCountLabel: String = "Synced attendees: 10",
         scannerStatusChip: StatusChipUiModel = StatusChipUiModel("Scanner active", StatusTone.Brand),
         admissionStatusChip: StatusChipUiModel = StatusChipUiModel("Attendee list ready", StatusTone.Success),
         admissionStatusVerdict: String = "Ready for admission",
@@ -304,8 +336,10 @@ class ScanDestinationScreenTest {
         reloginVisible: Boolean = false,
     ): ScanDestinationUiState =
         ScanDestinationUiState(
-            activeEventLabel = "Active event: #42",
-            factLabels = factLabels,
+            scannerOverlayTitle = scannerOverlayTitle,
+            scannerOverlayEventLabel = scannerOverlayEventLabel,
+            scannerOverlaySyncLabel = scannerOverlaySyncLabel,
+            syncedAttendeeCountLabel = syncedAttendeeCountLabel,
             scannerStatusChip = scannerStatusChip,
             scannerStatusMessage = "Scanner is ready",
             scannerDiagnosticLabel = scannerDiagnosticLabel,
