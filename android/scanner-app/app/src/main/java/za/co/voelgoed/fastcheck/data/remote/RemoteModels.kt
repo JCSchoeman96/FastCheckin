@@ -15,6 +15,7 @@ data class MobileLoginPayload(
     val token: String,
     val event_id: Long,
     val event_name: String,
+    val event_shortname: String? = null,
     val expires_in: Int
 )
 

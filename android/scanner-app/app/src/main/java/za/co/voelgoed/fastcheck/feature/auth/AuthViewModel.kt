@@ -52,7 +52,7 @@ class AuthViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isSubmitting = false,
-                            sessionSummary = "${session.eventName} (#${session.eventId})",
+                            sessionSummary = "${session.eventShortname ?: session.eventName} (#${session.eventId})",
                             errorMessage = null,
                             authenticatedSession = session
                         )

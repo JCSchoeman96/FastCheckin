@@ -168,7 +168,6 @@ fun ScanDestinationScreen(
                 )
             }
         }
-
         FcCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.xSmall)) {
                 Text(

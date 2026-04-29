@@ -20,6 +20,7 @@ class DataStoreSessionMetadataStore(
         return SessionMetadata(
             eventId = eventId,
             eventName = eventName,
+            eventShortname = preferences[EVENT_SHORTNAME].toNullableValue(),
             expiresInSeconds = expiresInSeconds,
             authenticatedAtEpochMillis = preferences[AUTHENTICATED_AT] ?: return null,
             expiresAtEpochMillis = preferences[EXPIRES_AT] ?: return null,
@@ -31,6 +32,7 @@ class DataStoreSessionMetadataStore(
         dataStore.edit { preferences ->
             preferences[EVENT_ID] = metadata.eventId
             preferences[EVENT_NAME] = metadata.eventName
+            preferences[EVENT_SHORTNAME] = metadata.eventShortname.orEmpty()
             preferences[EXPIRES_IN] = metadata.expiresInSeconds
             preferences[AUTHENTICATED_AT] = metadata.authenticatedAtEpochMillis
             preferences[EXPIRES_AT] = metadata.expiresAtEpochMillis
@@ -45,9 +47,17 @@ class DataStoreSessionMetadataStore(
     private companion object {
         val EVENT_ID = longPreferencesKey("session_event_id")
         val EVENT_NAME = stringPreferencesKey("session_event_name")
+        val EVENT_SHORTNAME = stringPreferencesKey("session_event_shortname")
         val EXPIRES_IN = intPreferencesKey("session_expires_in")
         val AUTHENTICATED_AT = longPreferencesKey("session_authenticated_at_epoch_millis")
         val EXPIRES_AT = longPreferencesKey("session_expires_at_epoch_millis")
         val LAST_SYNC_CURSOR = stringPreferencesKey("last_sync_cursor")
     }
+
+    private fun String?.toNullableValue(): String? =
+        if (this.isNullOrBlank()) {
+            null
+        } else {
+            this
+        }
 }
