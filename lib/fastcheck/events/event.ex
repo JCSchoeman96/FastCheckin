@@ -15,11 +15,13 @@ defmodule FastCheck.Events.Event do
   @scanner_code_length 6
   @scanner_code_space 1_073_741_824
   @scanner_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+  @shortname_regex ~r/^[A-Za-z0-9][A-Za-z0-9 _-]*$/
 
   @type t :: %__MODULE__{
           __meta__: Ecto.Schema.Metadata.t(),
           id: integer() | nil,
           name: String.t() | nil,
+          shortname: String.t() | nil,
           site_url: String.t() | nil,
           tickera_api_key_encrypted: String.t() | nil,
           tickera_api_key_last4: String.t() | nil,
@@ -51,6 +53,8 @@ defmodule FastCheck.Events.Event do
   schema "events" do
     # Human readable name, e.g. "Voelgoed Live 13 November"
     field :name, :string
+    # Optional operator-friendly short event label for compact UI surfaces
+    field :shortname, :string
     # Legacy site URL column retained for backwards compatibility with older migrations.
     field :site_url, :string
     # API key provided by Tickera (stored encrypted in the database)
@@ -108,6 +112,7 @@ defmodule FastCheck.Events.Event do
     event
     |> cast(attrs, [
       :name,
+      :shortname,
       :site_url,
       :tickera_api_key_encrypted,
       :tickera_api_key_last4,
@@ -129,9 +134,15 @@ defmodule FastCheck.Events.Event do
     |> synchronize_site_urls()
     |> maybe_put_scanner_login_code()
     |> validate_length(:scanner_login_code, is: @scanner_code_length)
+    |> validate_length(:shortname, max: 40)
+    |> validate_format(:shortname, @shortname_regex,
+      message:
+        "must start with a letter or number and only contain letters, numbers, spaces, hyphens, and underscores"
+    )
     |> validate_format(:scanner_login_code, @scanner_code_regex,
       message: "must be 6 uppercase characters using letters and numbers"
     )
+    |> unique_constraint(:shortname, name: :idx_events_shortname)
     |> unique_constraint(:scanner_login_code, name: :idx_events_scanner_login_code)
     |> check_constraint(:scanner_login_code, name: "events_scanner_login_code_format")
     |> validate_inclusion(:status, ["active", "syncing", "archived"])
@@ -150,6 +161,7 @@ defmodule FastCheck.Events.Event do
   defp sanitize_string_fields(changeset) do
     changeset
     |> update_change(:name, &Sanitizer.sanitize_name/1)
+    |> update_change(:shortname, &normalize_shortname/1)
     |> update_change(:site_url, &Sanitizer.sanitize_url/1)
     |> update_change(:location, &Sanitizer.sanitize_name/1)
     |> update_change(:entrance_name, &Sanitizer.sanitize_name/1)
@@ -191,6 +203,15 @@ defmodule FastCheck.Events.Event do
   end
 
   defp normalize_scanner_login_code(_value), do: nil
+
+  defp normalize_shortname(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_shortname(_value), do: nil
 
   defp generate_scanner_login_code do
     System.unique_integer([:positive, :monotonic])

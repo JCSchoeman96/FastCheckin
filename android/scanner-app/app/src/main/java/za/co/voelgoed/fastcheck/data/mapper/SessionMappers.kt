@@ -13,6 +13,7 @@ fun MobileLoginPayload.toDomain(clock: Clock): ScannerSession {
     return ScannerSession(
         eventId = event_id,
         eventName = event_name,
+        eventShortname = event_shortname.toNullableValue(),
         expiresInSeconds = expires_in,
         authenticatedAtEpochMillis = authenticatedAt.toEpochMilli(),
         expiresAtEpochMillis = expiresAt.toEpochMilli()
@@ -23,6 +24,7 @@ fun ScannerSession.toMetadata(): SessionMetadata =
     SessionMetadata(
         eventId = eventId,
         eventName = eventName,
+        eventShortname = eventShortname,
         expiresInSeconds = expiresInSeconds,
         authenticatedAtEpochMillis = authenticatedAtEpochMillis,
         expiresAtEpochMillis = expiresAtEpochMillis
@@ -32,7 +34,15 @@ fun SessionMetadata.toDomain(): ScannerSession =
     ScannerSession(
         eventId = eventId,
         eventName = eventName,
+        eventShortname = eventShortname,
         expiresInSeconds = expiresInSeconds,
         authenticatedAtEpochMillis = authenticatedAtEpochMillis,
         expiresAtEpochMillis = expiresAtEpochMillis
     )
+
+private fun String?.toNullableValue(): String? =
+    if (this.isNullOrBlank()) {
+        null
+    } else {
+        this
+    }

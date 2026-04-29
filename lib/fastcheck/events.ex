@@ -34,6 +34,7 @@ defmodule FastCheck.Events do
     "mobile_access_secret_encrypted" => :mobile_access_secret_encrypted,
     "scanner_login_code" => :scanner_login_code,
     "name" => :name,
+    "shortname" => :shortname,
     "status" => :status,
     "entrance_name" => :entrance_name,
     "location" => :location,
@@ -790,12 +791,14 @@ defmodule FastCheck.Events do
     event_date_override = fetch_attr(attrs, "event_date")
     event_time_override = fetch_attr(attrs, "event_time")
     event_name = resolve_event_name(attrs, essentials)
+    event_shortname = resolve_event_shortname(attrs)
     event_location = resolve_event_location(attrs, essentials)
     entrance_name = resolve_entrance_name(attrs)
     total_tickets = resolve_event_counts(essentials)
 
     %{
       name: event_name,
+      shortname: event_shortname,
       scanner_login_code:
         normalize_scanner_login_code_attr(fetch_attr(attrs, "scanner_login_code")),
       entrance_name: entrance_name,
@@ -820,6 +823,11 @@ defmodule FastCheck.Events do
       |> normalize_non_empty_binary()
 
     name_override || name_from_essentials
+  end
+
+  defp resolve_event_shortname(attrs) do
+    fetch_attr(attrs, "shortname")
+    |> normalize_non_empty_binary()
   end
 
   defp resolve_event_location(attrs, essentials) do

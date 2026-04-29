@@ -70,7 +70,7 @@ class DiagnosticsUiStateFactory @Inject constructor(
             }
 
         return DiagnosticsUiState(
-            currentEvent = session?.let { "${it.eventName} (#${it.eventId})" } ?: "No active event",
+            currentEvent = session?.let { "${it.eventShortname ?: it.eventName} (#${it.eventId})" } ?: "No active event",
             authSessionState =
                 when (sessionState) {
                     SessionState.LOGGED_OUT -> "Logged out"

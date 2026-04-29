@@ -10,6 +10,7 @@ defmodule FastCheck.Ticketing.Event do
   @type t :: %__MODULE__{
           id: integer() | nil,
           name: String.t() | nil,
+          shortname: String.t() | nil,
           scanner_login_code: String.t() | nil,
           status: String.t() | nil,
           entrance_name: String.t() | nil,
@@ -24,6 +25,7 @@ defmodule FastCheck.Ticketing.Event do
 
   schema "events" do
     field :name, :string
+    field :shortname, :string
     field :scanner_login_code, :string
     field :status, :string
     field :entrance_name, :string
