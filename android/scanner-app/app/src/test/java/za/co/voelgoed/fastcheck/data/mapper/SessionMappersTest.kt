@@ -17,6 +17,7 @@ class SessionMappersTest {
                 token = "jwt-token",
                 event_id = 123,
                 event_name = "Voelgoed Live",
+                event_shortname = "VG Live",
                 expires_in = 3600
             )
 
@@ -25,9 +26,11 @@ class SessionMappersTest {
 
         assertThat(session.eventId).isEqualTo(123)
         assertThat(session.eventName).isEqualTo("Voelgoed Live")
+        assertThat(session.eventShortname).isEqualTo("VG Live")
         assertThat(session.authenticatedAtEpochMillis).isEqualTo(1_773_388_800_000)
         assertThat(session.expiresAtEpochMillis).isEqualTo(1_773_392_400_000)
         assertThat(metadata.expiresInSeconds).isEqualTo(3600)
+        assertThat(metadata.eventShortname).isEqualTo("VG Live")
         assertThat(metadata.expiresAtEpochMillis).isEqualTo(session.expiresAtEpochMillis)
     }
 }

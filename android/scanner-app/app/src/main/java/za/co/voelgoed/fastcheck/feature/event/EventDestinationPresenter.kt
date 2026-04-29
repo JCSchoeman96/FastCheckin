@@ -29,7 +29,7 @@ class EventDestinationPresenter(
         val currentCacheStatus = currentCacheStatus(session, currentEventSyncStatus)
 
         return EventDestinationUiState(
-            headerTitle = session.eventName,
+            headerTitle = session.displayName(),
             headerSubtitle = "Event #${session.eventId}",
             statusChip = statusChipFor(queueUiState, syncUiState, currentCacheStatus, currentEventSyncStatus),
             statusMessage = statusMessageFor(queueUiState, syncUiState, currentCacheStatus, currentEventSyncStatus),
@@ -425,3 +425,5 @@ class EventDestinationPresenter(
         Unavailable
     }
 }
+
+private fun ScannerSession.displayName(): String = eventShortname ?: eventName

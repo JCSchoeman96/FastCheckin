@@ -737,6 +737,13 @@ defmodule FastCheckWeb.DashboardLive do
 
                 <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <.input
+                    field={@form[:shortname]}
+                    type="text"
+                    label="Event shortname (optional)"
+                    placeholder="VG Live"
+                  />
+
+                  <.input
                     field={@form[:tickera_site_url]}
                     type="url"
                     label="Tickera site URL"
@@ -806,7 +813,7 @@ defmodule FastCheckWeb.DashboardLive do
                 <.input
                   field={@search_form[:query]}
                   type="search"
-                  placeholder="Search events by name or location"
+                  placeholder="Search events by name, shortname, or location"
                   phx-debounce="300"
                 />
 
@@ -882,6 +889,12 @@ defmodule FastCheckWeb.DashboardLive do
                       {event.location || "Unassigned"}
                     </p>
                     <h3 class="mt-2 text-xl font-semibold text-fc-text-primary">{event.name}</h3>
+                    <p
+                      :if={present_text?(event.shortname)}
+                      class="mt-1 text-xs text-fc-text-secondary"
+                    >
+                      Shortname: {event.shortname}
+                    </p>
                     <p class="mt-1 text-xs text-fc-text-muted">Event ID {event.id}</p>
                     <p class="mt-1 text-xs text-fc-text-muted">
                       Scanner code {event_scanner_code(event)}
@@ -1235,6 +1248,14 @@ defmodule FastCheckWeb.DashboardLive do
               required
             />
             <.input
+              field={@edit_form[:shortname]}
+              type="text"
+              label="Event shortname (optional)"
+              value={
+                edit_form_value(@edit_form, :shortname, @editing_event && @editing_event.shortname)
+              }
+            />
+            <.input
               field={@edit_form[:tickera_site_url]}
               type="url"
               label="Tickera site URL"
@@ -1521,6 +1542,7 @@ defmodule FastCheckWeb.DashboardLive do
       "tickera_api_key_encrypted" => "",
       "mobile_access_code" => "",
       "tickera_site_url" => default_site_url,
+      "shortname" => "",
       "location" => "",
       "entrance_name" => ""
     }
@@ -1927,6 +1949,9 @@ defmodule FastCheckWeb.DashboardLive do
       Enum.filter(events, fn event ->
         name_match = event.name && String.contains?(String.downcase(event.name), trimmed)
 
+        shortname_match =
+          event.shortname && String.contains?(String.downcase(event.shortname), trimmed)
+
         location_match =
           event.location && String.contains?(String.downcase(event.location), trimmed)
 
@@ -1935,7 +1960,7 @@ defmodule FastCheckWeb.DashboardLive do
 
         status_match = event.status && String.contains?(String.downcase(event.status), trimmed)
 
-        name_match || location_match || entrance_match || status_match
+        name_match || shortname_match || location_match || entrance_match || status_match
       end)
     end
   end
@@ -2007,4 +2032,7 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp format_duration(_), do: "-"
+
+  defp present_text?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present_text?(_), do: false
 end

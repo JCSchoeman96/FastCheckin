@@ -56,6 +56,7 @@ class CurrentPhoenixSessionRepositoryTest {
                                         token = "jwt-token",
                                         event_id = 77,
                                         event_name = "FastCheck Event",
+                                        event_shortname = "FCE",
                                         expires_in = 7200
                                     ),
                                 error = null,
@@ -75,6 +76,7 @@ class CurrentPhoenixSessionRepositoryTest {
         assertThat(vault.token).isEqualTo("jwt-token")
         assertThat(metadataStore.saved?.eventId).isEqualTo(77)
         assertThat(metadataStore.saved?.eventName).isEqualTo("FastCheck Event")
+        assertThat(metadataStore.saved?.eventShortname).isEqualTo("FCE")
         assertThat(session.expiresAtEpochMillis).isEqualTo(1_773_396_000_000)
     }
 
@@ -308,6 +310,7 @@ class CurrentPhoenixSessionRepositoryTest {
                                         token = "jwt-new",
                                         event_id = 7,
                                         event_name = "New Event",
+                                        event_shortname = "NE",
                                         expires_in = 3600
                                     ),
                                 error = null,

@@ -153,6 +153,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
                   token: token,
                   event_id: event.id,
                   event_name: event.name,
+                  event_shortname: event.shortname,
                   expires_in: Token.token_ttl_seconds()
                 },
                 error: nil

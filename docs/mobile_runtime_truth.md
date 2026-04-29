@@ -45,6 +45,16 @@ The promoted Android mobile contract remains:
 - `GET /api/v1/mobile/attendees`
 - `POST /api/v1/mobile/scans`
 
+### Mobile login (`POST /api/v1/mobile/login`)
+
+Successful login responses include both:
+
+- `event_name` (canonical full event title)
+- `event_shortname` (optional compact label; additive field)
+
+Android should prefer `event_shortname` for compact UI surfaces when present,
+and fall back to `event_name` when it is `null` or blank.
+
 ## Attendee sync down (`GET /api/v1/mobile/attendees`)
 
 **Parallel `limit` (one exact sentence):** The numeric `limit` query parameter applies **in parallel** — the **attendees** sub-stream and the **invalidations** sub-stream are **independently capped** (each returns at most `limit` rows per response). It is **not** one shared row budget across both JSON arrays.

@@ -40,6 +40,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
                  "token" => token,
                  "event_id" => event_id,
                  "event_name" => event_name,
+                 "event_shortname" => event_shortname,
                  "expires_in" => expires_in
                },
                "error" => nil
@@ -49,6 +50,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
       assert String.starts_with?(token, "eyJ")
       assert event_id == event.id
       assert event_name == event.name
+      assert event_shortname == event.shortname
       assert is_integer(expires_in)
       assert expires_in > 0
     end
