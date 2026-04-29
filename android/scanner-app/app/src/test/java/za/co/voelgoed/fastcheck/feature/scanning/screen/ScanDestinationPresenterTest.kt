@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.app.scanning.ScannerSessionState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.CameraPermissionState
 import za.co.voelgoed.fastcheck.feature.scanning.domain.ScannerSourceType
@@ -34,11 +35,11 @@ class ScanDestinationPresenterTest {
         val older = trustedSyncedUiState(lastSuccessfulSyncAt = "2026-03-12T08:50:00Z")
         val invalid = trustedSyncedUiState(lastSuccessfulSyncAt = "not-a-timestamp")
 
-        assertThat(unknown.factLabels).contains("Last sync unknown")
-        assertThat(justNow.factLabels).contains("Last sync just now")
-        assertThat(sameDay.factLabels).contains("Last sync 08:50")
-        assertThat(older.factLabels).contains("Last sync 12 Mar 08:50")
-        assertThat(invalid.factLabels).contains("Last sync unknown")
+        assertThat(unknown.scannerOverlaySyncLabel).isEqualTo("Last sync unknown")
+        assertThat(justNow.scannerOverlaySyncLabel).isEqualTo("Last sync just now")
+        assertThat(sameDay.scannerOverlaySyncLabel).isEqualTo("Last sync 08:50")
+        assertThat(older.scannerOverlaySyncLabel).isEqualTo("Last sync 12 Mar 08:50")
+        assertThat(invalid.scannerOverlaySyncLabel).isEqualTo("Last sync unknown")
     }
 
     @Test
@@ -109,8 +110,9 @@ class ScanDestinationPresenterTest {
         assertThat(uiState.admissionStatusChip.text).isEqualTo("Attendee list ready")
         assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission state current")
         assertThat(uiState.admissionStatusDetail).isEqualTo("Recent attendee data is available for this event.")
-        assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
-        assertThat(uiState.factLabels).containsExactly("Synced attendees: 20", "Last sync 08:50").inOrder()
+        assertThat(uiState.scannerOverlayEventLabel).isEqualTo("Active Event: #5")
+        assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 20")
+        assertThat(uiState.scannerOverlaySyncLabel).isEqualTo("Last sync 08:50")
         assertThat(uiState.queueUploadStatusChip.text).isEqualTo("No upload backlog")
     }
 
@@ -135,8 +137,8 @@ class ScanDestinationPresenterTest {
         assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission state current")
         assertThat(uiState.admissionStatusDetail)
             .isEqualTo("The attendee cache is synced for this event and currently contains no attendees.")
-        assertThat(uiState.activeEventLabel).isEqualTo("Active event: #99")
-        assertThat(uiState.factLabels).contains("Synced attendees: 0")
+        assertThat(uiState.scannerOverlayEventLabel).isEqualTo("Active Event: #99")
+        assertThat(uiState.syncedAttendeeCountLabel).isEqualTo("Synced attendees: 0")
         assertThat(uiState.manualSyncVisible).isFalse()
     }
 
@@ -154,7 +156,7 @@ class ScanDestinationPresenterTest {
                 currentEventSyncStatus = null
             )
 
-        assertThat(uiState.activeEventLabel).isEqualTo("Active event: #5")
+        assertThat(uiState.scannerOverlayEventLabel).isEqualTo("Active Event: #5")
         assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission data missing")
         assertThat(uiState.admissionStatusDetail).isEqualTo("Sync attendees before relying on scan decisions.")
         assertThat(uiState.manualSyncVisible).isTrue()
@@ -170,7 +172,7 @@ class ScanDestinationPresenterTest {
                 currentEventSyncStatus = null
             )
 
-        assertThat(uiState.activeEventLabel).isEqualTo("Active event: unavailable")
+        assertThat(uiState.scannerOverlayEventLabel).isEqualTo("Active Event: unavailable")
         assertThat(uiState.admissionStatusVerdict).isEqualTo("Admission unavailable")
         assertThat(uiState.admissionStatusDetail).isEqualTo("Sign in to an event before scanning.")
         assertThat(uiState.manualSyncVisible).isFalse()
@@ -718,4 +720,26 @@ class ScanDestinationPresenterTest {
                     attendeeCount = 20
                 )
         )
+
+    @Test
+    fun usesSessionEventNameWhenAvailable() {
+        val uiState =
+            presenter.present(
+                session =
+                    ScannerSession(
+                        eventId = 123,
+                        eventName = "Voelgoed Fees Conference Long Name",
+                        expiresInSeconds = 3600,
+                        authenticatedAtEpochMillis = 1L,
+                        expiresAtEpochMillis = 2L
+                    ),
+                scanningUiState = ScanningUiState(sessionState = ScannerSessionState.Active),
+                queueUiState = QueueUiState(),
+                syncUiState = SyncScreenUiState(),
+                currentEventSyncStatus = null
+            )
+
+        assertThat(uiState.scannerOverlayEventLabel)
+            .isEqualTo("Active Event: Voelgoed Fees Conference Long Name")
+    }
 }

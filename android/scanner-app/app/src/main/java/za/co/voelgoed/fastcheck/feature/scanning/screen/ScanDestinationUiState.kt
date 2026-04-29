@@ -4,8 +4,10 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.StatusTone
 import za.co.voelgoed.fastcheck.feature.scanning.screen.model.ScanOperatorAction
 
 data class ScanDestinationUiState(
-    val activeEventLabel: String,
-    val factLabels: List<String>,
+    val scannerOverlayTitle: String,
+    val scannerOverlayEventLabel: String,
+    val scannerOverlaySyncLabel: String,
+    val syncedAttendeeCountLabel: String,
     val scannerStatusChip: StatusChipUiModel,
     val scannerStatusMessage: String,
     val scannerDiagnosticLabel: String? = null,

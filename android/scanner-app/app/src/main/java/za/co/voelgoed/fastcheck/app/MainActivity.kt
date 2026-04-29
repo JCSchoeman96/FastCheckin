@@ -152,6 +152,7 @@ class MainActivity : ComponentActivity() {
                 scanContent = {
                     if (authenticatedSession != null) {
                         ScanDestinationRoute(
+                            session = authenticatedSession,
                             scanningViewModel = scanningViewModel,
                             queueViewModel = queueViewModel,
                             syncViewModel = syncViewModel,
