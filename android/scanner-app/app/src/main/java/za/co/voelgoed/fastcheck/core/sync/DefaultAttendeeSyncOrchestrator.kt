@@ -136,7 +136,10 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
         }
     }
 
-    private fun enqueueSyncRequest() {
+    private fun enqueueSyncRequest(respectBackoff: Boolean = true) {
+        if (respectBackoff && retryJob?.isActive == true) {
+            return
+        }
         syncRequests.trySend(Unit)
     }
 
@@ -211,7 +214,7 @@ class DefaultAttendeeSyncOrchestrator @Inject constructor(
                 val delayMs = retryDelayMillisFor(cause)
                 delay(delayMs)
                 if (connectivityMonitor.isOnline.value) {
-                    enqueueSyncRequest()
+                    enqueueSyncRequest(respectBackoff = false)
                 }
             }
     }

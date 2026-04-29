@@ -199,6 +199,50 @@ class DefaultAttendeeSyncOrchestratorTest {
     }
 
     @Test
+    fun backoffActive_blocksBackgroundAndScanActiveEnqueues_untilRetryFires() = runBlocking {
+        var callCount = 0
+        val syncRepository =
+            RecordingSyncRepository(
+                syncBehavior = {
+                    callCount += 1
+                    if (callCount == 1) {
+                        throw SyncRateLimitedException(
+                            message = "rate limited",
+                            retryAfterMillis = 200L
+                        )
+                    }
+                    null
+                }
+            )
+        val orchestrator =
+            DefaultAttendeeSyncOrchestrator(
+                syncRepository = syncRepository,
+                sessionRepository = fixedSessionRepository(),
+                connectivityMonitor = alwaysOnline(),
+                clock = TEST_CLOCK
+            )
+
+        orchestrator.start()
+        val thrown = runCatching { orchestrator.runSyncCycleNow() }.exceptionOrNull()
+        assertThat(thrown).isInstanceOf(SyncRateLimitedException::class.java)
+        assertThat(syncRepository.syncCalls).isEqualTo(1)
+        assertThat(orchestrator.currentRetryJob()).isNotNull()
+
+        orchestrator.notifyAppForeground()
+        orchestrator.notifyStaleScanRefreshAdvisory()
+        orchestrator.notifyConnectivityRestored()
+        orchestrator.notifyScanDestinationActive()
+        delay(100)
+
+        // Backoff guard prevents queued background triggers from bypassing rate-limit pressure.
+        assertThat(syncRepository.syncCalls).isEqualTo(1)
+
+        waitForAtLeastSyncCalls(repository = syncRepository, expectedCalls = 2)
+        assertThat(syncRepository.syncCalls).isEqualTo(2)
+        orchestrator.notifyScanDestinationInactive()
+    }
+
+    @Test
     fun nullLastFullReconcileAtUsesLastSuccessfulSyncAnchorBeforeForcingFullReconcile() {
         runBlocking {
             val statusWithUpgradeStyleNullLastFull =
