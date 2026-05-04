@@ -127,7 +127,7 @@ defmodule FastCheckWeb.ScannerSessionController do
   end
 
   defp sticky_form_params(params) do
-      %{
+    %{
       "event_id" => Map.get(params, "event_id", ""),
       "credential" => "",
       "operator_name" => Map.get(params, "operator_name", "")

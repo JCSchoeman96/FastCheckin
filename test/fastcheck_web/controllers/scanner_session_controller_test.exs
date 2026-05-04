@@ -23,7 +23,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
     test "creates scanner session for valid credentials", %{conn: conn, event: event} do
       conn =
         post(conn, ~p"/scanner/login", %{
-            "scanner_session" => %{
+          "scanner_session" => %{
             "event_id" => Integer.to_string(event.id),
             "credential" => @credential,
             "operator_name" => "Door 1"
@@ -52,7 +52,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
           scanner_operator_name: "Locked Operator"
         })
         |> post(~p"/scanner/login", %{
-            "scanner_session" => %{
+          "scanner_session" => %{
             "event_id" => Integer.to_string(target_event.id),
             "credential" => @credential,
             "operator_name" => "New Operator"
@@ -68,7 +68,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
     test "rejects invalid credential", %{conn: conn, event: event} do
       conn =
         post(conn, ~p"/scanner/login", %{
-            "scanner_session" => %{
+          "scanner_session" => %{
             "event_id" => Integer.to_string(event.id),
             "credential" => "wrong",
             "operator_name" => "Door 2"
@@ -82,7 +82,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
     test "rejects missing operator name", %{conn: conn, event: event} do
       conn =
         post(conn, ~p"/scanner/login", %{
-            "scanner_session" => %{
+          "scanner_session" => %{
             "event_id" => Integer.to_string(event.id),
             "credential" => @credential,
             "operator_name" => ""
@@ -136,7 +136,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
 
       conn =
         post(conn, ~p"/scanner/login", %{
-            "scanner_session" => %{
+          "scanner_session" => %{
             "event_id" => Integer.to_string(event.id),
             "credential" => @credential,
             "operator_name" => "Door 2"
