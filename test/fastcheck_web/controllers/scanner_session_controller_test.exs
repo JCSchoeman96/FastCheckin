@@ -118,6 +118,19 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       assert html_response(conn, 400) =~ "Event ID must be a positive integer"
     end
 
+    test "rejects oversized event ID", %{conn: conn} do
+      conn =
+        post(conn, ~p"/scanner/login", %{
+          "scanner_session" => %{
+            "event_id" => "2147483648",
+            "credential" => @credential,
+            "operator_name" => "Door 2"
+          }
+        })
+
+      assert html_response(conn, 400) =~ "Event ID must be a positive integer"
+    end
+
     test "rejects archived event", %{conn: conn} do
       event = insert_event(%{status: "archived", name: "Archived Event"})
 

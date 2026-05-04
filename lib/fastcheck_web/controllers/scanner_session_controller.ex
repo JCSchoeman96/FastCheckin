@@ -15,6 +15,7 @@ defmodule FastCheckWeb.ScannerSessionController do
   @scanner_event_id_key :scanner_event_id
   @scanner_event_name_key :scanner_event_name
   @scanner_operator_name_key :scanner_operator_name
+  @max_event_id 2_147_483_647
 
   def new(conn, params) do
     render(conn, :new,
@@ -259,11 +260,16 @@ defmodule FastCheckWeb.ScannerSessionController do
     path == base_prefix or String.starts_with?(path, base_prefix <> "?")
   end
 
-  defp parse_event_id_value(value) when is_integer(value) and value > 0, do: {:ok, value}
+  defp parse_event_id_value(value)
+       when is_integer(value) and value > 0 and value <= @max_event_id,
+       do: {:ok, value}
+
+  defp parse_event_id_value(value) when is_integer(value) and value > @max_event_id,
+    do: {:error, :bad_request, "Event ID must be a positive integer"}
 
   defp parse_event_id_value(value) when is_binary(value) do
     case Integer.parse(String.trim(value)) do
-      {event_id, ""} when event_id > 0 -> {:ok, event_id}
+      {event_id, ""} when event_id > 0 and event_id <= @max_event_id -> {:ok, event_id}
       _ -> {:error, :bad_request, "Event ID must be a positive integer"}
     end
   end
