@@ -24,7 +24,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       conn =
         post(conn, ~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => event.scanner_login_code,
+            "event_id" => Integer.to_string(event.id),
             "credential" => @credential,
             "operator_name" => "Door 1"
           }
@@ -53,7 +53,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
         })
         |> post(~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => target_event.scanner_login_code,
+            "event_id" => Integer.to_string(target_event.id),
             "credential" => @credential,
             "operator_name" => "New Operator"
           }
@@ -69,7 +69,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       conn =
         post(conn, ~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => event.scanner_login_code,
+            "event_id" => Integer.to_string(event.id),
             "credential" => "wrong",
             "operator_name" => "Door 2"
           }
@@ -83,7 +83,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       conn =
         post(conn, ~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => event.scanner_login_code,
+            "event_id" => Integer.to_string(event.id),
             "credential" => @credential,
             "operator_name" => ""
           }
@@ -92,11 +92,11 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       assert html_response(conn, 400) =~ "Operator name is required"
     end
 
-    test "rejects non-existent event", %{conn: conn} do
+    test "rejects non-existent event ID", %{conn: conn} do
       conn =
         post(conn, ~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => "ZZZZZZ",
+            "event_id" => "999999999",
             "credential" => @credential,
             "operator_name" => "Door 2"
           }
@@ -105,18 +105,30 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       assert html_response(conn, 404) =~ "does not exist"
     end
 
-    test "rejects invalid scanner code format", %{conn: conn} do
+    test "rejects invalid event ID format", %{conn: conn} do
       conn =
         post(conn, ~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => "abc12",
+            "event_id" => "abc12",
             "credential" => @credential,
             "operator_name" => "Door 2"
           }
         })
 
-      assert html_response(conn, 400) =~
-               "Scanner code must be exactly 6 uppercase letters/numbers"
+      assert html_response(conn, 400) =~ "Event ID must be a positive integer"
+    end
+
+    test "rejects oversized event ID", %{conn: conn} do
+      conn =
+        post(conn, ~p"/scanner/login", %{
+          "scanner_session" => %{
+            "event_id" => "2147483648",
+            "credential" => @credential,
+            "operator_name" => "Door 2"
+          }
+        })
+
+      assert html_response(conn, 400) =~ "Event ID must be a positive integer"
     end
 
     test "rejects archived event", %{conn: conn} do
@@ -125,7 +137,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       conn =
         post(conn, ~p"/scanner/login", %{
           "scanner_session" => %{
-            "scanner_code" => event.scanner_login_code,
+            "event_id" => Integer.to_string(event.id),
             "credential" => @credential,
             "operator_name" => "Door 2"
           }
