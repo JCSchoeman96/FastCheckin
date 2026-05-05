@@ -282,8 +282,6 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("hide_edit_form", _params, socket) do
-    eid = socket.assigns.editing_event_id
-
     {:noreply,
      socket
      |> assign(:editing_event_id, nil)
@@ -292,8 +290,7 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:edit_revealed_secret, nil)
      |> assign(:edit_reveal_show_plain, false)
      |> assign(:edit_reveal_challenge_active, false)
-     |> assign(:reveal_error, nil)
-     |> then(fn s -> if eid, do: clear_reveal_throttle_for(s, eid), else: s end)}
+     |> assign(:reveal_error, nil)}
   end
 
   @impl true
@@ -473,8 +470,6 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("hide_reveal_secret", _params, socket) do
-    eid = socket.assigns.revealing_event_id
-
     {:noreply,
      socket
      |> assign(:revealing_event_id, nil)
@@ -482,8 +477,7 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:reveal_no_secret, false)
      |> assign(:reveal_decrypt_error, false)
      |> assign(:reveal_error, nil)
-     |> assign(:reveal_show_plain, false)
-     |> then(fn s -> if eid, do: clear_reveal_throttle_for(s, eid), else: s end)}
+     |> assign(:reveal_show_plain, false)}
   end
 
   @impl true
@@ -514,29 +508,23 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("clear_edit_revealed_secret", _params, socket) do
-    eid = socket.assigns.editing_event_id
-
     {:noreply,
      socket
      |> assign(:edit_revealed_secret, nil)
      |> assign(:edit_reveal_show_plain, false)
      |> assign(:edit_reveal_challenge_active, false)
-     |> assign(:reveal_error, nil)
-     |> then(fn s -> if eid, do: clear_reveal_throttle_for(s, eid), else: s end)}
+     |> assign(:reveal_error, nil)}
   end
 
   @impl true
   def handle_event("clear_revealed_secret", _params, socket) do
-    eid = socket.assigns.revealing_event_id
-
     {:noreply,
      socket
      |> assign(:revealed_secret, nil)
      |> assign(:reveal_no_secret, false)
      |> assign(:reveal_decrypt_error, false)
      |> assign(:reveal_show_plain, false)
-     |> assign(:reveal_error, nil)
-     |> then(fn s -> if eid, do: clear_reveal_throttle_for(s, eid), else: s end)}
+     |> assign(:reveal_error, nil)}
   end
 
   @impl true
@@ -1994,8 +1982,6 @@ defmodule FastCheckWeb.DashboardLive do
     |> update(:reveal_failure_timestamps, &Map.delete(&1, event_id))
     |> update(:reveal_lock_until, &Map.delete(&1, event_id))
   end
-
-  defp clear_reveal_throttle_for(socket, event_id), do: clear_reveal_failures(socket, event_id)
 
   defp confirm_reveal_secret_authenticated(socket, event_id, source) do
     event = Events.get_event!(event_id)

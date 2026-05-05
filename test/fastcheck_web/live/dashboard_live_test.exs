@@ -540,6 +540,23 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert html =~ "Too many incorrect attempts"
 
+      view
+      |> element("#reveal-secret-modal button[phx-click='hide_reveal_secret']")
+      |> render_click()
+
+      view |> element("#view-scanner-password-#{event.id}") |> render_click()
+
+      html =
+        view
+        |> form("#reveal-secret-form", %{
+          "source" => "card",
+          "event_id" => to_string(event.id),
+          "admin_password" => @dashboard_pw
+        })
+        |> render_submit()
+
+      assert html =~ "Too many incorrect attempts"
+
       Process.sleep(1_100)
 
       html =
