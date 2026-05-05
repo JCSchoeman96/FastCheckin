@@ -1,6 +1,7 @@
 defmodule FastCheckWeb.DashboardLiveTest do
   use FastCheckWeb.ConnCase, async: false
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
 
   alias FastCheck.Crypto
@@ -385,6 +386,203 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert render(view) =~ "Auto full sync not started because another sync is already running."
 
       assert_sync_finishes(view)
+    end
+  end
+
+  describe "reveal scanner password" do
+    @dashboard_pw "dashboard-reveal-test-pw"
+
+    setup do
+      previous_auth = Application.get_env(:fastcheck, :dashboard_auth)
+      previous_window = Application.get_env(:fastcheck, :dashboard_reveal_rate_limit_window_ms)
+      previous_lock = Application.get_env(:fastcheck, :dashboard_reveal_lock_duration_ms)
+      previous_max = Application.get_env(:fastcheck, :dashboard_reveal_max_failures)
+
+      Application.put_env(:fastcheck, :dashboard_auth, %{
+        username: "admin",
+        password: @dashboard_pw
+      })
+
+      Application.put_env(:fastcheck, :dashboard_reveal_rate_limit_window_ms, 5_000)
+      Application.put_env(:fastcheck, :dashboard_reveal_lock_duration_ms, 1_000)
+      Application.put_env(:fastcheck, :dashboard_reveal_max_failures, 3)
+
+      on_exit(fn ->
+        restore_env(:dashboard_auth, previous_auth)
+        restore_env(:dashboard_reveal_rate_limit_window_ms, previous_window)
+        restore_env(:dashboard_reveal_lock_duration_ms, previous_lock)
+        restore_env(:dashboard_reveal_max_failures, previous_max)
+      end)
+
+      :ok
+    end
+
+    test "View password is disabled when event has no mobile secret", %{conn: conn} do
+      event =
+        insert_event!(%{
+          name: "No Secret Event",
+          mobile_secret: "temp"
+        })
+
+      {1, _} =
+        Repo.update_all(from(e in Event, where: e.id == ^event.id),
+          set: [mobile_access_secret_encrypted: nil]
+        )
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      disabled_btn = view |> element("#view-scanner-password-#{event.id}") |> render()
+      assert disabled_btn =~ "disabled"
+    end
+
+    test "card flow: wrong password then correct reveals secret with clipboard payload", %{
+      conn: conn
+    } do
+      secret = "scanner-secret-#{System.unique_integer([:positive])}"
+      event = insert_event!(%{name: "Reveal Card", mobile_secret: secret})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#view-scanner-password-#{event.id}") |> render_click()
+      assert has_element?(view, "#reveal-secret-form")
+
+      view
+      |> form("#reveal-secret-form", %{
+        "source" => "card",
+        "event_id" => to_string(event.id),
+        "admin_password" => "wrong-password"
+      })
+      |> render_submit()
+
+      refute render(view) =~ ~s(data-clipboard-text="#{secret}")
+
+      html =
+        view
+        |> form("#reveal-secret-form", %{
+          "source" => "card",
+          "event_id" => to_string(event.id),
+          "admin_password" => @dashboard_pw
+        })
+        |> render_submit()
+
+      assert html =~ ~s(data-clipboard-text="#{secret}")
+    end
+
+    test "card flow: hide clears secret from markup", %{conn: conn} do
+      secret = "hide-me-#{System.unique_integer([:positive])}"
+      event = insert_event!(%{name: "Hide Card", mobile_secret: secret})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#view-scanner-password-#{event.id}") |> render_click()
+
+      view
+      |> form("#reveal-secret-form", %{
+        "source" => "card",
+        "event_id" => to_string(event.id),
+        "admin_password" => @dashboard_pw
+      })
+      |> render_submit()
+
+      assert render(view) =~ secret
+
+      view |> element("#reveal-secret-hide-value") |> render_click()
+      refute render(view) =~ secret
+    end
+
+    test "card flow: closing modal clears secret", %{conn: conn} do
+      secret = "close-me-#{System.unique_integer([:positive])}"
+      event = insert_event!(%{name: "Close Card", mobile_secret: secret})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#view-scanner-password-#{event.id}") |> render_click()
+
+      view
+      |> form("#reveal-secret-form", %{
+        "source" => "card",
+        "event_id" => to_string(event.id),
+        "admin_password" => @dashboard_pw
+      })
+      |> render_submit()
+
+      assert render(view) =~ secret
+
+      view |> element("#reveal-secret-close-modal") |> render_click()
+      refute render(view) =~ secret
+    end
+
+    test "lockout blocks attempts until lock expires", %{conn: conn} do
+      event = insert_event!(%{name: "Lockout", mobile_secret: "s"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#view-scanner-password-#{event.id}") |> render_click()
+
+      for _ <- 1..3 do
+        view
+        |> form("#reveal-secret-form", %{
+          "source" => "card",
+          "event_id" => to_string(event.id),
+          "admin_password" => "bad-attempt-#{System.unique_integer([:positive])}"
+        })
+        |> render_submit()
+      end
+
+      html =
+        view
+        |> form("#reveal-secret-form", %{
+          "source" => "card",
+          "event_id" => to_string(event.id),
+          "admin_password" => @dashboard_pw
+        })
+        |> render_submit()
+
+      assert html =~ "Too many incorrect attempts"
+
+      Process.sleep(1_100)
+
+      html =
+        view
+        |> form("#reveal-secret-form", %{
+          "source" => "card",
+          "event_id" => to_string(event.id),
+          "admin_password" => @dashboard_pw
+        })
+        |> render_submit()
+
+      assert html =~ ~s(data-clipboard-text="s")
+    end
+
+    test "edit modal flow: reveal current password with re-auth", %{conn: conn} do
+      secret = "edit-flow-#{System.unique_integer([:positive])}"
+      event = insert_event!(%{name: "Edit Reveal", mobile_secret: secret})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+      view |> element("#edit-reveal-show-challenge") |> render_click()
+
+      view
+      |> form("#edit-reveal-secret-form", %{
+        "source" => "edit_modal",
+        "admin_password" => @dashboard_pw
+      })
+      |> render_submit()
+
+      assert render(view) =~ secret
+      assert render(view) =~ ~s(data-clipboard-text="#{secret}")
+
+      view |> element("#edit-reveal-hide-value") |> render_click()
+      refute render(view) =~ secret
+    end
+  end
+
+  defp restore_env(key, previous) do
+    if is_nil(previous) do
+      Application.delete_env(:fastcheck, key)
+    else
+      Application.put_env(:fastcheck, key, previous)
     end
   end
 

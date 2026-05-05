@@ -719,6 +719,27 @@ defmodule FastCheck.Events do
   def verify_mobile_access_secret(_event, _credential), do: {:error, :missing_credential}
 
   @doc """
+  Decrypts the stored per-event mobile access credential for admin display.
+
+  Returns `{:error, :missing_secret}` when no credential is stored. Any decryption
+  failure is surfaced as `{:error, :decrypt_failed}` without logging the ciphertext.
+  """
+  @spec reveal_mobile_access_secret(Event.t()) ::
+          {:ok, String.t()} | {:error, :missing_secret | :decrypt_failed}
+  def reveal_mobile_access_secret(%Event{} = event) do
+    case event.mobile_access_secret_encrypted do
+      nil ->
+        {:error, :missing_secret}
+
+      encrypted ->
+        case Crypto.decrypt(encrypted) do
+          {:ok, secret} -> {:ok, secret}
+          {:error, _} -> {:error, :decrypt_failed}
+        end
+    end
+  end
+
+  @doc """
   Decrypts the stored Tickera API key for the event.
   """
   @spec get_tickera_api_key(Event.t() | nil) :: {:ok, String.t()} | {:error, :decryption_failed}

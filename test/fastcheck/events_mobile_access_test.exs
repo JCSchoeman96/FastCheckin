@@ -1,6 +1,8 @@
 defmodule FastCheck.EventsMobileAccessTest do
   use FastCheck.DataCase, async: true
 
+  import Ecto.Query
+
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Event
@@ -31,6 +33,39 @@ defmodule FastCheck.EventsMobileAccessTest do
              })
 
     assert :ok = Events.verify_mobile_access_secret(updated, "still-secret")
+  end
+
+  test "reveal_mobile_access_secret/1 returns decrypted secret" do
+    secret = "reveal-me-#{System.unique_integer([:positive])}"
+    event = insert_event!(secret)
+
+    assert {:ok, ^secret} = Events.reveal_mobile_access_secret(event)
+  end
+
+  test "reveal_mobile_access_secret/1 returns missing_secret when unset" do
+    event = insert_event!("x")
+
+    {1, _} =
+      Repo.update_all(from(e in Event, where: e.id == ^event.id),
+        set: [mobile_access_secret_encrypted: nil]
+      )
+
+    event = Repo.get!(Event, event.id)
+
+    assert {:error, :missing_secret} = Events.reveal_mobile_access_secret(event)
+  end
+
+  test "reveal_mobile_access_secret/1 returns decrypt_failed for corrupted ciphertext" do
+    event = insert_event!("ok")
+
+    {1, _} =
+      Repo.update_all(from(e in Event, where: e.id == ^event.id),
+        set: [mobile_access_secret_encrypted: "not-valid-ciphertext"]
+      )
+
+    event = Repo.get!(Event, event.id)
+
+    assert {:error, :decrypt_failed} = Events.reveal_mobile_access_secret(event)
   end
 
   defp insert_event!(mobile_secret) do
