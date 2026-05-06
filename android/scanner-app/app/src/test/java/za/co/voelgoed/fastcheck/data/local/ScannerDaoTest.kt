@@ -36,6 +36,37 @@ class ScannerDaoTest {
         database.close()
     }
 
+
+    @Test
+    fun upsertsAndLoadsEventLocalBucketByEventAndState() = runTest {
+        dao.upsertEventLocalBucket(
+            EventLocalBucketEntity(
+                eventId = 5,
+                state = EventLocalBucketState.ACTIVE,
+                selectedAtEpochMillis = 1_000L,
+                lastActivatedAtEpochMillis = 1_100L,
+                closeRequestedAtEpochMillis = null,
+                lastFlushAttemptAtEpochMillis = 1_200L,
+                lastSuccessfulFlushAtEpochMillis = null,
+                lastSuccessfulReconcileAtEpochMillis = null,
+                pendingScanCountSnapshot = 2,
+                activeOverlayCountSnapshot = 1,
+                quarantinedScanCountSnapshot = 0,
+                lastErrorCode = null,
+                lastErrorMessage = null,
+                updatedAtEpochMillis = 1_300L
+            )
+        )
+
+        val byEvent = dao.loadEventLocalBucket(5)
+        val active = dao.loadEventLocalBucketsByState(EventLocalBucketState.ACTIVE)
+
+        assertThat(byEvent).isNotNull()
+        assertThat(byEvent?.eventId).isEqualTo(5)
+        assertThat(byEvent?.state).isEqualTo(EventLocalBucketState.ACTIVE)
+        assertThat(active.map { it.eventId }).containsExactly(5L)
+    }
+
     @Test
     fun upsertsAndFindsAttendeeByEventAndTicketCode() = runTest {
         dao.upsertAttendees(

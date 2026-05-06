@@ -5,6 +5,7 @@ import androidx.room.RoomDatabase
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.EventAttendeeMetricsDao
 import za.co.voelgoed.fastcheck.data.local.AttendeeLookupDao
+import za.co.voelgoed.fastcheck.data.local.EventLocalBucketEntity
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
@@ -25,9 +26,10 @@ import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
         LocalAdmissionOverlayEntity::class,
         LatestFlushSnapshotEntity::class,
         RecentFlushOutcomeEntity::class,
-        QuarantinedScanEntity::class
+        QuarantinedScanEntity::class,
+        EventLocalBucketEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class FastCheckDatabase : RoomDatabase() {
