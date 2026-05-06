@@ -159,8 +159,6 @@ object FastCheckDatabaseMigrations {
             }
         }
 
-
-
     val MIGRATION_10_11: Migration =
         object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
