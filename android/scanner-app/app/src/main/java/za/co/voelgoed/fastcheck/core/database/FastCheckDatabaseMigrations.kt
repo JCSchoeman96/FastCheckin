@@ -68,8 +68,7 @@ object FastCheckDatabaseMigrations {
                 db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS local_admission_overlays (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        eventId INTEGER NOT NULL,
+                        eventId INTEGER PRIMARY KEY NOT NULL,
                         attendeeId INTEGER NOT NULL,
                         ticketCode TEXT NOT NULL,
                         idempotencyKey TEXT NOT NULL,
@@ -167,8 +166,7 @@ object FastCheckDatabaseMigrations {
                 db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS event_local_buckets (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        eventId INTEGER NOT NULL,
+                        eventId INTEGER PRIMARY KEY NOT NULL,
                         state TEXT NOT NULL,
                         selectedAtEpochMillis INTEGER NOT NULL,
                         lastActivatedAtEpochMillis INTEGER NOT NULL,
@@ -184,9 +182,6 @@ object FastCheckDatabaseMigrations {
                         updatedAtEpochMillis INTEGER NOT NULL
                     )
                     """.trimIndent()
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS index_event_local_buckets_eventId ON event_local_buckets(eventId)"
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_event_local_buckets_state ON event_local_buckets(state)"

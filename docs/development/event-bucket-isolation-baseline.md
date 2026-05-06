@@ -91,12 +91,14 @@ From `Mobile.SyncController.upload_scans` + `FastCheck.Scans.MobileUploadService
 
 ## Intended phase sequence (implementation)
 
-1. Replace hard unresolved-state login block with non-blocking event switch policy.
-2. Add explicit event-bucket lifecycle entity/state.
-3. Make replay suppression event-scoped (`eventId + ticketCode`).
-4. Add background bucket flush/retry workers.
-5. Add safe auto-close for resolved buckets.
-6. Add diagnostics-only force archive preserving evidence.
-7. Add server-side mobile scanner issue ingest.
-8. Add admin issue review surfaces.
-9. Tune sync frequency with debounced triggers/backoff.
+1. Add explicit event-bucket lifecycle entity/state.
+2. Add per-event queue/overlay/quarantine queries.
+3. Add event bucket repository.
+4. Make replay suppression event-scoped (`eventId + ticketCode`).
+5. Replace hard unresolved-state login block with non-blocking event switch policy.
+6. Add background bucket flush/retry workers.
+7. Add safe auto-close for resolved buckets.
+8. Add diagnostics-only force archive preserving evidence.
+9. Add server-side mobile scanner issue ingest.
+10. Add admin issue review surfaces.
+11. Tune sync frequency with debounced triggers/backoff.

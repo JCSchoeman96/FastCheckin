@@ -7,14 +7,12 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "event_local_buckets",
     indices = [
-        Index(value = ["eventId"], unique = true),
         Index(value = ["state"]),
         Index(value = ["lastFlushAttemptAtEpochMillis"])
     ]
 )
 data class EventLocalBucketEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val eventId: Long,
+    @PrimaryKey val eventId: Long,
     val state: String,
     val selectedAtEpochMillis: Long,
     val lastActivatedAtEpochMillis: Long,

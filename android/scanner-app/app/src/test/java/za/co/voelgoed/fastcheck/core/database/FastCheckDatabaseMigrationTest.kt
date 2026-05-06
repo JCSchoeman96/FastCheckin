@@ -80,12 +80,12 @@ class FastCheckDatabaseMigrationTest {
 
         assertThat(queued.map { it.ticketCode }).containsExactly("VG-100", "VG-200").inOrder()
         assertTableExists(sqliteDb, "event_local_buckets")
-        assertIndexColumns(sqliteDb, "index_event_local_buckets_eventId", listOf("eventId"))
-        assertIndexColumns(sqliteDb, "index_event_local_buckets_state", listOf("state"))
+        assertIndexColumns(sqliteDb = sqliteDb, indexName = "index_event_local_buckets_state", expectedColumns = listOf("state"), tableName = "event_local_buckets")
         assertIndexColumns(
-            sqliteDb,
-            "index_event_local_buckets_lastFlushAttemptAtEpochMillis",
-            listOf("lastFlushAttemptAtEpochMillis")
+            sqliteDb = sqliteDb,
+            indexName = "index_event_local_buckets_lastFlushAttemptAtEpochMillis",
+            expectedColumns = listOf("lastFlushAttemptAtEpochMillis"),
+            tableName = "event_local_buckets"
         )
 
         database.close()
