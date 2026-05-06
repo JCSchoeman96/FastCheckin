@@ -2,7 +2,7 @@
 
 ## Scope
 
-This note captures the current implementation baseline before Phase 1 changes. It focuses on Android event switching/local state and Phoenix mobile sync/upload boundaries only.
+This note captures the Android event-switching/local-state and Phoenix mobile sync/upload baseline after the Phase 1 event-bucket persistence slice, but before event-switch policy behavior changes. The app now has a local event bucket table; login still uses the old unresolved-state gate until a later phase changes that behavior.
 
 ## Current Android behavior baseline
 
@@ -11,7 +11,7 @@ This note captures the current implementation baseline before Phase 1 changes. I
 - `CurrentPhoenixSessionRepository.login(...)` calls `unresolvedAdmissionStateGate.requireNoConflictingEvents(eventId)` **before** remote login, so unresolved local state in other events blocks switching. 
 - `UnresolvedAdmissionStateGate` reads unresolved event IDs via `ScannerDao.loadUnresolvedEventIdsExcluding(targetEventId)` and throws `CrossEventUnresolvedStateException` if any are found.
 
-Implication: unresolved event 1 local state can block login to event 10.
+Implication: unresolved event 1 local state can still block login to event 10 until the event-switch policy phase replaces the hard block.
 
 ### What counts as unresolved local state
 
@@ -41,6 +41,7 @@ Risk: replay suppression is globally cleared/scoped today, not event-bucket scop
 - `local_admission_overlays` (`LocalAdmissionOverlayEntity`) has `eventId` and event-based indexes.
 - `quarantined_scans` (`QuarantinedScanEntity`) has `eventId` and event/time indexes.
 - `attendees` and `sync_metadata` are managed with per-event delete/query methods in `ScannerDao`.
+- `event_local_buckets` (`EventLocalBucketEntity`) now exists with `eventId` as the primary key so there is exactly one local bucket row per event.
 
 ### Global/non-event-scoped risk table
 
@@ -52,9 +53,10 @@ Risk: same ticket code across events can leak suppression behavior cross-event.
 
 ## Database and migrations baseline
 
-- `FastCheckDatabase` currently includes scanner runtime tables (attendees, queue, replay cache, sync metadata, replay suppression, overlays, flush snapshot, flush outcomes, quarantine).
-- DB version is currently `10`.
-- `FastCheckDatabaseMigrations` already includes prior rebuild/normalization and overlay/sync metadata related migrations; no event-bucket lifecycle table exists yet.
+- `FastCheckDatabase` currently includes scanner runtime tables (attendees, queue, replay cache, sync metadata, replay suppression, overlays, flush snapshot, flush outcomes, quarantine) plus `EventLocalBucketEntity`.
+- DB version is currently `11`.
+- `FastCheckDatabaseMigrations` includes prior rebuild/normalization and overlay/sync metadata migrations plus `MIGRATION_10_11`, which creates `event_local_buckets` with `eventId INTEGER PRIMARY KEY NOT NULL`.
+- `local_admission_overlays` still uses an auto-generated `id` primary key and `eventId INTEGER NOT NULL`, so multiple overlay rows per event remain valid.
 
 ## Backend mobile route/sync baseline
 
@@ -86,12 +88,12 @@ From `Mobile.SyncController.upload_scans` + `FastCheck.Scans.MobileUploadService
 
 1. **Event switch hard-block**: cross-event unresolved state currently prevents login progression.
 2. **Cross-event suppression leak**: replay suppression is global by ticket code.
-3. **No explicit event-bucket lifecycle**: unresolved/syncing/closing states are inferred, not tracked as first-class per-event bucket records.
+3. **Event-bucket lifecycle not wired yet**: the bucket table/DAO foundation exists, but repository logic, snapshot refreshing, background workers, and event-switch policy integration are still pending.
 4. **Global cleanup surfaces**: some runtime cleanup actions are global, not explicitly per-event bucket.
 
 ## Intended phase sequence (implementation)
 
-1. Add explicit event-bucket lifecycle entity/state.
+1. Completed in this slice: add explicit event-bucket lifecycle entity/state/table foundation.
 2. Add per-event queue/overlay/quarantine queries.
 3. Add event bucket repository.
 4. Make replay suppression event-scoped (`eventId + ticketCode`).
