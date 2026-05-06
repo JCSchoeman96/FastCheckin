@@ -103,7 +103,6 @@ From `Mobile.SyncController.upload_scans` + `FastCheck.Scans.MobileUploadService
 10. Add admin issue review surfaces.
 11. Tune sync frequency with debounced triggers/backoff.
 
-
 ## Local verification reminder
 
 For Android schema changes in this rollout, verify with:
