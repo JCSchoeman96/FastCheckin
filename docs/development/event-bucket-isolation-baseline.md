@@ -46,6 +46,7 @@ Risk: replay suppression is globally cleared/scoped today, not event-bucket scop
 
 - `local_replay_suppression` (`LocalReplaySuppressionEntity`) is keyed uniquely by `ticketCode` only (no `eventId`).
 - `ScannerDao.findReplaySuppression(ticketCode)` is also global by ticket code.
+- `latest_flush_snapshot` and `recent_flush_outcomes` are global status surfaces today (not event-scoped), so they can show stale/misleading flush status after event switching unless made bucket-aware later.
 
 Risk: same ticket code across events can leak suppression behavior cross-event.
 
