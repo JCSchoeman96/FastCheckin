@@ -102,3 +102,10 @@ From `Mobile.SyncController.upload_scans` + `FastCheck.Scans.MobileUploadService
 9. Add server-side mobile scanner issue ingest.
 10. Add admin issue review surfaces.
 11. Tune sync frequency with debounced triggers/backoff.
+
+
+## Local verification reminder
+
+For Android schema changes in this rollout, verify with:
+
+`./gradlew :app:compileDebugKotlin :app:testDebugUnitTest`
