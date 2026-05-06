@@ -11,6 +11,40 @@ import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 
 @Dao
 interface ScannerDao {
+
+    @Upsert
+    suspend fun upsertEventLocalBucket(bucket: EventLocalBucketEntity)
+
+    @Query("SELECT * FROM event_local_buckets WHERE eventId = :eventId LIMIT 1")
+    suspend fun loadEventLocalBucket(eventId: Long): EventLocalBucketEntity?
+
+    @Query("SELECT * FROM event_local_buckets WHERE state = :state ORDER BY updatedAtEpochMillis ASC, eventId ASC")
+    suspend fun loadEventLocalBucketsByState(state: String): List<EventLocalBucketEntity>
+
+    @Query(
+        """
+        UPDATE event_local_buckets
+        SET state = :state,
+            pendingScanCountSnapshot = :pendingScanCountSnapshot,
+            activeOverlayCountSnapshot = :activeOverlayCountSnapshot,
+            quarantinedScanCountSnapshot = :quarantinedScanCountSnapshot,
+            lastErrorCode = :lastErrorCode,
+            lastErrorMessage = :lastErrorMessage,
+            updatedAtEpochMillis = :updatedAtEpochMillis
+        WHERE eventId = :eventId
+        """
+    )
+    suspend fun updateEventLocalBucketState(
+        eventId: Long,
+        state: String,
+        pendingScanCountSnapshot: Int,
+        activeOverlayCountSnapshot: Int,
+        quarantinedScanCountSnapshot: Int,
+        lastErrorCode: String?,
+        lastErrorMessage: String?,
+        updatedAtEpochMillis: Long
+    )
+
     @Upsert
     suspend fun upsertAttendees(attendees: List<AttendeeEntity>)
 

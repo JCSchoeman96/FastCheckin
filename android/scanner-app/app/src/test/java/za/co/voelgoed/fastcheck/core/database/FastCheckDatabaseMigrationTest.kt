@@ -55,6 +55,42 @@ class FastCheckDatabaseMigrationTest {
         }
     }
 
+
+    @Test
+    fun migratesVersion3To11AddsEventLocalBucketsTableWithoutMutatingQueueRows() = runTest {
+        createVersion3Schema(databaseFile)
+
+        val database =
+            Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
+                .addMigrations(
+                    FastCheckDatabaseMigrations.MIGRATION_3_4,
+                    FastCheckDatabaseMigrations.MIGRATION_4_5,
+                    FastCheckDatabaseMigrations.MIGRATION_5_6,
+                    FastCheckDatabaseMigrations.MIGRATION_6_7,
+                    FastCheckDatabaseMigrations.MIGRATION_7_8,
+                    FastCheckDatabaseMigrations.MIGRATION_8_9,
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                )
+                .allowMainThreadQueries()
+                .build()
+
+        val sqliteDb = database.openHelper.writableDatabase
+        val queued = database.scannerDao().loadQueuedScans()
+
+        assertThat(queued.map { it.ticketCode }).containsExactly("VG-100", "VG-200").inOrder()
+        assertTableExists(sqliteDb, "event_local_buckets")
+        assertIndexColumns(sqliteDb = sqliteDb, indexName = "index_event_local_buckets_state", expectedColumns = listOf("state"), tableName = "event_local_buckets")
+        assertIndexColumns(
+            sqliteDb = sqliteDb,
+            indexName = "index_event_local_buckets_lastFlushAttemptAtEpochMillis",
+            expectedColumns = listOf("lastFlushAttemptAtEpochMillis"),
+            tableName = "event_local_buckets"
+        )
+
+        database.close()
+    }
+
     @Test
     fun migratesVersion2FlushTablesWithoutDroppingExistingData() = runTest {
         createVersion2Schema(databaseFile)
@@ -69,7 +105,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -149,7 +186,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -186,7 +224,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -239,7 +278,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -266,7 +306,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -294,7 +335,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -323,7 +365,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -337,6 +380,26 @@ class FastCheckDatabaseMigrationTest {
             expectedColumns = listOf("eventId", "state"),
             tableName = "local_admission_overlays"
         )
+
+        sqliteDb.execSQL(
+            """
+            INSERT INTO local_admission_overlays (
+                eventId, attendeeId, ticketCode, idempotencyKey, direction, state,
+                createdAtEpochMillis, overlayScannedAt, expectedRemainingAfterOverlay,
+                operatorName, entranceName, conflictReasonCode, conflictMessage
+            ) VALUES
+                (5, 1001, 'VG-OL-1', 'idem-overlay-1', 'in', 'PENDING_LOCAL', 1000, '2026-03-20T10:00:00Z', 0, 'Scanner 1', 'Main', NULL, NULL),
+                (5, 1002, 'VG-OL-2', 'idem-overlay-2', 'in', 'PENDING_LOCAL', 2000, '2026-03-20T10:00:01Z', 0, 'Scanner 1', 'Main', NULL, NULL)
+            """.trimIndent()
+        )
+
+        val overlayCountForEvent =
+            sqliteDb.query("SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = 5").use { cursor ->
+                cursor.moveToFirst()
+                cursor.getInt(0)
+            }
+
+        assertThat(overlayCountForEvent).isEqualTo(2)
 
         database.close()
     }
@@ -352,7 +415,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -383,7 +447,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_6_7,
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
-                    FastCheckDatabaseMigrations.MIGRATION_9_10
+                    FastCheckDatabaseMigrations.MIGRATION_9_10,
+                    FastCheckDatabaseMigrations.MIGRATION_10_11
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -1218,6 +1283,13 @@ class FastCheckDatabaseMigrationTest {
         )
         database.version = 2
         database.close()
+    }
+
+
+    private fun assertTableExists(sqliteDb: SupportSQLiteDatabase, tableName: String) {
+        sqliteDb.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", arrayOf(tableName)).use { cursor ->
+            assertThat(cursor.moveToFirst()).isTrue()
+        }
     }
 
     private class RecordingPhoenixMobileApi : PhoenixMobileApi {

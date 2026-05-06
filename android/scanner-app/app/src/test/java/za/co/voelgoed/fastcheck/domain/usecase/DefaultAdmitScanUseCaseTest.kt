@@ -16,6 +16,7 @@ import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
 import za.co.voelgoed.fastcheck.data.repository.AttendeeSyncMode
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
+import za.co.voelgoed.fastcheck.data.local.EventLocalBucketEntity
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
@@ -551,6 +552,20 @@ class DefaultAdmitScanUseCaseTest {
             lastOverlay = overlay
             return enqueueReturn
         }
+
+        override suspend fun upsertEventLocalBucket(bucket: EventLocalBucketEntity) = unused()
+        override suspend fun loadEventLocalBucket(eventId: Long): EventLocalBucketEntity? = unused()
+        override suspend fun loadEventLocalBucketsByState(state: String): List<EventLocalBucketEntity> = unused()
+        override suspend fun updateEventLocalBucketState(
+            eventId: Long,
+            state: String,
+            pendingScanCountSnapshot: Int,
+            activeOverlayCountSnapshot: Int,
+            quarantinedScanCountSnapshot: Int,
+            lastErrorCode: String?,
+            lastErrorMessage: String?,
+            updatedAtEpochMillis: Long
+        ) = unused()
 
         override suspend fun upsertAttendees(attendees: List<AttendeeEntity>) = unused()
         override suspend fun findAttendee(eventId: Long, ticketCode: String): AttendeeEntity? = unused()

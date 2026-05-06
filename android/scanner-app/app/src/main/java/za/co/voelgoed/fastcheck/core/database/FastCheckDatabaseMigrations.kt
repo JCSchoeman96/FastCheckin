@@ -159,6 +159,38 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_10_11: Migration =
+        object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS event_local_buckets (
+                        eventId INTEGER PRIMARY KEY NOT NULL,
+                        state TEXT NOT NULL,
+                        selectedAtEpochMillis INTEGER NOT NULL,
+                        lastActivatedAtEpochMillis INTEGER NOT NULL,
+                        closeRequestedAtEpochMillis INTEGER,
+                        lastFlushAttemptAtEpochMillis INTEGER,
+                        lastSuccessfulFlushAtEpochMillis INTEGER,
+                        lastSuccessfulReconcileAtEpochMillis INTEGER,
+                        pendingScanCountSnapshot INTEGER NOT NULL,
+                        activeOverlayCountSnapshot INTEGER NOT NULL,
+                        quarantinedScanCountSnapshot INTEGER NOT NULL,
+                        lastErrorCode TEXT,
+                        lastErrorMessage TEXT,
+                        updatedAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_event_local_buckets_state ON event_local_buckets(state)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_event_local_buckets_lastFlushAttemptAtEpochMillis ON event_local_buckets(lastFlushAttemptAtEpochMillis)"
+                )
+            }
+        }
+
     val MIGRATION_7_8: Migration =
         object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {

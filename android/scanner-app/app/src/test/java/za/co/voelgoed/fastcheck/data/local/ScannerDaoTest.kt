@@ -36,6 +36,85 @@ class ScannerDaoTest {
         database.close()
     }
 
+
+
+    @Test
+    fun upsertEventLocalBucket_sameEventId_updatesExistingBucket() = runTest {
+        dao.upsertEventLocalBucket(
+            EventLocalBucketEntity(
+                eventId = 7,
+                state = EventLocalBucketState.ACTIVE,
+                selectedAtEpochMillis = 1_000L,
+                lastActivatedAtEpochMillis = 1_000L,
+                closeRequestedAtEpochMillis = null,
+                lastFlushAttemptAtEpochMillis = null,
+                lastSuccessfulFlushAtEpochMillis = null,
+                lastSuccessfulReconcileAtEpochMillis = null,
+                pendingScanCountSnapshot = 1,
+                activeOverlayCountSnapshot = 0,
+                quarantinedScanCountSnapshot = 0,
+                lastErrorCode = null,
+                lastErrorMessage = null,
+                updatedAtEpochMillis = 1_000L
+            )
+        )
+        dao.upsertEventLocalBucket(
+            EventLocalBucketEntity(
+                eventId = 7,
+                state = EventLocalBucketState.SYNCING,
+                selectedAtEpochMillis = 1_000L,
+                lastActivatedAtEpochMillis = 1_200L,
+                closeRequestedAtEpochMillis = null,
+                lastFlushAttemptAtEpochMillis = 1_300L,
+                lastSuccessfulFlushAtEpochMillis = null,
+                lastSuccessfulReconcileAtEpochMillis = null,
+                pendingScanCountSnapshot = 3,
+                activeOverlayCountSnapshot = 1,
+                quarantinedScanCountSnapshot = 0,
+                lastErrorCode = "timeout",
+                lastErrorMessage = "network timeout",
+                updatedAtEpochMillis = 1_400L
+            )
+        )
+
+        val row = dao.loadEventLocalBucket(7)
+        assertThat(row).isNotNull()
+        assertThat(row?.state).isEqualTo(EventLocalBucketState.SYNCING)
+        assertThat(row?.pendingScanCountSnapshot).isEqualTo(3)
+        assertThat(dao.loadEventLocalBucketsByState(EventLocalBucketState.SYNCING).map { it.eventId })
+            .containsExactly(7L)
+    }
+
+    @Test
+    fun upsertsAndLoadsEventLocalBucketByEventAndState() = runTest {
+        dao.upsertEventLocalBucket(
+            EventLocalBucketEntity(
+                eventId = 5,
+                state = EventLocalBucketState.ACTIVE,
+                selectedAtEpochMillis = 1_000L,
+                lastActivatedAtEpochMillis = 1_100L,
+                closeRequestedAtEpochMillis = null,
+                lastFlushAttemptAtEpochMillis = 1_200L,
+                lastSuccessfulFlushAtEpochMillis = null,
+                lastSuccessfulReconcileAtEpochMillis = null,
+                pendingScanCountSnapshot = 2,
+                activeOverlayCountSnapshot = 1,
+                quarantinedScanCountSnapshot = 0,
+                lastErrorCode = null,
+                lastErrorMessage = null,
+                updatedAtEpochMillis = 1_300L
+            )
+        )
+
+        val byEvent = dao.loadEventLocalBucket(5)
+        val active = dao.loadEventLocalBucketsByState(EventLocalBucketState.ACTIVE)
+
+        assertThat(byEvent).isNotNull()
+        assertThat(byEvent?.eventId).isEqualTo(5)
+        assertThat(byEvent?.state).isEqualTo(EventLocalBucketState.ACTIVE)
+        assertThat(active.map { it.eventId }).containsExactly(5L)
+    }
+
     @Test
     fun upsertsAndFindsAttendeeByEventAndTicketCode() = runTest {
         dao.upsertAttendees(
