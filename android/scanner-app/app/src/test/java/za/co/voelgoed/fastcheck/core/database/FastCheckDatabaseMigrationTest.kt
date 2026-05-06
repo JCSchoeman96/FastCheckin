@@ -381,6 +381,26 @@ class FastCheckDatabaseMigrationTest {
             tableName = "local_admission_overlays"
         )
 
+        sqliteDb.execSQL(
+            """
+            INSERT INTO local_admission_overlays (
+                eventId, attendeeId, ticketCode, idempotencyKey, direction, state,
+                createdAtEpochMillis, overlayScannedAt, expectedRemainingAfterOverlay,
+                operatorName, entranceName, conflictReasonCode, conflictMessage
+            ) VALUES
+                (5, 1001, 'VG-OL-1', 'idem-overlay-1', 'in', 'PENDING_LOCAL', 1000, '2026-03-20T10:00:00Z', 0, 'Scanner 1', 'Main', NULL, NULL),
+                (5, 1002, 'VG-OL-2', 'idem-overlay-2', 'in', 'PENDING_LOCAL', 2000, '2026-03-20T10:00:01Z', 0, 'Scanner 1', 'Main', NULL, NULL)
+            """.trimIndent()
+        )
+
+        val overlayCountForEvent =
+            sqliteDb.query("SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = 5").use { cursor ->
+                cursor.moveToFirst()
+                cursor.getInt(0)
+            }
+
+        assertThat(overlayCountForEvent).isEqualTo(2)
+
         database.close()
     }
 

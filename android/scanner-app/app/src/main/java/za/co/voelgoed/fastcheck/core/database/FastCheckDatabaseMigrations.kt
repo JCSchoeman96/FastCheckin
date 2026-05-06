@@ -68,7 +68,8 @@ object FastCheckDatabaseMigrations {
                 db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS local_admission_overlays (
-                        eventId INTEGER PRIMARY KEY NOT NULL,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        eventId INTEGER NOT NULL,
                         attendeeId INTEGER NOT NULL,
                         ticketCode TEXT NOT NULL,
                         idempotencyKey TEXT NOT NULL,
