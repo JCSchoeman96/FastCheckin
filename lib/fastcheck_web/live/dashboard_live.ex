@@ -11,6 +11,7 @@ defmodule FastCheckWeb.DashboardLive do
   alias FastCheck.Events.Event
   alias FastCheck.Events.SyncState
   alias FastCheck.Repo
+  alias FastCheckWeb.Plugs.BrowserAuth
   alias Phoenix.LiveView.JS
   require Logger
 
@@ -45,7 +46,18 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:viewing_sync_history_for, nil)
      |> assign(:sync_history, [])
      |> assign(:default_tickera_site_url, default_site_url)
-     |> assign(:form, empty_event_form(default_site_url))}
+     |> assign(:form, empty_event_form(default_site_url))
+     |> assign(:revealing_event_id, nil)
+     |> assign(:revealed_secret, nil)
+     |> assign(:reveal_no_secret, false)
+     |> assign(:reveal_decrypt_error, false)
+     |> assign(:reveal_error, nil)
+     |> assign(:reveal_show_plain, false)
+     |> assign(:reveal_failure_timestamps, %{})
+     |> assign(:reveal_lock_until, %{})
+     |> assign(:edit_revealed_secret, nil)
+     |> assign(:edit_reveal_show_plain, false)
+     |> assign(:edit_reveal_challenge_active, false)}
   end
 
   @impl true
@@ -247,7 +259,11 @@ defmodule FastCheckWeb.DashboardLive do
        socket
        |> assign(:editing_event_id, event_id)
        |> assign(:editing_event, event)
-       |> assign(:edit_form, edit_form)}
+       |> assign(:edit_form, edit_form)
+       |> assign(:edit_revealed_secret, nil)
+       |> assign(:edit_reveal_show_plain, false)
+       |> assign(:edit_reveal_challenge_active, false)
+       |> assign(:reveal_error, nil)}
     else
       {:error, :not_found} ->
         {:noreply, assign(socket, :sync_status, "Event not found")}
@@ -270,7 +286,11 @@ defmodule FastCheckWeb.DashboardLive do
      socket
      |> assign(:editing_event_id, nil)
      |> assign(:editing_event, nil)
-     |> assign(:edit_form, nil)}
+     |> assign(:edit_form, nil)
+     |> assign(:edit_revealed_secret, nil)
+     |> assign(:edit_reveal_show_plain, false)
+     |> assign(:edit_reveal_challenge_active, false)
+     |> assign(:reveal_error, nil)}
   end
 
   @impl true
@@ -292,6 +312,10 @@ defmodule FastCheckWeb.DashboardLive do
            |> assign(:editing_event_id, nil)
            |> assign(:editing_event, nil)
            |> assign(:edit_form, nil)
+           |> assign(:edit_revealed_secret, nil)
+           |> assign(:edit_reveal_show_plain, false)
+           |> assign(:edit_reveal_challenge_active, false)
+           |> assign(:reveal_error, nil)
            |> assign(:sync_status, "Event updated successfully")}
 
         {:error, %Changeset{} = changeset} ->
@@ -420,6 +444,134 @@ defmodule FastCheckWeb.DashboardLive do
      socket
      |> assign(:viewing_sync_history_for, nil)
      |> assign(:sync_history, [])}
+  end
+
+  @impl true
+  def handle_event("show_reveal_secret", %{"event_id" => event_id_param}, socket) do
+    case parse_event_id(event_id_param) do
+      {:ok, event_id} ->
+        {:noreply,
+         socket
+         |> assign(:revealing_event_id, event_id)
+         |> assign(:revealed_secret, nil)
+         |> assign(:reveal_no_secret, false)
+         |> assign(:reveal_decrypt_error, false)
+         |> assign(:reveal_error, nil)
+         |> assign(:reveal_show_plain, false)}
+
+      {:error, _} ->
+        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+    end
+  end
+
+  def handle_event("show_reveal_secret", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
+  def handle_event("hide_reveal_secret", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:revealing_event_id, nil)
+     |> assign(:revealed_secret, nil)
+     |> assign(:reveal_no_secret, false)
+     |> assign(:reveal_decrypt_error, false)
+     |> assign(:reveal_error, nil)
+     |> assign(:reveal_show_plain, false)}
+  end
+
+  @impl true
+  def handle_event("toggle_reveal_secret_plain", _params, socket) do
+    {:noreply, update(socket, :reveal_show_plain, &(!&1))}
+  end
+
+  @impl true
+  def handle_event("toggle_edit_reveal_secret_plain", _params, socket) do
+    {:noreply, update(socket, :edit_reveal_show_plain, &(!&1))}
+  end
+
+  @impl true
+  def handle_event("show_edit_reveal_challenge", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:edit_reveal_challenge_active, true)
+     |> assign(:reveal_error, nil)}
+  end
+
+  @impl true
+  def handle_event("cancel_edit_reveal_challenge", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:edit_reveal_challenge_active, false)
+     |> assign(:reveal_error, nil)}
+  end
+
+  @impl true
+  def handle_event("clear_edit_revealed_secret", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:edit_revealed_secret, nil)
+     |> assign(:edit_reveal_show_plain, false)
+     |> assign(:edit_reveal_challenge_active, false)
+     |> assign(:reveal_error, nil)}
+  end
+
+  @impl true
+  def handle_event("clear_revealed_secret", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:revealed_secret, nil)
+     |> assign(:reveal_no_secret, false)
+     |> assign(:reveal_decrypt_error, false)
+     |> assign(:reveal_show_plain, false)
+     |> assign(:reveal_error, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_reveal_secret", params, socket) do
+    admin_password = params |> Map.get("admin_password", "") |> to_string()
+    source = params |> Map.get("source", "card") |> to_string()
+
+    event_id_result =
+      case source do
+        "edit_modal" ->
+          case socket.assigns.editing_event_id do
+            nil -> {:error, :no_edit_session}
+            eid -> {:ok, eid}
+          end
+
+        _ ->
+          parse_event_id(Map.get(params, "event_id"))
+      end
+
+    case event_id_result do
+      {:ok, event_id} ->
+        cond do
+          reveal_locked?(socket, event_id) ->
+            Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=locked")
+
+            {:noreply, assign(socket, :reveal_error, reveal_lockout_message())}
+
+          BrowserAuth.valid_admin_password?(admin_password) ->
+            confirm_reveal_secret_authenticated(socket, event_id, source)
+
+          true ->
+            Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=bad_password")
+
+            socket =
+              socket
+              |> record_reveal_failure(event_id)
+              |> assign(:reveal_error, "Incorrect password.")
+
+            {:noreply, socket}
+        end
+
+      {:error, :no_edit_session} ->
+        {:noreply, assign(socket, :reveal_error, "Open the edit dialog for this event first.")}
+
+      {:error, _} ->
+        {:noreply, assign(socket, :reveal_error, "Invalid event identifier")}
+    end
   end
 
   @impl true
@@ -1079,6 +1231,26 @@ defmodule FastCheckWeb.DashboardLive do
                       </.button>
                     </div>
 
+                    <.button
+                      id={"view-scanner-password-#{event.id}"}
+                      type="button"
+                      phx-click="show_reveal_secret"
+                      phx-value-event_id={event.id}
+                      phx-disable-with="Opening..."
+                      variant="bordered"
+                      color="natural"
+                      size="small"
+                      full_width
+                      disabled={is_nil(event.mobile_access_secret_encrypted)}
+                      title={
+                        if is_nil(event.mobile_access_secret_encrypted),
+                          do: "No scanner password is set for this event",
+                          else: "View current scanner password (requires admin password)"
+                      }
+                    >
+                      View password
+                    </.button>
+
                     <%!-- Overflow: Export + Archive --%>
                     <details
                       id={"event-more-actions-#{event.id}"}
@@ -1233,6 +1405,127 @@ defmodule FastCheckWeb.DashboardLive do
             Scanner code {safe_form_value(@edit_form, :scanner_login_code) || "Unavailable"}
           </p>
 
+          <div
+            :if={@edit_form && @editing_event}
+            class="mb-4 rounded-xl border border-fc-border-default dark:border-glass-border p-3 space-y-3"
+          >
+            <p class="text-sm font-semibold text-fc-text-primary">Current scanner password</p>
+
+            <div :if={is_nil(@editing_event.mobile_access_secret_encrypted)}>
+              <p class="text-sm text-fc-text-secondary">Not set.</p>
+            </div>
+
+            <div
+              :if={@editing_event.mobile_access_secret_encrypted && is_nil(@edit_revealed_secret)}
+              class="space-y-2"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <input
+                  type="password"
+                  readonly
+                  class="input w-full max-w-md flex-1"
+                  value="••••••••"
+                  aria-label="Scanner password hidden"
+                />
+                <.button
+                  id="edit-reveal-show-challenge"
+                  type="button"
+                  phx-click="show_edit_reveal_challenge"
+                  variant="bordered"
+                  color="natural"
+                  size="small"
+                  disabled={@edit_reveal_challenge_active}
+                >
+                  Reveal
+                </.button>
+              </div>
+
+              <div
+                :if={@edit_reveal_challenge_active}
+                class="space-y-2 border-t border-fc-border-default dark:border-glass-border pt-3"
+              >
+                <p class="text-xs text-fc-text-muted">
+                  Re-enter your dashboard password to view the current scanner password.
+                </p>
+                <p :if={@reveal_error} class="text-sm text-error">{@reveal_error}</p>
+                <form phx-submit="confirm_reveal_secret" id="edit-reveal-secret-form">
+                  <input type="hidden" name="source" value="edit_modal" />
+                  <.input
+                    type="password"
+                    name="admin_password"
+                    id="edit-reveal-admin-password"
+                    label="Admin password"
+                    value=""
+                    errors={[]}
+                    autocomplete="current-password"
+                    required
+                  />
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    <.button
+                      id="edit-reveal-confirm"
+                      type="submit"
+                      color="primary"
+                      variant="shadow"
+                      size="small"
+                    >
+                      Confirm
+                    </.button>
+                    <.button
+                      type="button"
+                      phx-click="cancel_edit_reveal_challenge"
+                      variant="bordered"
+                      color="natural"
+                      size="small"
+                    >
+                      Cancel
+                    </.button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div :if={@edit_revealed_secret} class="space-y-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <input
+                  type={if(@edit_reveal_show_plain, do: "text", else: "password")}
+                  readonly
+                  class="input w-full max-w-md flex-1 font-mono text-sm"
+                  value={@edit_revealed_secret}
+                  id="edit-revealed-secret-display"
+                />
+                <.button
+                  type="button"
+                  phx-click="toggle_edit_reveal_secret_plain"
+                  variant="bordered"
+                  color="natural"
+                  size="small"
+                >
+                  {if @edit_reveal_show_plain, do: "Mask", else: "Show"}
+                </.button>
+                <.clipboard
+                  text={@edit_revealed_secret}
+                  id={"edit-copy-scanner-secret-#{@editing_event_id}"}
+                >
+                  <:trigger>
+                    <.button type="button" color="primary" variant="shadow" size="small">
+                      Copy
+                    </.button>
+                  </:trigger>
+                </.clipboard>
+                <.button
+                  id="edit-reveal-hide-value"
+                  type="button"
+                  phx-click="clear_edit_revealed_secret"
+                  variant="bordered"
+                  color="natural"
+                  size="small"
+                >
+                  Hide
+                </.button>
+              </div>
+            </div>
+          </div>
+
           <.form
             :if={@edit_form}
             id="edit-event-form"
@@ -1371,6 +1664,140 @@ defmodule FastCheckWeb.DashboardLive do
         </.modal>
 
         <.modal
+          :if={@revealing_event_id != nil}
+          id="reveal-secret-modal"
+          title="Scanner password"
+          show
+          size="large"
+          rounded="large"
+          color="natural"
+          on_cancel={JS.push("hide_reveal_secret")}
+        >
+          <p class="text-sm text-fc-text-secondary mb-3">
+            Event ID {@revealing_event_id}
+          </p>
+
+          <p :if={@reveal_error} class="text-sm text-error mb-3">{@reveal_error}</p>
+
+          <div :if={@revealed_secret} class="space-y-3">
+            <p class="text-sm text-fc-text-secondary">
+              Scanner password (masked until you choose Show).
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                type={if(@reveal_show_plain, do: "text", else: "password")}
+                readonly
+                class="input w-full max-w-md flex-1 font-mono text-sm"
+                value={@revealed_secret}
+                id="reveal-secret-display"
+              />
+              <.button
+                type="button"
+                phx-click="toggle_reveal_secret_plain"
+                variant="bordered"
+                color="natural"
+                size="small"
+              >
+                {if @reveal_show_plain, do: "Mask", else: "Show"}
+              </.button>
+              <.clipboard text={@revealed_secret} id={"copy-scanner-secret-#{@revealing_event_id}"}>
+                <:trigger>
+                  <.button type="button" color="primary" variant="shadow" size="small">
+                    Copy
+                  </.button>
+                </:trigger>
+              </.clipboard>
+              <.button
+                id="reveal-secret-hide-value"
+                type="button"
+                phx-click="clear_revealed_secret"
+                variant="bordered"
+                color="natural"
+                size="small"
+              >
+                Hide
+              </.button>
+            </div>
+            <.button
+              id="reveal-secret-close-modal"
+              type="button"
+              phx-click="hide_reveal_secret"
+              variant="bordered"
+              color="natural"
+              full_width
+            >
+              Close
+            </.button>
+          </div>
+
+          <div :if={@reveal_no_secret} class="space-y-3">
+            <p class="text-sm text-fc-text-secondary">
+              No scanner password is set for this event.
+            </p>
+            <.button
+              type="button"
+              phx-click="hide_reveal_secret"
+              variant="bordered"
+              color="natural"
+              full_width
+            >
+              Close
+            </.button>
+          </div>
+
+          <div :if={@reveal_decrypt_error} class="space-y-3">
+            <p class="text-sm text-fc-text-secondary">
+              The stored scanner password could not be decrypted. Try rotating it from the edit form.
+            </p>
+            <.button
+              type="button"
+              phx-click="hide_reveal_secret"
+              variant="bordered"
+              color="natural"
+              full_width
+            >
+              Close
+            </.button>
+          </div>
+
+          <div
+            :if={is_nil(@revealed_secret) && !@reveal_no_secret && !@reveal_decrypt_error}
+            class="space-y-3"
+          >
+            <p class="text-sm text-fc-text-secondary">
+              Re-enter your dashboard password to view the current scanner password for this event.
+            </p>
+            <form phx-submit="confirm_reveal_secret" id="reveal-secret-form">
+              <input type="hidden" name="source" value="card" />
+              <input type="hidden" name="event_id" value={@revealing_event_id} />
+              <.input
+                type="password"
+                name="admin_password"
+                id="reveal-admin-password"
+                label="Admin password"
+                value=""
+                errors={[]}
+                autocomplete="current-password"
+                required
+              />
+              <div class="mt-4 flex flex-wrap gap-2">
+                <.button id="reveal-secret-confirm" type="submit" color="primary" variant="shadow">
+                  Confirm
+                </.button>
+                <.button
+                  type="button"
+                  phx-click="hide_reveal_secret"
+                  variant="bordered"
+                  color="natural"
+                >
+                  Cancel
+                </.button>
+              </div>
+            </form>
+          </div>
+        </.modal>
+
+        <.modal
           :if={@viewing_sync_history_for != nil}
           id="sync-history-modal"
           title="Sync History"
@@ -1484,6 +1911,164 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp parse_event_id(_), do: {:error, "Invalid event identifier"}
+
+  defp reveal_rate_limit_window_ms do
+    Application.get_env(:fastcheck, :dashboard_reveal_rate_limit_window_ms, 60_000)
+  end
+
+  defp reveal_lock_duration_ms do
+    Application.get_env(:fastcheck, :dashboard_reveal_lock_duration_ms, 60_000)
+  end
+
+  defp reveal_max_failures do
+    Application.get_env(:fastcheck, :dashboard_reveal_max_failures, 5)
+  end
+
+  defp reveal_lockout_message do
+    "Too many incorrect attempts. Wait about a minute and try again."
+  end
+
+  defp reveal_now_truncated do
+    DateTime.utc_now() |> DateTime.truncate(:second)
+  end
+
+  defp reveal_locked?(socket, event_id) do
+    case Map.get(socket.assigns.reveal_lock_until, event_id) do
+      %DateTime{} = until ->
+        DateTime.compare(reveal_now_truncated(), DateTime.truncate(until, :second)) == :lt
+
+      _ ->
+        false
+    end
+  end
+
+  defp record_reveal_failure(socket, event_id) do
+    now = reveal_now_truncated()
+    window_ms = reveal_rate_limit_window_ms()
+    window_start = DateTime.add(now, -window_ms, :millisecond)
+
+    pruned =
+      socket.assigns.reveal_failure_timestamps
+      |> Map.get(event_id, [])
+      |> Enum.filter(fn t ->
+        t = DateTime.truncate(t, :second)
+        DateTime.compare(t, window_start) != :lt
+      end)
+      |> Kernel.++([now])
+
+    socket =
+      assign(
+        socket,
+        :reveal_failure_timestamps,
+        Map.put(socket.assigns.reveal_failure_timestamps, event_id, pruned)
+      )
+
+    if length(pruned) >= reveal_max_failures() do
+      lock_until =
+        DateTime.add(now, reveal_lock_duration_ms(), :millisecond) |> DateTime.truncate(:second)
+
+      assign(
+        socket,
+        :reveal_lock_until,
+        Map.put(socket.assigns.reveal_lock_until, event_id, lock_until)
+      )
+    else
+      socket
+    end
+  end
+
+  defp clear_reveal_failures(socket, event_id) do
+    socket
+    |> update(:reveal_failure_timestamps, &Map.delete(&1, event_id))
+    |> update(:reveal_lock_until, &Map.delete(&1, event_id))
+  end
+
+  defp confirm_reveal_secret_authenticated(socket, event_id, source) do
+    event = Events.get_event!(event_id)
+
+    case Events.reveal_mobile_access_secret(event) do
+      {:ok, secret} ->
+        Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=ok")
+
+        socket =
+          socket
+          |> clear_reveal_failures(event_id)
+          |> assign(:reveal_error, nil)
+          |> assign(:reveal_no_secret, false)
+          |> assign(:reveal_decrypt_error, false)
+
+        socket =
+          case source do
+            "edit_modal" ->
+              socket
+              |> assign(:edit_revealed_secret, secret)
+              |> assign(:edit_reveal_challenge_active, false)
+              |> assign(:edit_reveal_show_plain, false)
+
+            _ ->
+              socket
+              |> assign(:revealed_secret, secret)
+              |> assign(:reveal_show_plain, false)
+          end
+
+        {:noreply, socket}
+
+      {:error, :missing_secret} ->
+        Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=missing")
+
+        socket =
+          socket
+          |> clear_reveal_failures(event_id)
+          |> assign(:reveal_no_secret, false)
+          |> assign(:reveal_decrypt_error, false)
+
+        socket =
+          case source do
+            "edit_modal" ->
+              socket
+              |> assign(:edit_revealed_secret, nil)
+              |> assign(:edit_reveal_challenge_active, false)
+              |> assign(:reveal_error, "No scanner password is set for this event.")
+
+            _ ->
+              socket
+              |> assign(:revealed_secret, nil)
+              |> assign(:reveal_error, nil)
+              |> assign(:reveal_no_secret, true)
+              |> assign(:reveal_decrypt_error, false)
+          end
+
+        {:noreply, socket}
+
+      {:error, :decrypt_failed} ->
+        Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=decrypt_failed")
+
+        socket =
+          socket
+          |> clear_reveal_failures(event_id)
+
+        socket =
+          case source do
+            "edit_modal" ->
+              socket
+              |> assign(:edit_revealed_secret, nil)
+              |> assign(:edit_reveal_challenge_active, false)
+              |> assign(:reveal_error, "Stored scanner password could not be decrypted.")
+
+            _ ->
+              socket
+              |> assign(:revealed_secret, nil)
+              |> assign(:reveal_no_secret, false)
+              |> assign(:reveal_decrypt_error, true)
+              |> assign(:reveal_error, nil)
+          end
+
+        {:noreply, socket}
+    end
+  rescue
+    Ecto.NoResultsError ->
+      {:noreply, assign(socket, :reveal_error, "Event not found")}
+  end
 
   defp fetch_event_for_edit(event_id) do
     {:ok, Events.get_event!(event_id)}

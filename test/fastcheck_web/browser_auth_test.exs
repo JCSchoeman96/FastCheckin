@@ -1,6 +1,8 @@
 defmodule FastCheckWeb.BrowserAuthTest do
   use FastCheckWeb.ConnCase, async: true
 
+  alias FastCheckWeb.Plugs.BrowserAuth
+
   @valid_username "admin"
   @valid_password "fastcheck"
 
@@ -82,6 +84,20 @@ defmodule FastCheckWeb.BrowserAuthTest do
         })
 
       assert redirected_to(conn) == ~p"/"
+    end
+  end
+
+  describe "valid_admin_password?/1" do
+    test "returns true for the configured dashboard password" do
+      assert BrowserAuth.valid_admin_password?(@valid_password)
+    end
+
+    test "returns false for a wrong password" do
+      refute BrowserAuth.valid_admin_password?("wrong-password")
+    end
+
+    test "returns false when length does not match configured password" do
+      refute BrowserAuth.valid_admin_password?("x")
     end
   end
 end

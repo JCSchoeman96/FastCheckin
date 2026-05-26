@@ -87,6 +87,26 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
 
   defp valid_credentials?(_, _), do: false
 
+  @doc """
+  Returns true when `password` matches the configured dashboard password.
+
+  Used for sensitive in-session actions (e.g. revealing a scanner credential).
+  Username is not required. When lengths differ from the configured password,
+  returns false without calling `secure_compare/2` (avoids `ArgumentError`).
+  """
+  @spec valid_admin_password?(String.t() | any()) :: boolean()
+  def valid_admin_password?(password) when is_binary(password) do
+    %{password: configured_password} = configured_credentials()
+
+    if byte_size(password) == byte_size(configured_password) do
+      Crypto.secure_compare(password, configured_password)
+    else
+      false
+    end
+  end
+
+  def valid_admin_password?(_), do: false
+
   defp secure_compare(left, right) when is_binary(left) and is_binary(right) do
     Crypto.secure_compare(left, right)
   end
