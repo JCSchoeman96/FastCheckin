@@ -1,0 +1,135 @@
+{
+  "pack_id": "0011_VS-01G_index-and-migration-verification",
+  "slice_id": "VS-01G",
+  "name": "Index and Migration Verification",
+  "version": "v1.0",
+  "status": "ready_for_implementation_after_VS-01B_to_VS-01F_and_planning_gates",
+  "primary_area": "DB / AshPostgres / Indexes / Migration QA / Tests",
+  "depends_on": [
+    "VS-01B",
+    "VS-01C",
+    "VS-01D",
+    "VS-01E",
+    "VS-01F",
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01A"
+  ],
+  "blocks": [
+    "VS-02",
+    "VS-03",
+    "VS-04A",
+    "VS-04B_validation",
+    "VS-05",
+    "VS-07A",
+    "VS-07B",
+    "VS-07C",
+    "VS-09A",
+    "VS-09B",
+    "VS-09C",
+    "VS-09D",
+    "VS-12"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_modified": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_created": [],
+  "tables_verified": [
+    "sales_ticket_offers",
+    "sales_orders",
+    "sales_order_lines",
+    "sales_checkout_sessions",
+    "sales_payment_attempts",
+    "sales_payment_events",
+    "sales_ticket_issues",
+    "sales_delivery_attempts",
+    "sales_conversations",
+    "sales_state_transitions"
+  ],
+  "migrations_expected": true,
+  "required_outputs": [
+    "priv/repo/migrations/*sales*_*.exs",
+    "lib/fastcheck/sales/*.ex identity/index alignment where needed",
+    "test/fastcheck/sales/*migration*test.exs or equivalent",
+    "test/fastcheck/sales/*index*test.exs or equivalent",
+    "test/fastcheck/sales/*identity*test.exs or equivalent",
+    "docs/fastcheck_sales/slices/VS-01G_INDEX_AND_MIGRATION_VERIFICATION.md"
+  ],
+  "forbidden_outputs": [
+    "lib/fastcheck/sales/inventory/*",
+    "lib/fastcheck/payments/paystack/*",
+    "lib/fastcheck/messaging/whatsapp/*",
+    "lib/fastcheck/tickets/*",
+    "lib/fastcheck/workers/*",
+    "lib/fastcheck_web/controllers/webhooks/*",
+    "lib/fastcheck_web/live/sales/*",
+    "existing scanner hot-path files",
+    "existing Attendee mutation/reconciliation files",
+    "existing Android/mobile API files"
+  ],
+  "critical_constraints": [
+    "sales_orders.public_reference unique",
+    "sales_orders.idempotency_key partial unique where not null",
+    "sales_payment_attempts(provider, provider_reference) unique",
+    "sales_payment_events(provider, provider_event_id) unique",
+    "sales_payment_events(provider, payload_hash) partial unique where provider_event_id is null",
+    "sales_ticket_issues.ticket_code unique",
+    "sales_ticket_issues(sales_order_line_id, line_item_sequence) unique",
+    "sales_ticket_issues.attendee_id partial unique where not null",
+    "sales_order_lines(sales_order_id, line_number) unique"
+  ],
+  "red_green_tests": {
+    "type": "db_index_constraint_identity_tests",
+    "red_requires_failure_when": [
+      "any critical unique or partial unique index is missing",
+      "checkout/order expiry query paths are unindexed",
+      "payment/webhook dedupe paths are unindexed",
+      "ticket issuance idempotency paths are unindexed",
+      "state transition audit query paths are unindexed",
+      "tenant/event query paths are unindexed when tenanting is accepted",
+      "workflow or provider boundary code appears in this slice"
+    ],
+    "green_requires": [
+      "all Sales migrations apply cleanly",
+      "all required DB indexes and constraints exist",
+      "critical duplicate insert tests reject duplicates",
+      "Ash identities align with DB unique constraints where appropriate",
+      "no Redis/Paystack/Meta/ticket/scanner/Admin UI behavior is added"
+    ]
+  },
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "performance_impact": "database-index foundation for later high-concurrency checkout/payment/ticket/admin paths",
+  "security_impact": "verifies sensitive fields are not indexed as broad-search blobs and token/hash constraints remain safe",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0011_VS-01G_index-and-migration-verification",
+  "normalization": {
+    "status": "normalized",
+    "normalized_at": "2026-06-14",
+    "canonical_repo_root": "docs/fastcheck_sales/feature_packs",
+    "source_docs_repo_relative": true,
+    "semantic_changes": false,
+    "legacy_nested_roots_removed": true
+  }
+}

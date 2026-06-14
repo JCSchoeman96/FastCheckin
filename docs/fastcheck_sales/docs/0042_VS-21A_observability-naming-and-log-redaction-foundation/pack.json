@@ -1,0 +1,141 @@
+{
+  "pack_id": "0042_VS-21A_observability-naming-and-log-redaction-foundation",
+  "slice": "VS-21A",
+  "name": "Observability Naming and Log Redaction Foundation",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation-ready foundation slice",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "Observability",
+    "Security",
+    "Telemetry",
+    "Logging"
+  ],
+  "depends_on": [
+    "VS-00",
+    "VS-00B"
+  ],
+  "blocks": [
+    "VS-21B",
+    "VS-22",
+    "VS-23B",
+    "VS-23C",
+    "production launch hardening"
+  ],
+  "current_fastcheckin_truth": {
+    "logger_metadata_plug": "FastCheckWeb.Plugs.LoggerMetadata",
+    "logger_metadata_config": "config/config.exs logger_metadata list",
+    "sentry_filter": "FastCheckWeb.SentryFilter",
+    "runtime_sentry_config": "config/runtime.exs"
+  },
+  "required_files": [
+    "lib/fastcheck/observability.ex",
+    "lib/fastcheck/observability/redactor.ex",
+    "lib/fastcheck/observability/telemetry_names.ex",
+    "lib/fastcheck/observability/correlation.ex",
+    "lib/fastcheck_web/sentry_filter.ex",
+    "config/config.exs",
+    "test/fastcheck/observability/redactor_test.exs",
+    "test/fastcheck/observability/telemetry_names_test.exs",
+    "test/fastcheck/observability/correlation_test.exs",
+    "test/fastcheck_web/sentry_filter_test.exs"
+  ],
+  "in_scope": [
+    "telemetry naming contract",
+    "safe logger metadata contract",
+    "redaction helper",
+    "Sentry filter hardening",
+    "correlation/idempotency helper conventions",
+    "redaction tests",
+    "telemetry naming tests"
+  ],
+  "out_of_scope": [
+    "dashboards",
+    "analytics tables",
+    "provider HTTP behavior",
+    "business workflow implementation",
+    "Paystack logic",
+    "WhatsApp message sending",
+    "TicketIssue/Attendee/DeliveryAttempt/scanner changes",
+    "Redis behavior"
+  ],
+  "telemetry_groups": [
+    "checkout",
+    "inventory",
+    "payment",
+    "ticket",
+    "scanner_visibility",
+    "delivery",
+    "whatsapp",
+    "manual_review"
+  ],
+  "forbidden_log_fields": [
+    "buyer_email",
+    "buyer_phone",
+    "phone_e164",
+    "recipient",
+    "authorization_url",
+    "access_code",
+    "delivery_token",
+    "delivery_token_hash",
+    "qr_token",
+    "qr_token_hash",
+    "raw_payload",
+    "raw_verify_response",
+    "raw_initialize_response",
+    "message_body",
+    "wa_message_body",
+    "meta_access_token",
+    "paystack_secret_key"
+  ],
+  "red_green_tests": {
+    "red": [
+      "Redactor removes delivery_token and delivery_token_hash",
+      "Redactor removes qr_token and qr_token_hash",
+      "Redactor removes Paystack authorization_url and access_code",
+      "Redactor removes Meta access token and app secret",
+      "Redactor masks buyer_phone and buyer_email",
+      "Redactor recursively filters nested raw provider payloads",
+      "safe_metadata rejects/filters forbidden metadata keys",
+      "TelemetryNames exposes approved Sales event names",
+      "SentryFilter filters Sales-sensitive request data, headers, and extra data",
+      "Correlation helper preserves existing request_id/correlation_id"
+    ],
+    "green": [
+      "shared redaction helper is available",
+      "Sentry payloads are safe for Sales/Payment/WhatsApp/Ticket failures",
+      "telemetry names are stable and documented",
+      "later VS-21B can build metrics without renaming churn"
+    ]
+  },
+  "performance_scaling": {
+    "hot_data": "small bounded logger/telemetry metadata only",
+    "warm_data": "none",
+    "cold_data": "none",
+    "redis": "none",
+    "oban": "no new workers; worker metadata conventions only",
+    "rules": [
+      "do not attach large raw payloads to telemetry metadata",
+      "do not attach whole structs to logs",
+      "do not run expensive JSON encoding just for log lines",
+      "avoid per-ticket verbose logs in bulk operations"
+    ]
+  },
+  "next_slice": "VS-21B — Operational Metrics and Audit Views",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0042_VS-21A_observability-naming-and-log-redaction-foundation",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_batch": "0041_0044",
+    "normalized_on": "2026-06-14",
+    "canonical_base": "docs/fastcheck_sales/feature_packs",
+    "semantic_changes": true,
+    "semantic_change_notes": [
+      "Normalized depends_on entry from 'VS-00B alignment' to actual slice ID 'VS-00B'."
+    ]
+  }
+}

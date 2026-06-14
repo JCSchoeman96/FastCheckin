@@ -1,0 +1,150 @@
+{
+  "pack_id": "0013_VS-03_ticket-offer-management",
+  "slice_id": "VS-03",
+  "name": "Ticket Offer Management",
+  "version": "v1.0",
+  "status": "ready_for_implementation_after_VS-01B_VS-01F_VS-01G_and_planning_gates",
+  "primary_area": "Ash / Sales / TicketOffer / Admin Actions / Cache Contract / Tests",
+  "depends_on": [
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01A",
+    "VS-01B",
+    "VS-01F",
+    "VS-01G"
+  ],
+  "blocks": [
+    "VS-04A",
+    "VS-04B",
+    "VS-05",
+    "VS-05A"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer"
+  ],
+  "ash_resources_created": [],
+  "ash_resources_modified": [
+    "FastCheck.Sales.TicketOffer"
+  ],
+  "expected_actions": [
+    "create_offer",
+    "update_offer",
+    "enable_sales",
+    "disable_sales",
+    "list_active_for_event",
+    "get_available_for_checkout"
+  ],
+  "forbidden_actions": [
+    "generic update_status",
+    "Redis reservation/consume/release",
+    "checkout session creation",
+    "order creation",
+    "Paystack HTTP",
+    "Meta/WhatsApp HTTP",
+    "ticket issuance",
+    "Attendee creation",
+    "scanner mutation"
+  ],
+  "required_fields": [
+    "id",
+    "organization_id_if_accepted",
+    "event_id",
+    "name",
+    "ticket_type",
+    "price_cents",
+    "currency",
+    "configured_quantity_available",
+    "initial_quantity",
+    "max_per_order",
+    "sales_enabled",
+    "sales_channel",
+    "starts_at",
+    "ends_at",
+    "lock_version",
+    "archived_at",
+    "inserted_at",
+    "updated_at"
+  ],
+  "required_identities_and_indexes": [
+    "unique sales_ticket_offers(event_id, name) where archived_at is null",
+    "index sales_ticket_offers(event_id, sales_enabled, starts_at, ends_at)",
+    "tenant scoped equivalents if organization_id is accepted"
+  ],
+  "policy_expectations": {
+    "admin": [
+      "create_offer",
+      "update_offer",
+      "enable_sales",
+      "disable_sales",
+      "read/list scoped offers"
+    ],
+    "operator": [
+      "read/list scoped offers only"
+    ],
+    "system": [
+      "controlled active-offer reads"
+    ],
+    "customer_session": [
+      "controlled active-offer reads only; no broad reads or mutations"
+    ]
+  },
+  "cache_contract": {
+    "hot_cache": "Cachex active-offer cache TTL 1-5 minutes",
+    "warm_cache": "Redis sales:event:{event_id}:offers TTL 30 minutes if implemented",
+    "invalidation_triggers": [
+      "create_offer",
+      "update_offer",
+      "enable_sales",
+      "disable_sales",
+      "archive_offer if present"
+    ],
+    "central_boundary_recommended": "FastCheck.Sales.Offers.CacheInvalidation.invalidate_event_offers(event_id) or existing equivalent"
+  },
+  "red_green_tests": {
+    "type": "ash_action_policy_validation_cache_boundary_tests",
+    "red_requires_failure_when": [
+      "non-admin can mutate offers",
+      "customer_session can broad-read disabled/archived/out-of-window offers",
+      "invalid money/currency/quantity/window/channel values are accepted",
+      "unique active offer name constraint is missing",
+      "cache invalidation contract is missing on mutations",
+      "get_available_for_checkout reserves inventory or calls Redis directly",
+      "Paystack/Meta/checkout/ticket issuance/scanner behavior appears in this slice"
+    ],
+    "green_requires": [
+      "admin can create/update/enable/disable valid offers",
+      "operator reads only",
+      "customer_session sees only active enabled in-window non-archived channel-compatible offers",
+      "validations reject unsafe data",
+      "required indexes/identities are verified",
+      "cache invalidation contract runs or is emitted after mutations",
+      "no live inventory or provider side effects exist"
+    ]
+  },
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "performance_impact": "active event offer listing must use indexed query paths and cache invalidation; no live availability from Postgres",
+  "security_impact": "customer_session reads must be scoped; no broad offer browsing across events/tenants",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0013_VS-03_ticket-offer-management",
+  "normalization": {
+    "status": "normalized",
+    "normalized_at": "2026-06-14",
+    "canonical_repo_root": "docs/fastcheck_sales/feature_packs",
+    "source_docs_repo_relative": true,
+    "semantic_changes": false,
+    "legacy_nested_roots_removed": true
+  }
+}

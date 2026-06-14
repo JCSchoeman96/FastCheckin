@@ -1,0 +1,114 @@
+{
+  "pack_id": "0018_VS-05A_secondary-sales-entry-points",
+  "slice_id": "VS-05A",
+  "name": "Secondary Sales Entry Points",
+  "version": "v1.0",
+  "status": "implementation_planning_pack",
+  "primary_area": "Web / Admin / Checkout adapters / Sales channel boundaries / Tests",
+  "depends_on": [
+    "VS-00D",
+    "VS-01F",
+    "VS-03",
+    "VS-05"
+  ],
+  "blocks": [
+    "VS-06B",
+    "VS-11",
+    "VS-12",
+    "VS-18",
+    "VS-19"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_created": [],
+  "ash_resources_modified": [],
+  "plain_elixir_modules_to_create_or_update": [
+    "FastCheck.Sales.SecondaryEntrypoints"
+  ],
+  "possible_web_files": [
+    "lib/fastcheck_web/live/sales/admin_checkout_live.ex",
+    "lib/fastcheck_web/controllers/sales/checkout_controller.ex",
+    "lib/fastcheck_web/controllers/sales/internal_pilot_checkout_controller.ex",
+    "lib/fastcheck_web/live/sales/components/checkout_form_component.ex",
+    "lib/fastcheck_web/router.ex"
+  ],
+  "preferred_test_files": [
+    "test/fastcheck/sales/secondary_entrypoints_test.exs",
+    "test/fastcheck_web/sales/admin_checkout_live_test.exs",
+    "test/fastcheck_web/sales/web_checkout_controller_test.exs",
+    "test/fastcheck_web/sales/internal_pilot_checkout_test.exs",
+    "test/fastcheck_web/sales/secondary_entrypoints_policy_test.exs",
+    "test/fastcheck_web/sales/secondary_entrypoints_boundary_test.exs",
+    "test/fastcheck_web/sales/secondary_entrypoints_log_redaction_test.exs"
+  ],
+  "forbidden_changes": [
+    "WhatsApp/Meta API behavior",
+    "Meta inbound webhook",
+    "WhatsApp conversation flow",
+    "Paystack HTTP calls",
+    "Paystack transaction initialization",
+    "Webhook behavior",
+    "Payment verification",
+    "Ticket issuing",
+    "Attendee creation",
+    "Scanner hot-path changes",
+    "Tickera reconciliation changes",
+    "Redis Lua changes",
+    "Direct Redis mutation",
+    "Duplicate checkout/order/inventory logic outside VS-05 checkout core",
+    "Refund/revocation/manual-review behavior"
+  ],
+  "selected_secondary_paths_supported": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "red_green_tests": {
+    "type": "implementation_tests_red_first_green_after",
+    "red_requires_failure_when": [
+      "Selected secondary entrypoint is missing",
+      "Secondary entrypoint creates checkout state directly instead of using VS-05 checkout core",
+      "Secondary entrypoint mutates Redis directly",
+      "Secondary entrypoint calls Paystack or WhatsApp modules",
+      "source_channel can be spoofed from public input",
+      "Public web checkout broadly reads orders or checkout sessions",
+      "Admin/internal pilot paths are unauthenticated or unauthorized",
+      "Public web checkout shows disabled or archived offers",
+      "Errors/logs expose PII, tokens, provider payloads, Redis internals, or stack traces"
+    ],
+    "green_requires": [
+      "Selected admin/web/internal pilot paths call the approved checkout core",
+      "source_channel is mapped server-side",
+      "Actor/policy rules are enforced",
+      "Public web checkout only lists active sales-enabled offers",
+      "Feature flag/config gates public web checkout if required",
+      "No Paystack, WhatsApp, ticket issuance, Attendee, scanner, revocation, or direct Redis behavior is added",
+      "Existing VS-05 checkout and scanner tests still pass"
+    ]
+  },
+  "performance_impact": "Adds thin entrypoint adapters over VS-05 checkout core; live inventory remains hot Redis via ReservationLedger inside checkout core",
+  "security_impact": "Exposes controlled admin/web/internal pilot input surfaces; requires strong actor policies and PII/log redaction",
+  "next_slice": "VS-06A Paystack Client Boundary",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0018_VS-05A_secondary-sales-entry-points/",
+  "normalization": {
+    "batch": "0018_0019",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "normalized_at": "2026-06-14"
+  }
+}

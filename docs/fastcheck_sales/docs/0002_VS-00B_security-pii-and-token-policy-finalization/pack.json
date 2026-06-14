@@ -1,0 +1,101 @@
+{
+  "pack_id": "0002_VS-00B_security-pii-and-token-policy-finalization",
+  "slice_id": "VS-00B",
+  "name": "Security, PII, and Token Policy Finalization",
+  "version": "v1.0",
+  "status": "ready_for_planning_after_VS-00",
+  "primary_area": "Security / Docs / Ash Policy Planning",
+  "depends_on": [
+    "VS-00"
+  ],
+  "blocks": [
+    "VS-01A",
+    "VS-01B",
+    "VS-01C",
+    "VS-01D",
+    "VS-01E",
+    "VS-01F",
+    "VS-01G",
+    "VS-05A",
+    "VS-06A",
+    "VS-06B",
+    "VS-06C",
+    "VS-07A",
+    "VS-07B",
+    "VS-07C",
+    "VS-08",
+    "VS-11",
+    "VS-12",
+    "VS-13",
+    "VS-16",
+    "VS-17",
+    "VS-18",
+    "VS-19",
+    "VS-20",
+    "VS-21A"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": false,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_created": [],
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "required_outputs": [
+    "VS-00B_SECURITY_PII_AND_TOKEN_POLICY_FINALIZATION.md",
+    "SECURITY_PII_TOKEN_MASTER.md",
+    "PII_DATA_CLASSIFICATION.md",
+    "ASH_FIELD_ACCESS_POLICY.md",
+    "ADMIN_OPERATOR_DISPLAY_POLICY.md",
+    "CUSTOMER_TOKEN_POLICY.md",
+    "LOG_REDACTION_POLICY.md",
+    "RAW_PROVIDER_PAYLOAD_POLICY.md",
+    "SECRET_AND_CONFIG_POLICY.md",
+    "TENANT_EVENT_ACCESS_POLICY.md",
+    "PAYSTACK_SECURITY_POLICY.md",
+    "META_WHATSAPP_SECURITY_POLICY.md",
+    "SECURITY_TEST_PLAN.md"
+  ],
+  "red_green_tests": {
+    "type": "documentation_contract_tests",
+    "red_requires_failure_when": [
+      "PII data classification is missing",
+      "customer-facing plaintext token storage is allowed",
+      "authorization_url or access_code may be logged",
+      "operator can view raw provider payloads by default",
+      "customer_session can perform broad Ash reads",
+      "raw provider payload retention is undefined",
+      "Paystack webhook payload alone can be treated as payment authority",
+      "WhatsApp is allowed to own payment, inventory, ticket issuance, or scanner validity"
+    ],
+    "green_requires": [
+      "all required security documents exist",
+      "sensitive fields are classified per resource",
+      "actor-specific field access expectations exist",
+      "operator access is narrower than admin access",
+      "customer token hashing, expiry, revocation, and log-redaction rules exist",
+      "raw provider payload access and retention are defined",
+      "log redaction covers PII, provider secrets, raw payloads, and plaintext tokens",
+      "no implementation code is added"
+    ]
+  },
+  "repository_path": "docs/fastcheck_sales/feature_packs/0002_VS-00B_security-pii-and-token-policy-finalization/",
+  "normalization": {
+    "normalized_for_repo": "JCSchoeman96/FastCheckin",
+    "normalized_feature_pack_root": "docs/fastcheck_sales/feature_packs/",
+    "source_doc_paths_are_repo_relative": true,
+    "semantic_changes": false
+  }
+}

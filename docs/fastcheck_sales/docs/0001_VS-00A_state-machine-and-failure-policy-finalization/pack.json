@@ -1,0 +1,83 @@
+{
+  "pack_id": "0001_VS-00A_state-machine-and-failure-policy-finalization",
+  "slice_id": "VS-00A",
+  "name": "State Machine and Failure Policy Finalization",
+  "version": "v1.0",
+  "status": "ready_for_planning_after_VS-00",
+  "primary_area": "Docs / Architecture / QA",
+  "depends_on": [
+    "VS-00"
+  ],
+  "blocks": [
+    "VS-00C",
+    "VS-01A",
+    "VS-05",
+    "VS-07A",
+    "VS-07B",
+    "VS-07C",
+    "VS-09A",
+    "VS-09B",
+    "VS-09C",
+    "VS-09D",
+    "VS-13",
+    "VS-15A",
+    "VS-15B",
+    "VS-18",
+    "VS-19"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": false,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_created": [],
+  "ash_resources_referenced": [
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "required_outputs": [
+    "VS-00A_STATE_MACHINE_AND_FAILURE_POLICY_FINALIZATION.md",
+    "STATE_MACHINE_MASTER.md",
+    "ORDER_STATE_MACHINE.md",
+    "CHECKOUT_SESSION_STATE_MACHINE.md",
+    "PAYMENT_ATTEMPT_STATE_MACHINE.md",
+    "PAYMENT_EVENT_PROCESSING_STATE_MACHINE.md",
+    "TICKET_ISSUE_STATE_MACHINE.md",
+    "DELIVERY_ATTEMPT_STATE_MACHINE.md",
+    "CONVERSATION_STATE_MACHINE.md",
+    "PAYMENT_AFTER_EXPIRY_POLICY.md",
+    "PARTIAL_TICKET_ISSUANCE_POLICY.md",
+    "MANUAL_REVIEW_POLICY.md",
+    "TERMINAL_STATE_POLICY.md"
+  ],
+  "red_green_tests": {
+    "type": "documentation_contract_tests",
+    "red_requires_failure_when": [
+      "any required state machine is missing",
+      "generic update_status/update_state is allowed",
+      "payment webhook alone can verify payment",
+      "TicketIssue owns delivery history instead of DeliveryAttempt",
+      "payment-after-expiry policy is missing"
+    ],
+    "green_requires": [
+      "all seven state machines exist",
+      "every transition includes action, actor, preconditions, side effects, audit, idempotency, terminal marker",
+      "payment-after-expiry, partial issuance, manual review, and terminal-state policies exist",
+      "no implementation code is added"
+    ]
+  },
+  "repository_path": "docs/fastcheck_sales/feature_packs/0001_VS-00A_state-machine-and-failure-policy-finalization/",
+  "normalization": {
+    "normalized_for_repo": "JCSchoeman96/FastCheckin",
+    "normalized_feature_pack_root": "docs/fastcheck_sales/feature_packs/",
+    "source_doc_paths_are_repo_relative": true,
+    "semantic_changes": false
+  }
+}

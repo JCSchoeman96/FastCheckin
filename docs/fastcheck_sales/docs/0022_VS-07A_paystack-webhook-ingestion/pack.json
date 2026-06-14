@@ -1,0 +1,192 @@
+{
+  "pack_id": "0022_VS-07A_paystack-webhook-ingestion",
+  "slice_id": "VS-07A",
+  "name": "Paystack Webhook Ingestion",
+  "version": "v1.0",
+  "status": "implementation_planning_pack",
+  "primary_area": "Payments / Webhook / Security / Oban / Idempotency",
+  "depends_on": [
+    "VS-06B",
+    "VS-06C",
+    "VS-06A",
+    "VS-00B",
+    "VS-00A",
+    "VS-01C",
+    "VS-01F",
+    "VS-01G",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-07B",
+    "VS-07C",
+    "VS-19",
+    "VS-21B",
+    "VS-22"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": "yes; ingestion-only implementation; no transaction verification or payment/ticket state mutation",
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_touched": [
+    "FastCheck.Sales.PaymentEvent"
+  ],
+  "ash_resources_optional_read_only": [
+    "FastCheck.Sales.PaymentAttempt"
+  ],
+  "ash_resources_forbidden_from_mutation": [
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation"
+  ],
+  "plain_elixir_modules_expected": [
+    "FastCheck.Payments.Paystack.WebhookVerifier",
+    "FastCheck.Payments.Paystack.WebhookEventParser",
+    "FastCheck.Payments.Paystack.PayloadSanitizer",
+    "FastCheck.Payments.Paystack.EventDedupe",
+    "FastCheck.Workers.PaystackWebhookWorker",
+    "FastCheckWeb.Webhooks.PaystackController or FastCheckWeb.Controllers.Webhooks.PaystackController"
+  ],
+  "preferred_files": [
+    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",
+    "lib/fastcheck/payments/paystack/webhook_verifier.ex",
+    "lib/fastcheck/payments/paystack/webhook_event_parser.ex",
+    "lib/fastcheck/payments/paystack/event_dedupe.ex",
+    "lib/fastcheck/workers/paystack_webhook_worker.ex"
+  ],
+  "preferred_test_files": [
+    "test/fastcheck_web/controllers/webhooks/paystack_controller_test.exs",
+    "test/fastcheck/payments/paystack/webhook_verifier_test.exs",
+    "test/fastcheck/payments/paystack/webhook_ingestion_test.exs",
+    "test/fastcheck/payments/paystack/webhook_dedupe_test.exs",
+    "test/fastcheck/workers/paystack_webhook_worker_enqueue_test.exs",
+    "test/fastcheck/payments/paystack/webhook_security_test.exs",
+    "test/fastcheck/payments/paystack/webhook_boundary_test.exs"
+  ],
+  "forbidden_changes": [
+    "Paystack Verify Transaction API call",
+    "Transaction verification workflow",
+    "PaymentAttempt verified_success mutation",
+    "Order paid_unverified or paid_verified transition",
+    "CheckoutSession paid transition",
+    "Payment-after-expiry fulfillment decision",
+    "Redis inventory consume/release/reserve/re-reserve",
+    "TicketIssue creation or mark_issued",
+    "Attendee creation or mutation",
+    "Scanner/mobile sync changes",
+    "DeliveryAttempt creation",
+    "WhatsApp or Meta behavior",
+    "Admin manual-review UI",
+    "Refund/revocation behavior",
+    "Raw payload/signature/secrets/PII logging"
+  ],
+  "payment_event_contract": {
+    "required_fields": [
+      "provider",
+      "provider_event_id",
+      "provider_reference",
+      "event_type",
+      "signature_valid",
+      "payload_hash",
+      "raw_payload",
+      "received_at",
+      "processing_status",
+      "processing_attempt_count",
+      "last_processing_error",
+      "last_processing_error_at"
+    ],
+    "provider": "paystack",
+    "allowed_statuses_for_this_slice": [
+      "stored",
+      "queued",
+      "duplicate",
+      "rejected_invalid_signature",
+      "rejected_malformed"
+    ],
+    "statuses_forbidden_in_this_slice": [
+      "verification_started",
+      "verified_success",
+      "verified_amount_mismatch",
+      "verified_currency_mismatch",
+      "paid_verified",
+      "ticket_issued"
+    ]
+  },
+  "dedupe": {
+    "redis_key": "sales:payments:paystack:webhook:{dedupe_key}",
+    "redis_structure": "string SETNX-style key",
+    "ttl": "24h minimum",
+    "dedupe_key_priority": [
+      "provider_event_id",
+      "payload_hash"
+    ],
+    "db_unique_indexes": [
+      "unique(provider, provider_event_id)",
+      "unique(provider, payload_hash) where provider_event_id is null"
+    ]
+  },
+  "red_green_tests": {
+    "type": "tests_red_first_green_after",
+    "red_requires_failure_when": [
+      "Valid signed Paystack payload is rejected",
+      "Raw body is unavailable for signature verification",
+      "Missing or invalid X-Paystack-Signature is accepted",
+      "Invalid signature enqueues a worker",
+      "Valid new webhook does not create PaymentEvent",
+      "Valid new webhook does not enqueue exactly one PaystackWebhookWorker job",
+      "Duplicate provider_event_id creates duplicate PaymentEvents or duplicate jobs",
+      "Payload_hash fallback does not dedupe events without provider_event_id",
+      "Malformed JSON crashes or logs raw payload",
+      "Operator/customer_session can access raw payload",
+      "Logs include raw payload, signature, secrets, access_code, authorization_url, PII, or tokens",
+      "Webhook path verifies transaction, mutates payment/order/ticket/attendee/scanner/inventory/WhatsApp state, or calls Paystack Verify Transaction API"
+    ],
+    "green_requires": [
+      "Valid signed webhook returns 200/202, stores one PaymentEvent, and enqueues one worker",
+      "Duplicate valid webhook returns 200 and creates no duplicate durable/worker side effects",
+      "Invalid signature and malformed payload are safely rejected with no business mutation",
+      "PaymentEvent raw payload is restricted and never logged",
+      "Redis SETNX plus DB uniqueness protect dedupe",
+      "Worker uniqueness is by payment_event_id",
+      "No verification or ticket/payment/inventory/channel side effects exist in this slice"
+    ]
+  },
+  "performance_and_scaling": {
+    "hot_data": "Redis SETNX dedupe key with TTL >= 24h",
+    "warm_data": "Optional metrics counters only if already present",
+    "cold_data": [
+      "FastCheck.Sales.PaymentEvent"
+    ],
+    "indexes_to_verify": [
+      "sales_payment_events unique(provider, provider_event_id)",
+      "sales_payment_events unique(provider, payload_hash) where provider_event_id is null",
+      "sales_payment_events index(provider_reference)",
+      "sales_payment_events index(processing_status, inserted_at)",
+      "sales_payment_events index(received_at) if cleanup/reporting requires it"
+    ],
+    "ttl_strategy": "Webhook dedupe TTL 24h minimum; no checkout/inventory TTL changes",
+    "cache_invalidation": "None in VS-07A",
+    "pubsub": "No customer-facing PubSub; telemetry only",
+    "telemetry": [
+      "[:fastcheck, :sales, :payment, :webhook_received]",
+      "[:fastcheck, :sales, :payment, :webhook_duplicate]",
+      "[:fastcheck, :sales, :payment, :webhook_rejected]"
+    ]
+  },
+  "security_impact": "Adds provider signature verification, raw payload restrictions, log redaction, secret protection, and no-value-delivery-from-webhook-only safeguards.",
+  "next_slice": "VS-07B Paystack Transaction Verification",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0022_VS-07A_paystack-webhook-ingestion/",
+  "normalization": {
+    "batch": "0020_0022",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "normalized_at": "2026-06-14"
+  }
+}

@@ -1,0 +1,148 @@
+{
+  "pack_id": "0041_VS-20_whatsapp-delivery-window-handling",
+  "slice": "VS-20",
+  "name": "WhatsApp Delivery Window Handling",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation-ready planning pack",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "WhatsApp",
+    "Delivery",
+    "Meta Templates",
+    "Fallback",
+    "Audit"
+  ],
+  "depends_on": [
+    "VS-16",
+    "VS-11",
+    "VS-19",
+    "VS-00B",
+    "VS-01D",
+    "VS-07C",
+    "VS-09D",
+    "VS-15A",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-22",
+    "VS-23C",
+    "whatsapp_first_paid_core production launch"
+  ],
+  "repo_findings": {
+    "mailer": "FastCheck.Mailer uses Swoosh.Mailer, otp_app: :fastcheck",
+    "runtime_config": "config/runtime.exs reads secrets/env values at boot",
+    "router": "FastCheckWeb.Router keeps API/browser/mobile routes separated",
+    "delivery_attempt_current_state": "No existing DeliveryAttempt implementation found during planning search; use approved Sales resource skeleton if present by implementation time"
+  },
+  "recommended_files": [
+    "lib/fastcheck/messaging/whatsapp/delivery_policy.ex",
+    "lib/fastcheck/messaging/whatsapp/delivery_window.ex",
+    "lib/fastcheck/messaging/whatsapp/ticket_message_builder.ex",
+    "lib/fastcheck/messaging/whatsapp/template_catalog.ex",
+    "lib/fastcheck/workers/send_whatsapp_ticket_worker.ex",
+    "lib/fastcheck/workers/send_ticket_email_fallback_worker.ex",
+    "lib/fastcheck/sales/delivery_attempt.ex",
+    "lib/fastcheck/sales/state_transition.ex",
+    "lib/fastcheck/sales/conversation.ex",
+    "lib/fastcheck/sales/ticket_issue.ex"
+  ],
+  "in_scope": [
+    "delivery policy module",
+    "24-hour window calculation",
+    "session message send selection",
+    "utility template send selection",
+    "DeliveryAttempt audit transitions",
+    "email/manual_review fallback",
+    "idempotent delivery worker",
+    "provider response classification",
+    "log redaction tests"
+  ],
+  "out_of_scope": [
+    "Paystack verification",
+    "Paystack refund API",
+    "TicketIssue creation",
+    "Attendee/scanner/mobile mutation",
+    "revocation implementation",
+    "conversation menu implementation",
+    "inbound webhook implementation",
+    "bulk marketing messaging"
+  ],
+  "delivery_states": [
+    "queued",
+    "sent",
+    "delivered",
+    "failed",
+    "fallback_required",
+    "cancelled",
+    "manual_review"
+  ],
+  "redis_keys": [
+    "whatsapp:delivery:dedupe:{idempotency_key}",
+    "whatsapp:delivery:rate:{phone_e164_hash}",
+    "whatsapp:session:{wa_id}"
+  ],
+  "ttl_strategy": {
+    "delivery_dedupe": "24h minimum",
+    "recipient_rate_limit": "short TTL sliding window/counter",
+    "template_catalog_cache": "30m-24h depending on template volatility"
+  },
+  "required_indexes": [
+    "sales_delivery_attempts(ticket_issue_id, status)",
+    "sales_delivery_attempts(sales_order_id, status)",
+    "sales_delivery_attempts(provider_message_id)",
+    "sales_delivery_attempts(channel, status, inserted_at)",
+    "sales_delivery_attempts(correlation_id)",
+    "sales_ticket_issues(status, delivery_token_expires_at)",
+    "sales_conversations(phone_e164)",
+    "sales_conversations(wa_id)",
+    "sales_conversations(last_message_at)"
+  ],
+  "red_green_tests": {
+    "red": [
+      "inside 24h window chooses session message",
+      "outside 24h window chooses approved utility template",
+      "missing outside-window template moves to fallback/manual_review",
+      "successful Meta send records provider_message_id",
+      "Meta 429 retries without duplicate DeliveryAttempt",
+      "Meta 401/403 moves to manual_review/config error",
+      "timeout/5xx retries idempotently",
+      "duplicate worker execution does not duplicate sends",
+      "revoked TicketIssue is not sent",
+      "email fallback requires valid buyer_email and enabled policy",
+      "logs redact phone/email/ticket URLs/tokens/raw payloads",
+      "no Paystack/ticket issuance/Attendee/scanner/mobile/Redis inventory side effects"
+    ],
+    "green": [
+      "delivery follows session/template/fallback policy",
+      "every attempt is audited",
+      "duplicate jobs are safe",
+      "delivery failures are support-visible",
+      "WhatsApp-first launch has delivery-window handling"
+    ]
+  },
+  "telemetry": [
+    "[:fastcheck, :sales, :delivery, :selected]",
+    "[:fastcheck, :sales, :delivery, :queued]",
+    "[:fastcheck, :sales, :delivery, :sent]",
+    "[:fastcheck, :sales, :delivery, :failed]",
+    "[:fastcheck, :sales, :delivery, :fallback_required]",
+    "[:fastcheck, :sales, :delivery, :manual_review]",
+    "[:fastcheck, :messaging, :whatsapp, :template_send]",
+    "[:fastcheck, :messaging, :whatsapp, :session_send]"
+  ],
+  "next_slice": "VS-21A — Observability Naming and Log Redaction Foundation",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0041_VS-20_whatsapp-delivery-window-handling",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_batch": "0041_0044",
+    "normalized_on": "2026-06-14",
+    "canonical_base": "docs/fastcheck_sales/feature_packs",
+    "semantic_changes": false,
+    "semantic_change_notes": []
+  }
+}

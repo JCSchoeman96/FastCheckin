@@ -1,0 +1,137 @@
+{
+  "pack_id": "0010_VS-01F_ash-policy-foundation",
+  "slice_id": "VS-01F",
+  "name": "Ash Policy Foundation",
+  "version": "v1.0",
+  "status": "ready_for_implementation_after_VS-01B_to_VS-01E_and_planning_gates",
+  "primary_area": "Ash / Security / Policies / Tests",
+  "depends_on": [
+    "VS-01B",
+    "VS-01C",
+    "VS-01D",
+    "VS-01E",
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01A"
+  ],
+  "blocks": [
+    "VS-01G",
+    "VS-03",
+    "VS-05A",
+    "VS-12",
+    "VS-13",
+    "later_customer_admin_provider_surfaces"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_modified": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_created": [],
+  "tables_created": [],
+  "migrations_expected": false,
+  "required_outputs": [
+    "lib/fastcheck/sales.ex",
+    "lib/fastcheck/sales/*.ex policy updates",
+    "test/fastcheck/sales/*policy*test.exs or equivalent",
+    "test/fastcheck/sales/*vs_01f*test.exs or equivalent",
+    "docs/fastcheck_sales/slices/VS-01F_ASH_POLICY_FOUNDATION.md"
+  ],
+  "forbidden_outputs": [
+    "lib/fastcheck/sales/inventory/*",
+    "lib/fastcheck/payments/paystack/*",
+    "lib/fastcheck/messaging/whatsapp/*",
+    "lib/fastcheck/tickets/*",
+    "lib/fastcheck/workers/*",
+    "lib/fastcheck_web/controllers/webhooks/*",
+    "lib/fastcheck_web/live/sales/*",
+    "existing scanner hot-path files",
+    "existing Attendee mutation/reconciliation files",
+    "existing Android/mobile API files"
+  ],
+  "actor_types": [
+    "system",
+    "admin",
+    "operator",
+    "customer_session"
+  ],
+  "policy_requirements": {
+    "customer_session": [
+      "no broad reads",
+      "no direct mutations",
+      "no raw payment/delivery/conversation internals"
+    ],
+    "operator": [
+      "support read only",
+      "no raw provider payloads",
+      "not equivalent to admin"
+    ],
+    "admin": [
+      "scoped read/manage according to accepted tenant/event model"
+    ],
+    "system": [
+      "internal actions and future worker transitions only"
+    ]
+  },
+  "forbidden_actions": [
+    "generic update_status",
+    "checkout workflows",
+    "payment verification workflows",
+    "ticket issuing workflows",
+    "delivery sending workflows",
+    "conversation menu workflows",
+    "manual review operations"
+  ],
+  "red_green_tests": {
+    "type": "ash_policy_tests",
+    "red_requires_failure_when": [
+      "customer_session can broadly read any Sales resource",
+      "operator can access raw provider payload fields",
+      "operator is authorized as admin",
+      "StateTransition can be updated or destroyed",
+      "tenant/event cross-scope reads are allowed when tenanting is accepted",
+      "workflow or provider boundary code appears in this slice"
+    ],
+    "green_requires": [
+      "all Sales resources compile with policies",
+      "policy tests cover system/admin/operator/customer_session",
+      "customer_session broad reads are denied",
+      "operator raw payload access is denied or unavailable",
+      "StateTransition remains append-only",
+      "no Redis/Paystack/Meta/ticket/scanner/Admin UI behavior is added"
+    ]
+  },
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "performance_impact": "policy-only slice; no hot path runtime behavior added",
+  "security_impact": "establishes baseline Ash access control and raw-payload/PII restrictions",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0010_VS-01F_ash-policy-foundation",
+  "normalization": {
+    "status": "normalized",
+    "normalized_at": "2026-06-14",
+    "canonical_repo_root": "docs/fastcheck_sales/feature_packs",
+    "source_docs_repo_relative": true,
+    "semantic_changes": false,
+    "legacy_nested_roots_removed": true
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "pack_id": "0029_VS-09D_issuance-retry-and-partial-failure-tests",
+  "slice": "VS-09D",
+  "name": "Issuance Retry and Partial Failure Tests",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "QA / hardening pack",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "module_root": "FastCheck",
+  "primary_area": [
+    "Tickets",
+    "Issuance",
+    "Attendees",
+    "Retry Safety",
+    "Partial Failure"
+  ],
+  "dependencies": [
+    "VS-09B",
+    "VS-09C",
+    "VS-09A",
+    "VS-02",
+    "VS-07C",
+    "VS-08",
+    "VS-05",
+    "VS-01D",
+    "VS-01F",
+    "VS-01G",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-10",
+    "VS-11",
+    "VS-12",
+    "VS-15A",
+    "VS-15B",
+    "VS-19",
+    "VS-22"
+  ],
+  "implementation_code_allowed": true,
+  "scope_type": "tests_and_minimal_hardening",
+  "fastcheckin_truth": {
+    "attendee_schema": "FastCheck.Attendees.Attendee",
+    "scanner_path": "FastCheck.Attendees.Scan",
+    "reconciliation_path": "FastCheck.Attendees.Reconciliation",
+    "mobile_sync_path": "FastCheckWeb.Mobile.SyncController",
+    "scan_deny_field": "scan_eligibility = not_scannable",
+    "scanner_lookup": "event_id + ticket_code",
+    "existing_attendee_unique_constraint": "unique_ticket_per_event"
+  },
+  "required_outputs": [
+    "Retry and partial failure tests for FastCheck.Tickets.Issuer",
+    "Duplicate worker tests",
+    "Partial Attendee creation recovery tests",
+    "Partial TicketIssue creation recovery tests",
+    "Order transition failure recovery tests",
+    "Existing scanner/reconciliation/mobile sync compatibility checks",
+    "Minimal issuer hardening only if required by tests"
+  ],
+  "forbidden_outputs": [
+    "Paystack changes",
+    "WhatsApp/Meta changes",
+    "DeliveryAttempt creation",
+    "secure ticket page",
+    "event sync aggregator implementation",
+    "scanner revocation/refund implementation",
+    "Redis inventory mutation",
+    "admin UI operations"
+  ],
+  "red_green_tests": {
+    "red": [
+      "duplicate issue_order calls create exactly N attendees and N ticket issues",
+      "concurrent duplicate workers create no duplicates",
+      "failure after attendee creation retries and reuses attendee",
+      "failure after ticket issue creation retries and reuses ticket issue",
+      "order is not ticket_issued until all ticket issues exist",
+      "conflicting attendee/ticket issue rows move order to manual_review",
+      "existing ScanTest remains green",
+      "existing ReconciliationTest remains green",
+      "existing Mobile SyncController tests remain green",
+      "no forbidden side effects occur"
+    ],
+    "green": [
+      "issuer path is retry safe forever",
+      "partial failures recover idempotently",
+      "DB constraints enforce uniqueness",
+      "manual_review explains unrecoverable conflicts",
+      "logs redact PII/tokens"
+    ]
+  },
+  "required_constraints_to_verify": [
+    "attendees unique(event_id, ticket_code)",
+    "attendees unique Sales origin reference",
+    "sales_ticket_issues unique(ticket_code)",
+    "sales_ticket_issues unique(sales_order_line_id, line_item_sequence)",
+    "sales_ticket_issues unique(attendee_id) where attendee_id is not null"
+  ],
+  "performance_scaling": {
+    "hot_data": "Existing scanner reads/check-ins remain unchanged.",
+    "warm_data": "Existing Cachex/ETS attendee caches invalidated only where needed.",
+    "cold_data": "Attendee, TicketIssue, Order, StateTransition in Postgres.",
+    "redis": "No Redis inventory mutation in this slice.",
+    "concurrency": "Use DB uniqueness plus order/advisory locks; Oban uniqueness alone is insufficient."
+  },
+  "next_slice": "VS-10 — Event Sync Version Aggregator",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0029_VS-09D_issuance-retry-and-partial-failure-tests",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_date": "2026-06-14",
+    "batch": "0029_0031",
+    "canonical_root": "docs/fastcheck_sales/feature_packs",
+    "semantic_changes": false
+  }
+}

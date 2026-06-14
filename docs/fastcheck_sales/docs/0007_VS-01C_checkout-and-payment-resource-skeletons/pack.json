@@ -1,0 +1,168 @@
+{
+  "pack_id": "0007_VS-01C_checkout-and-payment-resource-skeletons",
+  "slice_id": "VS-01C",
+  "name": "Checkout and Payment Resource Skeletons",
+  "version": "v1.0",
+  "status": "ready_for_implementation_after_VS-01B_and_planning_gates",
+  "primary_area": "Ash / DB / Checkout and Payment Skeletons",
+  "depends_on": [
+    "VS-01B",
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01A"
+  ],
+  "blocks": [
+    "VS-01D",
+    "VS-01F",
+    "VS-01G",
+    "VS-05",
+    "VS-06B",
+    "VS-07A",
+    "VS-07B",
+    "VS-07C"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_created": [
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent"
+  ],
+  "ash_resources_from_previous_slices": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_must_not_be_created": [
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation"
+  ],
+  "plain_modules_must_not_be_created": [
+    "FastCheck.Sales.Inventory.ReservationLedger",
+    "FastCheck.Sales.Inventory.RedisScripts",
+    "FastCheck.Payments.Paystack.Client",
+    "FastCheck.Payments.Paystack.TransactionInitializer",
+    "FastCheck.Payments.Paystack.TransactionVerifier",
+    "FastCheck.Payments.Paystack.WebhookVerifier",
+    "FastCheck.Messaging.WhatsApp.Client",
+    "FastCheck.Tickets.Issuer",
+    "FastCheck.Workers.*"
+  ],
+  "tables_created": [
+    "sales_checkout_sessions",
+    "sales_payment_attempts",
+    "sales_payment_events"
+  ],
+  "tables_must_not_be_created": [
+    "sales_ticket_issues",
+    "sales_delivery_attempts",
+    "sales_conversations"
+  ],
+  "required_outputs": [
+    "lib/fastcheck/sales.ex",
+    "lib/fastcheck/sales/checkout_session.ex",
+    "lib/fastcheck/sales/payment_attempt.ex",
+    "lib/fastcheck/sales/payment_event.ex",
+    "priv/repo/migrations/*create_sales_checkout_sessions*.exs or equivalent",
+    "priv/repo/migrations/*create_sales_payment_attempts*.exs or equivalent",
+    "priv/repo/migrations/*create_sales_payment_events*.exs or equivalent",
+    "test/fastcheck/sales/*checkout_session*test.exs or equivalent",
+    "test/fastcheck/sales/*payment_attempt*test.exs or equivalent",
+    "test/fastcheck/sales/*payment_event*test.exs or equivalent",
+    "test/fastcheck/sales/*vs_01c*test.exs or equivalent",
+    "docs/fastcheck_sales/slices/VS-01C_CHECKOUT_AND_PAYMENT_RESOURCE_SKELETONS.md"
+  ],
+  "forbidden_outputs": [
+    "lib/fastcheck/sales/ticket_issue.ex",
+    "lib/fastcheck/sales/delivery_attempt.ex",
+    "lib/fastcheck/sales/conversation.ex",
+    "lib/fastcheck/sales/inventory/*",
+    "lib/fastcheck/payments/paystack/*",
+    "lib/fastcheck/messaging/whatsapp/*",
+    "lib/fastcheck/tickets/*",
+    "lib/fastcheck/workers/*",
+    "lib/fastcheck_web/controllers/webhooks/*",
+    "lib/fastcheck_web/live/sales/*"
+  ],
+  "allowed_actions": [
+    "basic read actions",
+    "basic get_by_id/read-by-identity actions",
+    "safe paginated list actions if repo convention requires them"
+  ],
+  "forbidden_actions": [
+    "create_session",
+    "attach_inventory_hold",
+    "mark_payment_link_sent",
+    "expire_session",
+    "release_session",
+    "create_initialized",
+    "mark_authorization_url_sent",
+    "mark_webhook_received",
+    "mark_verification_started",
+    "mark_verified_success",
+    "mark_amount_mismatch",
+    "mark_currency_mismatch",
+    "mark_failed",
+    "mark_duplicate",
+    "mark_manual_review",
+    "store_webhook_event",
+    "mark_processing_started",
+    "mark_processed",
+    "mark_unmatched",
+    "generic update_status",
+    "any Redis/Paystack/Meta/Ticket/Scanner/Admin side-effect action"
+  ],
+  "red_green_tests": {
+    "type": "ash_resource_skeleton_tests",
+    "red_requires_failure_when": [
+      "any required VS-01C resource module is missing",
+      "FastCheck.Sales does not register the three VS-01C resources",
+      "any required table is missing",
+      "required fields are missing",
+      "required identities/indexes are missing",
+      "CheckoutSession does not belong to Order",
+      "PaymentAttempt does not belong to Order",
+      "PaymentEvent dedupe indexes are missing",
+      "generic update_status exists",
+      "later resource modules are created too early",
+      "Redis/Paystack/Meta/Ticket/Scanner/Admin code is added",
+      "raw provider payloads are logged or exposed in tests"
+    ],
+    "green_requires": [
+      "mix compile passes",
+      "formatting passes",
+      "migrations create only the three intended tables",
+      "resources compile with AshPostgres",
+      "FastCheck.Sales registers the intended resources",
+      "required fields, indexes, identities, and relationships exist",
+      "no workflow behavior or cross-boundary side effects are added",
+      "raw provider payloads are persisted only as restricted fields and not logged"
+    ]
+  },
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "performance_impact": "creates durable cold Postgres shape and indexes for checkout/payment; no hot runtime checkout path added",
+  "security_impact": "introduces restricted Paystack/provider payload fields but no UI/API/log exposure; policy enforcement follows in VS-01F",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0007_VS-01C_checkout-and-payment-resource-skeletons",
+  "normalization": {
+    "status": "normalized",
+    "normalized_at": "2026-06-14",
+    "canonical_repo_root": "docs/fastcheck_sales/feature_packs",
+    "source_docs_repo_relative": true,
+    "semantic_changes": false,
+    "legacy_nested_roots_removed": true
+  }
+}
