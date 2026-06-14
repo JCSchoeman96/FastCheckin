@@ -1,0 +1,125 @@
+{
+  "pack_id": "0003_VS-00C_inventory-recovery-and-reconciliation-contract",
+  "slice_id": "VS-00C",
+  "name": "Inventory Recovery and Reconciliation Contract",
+  "version": "v1.0",
+  "status": "ready_for_planning_after_VS-00_and_VS-00A_alignment",
+  "primary_area": "Redis / Architecture / Inventory Safety / Docs",
+  "depends_on": [
+    "VS-00",
+    "VS-00A"
+  ],
+  "blocks": [
+    "VS-01A",
+    "VS-01B",
+    "VS-01C",
+    "VS-01D",
+    "VS-01E",
+    "VS-01F",
+    "VS-01G",
+    "VS-04A",
+    "VS-04B",
+    "VS-04C",
+    "VS-05",
+    "VS-14",
+    "VS-22",
+    "VS-23A"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": false,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_created": [],
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "plain_modules_planned_later": [
+    "FastCheck.Sales.Inventory.ReservationLedger",
+    "FastCheck.Sales.Inventory.RedisScripts",
+    "FastCheck.Workers.ExpireCheckoutSessionWorker",
+    "FastCheck.Workers.EventSyncVersionAggregatorWorker"
+  ],
+  "required_outputs": [
+    "VS-00C_INVENTORY_RECOVERY_AND_RECONCILIATION_CONTRACT.md",
+    "INVENTORY_MASTER_CONTRACT.md",
+    "INVENTORY_AUTHORITY_MODEL.md",
+    "REDIS_KEY_STRUCTURE.md",
+    "RESERVATION_LEDGER_OPERATION_CONTRACT.md",
+    "INVENTORY_IDEMPOTENCY_AND_LOCKING.md",
+    "HOLD_TTL_AND_EXPIRY_POLICY.md",
+    "REDIS_FAILURE_AND_RECOVERY_POLICY.md",
+    "REDIS_POSTGRES_RECONCILIATION_POLICY.md",
+    "INVENTORY_CACHE_AND_PUBSUB_POLICY.md",
+    "INVENTORY_HEALTH_AND_LAUNCH_GATES.md",
+    "INVENTORY_TEST_PLAN.md"
+  ],
+  "redis_structures_to_document": {
+    "sales:offer:{offer_id}:meta": "hash",
+    "sales:offer:{offer_id}:available": "string integer or hash field",
+    "sales:offer:{offer_id}:holds": "zset",
+    "sales:hold:{public_reference}": "hash",
+    "sales:order:{public_reference}:lock": "short ttl string",
+    "sales:inventory:events:{offer_id}": "list or stream-like list",
+    "sales:inventory:health:{offer_id}": "hash/string",
+    "sales:event:{event_id}:offers": "warm cache"
+  },
+  "operations_to_document": [
+    "initialize_offer/4",
+    "reserve/5",
+    "consume/4",
+    "release/3",
+    "expire_due_holds/1",
+    "get_availability/1",
+    "mark_offer_health/3",
+    "reconcile_offer/1"
+  ],
+  "red_green_tests": {
+    "type": "documentation_contract_tests",
+    "red_requires_failure_when": [
+      "Redis key structure document is missing",
+      "reserve/consume/release/expire operation contract is missing",
+      "idempotency model is missing",
+      "Redis unavailable behavior is missing",
+      "Redis restart recovery behavior is missing",
+      "Redis/Postgres reconciliation formula is missing",
+      "payment-after-expiry inventory behavior is missing",
+      "cache invalidation/PubSub policy is missing",
+      "any sales channel can bypass ReservationLedger",
+      "Ash resources are allowed to run Redis Lua",
+      "controllers/LiveViews/WhatsApp handlers can mutate reservation keys directly",
+      "release can double-increment availability",
+      "consume can double-decrement availability",
+      "expiry can release consumed holds",
+      "implementation code is added"
+    ],
+    "green_requires": [
+      "all required inventory docs exist",
+      "Redis hot state and Postgres/Ash durable state are clearly separated",
+      "every Redis key has type, purpose, owner, TTL/expiry behavior, and mutation rules",
+      "ReservationLedger operations are fully specified",
+      "idempotency is defined for duplicate reserve/consume/release/expiry/reconcile",
+      "Redis failure and restart recovery behavior is documented",
+      "Redis/Postgres reconciliation formula and report shape are documented",
+      "payment-after-expiry inventory outcomes are documented",
+      "cache TTL and PubSub invalidation rules are documented",
+      "future tests cover concurrency, duplicate execution, Redis failure, expiry, and reconciliation",
+      "no implementation code is added"
+    ]
+  },
+  "repository_path": "docs/fastcheck_sales/feature_packs/0003_VS-00C_inventory-recovery-and-reconciliation-contract/",
+  "normalization": {
+    "normalized_for_repo": "JCSchoeman96/FastCheckin",
+    "normalized_feature_pack_root": "docs/fastcheck_sales/feature_packs/",
+    "source_doc_paths_are_repo_relative": true,
+    "semantic_changes": false
+  }
+}

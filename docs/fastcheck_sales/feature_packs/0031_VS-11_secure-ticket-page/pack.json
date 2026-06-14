@@ -1,0 +1,138 @@
+{
+  "pack_id": "0031_VS-11_secure-ticket-page",
+  "slice": "VS-11",
+  "name": "Secure Ticket Page",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation_planning_pack",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "Ticket access",
+    "Secure customer page",
+    "Token verification",
+    "QR display boundary"
+  ],
+  "depends_on": [
+    "VS-08",
+    "VS-09A",
+    "VS-09B",
+    "VS-09C",
+    "VS-09D",
+    "VS-10",
+    "VS-00B",
+    "VS-01D",
+    "VS-01F",
+    "VS-01G",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-12",
+    "VS-15A",
+    "VS-15B",
+    "VS-19",
+    "VS-20",
+    "VS-22",
+    "VS-23B",
+    "VS-23C"
+  ],
+  "repo_grounding": {
+    "app_root": "FastCheck",
+    "router": "lib/fastcheck_web/router.ex",
+    "security_headers": "lib/fastcheck_web/plugs/security_headers.ex",
+    "attendee_schema": "lib/fastcheck/attendees/attendee.ex",
+    "scanner_mutation_path": "FastCheck.Attendees.Scan",
+    "mobile_sync_path": "FastCheckWeb.Mobile.SyncController",
+    "scanner_truth": "event_id + ticket_code",
+    "scanner_deny_state": "scan_eligibility='not_scannable'"
+  },
+  "implementation_code_allowed": true,
+  "recommended_files": [
+    "lib/fastcheck/sales/ticket_page.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_controller.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_html.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_html/show.html.heex",
+    "test/fastcheck/sales/ticket_page_test.exs",
+    "test/fastcheck_web/controllers/secure_ticket_controller_test.exs"
+  ],
+  "route": "GET /t/:token through browser pipeline",
+  "in_scope": [
+    "public secure ticket route",
+    "hash-only delivery token lookup",
+    "token expiry/revocation/status checks",
+    "linked Attendee/Event load",
+    "safe ticket display",
+    "QR/text scanner payload display only when valid",
+    "no-store/private/noindex headers",
+    "rate limit invalid attempts",
+    "security and boundary tests"
+  ],
+  "out_of_scope": [
+    "WhatsApp delivery",
+    "email delivery",
+    "DeliveryAttempt creation",
+    "resend flow",
+    "Paystack changes",
+    "inventory mutation",
+    "Attendee creation",
+    "TicketIssue creation",
+    "scanner mutation",
+    "mobile sync response-shape changes",
+    "admin dashboard"
+  ],
+  "validity_states": [
+    "valid",
+    "expired_link",
+    "ticket_revoked",
+    "ticket_not_scannable",
+    "ticket_not_ready",
+    "not_found"
+  ],
+  "required_headers": [
+    "cache-control: no-store, private",
+    "pragma: no-cache",
+    "x-robots-tag: noindex, nofollow"
+  ],
+  "required_indexes": [
+    "sales_ticket_issues.delivery_token_hash",
+    "sales_ticket_issues.delivery_token_expires_at",
+    "sales_ticket_issues.attendee_id",
+    "existing attendees unique(event_id, ticket_code)"
+  ],
+  "forbidden_side_effects": [
+    "no raw token logging",
+    "no raw token storage",
+    "no Paystack mutations",
+    "no WhatsApp/email",
+    "no DeliveryAttempt",
+    "no Attendee mutation",
+    "no scanner behavior changes",
+    "no mobile API shape changes",
+    "no Redis inventory mutation"
+  ],
+  "performance_scaling": {
+    "hot": "existing ETS attendee/event cache may be used after token verification, not before",
+    "warm": "no Redis required except existing rate-limit/storage patterns",
+    "cold": "TicketIssue token metadata in Postgres",
+    "target": "p95 sub-100ms excluding QR generation; indexed token lookup; no full-table scans",
+    "caching": "no public/CDN caching; private/no-store response"
+  },
+  "next_slice": "VS-12 — Admin Sales Dashboard",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0031_VS-11_secure-ticket-page",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "semantic_patches": [
+    {
+      "id": "VS-11-BLOCKS-001",
+      "change": "Removed VS-16 from blocks because VS-16 depends on VS-00B in the roadmap and is not blocked by secure ticket page."
+    }
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_date": "2026-06-14",
+    "batch": "0029_0031",
+    "canonical_root": "docs/fastcheck_sales/feature_packs",
+    "semantic_changes": true
+  }
+}

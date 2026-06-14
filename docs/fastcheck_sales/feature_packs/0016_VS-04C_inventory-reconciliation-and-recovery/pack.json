@@ -1,0 +1,134 @@
+{
+  "pack_id": "0016_VS-04C_inventory-reconciliation-and-recovery",
+  "slice_id": "VS-04C",
+  "name": "Inventory Reconciliation and Recovery",
+  "version": "v1.0",
+  "status": "implementation_planning_pack_implementation_blocked_until_VS-05",
+  "primary_area": "Redis / Postgres / Oban / Inventory Recovery / QA",
+  "depends_on": [
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01B",
+    "VS-01C",
+    "VS-01D",
+    "VS-01G",
+    "VS-03",
+    "VS-04A",
+    "VS-04B",
+    "VS-05"
+  ],
+  "blocks": [
+    "VS-14",
+    "VS-22",
+    "production_launch_readiness"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "implementation_blocked_until": [
+    "VS-05"
+  ],
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_created": [],
+  "ash_resources_modified": [],
+  "plain_elixir_modules_to_create_or_update": [
+    "FastCheck.Sales.Inventory.Health",
+    "FastCheck.Sales.Inventory.Reconciler",
+    "FastCheck.Sales.Inventory.Recovery",
+    "FastCheck.Workers.InventoryReconciliationWorker"
+  ],
+  "preferred_files": [
+    "lib/fastcheck/sales/inventory/health.ex",
+    "lib/fastcheck/sales/inventory/reconciler.ex",
+    "lib/fastcheck/sales/inventory/recovery.ex",
+    "lib/fastcheck/workers/inventory_reconciliation_worker.ex",
+    "test/fastcheck/sales/inventory/health_test.exs",
+    "test/fastcheck/sales/inventory/reconciler_test.exs",
+    "test/fastcheck/sales/inventory/recovery_test.exs",
+    "test/fastcheck/sales/inventory/reconciliation_worker_test.exs",
+    "test/fastcheck/sales/inventory/reconciliation_boundary_test.exs"
+  ],
+  "forbidden_changes": [
+    "Checkout workflow implementation",
+    "Order state-machine implementation beyond read-only reconciliation queries",
+    "PaymentAttempt/Paystack behavior",
+    "Webhook behavior",
+    "WhatsApp/Meta API behavior",
+    "Ticket issuing",
+    "Attendee creation",
+    "Scanner hot-path changes",
+    "LiveView/admin UI",
+    "Manual refund/revocation UI",
+    "Ash resource Redis mutation"
+  ],
+  "required_capabilities": [
+    "offer_health(offer_id)",
+    "reconcile_offer(offer_id, opts)",
+    "rebuild_offer_inventory(offer_id, opts)",
+    "repair_stale_holds(offer_id, now, opts)"
+  ],
+  "red_green_tests": {
+    "type": "implementation_tests_red_first_green_after",
+    "red_requires_failure_when": [
+      "Health API is missing",
+      "Reconciler module is missing",
+      "Recovery module is missing",
+      "Reconciliation trusts Redis over durable Sales state",
+      "Rebuild proceeds on ambiguous durable state",
+      "Rebuild sets availability above safe calculated availability",
+      "Expired consumed holds are released",
+      "Duplicate reconciliation runs corrupt availability",
+      "Redis unavailable allows fallback reservations",
+      "Manual-review cases are auto-repaired",
+      "Reconciliation queries are not offer-scoped/indexed",
+      "Logs or telemetry include PII, tokens, or provider payloads",
+      "Ash resources directly mutate inventory keys"
+    ],
+    "green_requires": [
+      "offer_health reports healthy Redis inventory",
+      "offer_health detects missing Redis keys",
+      "dry-run reconciliation reports drift without mutation",
+      "reconciliation safely adjusts overstated Redis availability downward",
+      "reconciliation adjusts Redis availability upward only when unambiguous",
+      "rebuild restores Redis after simulated key loss when safe",
+      "stale unpaid holds are repaired safely",
+      "consumed holds are never released",
+      "ambiguous late-payment inventory returns manual_review_required",
+      "duplicate recovery runs are idempotent",
+      "Redis unavailable fails closed",
+      "safe telemetry events are emitted",
+      "only approved inventory modules mutate inventory keys"
+    ]
+  },
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "performance_impact": "Adds worker/manual reconciliation outside hot checkout path; must use offer-scoped indexed durable queries and Redis hot state repair",
+  "security_impact": "No PII, tokens, Paystack payloads, Meta payloads, authorization URLs, or access codes in Redis keys/logs/telemetry",
+  "next_slice": "VS-05 Order and Checkout Core",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0016_VS-04C_inventory-reconciliation-and-recovery",
+  "normalization": {
+    "status": "normalized",
+    "normalized_at": "2026-06-14",
+    "canonical_repo_root": "docs/fastcheck_sales/feature_packs",
+    "source_docs_repo_relative": true,
+    "semantic_changes": false,
+    "legacy_nested_roots_removed": true
+  }
+}

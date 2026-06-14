@@ -1,0 +1,165 @@
+{
+  "pack_id": "0036_VS-15B_admin-refund-and-revocation-operations",
+  "slice": "VS-15B",
+  "name": "Admin Refund and Revocation Operations",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation-ready admin/ops slice",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "LiveView Admin",
+    "Sales Ops",
+    "Refund & Revocation",
+    "Audit"
+  ],
+  "depends_on": [
+    "VS-13",
+    "VS-15A",
+    "VS-12",
+    "VS-10",
+    "VS-09D",
+    "VS-07C",
+    "VS-00A",
+    "VS-00B",
+    "VS-01F",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-20",
+    "VS-21B",
+    "VS-22",
+    "VS-23B",
+    "paid-event launch if admin refund/revoke is launch-supported"
+  ],
+  "current_fastcheckin_truth": {
+    "dashboard_routes": "[:browser, :dashboard_auth]",
+    "dashboard_live": "FastCheckWeb.DashboardLive",
+    "browser_auth": "FastCheckWeb.Plugs.BrowserAuth",
+    "sensitive_confirmation": "BrowserAuth.valid_admin_password?/1",
+    "core_revocation": "FastCheck.Tickets.Revocation",
+    "scanner_deny": "FastCheck.Attendees.Attendee.scan_eligibility == not_scannable"
+  },
+  "recommended_files": [
+    "lib/fastcheck/sales/admin_refunds.ex",
+    "lib/fastcheck/sales/admin_revocations.ex",
+    "lib/fastcheck_web/live/sales/manual_review_live.ex",
+    "lib/fastcheck_web/live/sales/order_show_live.ex",
+    "lib/fastcheck_web/live/sales/components/revocation_form_component.ex",
+    "lib/fastcheck_web/router.ex"
+  ],
+  "in_scope": [
+    "single TicketIssue revocation from admin UI",
+    "order-level bounded revocation",
+    "manual refunded marker/state transition",
+    "reason-required forms",
+    "optional password confirmation",
+    "policy checks",
+    "StateTransition audit",
+    "PII masking",
+    "idempotency tests"
+  ],
+  "out_of_scope": [
+    "Paystack refund API",
+    "provider refund settlement",
+    "WhatsApp/email notifications",
+    "DeliveryAttempt creation",
+    "resend flow",
+    "scanner rewrite",
+    "Redis inventory mutation",
+    "direct Attendee mutation from LiveView"
+  ],
+  "required_indexes": [
+    "sales_orders(event_id, status, inserted_at)",
+    "sales_orders(status, updated_at)",
+    "sales_orders(public_reference)",
+    "sales_ticket_issues(sales_order_id, status)",
+    "sales_ticket_issues(attendee_id)",
+    "sales_ticket_issues(status, revoked_at)",
+    "sales_payment_attempts(sales_order_id, status)",
+    "sales_state_transitions(entity_type, entity_id, inserted_at)",
+    "attendees(event_id, ticket_code)",
+    "attendees(event_id, scan_eligibility)",
+    "attendee_invalidation_events(event_id, id)"
+  ],
+  "red_green_tests": {
+    "red": [
+      "admin can revoke single issued TicketIssue with reason",
+      "revocation calls FastCheck.Tickets.Revocation",
+      "linked Attendee becomes not_scannable via VS-15A",
+      "scanner rejects admin-revoked ticket",
+      "admin can revoke all issued tickets for an order with confirmation",
+      "admin can mark refunded_manual only after verified payment context",
+      "operator cannot perform admin-only refund action",
+      "customer_session cannot access/mutate admin action",
+      "reason required before mutation",
+      "duplicate submit is idempotent",
+      "PII masked in LiveView",
+      "raw payloads/token hashes absent from HTML/logs",
+      "no Paystack/WhatsApp/DeliveryAttempt/Redis inventory side effects"
+    ],
+    "green": [
+      "admin revocation uses core VS-15A path",
+      "refunded/cancelled tickets cannot remain scanner-acceptable",
+      "policies distinguish admin/operator/system/customer_session",
+      "audit trail is dispute-ready"
+    ]
+  },
+  "performance_scaling": {
+    "hot_data": "Scanner decision stays in existing Attendee/DbAuthority path.",
+    "warm_data": "No new Redis data structures; dashboard may use existing cache/PubSub conventions.",
+    "cold_data": "Sales Orders, TicketIssues, PaymentAttempts, StateTransitions in Postgres/Ash.",
+    "cache_rules": [
+      "Call VS-15A/VS-10 helpers only",
+      "Do not directly mutate mobile scan Redis keys",
+      "Do not mutate sales inventory Redis"
+    ],
+    "concurrency": [
+      "idempotency_key per admin action",
+      "row locks in core service",
+      "bounded order-level revocation batches",
+      "no reliance on LiveView single-click behavior"
+    ]
+  },
+  "security": {
+    "reason_required": true,
+    "mask_by_default": [
+      "buyer_phone",
+      "buyer_email",
+      "recipient"
+    ],
+    "never_render": [
+      "raw Paystack payload",
+      "raw Meta payload",
+      "authorization_url",
+      "access_code",
+      "delivery_token_hash",
+      "qr_token_hash",
+      "plaintext token"
+    ]
+  },
+  "telemetry": [
+    "[:fastcheck, :sales, :admin, :revocation_requested]",
+    "[:fastcheck, :sales, :admin, :revocation_completed]",
+    "[:fastcheck, :sales, :admin, :revocation_failed]",
+    "[:fastcheck, :sales, :admin, :refund_marked]",
+    "[:fastcheck, :sales, :admin, :action_denied]"
+  ],
+  "next_slice": "VS-16 — Meta Cloud API Outbound Client",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0036_VS-15B_admin-refund-and-revocation-operations/",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_at": "2026-06-14",
+    "batch": "0035_0037",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "notes": [
+      "Structural normalization only."
+    ]
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "pack_id": "0033_VS-13_manual-review-operations",
+  "slice_id": "VS-13",
+  "name": "Manual Review Operations",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation_planning_pack",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": "Admin Operations / Manual Review / Audit / Recovery",
+  "depends_on": [
+    "VS-07C",
+    "VS-09D",
+    "VS-10",
+    "VS-11",
+    "VS-12",
+    "VS-01F",
+    "VS-01G",
+    "VS-00A",
+    "VS-00B",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-15A",
+    "VS-15B",
+    "VS-19",
+    "VS-21B",
+    "VS-22",
+    "VS-23B"
+  ],
+  "repo_findings": {
+    "dashboard_live": "FastCheckWeb.DashboardLive exists as current admin dashboard pattern.",
+    "dashboard_auth": "FastCheckWeb.Router protects dashboard routes through [:browser, :dashboard_auth].",
+    "browser_auth": "FastCheckWeb.Plugs.BrowserAuth assigns current_user and exposes valid_admin_password?/1.",
+    "manual_review_existing_code": "No existing manual_review code found through connector search; introduce clean boundary."
+  },
+  "implementation_code_allowed": true,
+  "new_modules": [
+    "lib/fastcheck/sales/manual_review.ex",
+    "lib/fastcheck/sales/manual_review_action.ex",
+    "lib/fastcheck_web/live/sales_manual_review_live.ex"
+  ],
+  "new_route": "live \"/dashboard/sales/reviews\", SalesManualReviewLive, :index under [:browser, :dashboard_auth]",
+  "allowed_actions": [
+    "assign_to_self",
+    "unassign",
+    "add_note",
+    "hold_for_investigation",
+    "close_no_fulfillment",
+    "retry_payment_verification",
+    "retry_ticket_issuance",
+    "return_to_fulfillment_queue_when_safe"
+  ],
+  "forbidden_actions": [
+    "manual_mark_paid",
+    "direct_ticket_issuance_from_liveview",
+    "direct_attendee_creation_from_liveview",
+    "paystack_http_inside_liveview",
+    "refund",
+    "revoke",
+    "resend",
+    "delivery_attempt_creation",
+    "whatsapp_or_email_delivery",
+    "redis_inventory_mutation",
+    "raw_provider_payload_viewer"
+  ],
+  "required_indexes": [
+    "sales_manual_review_actions(subject_type, subject_id, inserted_at desc)",
+    "sales_manual_review_actions(sales_order_id, inserted_at desc)",
+    "sales_manual_review_actions(actor_id, inserted_at desc)",
+    "sales_orders(status, inserted_at desc)",
+    "sales_orders(manual_review_reason_code, inserted_at desc) if field exists",
+    "sales_payment_attempts(status, inserted_at desc)",
+    "sales_ticket_issues(status, inserted_at desc)",
+    "sales_state_transitions(subject_type, subject_id, inserted_at desc)"
+  ],
+  "performance": {
+    "queue_limit": "default <= 50",
+    "summary_cache_ttl": "10s-60s",
+    "pubsub_topic": "sales:manual_review or repo-equivalent",
+    "no_external_http_in_liveview": true,
+    "no_full_table_scans": true
+  },
+  "security": {
+    "auth": "dashboard_auth only",
+    "actor_source": "BrowserAuth current_user username",
+    "pii_masking_required": true,
+    "raw_payload_viewing_forbidden": true,
+    "notes_must_be_sanitized": true
+  },
+  "next_slice": "VS-14 — Checkout Expiry and Cleanup",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0033_VS-13_manual-review-operations",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "slice": "VS-13",
+  "normalization": {
+    "normalized": true,
+    "normalization_version": "v1.0.0",
+    "normalized_date": "2026-06-14",
+    "batch": "0032_0034",
+    "semantic_changes": true,
+    "notes": [
+      "Removed VS-14 from Blocks; checkout expiry/cleanup must not be blocked by manual-review operations.",
+      "pack.json blocks updated: removed VS-14."
+    ]
+  }
+}

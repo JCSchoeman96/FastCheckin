@@ -1,0 +1,214 @@
+{
+  "pack_id": "0023_VS-07B_paystack-transaction-verification",
+  "slice_id": "VS-07B",
+  "name": "Paystack Transaction Verification",
+  "version": "v1.0",
+  "status": "implementation_planning_pack",
+  "primary_area": "Payments / Verification / Ash State / Oban / Idempotency",
+  "depends_on": [
+    "VS-07A",
+    "VS-06B",
+    "VS-06C",
+    "VS-06A",
+    "VS-05",
+    "VS-04B",
+    "VS-01C",
+    "VS-01F",
+    "VS-01G",
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-07C",
+    "VS-09A",
+    "VS-12",
+    "VS-19",
+    "VS-21B",
+    "VS-22"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": "yes; transaction-verification-only implementation; no ticket issuance, attendee mutation, scanner sync, delivery, WhatsApp, refund, or Redis inventory mutation",
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_touched": [
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_forbidden_from_mutation": [
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation"
+  ],
+  "existing_systems_forbidden_from_mutation": [
+    "FastCheck.Attendees",
+    "FastCheck.Attendees.Scan",
+    "FastCheck.Attendees.Reconciliation",
+    "FastCheck.Events.Sync",
+    "Android mobile API",
+    "Scanner routes and scanner hot path"
+  ],
+  "plain_elixir_modules_expected": [
+    "FastCheck.Payments.Paystack.TransactionVerifier",
+    "FastCheck.Payments.Paystack.VerificationResult",
+    "FastCheck.Payments.Paystack.PaymentVerification",
+    "FastCheck.Payments.Paystack.PayloadSanitizer",
+    "FastCheck.Workers.VerifyPaymentWorker"
+  ],
+  "preferred_files": [
+    "lib/fastcheck/payments/paystack/transaction_verifier.ex",
+    "lib/fastcheck/payments/paystack/verification_result.ex",
+    "lib/fastcheck/payments/paystack/payment_verification.ex",
+    "lib/fastcheck/payments/paystack/payload_sanitizer.ex",
+    "lib/fastcheck/workers/verify_payment_worker.ex"
+  ],
+  "preferred_test_files": [
+    "test/fastcheck/payments/paystack/transaction_verifier_test.exs",
+    "test/fastcheck/payments/paystack/payment_verification_test.exs",
+    "test/fastcheck/workers/verify_payment_worker_test.exs",
+    "test/fastcheck/payments/paystack/payment_verification_state_test.exs",
+    "test/fastcheck/payments/paystack/payment_verification_idempotency_test.exs",
+    "test/fastcheck/payments/paystack/payment_verification_security_test.exs",
+    "test/fastcheck/payments/paystack/payment_verification_boundary_test.exs"
+  ],
+  "verification_required_checks": [
+    "local PaymentAttempt exists for provider + provider_reference",
+    "PaymentAttempt belongs to loaded Order",
+    "Paystack API call succeeded and response contains data",
+    "Paystack data.status == success",
+    "Paystack data.reference == PaymentAttempt.provider_reference",
+    "Paystack data.amount == PaymentAttempt.amount_cents",
+    "Paystack data.amount == Order.total_amount_cents",
+    "Paystack data.currency == PaymentAttempt.currency",
+    "Paystack data.currency == Order.currency",
+    "provider environment/domain matches expected mode when available"
+  ],
+  "forbidden_changes": [
+    "Paystack HTTP call inside Ash resource actions",
+    "Verification directly inside webhook controller",
+    "Direct Repo status updates bypassing named Ash actions",
+    "Payment verified from webhook payload only",
+    "Payment-after-expiry inventory decision",
+    "Redis inventory consume/release/reserve/re-reserve",
+    "TicketIssue creation or mutation",
+    "Attendee creation or mutation",
+    "Scanner/mobile sync changes",
+    "DeliveryAttempt creation",
+    "WhatsApp or Meta behavior",
+    "Refund/revocation behavior",
+    "Raw payload/signature/secrets/PII/token logging"
+  ],
+  "state_transitions_owned": {
+    "PaymentAttempt": [
+      "initialized -> verification_started",
+      "authorization_url_sent -> verification_started",
+      "webhook_received -> verification_started",
+      "verification_started -> verified_success",
+      "verification_started -> verified_amount_mismatch",
+      "verification_started -> verified_currency_mismatch",
+      "verification_started -> failed",
+      "verification_started -> manual_review",
+      "verified_success -> verified_success idempotent no-op"
+    ],
+    "Order": [
+      "awaiting_payment -> paid_verified when all checks pass and active checkout preconditions hold",
+      "payment_pending -> paid_verified when all checks pass and active checkout preconditions hold",
+      "paid_unverified -> paid_verified when all checks pass and active checkout preconditions hold",
+      "terminal states remain terminal; VS-07C owns recovery/manual-review outcomes"
+    ],
+    "CheckoutSession": [
+      "payment_link_sent -> paid when all checks pass and session is eligible",
+      "payment_started -> paid when all checks pass and session is eligible",
+      "expired/released/manual_review unchanged; VS-07C owns late-payment recovery"
+    ],
+    "PaymentEvent": [
+      "stored -> processing_started",
+      "processing_started -> processed",
+      "processing_started -> unmatched",
+      "processing_started -> failed",
+      "processing_started -> duplicate"
+    ]
+  },
+  "red_green_tests": {
+    "type": "tests_red_first_green_after",
+    "red_requires_failure_when": [
+      "Valid Paystack verification response does not move PaymentAttempt to verified_success",
+      "Provider status not success can mark Order paid_verified",
+      "Amount mismatch can mark Order paid_verified",
+      "Currency mismatch can mark Order paid_verified",
+      "Reference mismatch can mark Order paid_verified",
+      "Webhook payload alone can mark paid_verified",
+      "Expired checkout consumes inventory or issues ticket during verification",
+      "Duplicate worker creates duplicate transitions or downgrades verified state",
+      "Transient provider timeout permanently fails the payment",
+      "Operator/customer_session can trigger verification directly or read raw verify response",
+      "Logs include raw payload, raw verify response, secrets, access_code, authorization_url, phone, email, or tokens",
+      "Verification path mutates TicketIssue, Attendee, scanner/mobile sync, DeliveryAttempt, WhatsApp/Meta, refunds, or Redis inventory"
+    ],
+    "green_requires": [
+      "Provider success with matching status/reference/amount/currency marks PaymentAttempt verified_success",
+      "Active eligible Order and CheckoutSession move to paid_verified/paid through named actions",
+      "StateTransition rows are appended for all state changes",
+      "Mismatch/unmatched/expired cases are safe and do not deliver value",
+      "Duplicate worker execution is idempotent",
+      "Provider timeout is retry-safe",
+      "Raw verify responses are sanitized/restricted and never logged",
+      "Only system/worker path can perform verification transitions",
+      "No ticket, attendee, scanner, inventory, delivery, WhatsApp, or refund side effects exist"
+    ]
+  },
+  "performance_and_scaling": {
+    "hot_data": "Oban uniqueness by payment_attempt_id/provider_reference; optional Redis verification dedupe only if existing repo convention uses it",
+    "warm_data": "Optional admin/order/payment status cache invalidation after paid_verified",
+    "cold_data": [
+      "PaymentAttempt",
+      "PaymentEvent",
+      "Order",
+      "CheckoutSession",
+      "StateTransition"
+    ],
+    "indexes_to_verify": [
+      "sales_payment_attempts unique(provider, provider_reference)",
+      "sales_payment_attempts index(sales_order_id, status)",
+      "sales_payment_attempts index(provider, status)",
+      "sales_payment_attempts index(last_verified_at)",
+      "sales_payment_events index(provider_reference)",
+      "sales_payment_events index(processing_status, inserted_at)",
+      "sales_orders index(event_id, status, inserted_at)",
+      "sales_orders index(status, fulfillment_queued_at)",
+      "sales_checkout_sessions unique(sales_order_id)",
+      "sales_checkout_sessions index(status, expires_at)",
+      "sales_state_transitions index(entity_type, entity_id, inserted_at)"
+    ],
+    "ttl_strategy": "No inventory TTL changes; optional verification dedupe key sales:payments:paystack:verify:{provider_reference} TTL 1-24h only if repo already uses Redis dedupe",
+    "cache_invalidation": "No inventory cache invalidation; invalidate admin/order/payment dashboard cache on paid_verified if such cache exists",
+    "pubsub": "Internal admin/status broadcast only; no customer ticket/delivery PubSub",
+    "telemetry": [
+      "[:fastcheck, :sales, :payment, :verification_started]",
+      "[:fastcheck, :sales, :payment, :verified]",
+      "[:fastcheck, :sales, :payment, :mismatch]",
+      "[:fastcheck, :sales, :payment, :verification_failed]",
+      "[:fastcheck, :sales, :payment, :verification_idempotent]"
+    ]
+  },
+  "security_impact": "Adds server-side payment verification, strict provider-result matching, raw verify response restrictions, and no-value-delivery-from-webhook-only safeguards.",
+  "next_slice": "VS-07C Payment Failure and Mismatch Handling",
+  "date": "2026-06-13",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0023_VS-07B_paystack-transaction-verification/",
+  "normalization": {
+    "batch": "0023_0025",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "normalized_at": "2026-06-14"
+  }
+}

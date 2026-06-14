@@ -1,0 +1,150 @@
+{
+  "pack_id": "0040_VS-19_whatsapp-payment-and-ticket-flow",
+  "slice": "VS-19",
+  "name": "WhatsApp Payment and Ticket Flow",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation-ready planning pack",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "WhatsApp",
+    "Sales",
+    "Paystack handoff",
+    "Ticket delivery handoff"
+  ],
+  "depends_on": [
+    "VS-07C",
+    "VS-11",
+    "VS-18",
+    "VS-05",
+    "VS-06B",
+    "VS-06C",
+    "VS-07A",
+    "VS-07B",
+    "VS-09D",
+    "VS-12",
+    "VS-15A",
+    "VS-16",
+    "VS-17"
+  ],
+  "blocks": [
+    "VS-20",
+    "VS-22",
+    "VS-23C",
+    "WhatsApp-first production launch"
+  ],
+  "purpose": "Connect WhatsApp conversation flow to approved Sales checkout, Paystack payment-link handoff, and secure ticket-link retrieval without making WhatsApp an authority layer.",
+  "in_scope": [
+    "confirm checkout from WhatsApp conversation",
+    "Paystack transaction initialization through approved boundary",
+    "WhatsApp payment-link send through VS-16 client",
+    "payment-pending reassurance",
+    "secure ticket link send after TicketIssue issued",
+    "DeliveryAttempt audit if available",
+    "Redis dedupe for duplicate inbound/outbound sends",
+    "Conversation checkpoint transitions",
+    "StateTransition audit"
+  ],
+  "out_of_scope": [
+    "Meta inbound webhook implementation",
+    "number-only menu basics",
+    "Meta outbound client implementation",
+    "Paystack client implementation",
+    "payment verification",
+    "ticket issuance",
+    "secure ticket page implementation",
+    "Meta 24-hour template/fallback policy",
+    "refund/revocation",
+    "scanner/mobile API changes",
+    "direct Redis inventory mutation"
+  ],
+  "recommended_files": [
+    "lib/fastcheck/messaging/whatsapp/payment_flow.ex",
+    "lib/fastcheck/messaging/whatsapp/payment_status_renderer.ex",
+    "lib/fastcheck/messaging/whatsapp/ticket_link_renderer.ex",
+    "lib/fastcheck/messaging/whatsapp/flow_result.ex",
+    "lib/fastcheck/workers/whatsapp_payment_flow_worker.ex",
+    "lib/fastcheck/workers/send_whatsapp_payment_link_worker.ex",
+    "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex"
+  ],
+  "forbidden": [
+    "ticket issuance from WhatsApp code",
+    "payment verification from WhatsApp code",
+    "mark_paid_verified from WhatsApp code",
+    "mark_ticket_issued from WhatsApp code",
+    "Attendee/scanner/mobile sync mutation",
+    "direct Redis inventory mutation",
+    "raw Req Paystack/Meta calls inside PaymentFlow",
+    "authorization_url/access_code/PII/token logging"
+  ],
+  "redis_keys": {
+    "message_dedupe": "whatsapp:dedupe:message:{provider_message_id} TTL 24h",
+    "send_payment_link_dedupe": "whatsapp:dedupe:send_payment_link:{conversation_id}:{order_id} TTL 5m-30m",
+    "send_ticket_link_dedupe": "whatsapp:dedupe:send_ticket_link:{conversation_id}:{ticket_issue_id} TTL 5m-30m",
+    "session": "whatsapp:session:{wa_id} TTL 24h active session"
+  },
+  "required_indexes": [
+    "sales_conversations(phone_e164)",
+    "sales_conversations(wa_id)",
+    "sales_conversations(state, expires_at)",
+    "sales_orders(whatsapp_conversation_id)",
+    "sales_orders(public_reference)",
+    "sales_orders(event_id, status, inserted_at)",
+    "sales_checkout_sessions(sales_order_id)",
+    "sales_payment_attempts(sales_order_id, status)",
+    "sales_ticket_issues(sales_order_id, status)",
+    "sales_delivery_attempts(sales_order_id, channel, status, inserted_at)",
+    "sales_state_transitions(entity_type, entity_id, inserted_at)"
+  ],
+  "red_green_tests": {
+    "red": [
+      "confirming order through WhatsApp calls approved Sales checkout facade",
+      "payment link initializes through approved Paystack initializer",
+      "payment link send uses VS-16 WhatsApp client boundary",
+      "duplicate confirmation does not create duplicate orders",
+      "duplicate payment-link worker does not send duplicate links",
+      "payment_pending status request reassures user",
+      "ticket_issued status sends secure ticket page link",
+      "revoked/refunded/cancelled TicketIssue does not send active ticket link",
+      "manual_review state returns support/handoff message",
+      "no WhatsApp code calls Tickets.Issuer directly",
+      "no authorization_url/access_code/customer phone/raw payload logged"
+    ],
+    "green": [
+      "WhatsApp safely hands customer to Paystack",
+      "WhatsApp reports status from durable Sales state",
+      "WhatsApp sends secure ticket link only after issue",
+      "duplicate messages and workers are safe",
+      "state changes are audited"
+    ]
+  },
+  "performance_scaling": {
+    "hot": "Redis conversation session hash and dedupe keys",
+    "warm": "active offers/cache and current conversation checkpoint summaries",
+    "cold": "Postgres Sales Order, CheckoutSession, PaymentAttempt, TicketIssue, DeliveryAttempt, Conversation, StateTransition",
+    "rules": [
+      "do not load all orders/offers/tickets for a phone",
+      "do not call Paystack initialize on repeated status checks",
+      "use Oban workers for outbound sends",
+      "no scanner event_sync_version bump in this slice"
+    ]
+  },
+  "next_slice": "VS-20 — WhatsApp Delivery Window Handling",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0040_VS-19_whatsapp-payment-and-ticket-flow/",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_at": "2026-06-14",
+    "batch": "0038_0040",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "notes": [
+      "Structural normalization only. No semantic changes."
+    ]
+  }
+}

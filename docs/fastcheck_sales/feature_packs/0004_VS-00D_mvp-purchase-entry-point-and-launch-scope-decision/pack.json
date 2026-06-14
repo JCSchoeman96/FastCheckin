@@ -1,0 +1,131 @@
+{
+  "pack_id": "0004_VS-00D_mvp-purchase-entry-point-and-launch-scope-decision",
+  "slice_id": "VS-00D",
+  "name": "MVP Purchase Entry-Point and Launch Scope Decision",
+  "version": "v1.0",
+  "status": "ready_for_planning_after_VS-00",
+  "primary_area": "Product / Architecture / Channel Strategy / Docs",
+  "depends_on": [
+    "VS-00"
+  ],
+  "blocks": [
+    "VS-01A",
+    "VS-01B",
+    "VS-01C",
+    "VS-01D",
+    "VS-01E",
+    "VS-01F",
+    "VS-01G",
+    "VS-05A",
+    "VS-16",
+    "VS-17",
+    "VS-18",
+    "VS-19",
+    "VS-20",
+    "VS-22",
+    "VS-23B",
+    "VS-23C"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": false,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_created": [],
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "plain_modules_referenced": [
+    "FastCheck.Sales.Inventory.ReservationLedger",
+    "FastCheck.Payments.Paystack.Client",
+    "FastCheck.Payments.Paystack.TransactionInitializer",
+    "FastCheck.Payments.Paystack.TransactionVerifier",
+    "FastCheck.Payments.Paystack.WebhookVerifier",
+    "FastCheck.Messaging.WhatsApp.Client",
+    "FastCheck.Messaging.WhatsApp.WebhookVerifier",
+    "FastCheck.Messaging.WhatsApp.ConversationStateMachine",
+    "FastCheck.Tickets.Issuer",
+    "FastCheck.Tickets.DeliveryToken"
+  ],
+  "required_outputs": [
+    "VS-00D_MVP_PURCHASE_ENTRY_POINT_AND_LAUNCH_SCOPE_DECISION.md",
+    "PRIMARY_CHANNEL_AND_MULTI_CHANNEL_STRATEGY.md",
+    "SELECTED_LAUNCH_SCOPE.md",
+    "SALES_CHANNEL_AUTHORITY_MODEL.md",
+    "SECONDARY_SALES_PATHS.md",
+    "SALES_CORE_BRIDGE_MVP.md",
+    "LAUNCH_SCOPE_TEST_REQUIREMENTS.md",
+    "LAUNCH_SCOPE_RUNBOOK_REQUIREMENTS.md",
+    "CHANNEL_DECISION_LOG.md"
+  ],
+  "primary_launch_scope": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "internal_pilot_sales",
+    "admin_assisted_sales",
+    "web_checkout_sales"
+  ],
+  "recommended_default": {
+    "primary_launch_scope": "whatsapp_first_paid_core",
+    "secondary_paths_before_first_launch": [
+      "internal_pilot_sales",
+      "admin_assisted_sales"
+    ],
+    "secondary_paths_after_first_launch": [
+      "web_checkout_sales"
+    ]
+  },
+  "vs_05a_scope": "Secondary Sales Entry Points only; not WhatsApp-first checkout",
+  "whatsapp_first_entrypoint_slices": [
+    "VS-17",
+    "VS-18",
+    "VS-19",
+    "VS-20"
+  ],
+  "red_green_tests": {
+    "type": "documentation_decision_tests",
+    "red_requires_failure_when": [
+      "primary production channel is not whatsapp_first_paid_core",
+      "secondary sales paths are not classified",
+      "VS-05A claims to implement WhatsApp-first checkout by itself",
+      "web checkout is described as the primary default launch direction",
+      "admin-assisted sales can bypass Redis inventory",
+      "any channel can bypass Paystack verification",
+      "any channel can issue tickets directly",
+      "any channel can bypass DeliveryAttempt audit",
+      "any channel can bypass scanner-safe revocation",
+      "VS-22 test impact is not tied to launch scope",
+      "VS-23B/VS-23C runbook impact is not tied to launch scope",
+      "no decision log is created",
+      "implementation code is added"
+    ],
+    "green_requires": [
+      "primary production channel is set to whatsapp_first_paid_core",
+      "internal pilot, admin-assisted sales, and web checkout are classified",
+      "VS-05A is scoped to secondary sales entry points only",
+      "WhatsApp-first entrypoint is mapped to VS-17, VS-18, VS-19, and VS-20",
+      "all channels use the same Sales core",
+      "all channels are forbidden from bypassing inventory/payment/issuance/delivery/revocation rules",
+      "selected launch scope controls VS-22 tests",
+      "selected launch scope controls VS-23B and VS-23C runbooks",
+      "a channel decision log exists",
+      "no implementation code is added"
+    ]
+  },
+  "repository_path": "docs/fastcheck_sales/feature_packs/0004_VS-00D_mvp-purchase-entry-point-and-launch-scope-decision/",
+  "normalization": {
+    "normalized_for_repo": "JCSchoeman96/FastCheckin",
+    "normalized_feature_pack_root": "docs/fastcheck_sales/feature_packs/",
+    "source_doc_paths_are_repo_relative": true,
+    "semantic_changes": false
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "pack_id": "0000_VS-00_planning-pack-finalization",
+  "slice_id": "VS-00",
+  "name": "Planning Pack Finalization",
+  "version": "v1.0",
+  "status": "ready_for_planning",
+  "primary_area": "Docs / Architecture",
+  "depends_on": [],
+  "blocks": [
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01A"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": false,
+  "ash_resources_created": [],
+  "primary_channel": "whatsapp_first_paid_core",
+  "secondary_channels": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "required_outputs": [
+    "DECISION_LOG.md",
+    "RISK_REGISTER.md",
+    "VS-00_PLANNING_PACK_FINALIZATION.md"
+  ],
+  "repository_path": "docs/fastcheck_sales/feature_packs/0000_VS-00_planning-pack-finalization/",
+  "normalization": {
+    "normalized_for_repo": "JCSchoeman96/FastCheckin",
+    "normalized_feature_pack_root": "docs/fastcheck_sales/feature_packs/",
+    "source_doc_paths_are_repo_relative": true,
+    "semantic_changes": false
+  }
+}

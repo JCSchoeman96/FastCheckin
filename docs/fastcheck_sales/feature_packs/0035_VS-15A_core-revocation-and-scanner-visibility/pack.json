@@ -1,0 +1,189 @@
+{
+  "pack_id": "0035_VS-15A_core-revocation-and-scanner-visibility",
+  "slice": "VS-15A",
+  "name": "Core Revocation and Scanner Visibility",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation-ready safety slice",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "Sales",
+    "TicketIssue",
+    "Existing Attendees",
+    "Scanner Visibility",
+    "Mobile Sync"
+  ],
+  "depends_on": [
+    "VS-09D",
+    "VS-10",
+    "VS-08",
+    "VS-09C",
+    "VS-00A",
+    "VS-00B",
+    "VS-01F",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-15B",
+    "VS-20",
+    "VS-21B",
+    "VS-22",
+    "VS-23B",
+    "paid-event launch"
+  ],
+  "current_fastcheckin_truth": {
+    "attendee_schema": "FastCheck.Attendees.Attendee",
+    "scanner_deny_field": "scan_eligibility",
+    "scanner_deny_value": "not_scannable",
+    "invalidation_schema": "FastCheck.Attendees.AttendeeInvalidationEvent",
+    "reason_code_module": "FastCheck.Attendees.ReasonCodes",
+    "db_authority": "FastCheck.Scans.HotState.DbAuthority",
+    "mobile_sync_path": "FastCheckWeb.Mobile.SyncController",
+    "event_sync_field": "FastCheck.Events.Event.event_sync_version"
+  },
+  "required_modules": [
+    "lib/fastcheck/tickets/revocation.ex",
+    "lib/fastcheck/tickets/scanner_visibility.ex",
+    "lib/fastcheck/sales/ticket_issue.ex",
+    "lib/fastcheck/attendees/reason_codes.ex"
+  ],
+  "public_api": [
+    "FastCheck.Tickets.Revocation.revoke_ticket_issue(ticket_issue_id, opts \\\\ [])",
+    "FastCheck.Tickets.Revocation.revoke_order_tickets(order_id, opts \\\\ [])"
+  ],
+  "in_scope": [
+    "TicketIssue revoked transition",
+    "Attendee scan_eligibility not_scannable update",
+    "AttendeeInvalidationEvent append",
+    "event sync aggregation trigger",
+    "cache invalidation",
+    "secure ticket page invalidation via TicketIssue status",
+    "StateTransition audit",
+    "idempotency tests",
+    "scanner/mobile sync tests"
+  ],
+  "out_of_scope": [
+    "Paystack refund API",
+    "admin refund/revocation UI",
+    "WhatsApp/email sends",
+    "DeliveryAttempt creation",
+    "resend behavior",
+    "scanner rewrite",
+    "Redis inventory mutation",
+    "checkout expiry changes"
+  ],
+  "required_indexes": [
+    "sales_ticket_issues(attendee_id)",
+    "sales_ticket_issues(ticket_code)",
+    "sales_ticket_issues(status, revoked_at)",
+    "sales_ticket_issues(sales_order_id, status)",
+    "attendees(event_id, ticket_code)",
+    "attendees(event_id, scan_eligibility)",
+    "attendee_invalidation_events(event_id, id)",
+    "attendee_invalidation_events(attendee_id)",
+    "sales_state_transitions(entity_type, entity_id, inserted_at)"
+  ],
+  "red_green_tests": {
+    "red": [
+      "revoke_ticket_issue changes TicketIssue issued to revoked",
+      "linked Attendee scan_eligibility becomes not_scannable",
+      "scanner check_in rejects revoked attendee with TICKET_NOT_SCANNABLE",
+      "mobile DbAuthority rejects revoked attendee even with stale Redis snapshot",
+      "AttendeeInvalidationEvent is appended",
+      "event sync aggregation is triggered once per event",
+      "attendee caches are invalidated",
+      "secure ticket page token no longer renders active ticket",
+      "duplicate revocation is idempotent",
+      "missing/conflicting attendee returns explicit error/manual_review",
+      "customer_session cannot revoke",
+      "admin/operator requires audit reason",
+      "no Paystack/WhatsApp/DeliveryAttempt/Redis inventory side effects"
+    ],
+    "green": [
+      "core revocation path is safe and retryable",
+      "existing scanner path denies revoked tickets without rewrite",
+      "mobile sync receives invalidation",
+      "VS-15B can call core revocation path",
+      "logs are PII/token safe"
+    ]
+  },
+  "performance_scaling": {
+    "hot_data": "Existing scanner path plus DbAuthority; no scanner rewrite.",
+    "warm_data": "Existing Redis mobile scan hot-state; do not mutate keys directly.",
+    "cold_data": "Postgres Attendee, Sales TicketIssue, StateTransition.",
+    "cache_rules": [
+      "invalidate ETS attendee key {event_id,ticket_code}",
+      "invalidate event attendee list Cachex key",
+      "trigger VS-10 event sync aggregator once per event window"
+    ],
+    "redis_rules": [
+      "no Sales inventory Redis mutation",
+      "no direct mobile scan Redis key mutation",
+      "rely on DbAuthority for immediate deny and aggregator for sync visibility"
+    ],
+    "concurrency": [
+      "row lock TicketIssue and Attendee",
+      "idempotency_key for worker-triggered revocation",
+      "do not rely on Oban uniqueness alone",
+      "bulk revoke in bounded batches"
+    ]
+  },
+  "security": {
+    "reason_required_for": [
+      "admin",
+      "operator"
+    ],
+    "forbidden_logs": [
+      "buyer_email",
+      "buyer_phone",
+      "raw delivery token",
+      "delivery_token_hash",
+      "qr_token_hash",
+      "raw provider payload",
+      "Paystack access_code",
+      "authorization_url"
+    ]
+  },
+  "telemetry": [
+    "[:fastcheck, :sales, :ticket, :revocation_started]",
+    "[:fastcheck, :sales, :ticket, :revoked]",
+    "[:fastcheck, :sales, :ticket, :revocation_idempotent]",
+    "[:fastcheck, :sales, :ticket, :revocation_failed]",
+    "[:fastcheck, :sales, :scanner_visibility, :invalidation_appended]",
+    "[:fastcheck, :sales, :scanner_visibility, :sync_queued]"
+  ],
+  "next_slice": "VS-15B — Admin Refund and Revocation Operations",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0035_VS-15A_core-revocation-and-scanner-visibility/",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_at": "2026-06-14",
+    "batch": "0035_0037",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": true,
+    "notes": [
+      "Patched secure-ticket/token section so scanner authority remains existing Attendee.scan_eligibility; removed TicketIssue.scanner_status wording from scanner-truth context.",
+      "Added repo-specific scanner authority guardrail."
+    ]
+  },
+  "repo_alignment_guardrails": {
+    "scanner_authority": {
+      "do_not_add": [
+        "attendees.scanner_status"
+      ],
+      "scanner_truth_fields": [
+        "attendees.scan_eligibility",
+        "attendees.ineligibility_reason",
+        "attendees.ineligible_since",
+        "attendees.source_last_seen_at",
+        "attendees.last_authoritative_sync_run_id"
+      ],
+      "sales_side_status_note": "Sales TicketIssue.status may record Sales-side validity/audit state; scanner/mobile runtime acceptance must be projected through existing Attendee scan_eligibility."
+    }
+  }
+}

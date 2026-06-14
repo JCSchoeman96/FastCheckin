@@ -1,0 +1,197 @@
+{
+  "pack_id": "0026_VS-09A_ticket-issuance-contract-and-idempotency-model",
+  "slice_id": "VS-09A",
+  "name": "Ticket Issuance Contract and Idempotency Model",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "contract_planning_pack",
+  "primary_area": "Architecture / Tickets / Issuance Idempotency / Cross-Boundary Contract",
+  "depends_on": [
+    "VS-02",
+    "VS-07C",
+    "VS-08",
+    "VS-01D",
+    "VS-01F",
+    "VS-01G",
+    "VS-00A",
+    "VS-00B",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-09B",
+    "VS-09C",
+    "VS-09D",
+    "VS-10",
+    "VS-11",
+    "VS-12",
+    "VS-15A",
+    "VS-15B",
+    "VS-19",
+    "VS-22"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": "no production issuance implementation; docs, contract tests, and optional stubs/specs only if existing repo conventions support them",
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_referenced": [
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.TicketIssue",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "existing_ecto_systems_referenced": [
+    "FastCheck.Attendees",
+    "FastCheck.Attendees.Reconciliation",
+    "FastCheck.Attendees.Scan",
+    "FastCheck.Events.Sync"
+  ],
+  "plain_elixir_modules_referenced": [
+    "FastCheck.Tickets.Issuer",
+    "FastCheck.Tickets.CodeGenerator",
+    "FastCheck.Tickets.QrPayload",
+    "FastCheck.Tickets.DeliveryToken",
+    "FastCheck.Workers.IssueTicketsWorker",
+    "FastCheck.Workers.EventSyncVersionAggregatorWorker"
+  ],
+  "preferred_files": [
+    "docs/fastcheck_sales/VS-09A_ticket_issuance_contract.md",
+    "docs/fastcheck_sales/ticket_issuance_failure_matrix.md",
+    "docs/fastcheck_sales/ticket_issuance_idempotency_keys.md",
+    "lib/fastcheck/tickets/issuer.ex",
+    "lib/fastcheck/tickets/issuer_contract.ex"
+  ],
+  "preferred_test_files": [
+    "test/fastcheck/tickets/issuer_contract_test.exs",
+    "test/fastcheck/tickets/issuer_idempotency_contract_test.exs",
+    "test/fastcheck/tickets/issuer_boundary_test.exs",
+    "test/fastcheck/tickets/issuer_partial_failure_contract_test.exs",
+    "test/fastcheck/workers/issue_tickets_worker_contract_test.exs"
+  ],
+  "approved_issuer_entrypoint": "FastCheck.Tickets.Issuer.issue_order/1 or issue_order/2",
+  "transaction_model_decision": {
+    "preferred": "single Repo transaction if Ash Sales and existing Attendees share one Repo",
+    "fallback": "durable saga/recovery model if Sales and Attendees cannot share one transaction",
+    "must_document_selection": true
+  },
+  "required_locks": [
+    "order row lock or advisory lock keyed by order id/public_reference",
+    "unique sales_order_line_id + line_item_sequence issuance unit",
+    "unique attendee source/source_reference or VS-02 equivalent",
+    "unique ticket_code",
+    "unique attendee_id on TicketIssue where attendee_id is not null",
+    "Oban uniqueness by sales_order_id as noise reduction only"
+  ],
+  "required_idempotency_keys": [
+    "sales_order_id",
+    "sales_order_line_id",
+    "line_item_sequence",
+    "ticket_code",
+    "attendee_sales_origin_reference",
+    "correlation_id",
+    "idempotency_key"
+  ],
+  "required_constraints": [
+    "sales_ticket_issues.unique(ticket_code)",
+    "sales_ticket_issues.unique(sales_order_line_id, line_item_sequence)",
+    "sales_ticket_issues.unique(attendee_id) where attendee_id is not null",
+    "attendees.unique(source, source_reference) or approved VS-02 equivalent",
+    "orders.unique(public_reference)",
+    "payment_attempts.unique(provider, provider_reference)"
+  ],
+  "forbidden_changes": [
+    "Attendee creation",
+    "TicketIssue creation from paid orders",
+    "production FastCheck.Tickets.Issuer issuing behavior",
+    "IssueTicketsWorker implementation behavior",
+    "scanner route or scanner hot-path change",
+    "Android/mobile sync change",
+    "event sync version bump implementation",
+    "DeliveryAttempt creation",
+    "secure ticket page",
+    "WhatsApp/Meta behavior",
+    "Paystack webhook/verification behavior",
+    "Redis inventory mutation",
+    "refund/revocation implementation",
+    "admin UI/manual review action implementation"
+  ],
+  "red_green_tests": {
+    "contract_presence": [
+      "RED no issuer contract document exists",
+      "GREEN VS-09A contract document exists and names selected transaction/saga model",
+      "RED no precondition matrix exists",
+      "GREEN preconditions cover order, payment, checkout/inventory, attendee origin, and tokens"
+    ],
+    "boundary": [
+      "RED controller/webhook/LiveView/WhatsApp/payment worker directly creates Attendee or TicketIssue records",
+      "GREEN only FastCheck.Tickets.Issuer is approved to coordinate future issuing",
+      "RED VS-09A creates Attendee or TicketIssue records from paid orders",
+      "GREEN VS-09A only defines contract/docs/optional stubs/specs/tests"
+    ],
+    "idempotency": [
+      "RED duplicate IssueTicketsWorker execution can create duplicate issuance units by contract",
+      "GREEN DB uniqueness and deterministic issuance units make duplicate execution idempotent",
+      "RED line_item_sequence generated from race-prone count",
+      "GREEN line_item_sequence deterministic from 1..order_line.quantity",
+      "RED already ticket_issued causes retry loop",
+      "GREEN already ticket_issued returns idempotent success"
+    ],
+    "partial_failure": [
+      "RED existing Attendee without TicketIssue has no recovery path",
+      "GREEN retry links existing Attendee to TicketIssue or manual_review with reason",
+      "RED one failed ticket in multi-ticket order marks full ticket_issued",
+      "GREEN partial issuance becomes partially_issued or manual_review with counts"
+    ],
+    "security_logging": [
+      "RED issuer logs PII, plaintext tokens, raw provider payloads, Paystack access_code, or authorization_url",
+      "GREEN issuer logs only sanitized ids, counts, correlation_id, idempotency_key, and reason codes"
+    ]
+  },
+  "performance_scaling_review": {
+    "hot_data": [
+      "IssueTicketsWorker uniqueness and order-level lock contention"
+    ],
+    "warm_data": [
+      "future event sync aggregation handled by VS-10"
+    ],
+    "cold_data": [
+      "orders, order_lines, payment_attempts, checkout_sessions, attendees, ticket_issues, state_transitions"
+    ],
+    "redis_structures": [
+      "none in VS-09A; no direct Redis mutation allowed"
+    ],
+    "ttl_strategy": "none in VS-09A; delivery token expiry comes from VS-08 and secure page behavior from VS-11",
+    "invalidation_triggers": [
+      "future TicketIssue issued -> admin/order cache invalidation",
+      "future Attendee created -> event sync aggregation via VS-10",
+      "future revocation/refund -> secure ticket/scanner invalidation via VS-15A"
+    ],
+    "pubsub_rules": [
+      "none in VS-09A; future broadcasts must happen after durable state changes only"
+    ],
+    "indexes_required": [
+      "sales_orders index(status, fulfillment_queued_at)",
+      "sales_order_lines index(sales_order_id)",
+      "sales_payment_attempts index(sales_order_id, status)",
+      "sales_ticket_issues unique(sales_order_line_id, line_item_sequence)",
+      "sales_ticket_issues unique(ticket_code)",
+      "sales_ticket_issues unique(attendee_id) where attendee_id is not null",
+      "attendees unique(source, source_reference) or VS-02 equivalent",
+      "state_transitions index(entity_type, entity_id, inserted_at)",
+      "state_transitions index(correlation_id)"
+    ]
+  },
+  "next_slice": "VS-09B — Attendee Creation Bridge",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0026_VS-09A_ticket-issuance-contract-and-idempotency-model/",
+  "normalization": {
+    "batch": "0026_0028",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "normalized_at": "2026-06-14"
+  }
+}

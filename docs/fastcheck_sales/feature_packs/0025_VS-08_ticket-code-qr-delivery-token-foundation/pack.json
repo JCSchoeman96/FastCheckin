@@ -1,0 +1,210 @@
+{
+  "pack_id": "0025_VS-08_ticket-code-qr-delivery-token-foundation",
+  "slice_id": "VS-08",
+  "name": "Ticket Code, QR, and Delivery Token Foundation",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "implementation_planning_pack",
+  "primary_area": "Tickets / Security / Token Foundation / QR Payloads",
+  "depends_on": [
+    "VS-01D",
+    "VS-01F",
+    "VS-01G",
+    "VS-00A",
+    "VS-00B",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-09A",
+    "VS-09B",
+    "VS-09C",
+    "VS-09D",
+    "VS-11",
+    "VS-15A",
+    "VS-19",
+    "VS-20",
+    "VS-22"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": "yes; ticket code, QR payload, delivery token, token hash primitives, tests, and missing TicketIssue token indexes only; no issuing, Attendee mutation, scanner/mobile sync, payment/order/inventory/delivery/WhatsApp behavior",
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_touched": [
+    "FastCheck.Sales.TicketIssue"
+  ],
+  "ash_resources_forbidden_from_mutation": [
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.PaymentEvent",
+    "FastCheck.Sales.DeliveryAttempt",
+    "FastCheck.Sales.Conversation",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "existing_systems_forbidden_from_mutation": [
+    "FastCheck.Attendees",
+    "FastCheck.Attendees.Scan",
+    "FastCheck.Attendees.Reconciliation",
+    "FastCheck.Events.Sync",
+    "Android mobile API",
+    "Scanner routes and scanner hot path"
+  ],
+  "plain_elixir_modules_expected": [
+    "FastCheck.Tickets.CodeGenerator",
+    "FastCheck.Tickets.QrPayload",
+    "FastCheck.Tickets.DeliveryToken",
+    "FastCheck.Tickets.TokenHash"
+  ],
+  "preferred_files": [
+    "lib/fastcheck/tickets/code_generator.ex",
+    "lib/fastcheck/tickets/qr_payload.ex",
+    "lib/fastcheck/tickets/delivery_token.ex",
+    "lib/fastcheck/tickets/token_hash.ex",
+    "config/runtime.exs",
+    "priv/repo/migrations/*_add_ticket_token_indexes.exs"
+  ],
+  "preferred_test_files": [
+    "test/fastcheck/tickets/code_generator_test.exs",
+    "test/fastcheck/tickets/qr_payload_test.exs",
+    "test/fastcheck/tickets/delivery_token_test.exs",
+    "test/fastcheck/tickets/token_hash_test.exs",
+    "test/fastcheck/tickets/ticket_token_indexes_test.exs",
+    "test/fastcheck/tickets/ticket_token_security_test.exs",
+    "test/fastcheck/tickets/ticket_token_boundary_test.exs"
+  ],
+  "identifier_model": {
+    "ticket_code": {
+      "purpose": "human/support reference and durable unique ticket identifier",
+      "entropy_bits_minimum": 128,
+      "stored_plaintext": true,
+      "grants_secure_ticket_access": false
+    },
+    "qr_token": {
+      "purpose": "scanner QR payload secret where scanner model supports opaque token",
+      "entropy_bits_minimum": 128,
+      "stored_plaintext": false,
+      "stored_hash_field": "qr_token_hash"
+    },
+    "delivery_token": {
+      "purpose": "secure customer ticket-page bearer token",
+      "entropy_bits_minimum": 256,
+      "stored_plaintext": false,
+      "stored_hash_field": "delivery_token_hash",
+      "expires_field": "delivery_token_expires_at"
+    }
+  },
+  "required_indexes": [
+    "unique(ticket_code)",
+    "unique(qr_token_hash) where qr_token_hash is not null",
+    "unique(delivery_token_hash) where delivery_token_hash is not null",
+    "index(delivery_token_expires_at) where delivery_token_hash is not null",
+    "index(status, delivery_token_expires_at)",
+    "index(scanner_status)"
+  ],
+  "forbidden_changes": [
+    "TicketIssue creation from orders",
+    "Tickets.Issuer implementation",
+    "Attendee creation or mutation",
+    "scanner route or scanner hot-path change",
+    "Android/mobile sync change",
+    "DeliveryAttempt creation",
+    "WhatsApp/Meta/email sending",
+    "Paystack/payment/order/checkout state mutation",
+    "Redis inventory mutation",
+    "plaintext qr_token or delivery_token persistence",
+    "raw token/PII/provider payload logging",
+    "using delivery_token as QR scanner token",
+    "using ticket_code alone as secure ticket-page bearer token"
+  ],
+  "red_green_tests": {
+    "ticket_code": [
+      "RED ticket code is sequential or derived from DB/order/customer/provider data",
+      "GREEN ticket code is random, non-sequential, URL/QR safe, and >=128 bits entropy",
+      "RED ticket_code unique DB constraint is missing",
+      "GREEN sales_ticket_issues has unique(ticket_code)"
+    ],
+    "qr_payload": [
+      "RED QR payload includes PII, order id, payment reference, or delivery URL",
+      "GREEN QR payload includes only approved version prefix and opaque code/token",
+      "RED parser accepts malformed payload silently",
+      "GREEN parser returns explicit ok/error tuples",
+      "RED VS-08 modifies scanner or Android scanner behavior",
+      "GREEN no scanner/mobile code paths are modified"
+    ],
+    "delivery_token": [
+      "RED plaintext delivery_token is stored or logged",
+      "GREEN only delivery_token_hash is persisted/logged in redacted form",
+      "RED token hash uses plain SHA256 without a secret",
+      "GREEN hash uses secret-backed HMAC or approved helper",
+      "RED delivery token has too little entropy",
+      "GREEN delivery token uses >=256 bits randomness",
+      "RED expired/revoked token validates successfully",
+      "GREEN expired/revoked token is rejected",
+      "RED missing token secret uses insecure default",
+      "GREEN missing token secret fails closed in production"
+    ],
+    "indexes_and_lookup": [
+      "RED delivery_token_hash lookup would scan table or compare plaintext",
+      "GREEN hash-first indexed lookup contract is present",
+      "RED qr_token_hash partial unique index is absent",
+      "GREEN qr_token_hash partial unique index exists where field exists",
+      "RED delivery_token_hash partial unique index is absent",
+      "GREEN delivery_token_hash partial unique index exists where field exists"
+    ],
+    "boundary_security": [
+      "RED VS-08 creates TicketIssue/Attendee/DeliveryAttempt records or enqueues issuance/delivery workers",
+      "GREEN VS-08 only provides generator/hash/payload/index foundations",
+      "RED VS-08 mutates Order/PaymentAttempt/PaymentEvent/CheckoutSession/Redis inventory/WhatsApp behavior",
+      "GREEN no payment/order/checkout/inventory/WhatsApp behavior exists",
+      "RED logs or telemetry include plaintext token, raw bearer QR payload, PII, provider payload, or secret",
+      "GREEN logs and telemetry contain only sanitized metadata"
+    ]
+  },
+  "performance_scaling_review": {
+    "hot_data": [
+      "plaintext tokens in memory only during generation/render/send"
+    ],
+    "warm_data": [
+      "none in VS-08"
+    ],
+    "cold_data": [
+      "TicketIssue token hashes and expiry metadata in Postgres"
+    ],
+    "redis_structures": [
+      "none required in VS-08; future secure ticket rate limiting may use sorted sets"
+    ],
+    "ttl_strategy": {
+      "delivery_token": "expires via delivery_token_expires_at; exact duration must follow VS-00B security policy",
+      "qr_token": "no Redis TTL; revoked via TicketIssue state/hash semantics"
+    },
+    "invalidation_triggers": [
+      "TicketIssue token rotation invalidates secure ticket page cache in future VS-11",
+      "TicketIssue revocation/refund/cancellation invalidates ticket page and scanner-facing caches in future VS-15A",
+      "Delivery token expiry must prevent future cached access"
+    ],
+    "pubsub_rules": [
+      "none required in VS-08; future broadcasts must never include plaintext tokens"
+    ],
+    "indexes_required": [
+      "unique(ticket_code)",
+      "unique(qr_token_hash) where qr_token_hash is not null",
+      "unique(delivery_token_hash) where delivery_token_hash is not null",
+      "index(delivery_token_expires_at) where delivery_token_hash is not null",
+      "index(status, delivery_token_expires_at)",
+      "index(scanner_status)"
+    ]
+  },
+  "next_slice": "VS-09A — Ticket Issuance Contract and Idempotency Model",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0025_VS-08_ticket-code-qr-delivery-token-foundation/",
+  "normalization": {
+    "batch": "0023_0025",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "normalized_at": "2026-06-14"
+  }
+}

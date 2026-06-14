@@ -1,0 +1,147 @@
+{
+  "pack_id": "0044_VS-22_end-to-end-sandbox-tests",
+  "slice": "VS-22",
+  "name": "End-to-End Sandbox Tests",
+  "version": "v1.0",
+  "date": "2026-06-13",
+  "status": "QA / hardening slice",
+  "repo_truth": "JCSchoeman96/FastCheckin",
+  "primary_area": [
+    "QA",
+    "Integration",
+    "Sandbox",
+    "Failure-path proof"
+  ],
+  "depends_on": [
+    "selected launch scope",
+    "VS-05",
+    "VS-06C",
+    "VS-07C",
+    "VS-09D",
+    "VS-10",
+    "VS-11",
+    "VS-14",
+    "VS-15A",
+    "VS-21A",
+    "VS-21B",
+    "VS-15B if admin refund/revoke is launch scope",
+    "VS-16-VS-20 if WhatsApp-first launch scope"
+  ],
+  "blocks": [
+    "VS-23B",
+    "VS-23C",
+    "paid production launch"
+  ],
+  "repo_truth_findings": {
+    "data_case": "FastCheck.DataCase uses SQL Sandbox and imports FastCheck.Fixtures",
+    "conn_case": "FastCheckWeb.ConnCase provides Phoenix.ConnTest setup",
+    "fixtures": "FastCheck.Fixtures creates events and attendees",
+    "test_config": "Oban testing :manual, Swoosh test adapter, SQL Sandbox, mobile scan in-memory store"
+  },
+  "recommended_files": [
+    "test/fastcheck/sales/e2e/checkout_to_scanner_test.exs",
+    "test/fastcheck/sales/e2e/payment_failure_paths_test.exs",
+    "test/fastcheck/sales/e2e/checkout_expiry_recovery_test.exs",
+    "test/fastcheck/sales/e2e/revocation_scanner_visibility_test.exs",
+    "test/fastcheck/sales/e2e/admin_assisted_sales_test.exs",
+    "test/fastcheck/messaging/whatsapp/e2e/whatsapp_paid_core_test.exs",
+    "test/support/sales_fixtures.ex",
+    "test/support/fake_paystack.ex",
+    "test/support/fake_meta_whatsapp.ex",
+    "test/support/e2e_assertions.ex",
+    "test/support/redis_sandbox.ex",
+    "test/support/oban_assertions.ex"
+  ],
+  "test_matrix": [
+    "core paid happy path",
+    "duplicate webhook and worker retries",
+    "payment mismatch and manual review",
+    "checkout expiry and late payment",
+    "revocation/refund scanner denial",
+    "WhatsApp-first paid core if in launch scope",
+    "admin-assisted sales if in launch scope",
+    "redaction and Sentry/log safety"
+  ],
+  "out_of_scope": [
+    "new production business behavior",
+    "new provider HTTP behavior",
+    "new Paystack verification rules",
+    "new ticket issuance behavior",
+    "new scanner logic",
+    "new WhatsApp menu behavior",
+    "admin UI feature implementation",
+    "runbook finalization"
+  ],
+  "required_indexes_review": [
+    "orders(status, inserted_at)",
+    "orders(public_reference)",
+    "checkout_sessions(status, expires_at)",
+    "payment_attempts(provider, provider_reference)",
+    "payment_events(provider, provider_event_id)",
+    "ticket_issues(sales_order_id, status)",
+    "ticket_issues(ticket_code)",
+    "ticket_issues(attendee_id)",
+    "delivery_attempts(sales_order_id, status)",
+    "delivery_attempts(ticket_issue_id, status)",
+    "state_transitions(entity_type, entity_id, inserted_at)",
+    "attendees(event_id, ticket_code)",
+    "attendee_invalidation_events(event_id, id)"
+  ],
+  "performance_scaling": {
+    "hot_data": [
+      "Redis inventory holds",
+      "Redis WhatsApp dedupe/session keys",
+      "scanner/mobile hot state"
+    ],
+    "warm_data": [
+      "Cachex/Redis dashboard aggregates",
+      "offer availability",
+      "active event/offer display"
+    ],
+    "cold_data": [
+      "Postgres Sales resources",
+      "Attendees",
+      "PaymentEvents",
+      "TicketIssues",
+      "DeliveryAttempts",
+      "StateTransitions"
+    ],
+    "rules": [
+      "no production Redis keys in tests",
+      "no wall-clock sleeps for TTL behavior",
+      "bounded concurrency tests only",
+      "assert no oversell",
+      "assert no duplicate issuance or duplicate inventory consumption"
+    ]
+  },
+  "security_redaction_targets": [
+    "buyer_email",
+    "buyer_phone",
+    "phone_e164",
+    "WhatsApp wa_id",
+    "WhatsApp message body",
+    "Paystack authorization_url",
+    "Paystack access_code",
+    "provider raw payload",
+    "Meta access token",
+    "Meta app secret",
+    "delivery token plaintext",
+    "delivery_token_hash",
+    "qr_token_hash",
+    "secure ticket URL"
+  ],
+  "next_slice": "VS-23A — Launch Runbook Draft",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0044_VS-22_end-to-end-sandbox-tests",
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "normalization": {
+    "normalized": true,
+    "normalized_batch": "0041_0044",
+    "normalized_on": "2026-06-14",
+    "canonical_base": "docs/fastcheck_sales/feature_packs",
+    "semantic_changes": false,
+    "semantic_change_notes": []
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "pack_id": "0020_VS-06B_paystack-transaction-initialization",
+  "slice_id": "VS-06B",
+  "name": "Paystack Transaction Initialization",
+  "version": "v1.0",
+  "status": "implementation_planning_pack",
+  "primary_area": "Payments / Checkout / Sales / Ash Actions / Security / Tests",
+  "depends_on": [
+    "VS-05",
+    "VS-06A",
+    "VS-00A",
+    "VS-00B",
+    "VS-01C",
+    "VS-01F",
+    "VS-21A"
+  ],
+  "blocks": [
+    "VS-06C",
+    "VS-07A",
+    "VS-07B",
+    "VS-07C",
+    "VS-19"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_referenced": [
+    "FastCheck.Sales.OrderLine",
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.PaymentEvent"
+  ],
+  "ash_resources_created": [],
+  "ash_resources_modified": [
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.PaymentAttempt",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "plain_elixir_modules_to_create_or_update": [
+    "FastCheck.Sales.Payments.TransactionInitialization"
+  ],
+  "provider_modules_used": [
+    "FastCheck.Payments.Paystack.TransactionInitializer",
+    "FastCheck.Payments.Paystack.ResponseSanitizer",
+    "FastCheck.Payments.Paystack.Error"
+  ],
+  "preferred_files": [
+    "lib/fastcheck/sales/payments/transaction_initialization.ex",
+    "lib/fastcheck/sales/payment_attempt.ex",
+    "lib/fastcheck/sales/order.ex",
+    "lib/fastcheck/sales/checkout_session.ex",
+    "lib/fastcheck/sales/state_transition.ex"
+  ],
+  "preferred_test_files": [
+    "test/fastcheck/sales/payments/transaction_initialization_test.exs",
+    "test/fastcheck/sales/payment_attempt_initialization_actions_test.exs",
+    "test/fastcheck/sales/payments/paystack_initialization_idempotency_test.exs",
+    "test/fastcheck/sales/payments/paystack_initialization_security_test.exs"
+  ],
+  "forbidden_changes": [
+    "Paystack HTTP calls inside Ash resource actions",
+    "Paystack webhook controller or route",
+    "Paystack webhook worker",
+    "PaymentEvent persistence",
+    "Transaction verification workflow",
+    "mark_paid_unverified or mark_paid_verified",
+    "Ticket issuance",
+    "Attendee creation",
+    "Scanner changes",
+    "WhatsApp or Meta API behavior",
+    "Redis inventory consume/release",
+    "Refund or revocation behavior",
+    "Admin manual review UI"
+  ],
+  "red_green_tests": {
+    "type": "implementation_tests_red_first_green_after",
+    "red_requires_failure_when": [
+      "Valid active checkout cannot initialize a Paystack transaction",
+      "Cancelled/expired/refunded/ticket_issued orders call Paystack",
+      "Expired checkout sessions call Paystack",
+      "Missing buyer_email calls Paystack without approved policy",
+      "Amount/currency/provider_reference can be supplied by client input",
+      "Double-submit creates duplicate PaymentAttempts or duplicate provider calls",
+      "Provider timeout raises raw exception or marks order paid",
+      "PaymentEvent persistence or webhook controller appears in this slice",
+      "Ticket issuance, Attendee creation, scanner, WhatsApp, or Redis inventory mutation appears",
+      "authorization_url, access_code, raw response, email, phone, Authorization header, or secrets appear in logs"
+    ],
+    "green_requires": [
+      "Valid active checkout initializes Paystack and creates an idempotent PaymentAttempt",
+      "Backend-derived amount/currency/reference/email/callback_url are used",
+      "Invalid states return safe errors and do not call Paystack",
+      "Duplicate initialization returns existing active attempt/link",
+      "Provider failures are normalized and do not mark order paid or consume inventory",
+      "StateTransition audit is appended for all state changes",
+      "Boundary tests prove no webhook, verification, ticketing, scanner, Redis, or WhatsApp behavior was added",
+      "Logs and errors redact all sensitive fields"
+    ]
+  },
+  "security_impact": "Introduces backend payment-link creation and storage of restricted authorization_url/access_code fields; requires strict redaction and actor checks.",
+  "performance_impact": "Adds bounded external HTTP call from a service layer with idempotency; must not hold DB transactions across provider calls or touch hot inventory mutation.",
+  "next_slice": "VS-06C Paystack Initialization Tests",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0020_VS-06B_paystack-transaction-initialization/",
+  "normalization": {
+    "batch": "0020_0022",
+    "canonical_root": "docs/fastcheck_sales/feature_packs/",
+    "source_docs_repo_relative": true,
+    "legacy_nested_root_removed": true,
+    "semantic_changes": false,
+    "normalized_at": "2026-06-14"
+  }
+}

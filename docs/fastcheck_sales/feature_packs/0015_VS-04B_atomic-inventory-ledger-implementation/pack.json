@@ -1,0 +1,129 @@
+{
+  "pack_id": "0015_VS-04B_atomic-inventory-ledger-implementation",
+  "slice_id": "VS-04B",
+  "name": "Atomic Inventory Ledger Implementation",
+  "version": "v1.0",
+  "status": "implementation_planning_pack",
+  "primary_area": "Redis / Lua / Inventory / Concurrency / Tests",
+  "depends_on": [
+    "VS-00A",
+    "VS-00B",
+    "VS-00C",
+    "VS-00D",
+    "VS-01B",
+    "VS-01G",
+    "VS-03",
+    "VS-04A"
+  ],
+  "blocks": [
+    "VS-04C",
+    "VS-05",
+    "VS-14"
+  ],
+  "source_docs": [
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md",
+    "docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md"
+  ],
+  "implementation_code_allowed": true,
+  "ash_domain": "FastCheck.Sales",
+  "ash_resources_referenced": [
+    "FastCheck.Sales.TicketOffer",
+    "FastCheck.Sales.CheckoutSession",
+    "FastCheck.Sales.Order",
+    "FastCheck.Sales.StateTransition"
+  ],
+  "ash_resources_created": [],
+  "ash_resources_modified": [],
+  "plain_elixir_modules_to_create_or_update": [
+    "FastCheck.Sales.Inventory.ReservationLedger",
+    "FastCheck.Sales.Inventory.RedisScripts"
+  ],
+  "preferred_files": [
+    "lib/fastcheck/sales/inventory/reservation_ledger.ex",
+    "lib/fastcheck/sales/inventory/redis_scripts.ex",
+    "test/fastcheck/sales/inventory/reservation_ledger_test.exs",
+    "test/fastcheck/sales/inventory/reservation_ledger_concurrency_test.exs",
+    "test/fastcheck/sales/inventory/redis_scripts_test.exs",
+    "test/fastcheck/sales/inventory/inventory_boundary_test.exs"
+  ],
+  "forbidden_changes": [
+    "Checkout workflow implementation",
+    "Order state machine implementation",
+    "PaymentAttempt/Paystack implementation",
+    "Webhook behavior",
+    "WhatsApp/Meta API behavior",
+    "Ticket issuing",
+    "Attendee/scanner changes",
+    "LiveView/admin UI",
+    "Full Redis/Postgres reconciliation tooling",
+    "Ash resource Redis mutation"
+  ],
+  "required_operations": [
+    "initialize_offer(offer_id, configured_quantity)",
+    "reserve(offer_id, order_public_reference, quantity, ttl_seconds, idempotency_key)",
+    "consume(offer_id, order_public_reference, quantity, idempotency_key)",
+    "release(offer_id, order_public_reference, idempotency_key)",
+    "expire_due_holds(now)",
+    "get_availability(offer_id)"
+  ],
+  "redis_structures_required": {
+    "sales:offer:{offer_id}:inventory": "hash",
+    "sales:offer:{offer_id}:holds": "zset",
+    "sales:hold:{public_reference}": "hash",
+    "sales:order:{public_reference}:lock": "short-lived SET NX PX key",
+    "sales:inventory:dedupe:{operation}:{idempotency_key}": "string_or_hash_with_ttl",
+    "sales:inventory:events:{offer_id}": "list_or_stream_like_audit_trail"
+  },
+  "red_green_tests": {
+    "type": "implementation_tests_red_first_green_after",
+    "red_requires_failure_when": [
+      "ReservationLedger module is missing",
+      "RedisScripts module is missing",
+      "reserve/5 is missing or non-atomic",
+      "consume/4 is missing or non-idempotent",
+      "release/3 is missing or non-idempotent",
+      "expire_due_holds/1 releases consumed holds",
+      "reserve oversells under sequential or concurrent calls",
+      "reserve allows negative or zero quantity",
+      "reserve accepts invalid TTL",
+      "Redis unavailable falls back to Postgres and accepts reservation",
+      "Redis keys/logs include PII or tokens",
+      "Ash resources/controllers directly mutate inventory Redis keys"
+    ],
+    "green_requires": [
+      "initialize_offer creates healthy inventory state",
+      "reserve/5 atomically decreases availability and creates a hold",
+      "reserve/5 returns insufficient_inventory safely",
+      "reserve/5 is idempotent by idempotency key",
+      "consume/4 atomically converts held to consumed",
+      "consume/4 cannot consume twice",
+      "release/3 returns held inventory to availability once",
+      "release/3 cannot release consumed holds",
+      "expire_due_holds/1 only expires due held holds",
+      "get_availability/1 reads Redis hot snapshot",
+      "concurrent reserves never oversell",
+      "Redis unavailable fails closed",
+      "no PII or secrets in inventory keys/logs",
+      "only ReservationLedger/RedisScripts mutate inventory keys"
+    ]
+  },
+  "channel_strategy": "multi_channel_whatsapp_first",
+  "primary_production_channel": "whatsapp_first_paid_core",
+  "secondary_sales_paths": [
+    "admin_assisted_sales",
+    "web_checkout_sales",
+    "internal_pilot_sales"
+  ],
+  "performance_impact": "Implements Redis hot inventory layer; reservation path avoids Postgres live counter and prevents oversell under concurrency",
+  "security_impact": "Inventory Redis keys/events/logs must not contain PII, tokens, Paystack payloads, or Meta payloads",
+  "next_slice": "VS-04C Inventory Reconciliation and Recovery",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0015_VS-04B_atomic-inventory-ledger-implementation",
+  "normalization": {
+    "status": "normalized",
+    "normalized_at": "2026-06-14",
+    "canonical_repo_root": "docs/fastcheck_sales/feature_packs",
+    "source_docs_repo_relative": true,
+    "semantic_changes": false,
+    "legacy_nested_roots_removed": true
+  }
+}
