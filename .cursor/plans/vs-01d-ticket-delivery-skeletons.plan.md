@@ -4,22 +4,22 @@ overview: Add read-only Ash/Postgres skeleton resources TicketIssue and Delivery
 todos:
   - id: beads-branch
     content: "Verify Beads/Dolt, create/claim VS-01D bead; branch-only: git switch main && git pull && git switch -c vs-01d-ticket-delivery-skeletons"
-    status: pending
+    status: completed
   - id: red-tests
     content: "Write RED tests: update domain_shell + boundary tests; add ticket_and_delivery skeleton/migration tests + vs_01d_boundary_test"
-    status: pending
+    status: completed
   - id: migration
     content: "Add single migration *create_ticket_and_delivery_resource_skeletons.exs with CHECK constraints (incl. attempt_number >= 1), FKs, partial uniques, named indexes"
-    status: pending
+    status: completed
   - id: ash-resources
     content: "Implement TicketIssue + DeliveryAttempt; register in FastCheck.Sales; Order/OrderLine has_many only; mark all seven sensitive/restricted fields sensitive?: true"
-    status: pending
+    status: completed
   - id: slice-docs
     content: Add docs/fastcheck_sales/slices/VS-01D_TICKET_AND_DELIVERY_RESOURCE_SKELETONS.md (canonical plan file committed in same PR)
-    status: pending
+    status: completed
   - id: verify
     content: Run mix test test/fastcheck/sales/ and mix precommit; close Bead with Dolt sync
-    status: pending
+    status: completed
 isProject: false
 ---
 
