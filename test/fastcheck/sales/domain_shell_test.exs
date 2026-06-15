@@ -10,7 +10,8 @@ defmodule FastCheck.Sales.DomainShellTest do
     FastCheck.Sales.PaymentAttempt,
     FastCheck.Sales.PaymentEvent,
     FastCheck.Sales.TicketIssue,
-    FastCheck.Sales.DeliveryAttempt
+    FastCheck.Sales.DeliveryAttempt,
+    FastCheck.Sales.Conversation
   ]
 
   test "FastCheck.Sales exists and is registered as the Ash domain" do
@@ -19,21 +20,22 @@ defmodule FastCheck.Sales.DomainShellTest do
     assert FastCheck.Sales in Application.fetch_env!(:fastcheck, :ash_domains)
   end
 
-  test "FastCheck.Sales registers exactly the VS-01D sales resources" do
+  test "FastCheck.Sales registers exactly the VS-01E sales resources" do
     assert Ash.Domain.Info.resources(FastCheck.Sales) == @expected_resource_modules
   end
 
-  test "VS-01D resource modules are available" do
+  test "VS-01E resource modules are available" do
     for module <- @expected_resource_modules do
-      assert Code.ensure_loaded?(module), "#{inspect(module)} must exist through VS-01D"
+      assert Code.ensure_loaded?(module), "#{inspect(module)} must exist through VS-01E"
     end
   end
 
-  test "only VS-01D Sales resource files exist" do
+  test "only VS-01E Sales resource files exist" do
     assert Path.wildcard("priv/repo/migrations/*sales*.exs") != []
 
     assert Path.wildcard("lib/fastcheck/sales/*.ex") |> Enum.sort() == [
              "lib/fastcheck/sales/checkout_session.ex",
+             "lib/fastcheck/sales/conversation.ex",
              "lib/fastcheck/sales/delivery_attempt.ex",
              "lib/fastcheck/sales/order.ex",
              "lib/fastcheck/sales/order_line.ex",

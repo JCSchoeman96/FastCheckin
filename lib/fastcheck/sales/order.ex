@@ -117,6 +117,12 @@ defmodule FastCheck.Sales.Order do
     has_many :delivery_attempts, FastCheck.Sales.DeliveryAttempt do
       destination_attribute(:sales_order_id)
     end
+
+    belongs_to :conversation, FastCheck.Sales.Conversation do
+      source_attribute(:sales_conversation_id)
+      attribute_type(:integer)
+      allow_nil?(true)
+    end
   end
 
   identities do
