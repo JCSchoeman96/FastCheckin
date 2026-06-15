@@ -1,12 +1,9 @@
 defmodule FastCheck.Sales.CoreResourceBoundaryTest do
   use ExUnit.Case, async: true
 
-  @forbidden_resource_modules [
-    FastCheck.Sales.Conversation
-  ]
+  @forbidden_resource_modules []
 
   @forbidden_paths [
-    "lib/fastcheck/sales/conversation.ex",
     "lib/fastcheck/sales/inventory",
     "lib/fastcheck/payments/paystack",
     "lib/fastcheck/messaging/whatsapp",

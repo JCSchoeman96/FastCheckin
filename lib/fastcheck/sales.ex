@@ -2,10 +2,10 @@ defmodule FastCheck.Sales do
   @moduledoc """
   Ash domain boundary for FastCheck Sales.
 
-  VS-01D registers durable core, checkout/payment, and ticket/delivery audit
-  resource skeletons only. Inventory, workflow actions, Paystack integration,
-  delivery sending, ticket issuance, and scanner behavior are added by later
-  approved slices.
+  VS-01E registers durable core, checkout/payment, ticket/delivery audit, and
+  conversation checkpoint resource skeletons only. Inventory, workflow actions,
+  Paystack integration, delivery sending, ticket issuance, WhatsApp runtime, and
+  scanner behavior are added by later approved slices.
   """
 
   use Ash.Domain, otp_app: :fastcheck
@@ -20,5 +20,6 @@ defmodule FastCheck.Sales do
     resource(FastCheck.Sales.PaymentEvent)
     resource(FastCheck.Sales.TicketIssue)
     resource(FastCheck.Sales.DeliveryAttempt)
+    resource(FastCheck.Sales.Conversation)
   end
 end

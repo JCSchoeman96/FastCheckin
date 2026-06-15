@@ -13,7 +13,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     "sales_ticket_offers"
   ]
 
-  test "creates the expected Sales table inventory through VS-01D" do
+  test "keeps the VS-01D ticket and delivery tables present" do
     existing_tables =
       Repo.query!(
         """
@@ -26,8 +26,11 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
         []
       ).rows
       |> List.flatten()
+      |> MapSet.new()
 
-    assert existing_tables == @sales_tables
+    for table <- @sales_tables do
+      assert table in existing_tables, "VS-01D table #{table} must remain present"
+    end
   end
 
   test "ticket and delivery tables expose required columns" do
