@@ -112,8 +112,17 @@ The merge commit summary also records the implementation scope:
   transitions.
 - Add Postgres tables, constraints, indexes, and boundary tests.
 
-No full-suite, precommit, or CI result was present in the PR body inspected for
-this handoff.
+PR #331 body listed the focused Sales test commands. The implementation report
+also recorded:
+
+- `mix deps.get`
+- `mix ecto.migrate`
+- `mix format --check-formatted`
+- `mix compile --warnings-as-errors`
+- `mix test` — 353 tests, 0 failures, 4 skipped
+- `mix precommit` — passed; 353 tests, 0 failures, 4 skipped
+
+GitHub CI for PR #331 completed successfully before merge.
 
 ## Known Limitations
 
