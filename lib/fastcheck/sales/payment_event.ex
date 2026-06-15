@@ -8,7 +8,8 @@ defmodule FastCheck.Sales.PaymentEvent do
 
   use Ash.Resource,
     domain: FastCheck.Sales,
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
 
   postgres do
     table("sales_payment_events")
@@ -31,6 +32,21 @@ defmodule FastCheck.Sales.PaymentEvent do
       end
 
       filter(expr(id == ^arg(:id)))
+    end
+  end
+
+  policies do
+    policy action_type(:read) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
+    end
+  end
+
+  field_policies do
+    private_fields(:include)
+
+    field_policy :* do
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
     end
   end
 

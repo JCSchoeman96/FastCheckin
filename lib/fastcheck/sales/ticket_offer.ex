@@ -8,7 +8,8 @@ defmodule FastCheck.Sales.TicketOffer do
 
   use Ash.Resource,
     domain: FastCheck.Sales,
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
 
   postgres do
     table("sales_ticket_offers")
@@ -28,6 +29,31 @@ defmodule FastCheck.Sales.TicketOffer do
       end
 
       filter(expr(id == ^arg(:id)))
+    end
+  end
+
+  policies do
+    bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
+      authorize_if(always())
+    end
+
+    policy action_type(:read) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
+    end
+
+    policy action_type(:read) do
+      authorize_if(FastCheck.Sales.PolicyChecks.EventAllowed)
+    end
+  end
+
+  field_policies do
+    private_fields(:include)
+
+    field_policy :* do
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin, :operator]}
+      )
     end
   end
 

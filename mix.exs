@@ -57,6 +57,7 @@ defmodule FastCheck.MixProject do
       {:postgrex, ">= 0.0.0"},
       {:ash, "~> 3.27"},
       {:ash_postgres, "~> 2.9"},
+      {:simple_sat, "~> 0.1.4"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 1.1.17"},
