@@ -9,7 +9,8 @@ defmodule FastCheck.Sales.Conversation do
 
   use Ash.Resource,
     domain: FastCheck.Sales,
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
 
   postgres do
     table("sales_conversations")
@@ -41,6 +42,21 @@ defmodule FastCheck.Sales.Conversation do
       end
 
       filter(expr(phone_e164 == ^arg(:phone_e164)))
+    end
+  end
+
+  policies do
+    policy action_type(:read) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
+    end
+  end
+
+  field_policies do
+    private_fields(:include)
+
+    field_policy :* do
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
     end
   end
 

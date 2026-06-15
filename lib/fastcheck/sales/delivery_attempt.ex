@@ -8,7 +8,8 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
   use Ash.Resource,
     domain: FastCheck.Sales,
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
 
   postgres do
     table("sales_delivery_attempts")
@@ -50,6 +51,35 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       end
 
       filter(expr(status == ^arg(:status)))
+    end
+  end
+
+  policies do
+    bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
+      authorize_if(always())
+    end
+
+    policy action_type(:read) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
+    end
+
+    policy action_type(:read) do
+      authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, relationship_path: [:order]})
+    end
+  end
+
+  field_policies do
+    private_fields(:include)
+
+    field_policy [:recipient, :provider_error_message, :failure_reason] do
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin]})
+    end
+
+    field_policy :* do
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin, :operator]}
+      )
     end
   end
 

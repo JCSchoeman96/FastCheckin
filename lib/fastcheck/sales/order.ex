@@ -8,7 +8,8 @@ defmodule FastCheck.Sales.Order do
 
   use Ash.Resource,
     domain: FastCheck.Sales,
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    authorizers: [Ash.Policy.Authorizer]
 
   postgres do
     table("sales_orders")
@@ -41,6 +42,35 @@ defmodule FastCheck.Sales.Order do
       end
 
       filter(expr(public_reference == ^arg(:public_reference)))
+    end
+  end
+
+  policies do
+    bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
+      authorize_if(always())
+    end
+
+    policy action_type(:read) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
+    end
+
+    policy action_type(:read) do
+      authorize_if(FastCheck.Sales.PolicyChecks.EventAllowed)
+    end
+  end
+
+  field_policies do
+    private_fields(:include)
+
+    field_policy [:buyer_name, :buyer_phone, :buyer_email] do
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin]})
+    end
+
+    field_policy :* do
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin, :operator]}
+      )
     end
   end
 
