@@ -94,6 +94,10 @@ defmodule FastCheck.Sales.OrderLine do
       attribute_type(:integer)
       allow_nil?(false)
     end
+
+    has_many :ticket_issues, FastCheck.Sales.TicketIssue do
+      destination_attribute(:sales_order_line_id)
+    end
   end
 
   identities do

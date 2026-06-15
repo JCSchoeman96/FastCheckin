@@ -109,6 +109,14 @@ defmodule FastCheck.Sales.Order do
     has_many :payment_attempts, FastCheck.Sales.PaymentAttempt do
       destination_attribute(:sales_order_id)
     end
+
+    has_many :ticket_issues, FastCheck.Sales.TicketIssue do
+      destination_attribute(:sales_order_id)
+    end
+
+    has_many :delivery_attempts, FastCheck.Sales.DeliveryAttempt do
+      destination_attribute(:sales_order_id)
+    end
   end
 
   identities do
