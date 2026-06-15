@@ -9,6 +9,7 @@ import Config
 
 config :fastcheck,
   ecto_repos: [FastCheck.Repo],
+  ash_domains: [FastCheck.Sales],
   generators: [timestamp_type: :utc_datetime]
 
 # `GET /api/v1/mobile/attendees`: use :repeatable_read so invalidations + attendees + version
