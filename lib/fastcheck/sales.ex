@@ -1,13 +1,18 @@
 defmodule FastCheck.Sales do
   @moduledoc """
-  Empty Ash domain shell for FastCheck Sales.
+  Ash domain boundary for FastCheck Sales.
 
-  VS-01A only establishes the Sales Ash boundary. Sales resources and durable
-  business state are added by later slices.
+  VS-01B registers the durable core Sales resource skeletons only. Checkout,
+  payment, inventory, delivery, ticket issuance, and scanner behavior are added
+  by later approved slices.
   """
 
   use Ash.Domain, otp_app: :fastcheck
 
   resources do
+    resource(FastCheck.Sales.TicketOffer)
+    resource(FastCheck.Sales.Order)
+    resource(FastCheck.Sales.OrderLine)
+    resource(FastCheck.Sales.StateTransition)
   end
 end

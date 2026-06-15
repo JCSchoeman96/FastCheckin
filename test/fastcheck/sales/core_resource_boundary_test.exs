@@ -1,0 +1,66 @@
+defmodule FastCheck.Sales.CoreResourceBoundaryTest do
+  use ExUnit.Case, async: true
+
+  @forbidden_resource_modules [
+    FastCheck.Sales.CheckoutSession,
+    FastCheck.Sales.PaymentAttempt,
+    FastCheck.Sales.PaymentEvent,
+    FastCheck.Sales.TicketIssue,
+    FastCheck.Sales.DeliveryAttempt,
+    FastCheck.Sales.Conversation
+  ]
+
+  @forbidden_paths [
+    "lib/fastcheck/sales/checkout_session.ex",
+    "lib/fastcheck/sales/payment_attempt.ex",
+    "lib/fastcheck/sales/payment_event.ex",
+    "lib/fastcheck/sales/ticket_issue.ex",
+    "lib/fastcheck/sales/delivery_attempt.ex",
+    "lib/fastcheck/sales/conversation.ex",
+    "lib/fastcheck/sales/inventory",
+    "lib/fastcheck/payments/paystack",
+    "lib/fastcheck/messaging/whatsapp",
+    "lib/fastcheck/tickets",
+    "lib/fastcheck_web/live/sales",
+    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",
+    "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
+  ]
+
+  test "later Sales resources are not implemented in VS-01B" do
+    for module <- @forbidden_resource_modules do
+      refute Code.ensure_loaded?(module), "#{inspect(module)} is out of scope for VS-01B"
+    end
+  end
+
+  test "forbidden VS-01B boundary paths do not exist" do
+    for path <- @forbidden_paths do
+      refute File.exists?(path), "#{path} is out of scope for VS-01B"
+    end
+
+    assert Path.wildcard("lib/fastcheck/workers/*sales*") == []
+  end
+
+  test "existing scanner, mobile, event, attendee, Tickera, and Android surfaces remain untouched" do
+    changed_files =
+      System.cmd("git", ["diff", "--name-only", "main...HEAD"])
+      |> elem(0)
+      |> String.split("\n", trim: true)
+
+    forbidden_changed_prefixes = [
+      "android/",
+      "lib/fastcheck/attendees/",
+      "lib/fastcheck/events/",
+      "lib/fastcheck/ticketing/",
+      "lib/fastcheck/tickera",
+      "lib/fastcheck_web/controllers/",
+      "lib/fastcheck_web/live/",
+      "lib/fastcheck_web/router.ex"
+    ]
+
+    for file <- changed_files,
+        prefix <- forbidden_changed_prefixes,
+        String.starts_with?(file, prefix) do
+      flunk("#{file} must not change in VS-01B")
+    end
+  end
+end
