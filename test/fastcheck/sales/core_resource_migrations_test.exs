@@ -8,7 +8,7 @@ defmodule FastCheck.Sales.CoreResourceMigrationsTest do
     "sales_ticket_offers"
   ]
 
-  test "creates exactly the VS-01B sales tables" do
+  test "keeps the VS-01B core sales tables present" do
     existing_tables =
       Repo.query!(
         """
@@ -21,8 +21,11 @@ defmodule FastCheck.Sales.CoreResourceMigrationsTest do
         []
       ).rows
       |> List.flatten()
+      |> MapSet.new()
 
-    assert existing_tables == @sales_tables
+    for table <- @sales_tables do
+      assert table in existing_tables, "VS-01B table #{table} must remain present"
+    end
   end
 
   test "sales tables expose required columns" do
