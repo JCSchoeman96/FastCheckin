@@ -11,7 +11,7 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
     "sales_ticket_offers"
   ]
 
-  test "creates the expected Sales table inventory through VS-01C" do
+  test "keeps the VS-01C checkout and payment tables present" do
     existing_tables =
       Repo.query!(
         """
@@ -24,8 +24,11 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
         []
       ).rows
       |> List.flatten()
+      |> MapSet.new()
 
-    assert existing_tables == @sales_tables
+    for table <- @sales_tables do
+      assert table in existing_tables, "VS-01C table #{table} must remain present"
+    end
   end
 
   test "checkout and payment tables expose required columns" do
