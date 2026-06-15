@@ -151,6 +151,12 @@ defmodule FastCheck.Repo.Migrations.CreateCheckoutAndPaymentResourceSkeletons do
     )
 
     create(
+      constraint(:sales_payment_events, :sales_payment_events_dedupe_identity_present,
+        check: "provider_event_id IS NOT NULL OR payload_hash IS NOT NULL"
+      )
+    )
+
+    create(
       unique_index(:sales_checkout_sessions, [:sales_order_id],
         name: :sales_checkout_sessions_sales_order_id_uidx
       )

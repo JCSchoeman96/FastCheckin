@@ -162,6 +162,10 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
       insert_payment_event!("not_a_state")
     end)
 
+    assert_db_error(~r/sales_payment_events_dedupe_identity_present/, fn ->
+      insert_payment_event!("stored", provider_event_id: nil, payload_hash: nil)
+    end)
+
     insert_checkout_session!(order_id, "created")
 
     assert_db_error(~r/sales_checkout_sessions_sales_order_id_uidx/, fn ->

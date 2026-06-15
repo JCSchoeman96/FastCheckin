@@ -41,6 +41,8 @@ Combined with VS-01B, the Sales table inventory through VS-01C is seven tables.
 - `PaymentAttempt` belongs to `Order` (`sales_order_id`).
 - `PaymentEvent` has no foreign key to `PaymentAttempt` so unmatched or early
   webhooks can be stored durably.
+- `sales_payment_events` requires `provider_event_id IS NOT NULL OR payload_hash IS NOT NULL`
+  so every stored event has a dedupe identity.
 
 ## Sensitive Fields
 
