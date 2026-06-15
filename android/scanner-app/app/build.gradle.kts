@@ -203,6 +203,21 @@ val selectedApiBaseUrl =
         else -> releaseApiBaseUrl
     }
 
+val playVersionPropertiesFile = rootProject.file("version.properties")
+val playVersionProperties =
+    Properties().apply {
+        if (playVersionPropertiesFile.isFile) {
+            playVersionPropertiesFile.inputStream().use(::load)
+        }
+    }
+
+fun requirePlayVersionProperty(name: String): String =
+    playVersionProperties.getProperty(name)?.trim()?.takeIf { it.isNotBlank() }
+        ?: error("Missing $name in ${playVersionPropertiesFile.path}")
+
+val playVersionCode = requirePlayVersionProperty("versionCode").toInt()
+val playVersionName = requirePlayVersionProperty("versionName")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -216,11 +231,11 @@ extensions.configure<ApplicationExtension>("android") {
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
-        applicationId = "za.co.voelgoed.fastcheck"
+        applicationId = "coza.voelgoed.fastcheck"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-scaffold"
+        versionCode = playVersionCode
+        versionName = playVersionName
 
         buildConfigField("String", "API_TARGET", "\"$fastcheckApiTarget\"")
         buildConfigField("String", "API_BASE_URL", "\"$selectedApiBaseUrl\"")
@@ -247,6 +262,9 @@ extensions.configure<ApplicationExtension>("android") {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")
             buildConfigField("boolean", "ENABLE_HTTP_BASIC_LOGGING", "false")
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
