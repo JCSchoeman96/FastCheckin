@@ -59,113 +59,159 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
       metadata
     )
 
-    with {:ok, durable} <- DurableSnapshot.fetch(offer_id),
-         {:ok, redis_before} <- fetch_redis_or_missing(offer_id),
-         analysis <- analyze(durable, redis_before) do
-      report =
-        %ReconciliationReport{
-          offer_id: offer_id,
-          event_id: durable.event_id,
-          started_at: started_at,
-          finished_at: nil,
-          health_before: health_label(redis_before),
-          health_after: nil,
-          redis_available_before: redis_available(redis_before),
-          redis_available_after: nil,
-          expected_available: max(durable.safe_available, 0),
-          active_hold_count: durable.active_hold_count,
-          sold_count: durable.sold_count,
-          orphan_hold_count: 0,
-          consumed_count: durable.sold_count,
-          released_count: 0,
-          expired_count: 0,
-          manual_review_required?: analysis.manual_review_required?,
-          dry_run?: dry_run?,
-          repair_applied?: false,
-          anomalies: analysis.anomalies,
-          planned_actions: analysis.planned_actions,
-          applied_actions: []
-        }
+    case DurableSnapshot.fetch(offer_id) do
+      {:ok, durable} ->
+        redis_before = fetch_redis_state(offer_id)
 
-      cond do
-        analysis.manual_review_required? ->
-          finished = finish_report(report, redis_before, started_at)
+        case redis_before do
+          {:error, :ledger_unavailable, meta} ->
+            :telemetry.execute(
+              [:fastcheck, :sales, :inventory, :reconciliation_failed],
+              %{count: 1},
+              Map.merge(metadata, %{reason: :ledger_unavailable})
+            )
 
-          :telemetry.execute(
-            [:fastcheck, :sales, :inventory, :manual_review_required],
-            %{count: 1},
-            Map.merge(metadata, %{
-              event_id: durable.event_id,
-              manual_review_required: true,
-              safe_available: durable.safe_available
-            })
-          )
+            {:error, {:ledger_unavailable, meta}}
 
-          {:manual_review_required, finished}
+          redis_state ->
+            analysis = analyze(durable, redis_state)
+            report = build_report(durable, analysis, redis_state, started_at, dry_run?)
 
-        dry_run? or not allow_repair? ->
-          finished = finish_report(report, redis_before, started_at)
-          emit_reconciled(metadata, durable, finished)
-          {:ok, finished}
+            cond do
+              analysis.manual_review_required? ->
+                {:manual_review_required,
+                 finish_manual_review(
+                   report,
+                   redis_state,
+                   started_at,
+                   metadata,
+                   durable,
+                   analysis
+                 )}
 
-        true ->
-          case Recovery.apply_safe_repairs(offer_id, durable, analysis, opts) do
-            {:ok, recovery_report} ->
-              {:ok, redis_after} = fetch_redis_or_missing(offer_id)
+              dry_run? or not allow_repair? ->
+                finished = finish_report(report, redis_state, started_at)
+                emit_reconciled(metadata, durable, finished)
+                {:ok, finished}
 
-              finished =
-                report
-                |> Map.put(:repair_applied?, true)
-                |> Map.put(:applied_actions, recovery_report.applied_actions)
-                |> Map.put(:expired_count, recovery_report.expired_count)
-                |> finish_report(redis_after, started_at)
+              true ->
+                apply_repair_path(
+                  offer_id,
+                  durable,
+                  analysis,
+                  report,
+                  redis_state,
+                  started_at,
+                  metadata,
+                  opts
+                )
+            end
+        end
 
-              emit_reconciled(metadata, durable, finished)
-              {:ok, finished}
-
-            {:manual_review_required, recovery_report} ->
-              finished =
-                report
-                |> Map.put(:applied_actions, recovery_report.applied_actions)
-                |> finish_report(redis_before, started_at)
-
-              {:manual_review_required, finished}
-
-            {:error, reason} ->
-              :telemetry.execute(
-                [:fastcheck, :sales, :inventory, :reconciliation_failed],
-                %{count: 1},
-                Map.merge(metadata, %{reason: reason})
-              )
-
-              {:error, reason}
-          end
-      end
-    else
       {:error, :offer_not_found} = error ->
         error
+    end
+  end
 
-      {:error, :ledger_unavailable, meta} ->
+  defp build_report(durable, analysis, redis_state, started_at, dry_run?) do
+    %ReconciliationReport{
+      offer_id: durable.offer_id,
+      event_id: durable.event_id,
+      started_at: started_at,
+      finished_at: nil,
+      health_before: health_label(redis_state),
+      health_after: nil,
+      redis_available_before: redis_available(redis_state),
+      redis_available_after: nil,
+      expected_available: max(durable.safe_available, 0),
+      active_hold_count: durable.active_hold_count,
+      sold_count: durable.sold_count,
+      orphan_hold_count: analysis.orphan_hold_count,
+      consumed_count: durable.sold_count,
+      released_count: 0,
+      expired_count: 0,
+      manual_review_required?: analysis.manual_review_required?,
+      dry_run?: dry_run?,
+      repair_applied?: false,
+      anomalies: analysis.anomalies,
+      planned_actions: analysis.planned_actions,
+      applied_actions: []
+    }
+  end
+
+  defp finish_manual_review(report, redis_state, started_at, metadata, durable, analysis) do
+    finished = finish_report(report, redis_state, started_at)
+
+    :telemetry.execute(
+      [:fastcheck, :sales, :inventory, :manual_review_required],
+      %{count: 1},
+      Map.merge(metadata, %{
+        event_id: durable.event_id,
+        manual_review_required: true,
+        safe_available: durable.safe_available,
+        orphan_hold_count: analysis.orphan_hold_count
+      })
+    )
+
+    finished
+  end
+
+  defp apply_repair_path(
+         offer_id,
+         durable,
+         analysis,
+         report,
+         redis_state,
+         started_at,
+         metadata,
+         opts
+       ) do
+    case Recovery.apply_safe_repairs(offer_id, durable, analysis, opts) do
+      {:ok, recovery_report} ->
+        redis_after = fetch_redis_state(offer_id)
+
+        finished =
+          report
+          |> Map.put(:repair_applied?, true)
+          |> Map.put(:applied_actions, recovery_report.applied_actions)
+          |> Map.put(:expired_count, recovery_report.expired_count)
+          |> finish_report(redis_after, started_at)
+
+        emit_reconciled(metadata, durable, finished)
+        {:ok, finished}
+
+      {:manual_review_required, recovery_report} ->
+        finished =
+          report
+          |> Map.put(:applied_actions, recovery_report.applied_actions)
+          |> finish_report(redis_state, started_at)
+
+        {:manual_review_required, finished}
+
+      {:error, reason} ->
         :telemetry.execute(
           [:fastcheck, :sales, :inventory, :reconciliation_failed],
           %{count: 1},
-          Map.merge(metadata, %{reason: :ledger_unavailable})
+          Map.merge(metadata, %{reason: reason})
         )
 
-        {:error, {:ledger_unavailable, meta}}
+        {:error, reason}
     end
   end
 
   defp analyze(durable, redis_before) do
     expected = max(durable.safe_available, 0)
     redis_available = redis_available(redis_before)
+    orphan_hold_count = orphan_hold_count(durable.offer_id)
 
     drift_down? = is_integer(redis_available) and redis_available > expected
     drift_up? = is_integer(redis_available) and redis_available < expected
     missing_redis? = match?({:error, :reconciliation_required, _}, redis_before)
+    orphan_holds? = orphan_hold_count > 0
 
     manual_review_required? =
       durable.manual_review_required? or
+        orphan_holds? or
         (drift_up? and durable.manual_review_order_count > 0)
 
     planned_actions =
@@ -188,23 +234,31 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
       |> maybe_add(drift_down?, %{code: :redis_overstated_availability})
       |> maybe_add(drift_up?, %{code: :redis_understated_availability})
       |> maybe_add(missing_redis?, %{code: :missing_redis_inventory})
+      |> maybe_add(orphan_holds?, %{code: :orphan_redis_holds, count: orphan_hold_count})
 
     %{
       manual_review_required?: manual_review_required?,
       planned_actions: planned_actions,
       anomalies: anomalies,
       expected_available: expected,
-      missing_redis?: missing_redis?
+      missing_redis?: missing_redis?,
+      orphan_hold_count: orphan_hold_count
     }
   end
 
-  defp fetch_redis_or_missing(offer_id) do
-    case ReservationLedger.get_availability(offer_id) do
-      {:ok, _} = ok -> ok
-      {:error, :reconciliation_required, meta} -> {:error, :reconciliation_required, meta}
-      {:error, :ledger_unavailable, meta} -> {:error, :ledger_unavailable, meta}
-      {:error, atom, meta} -> {:error, atom, meta}
+  defp orphan_hold_count(offer_id) do
+    with {:ok, redis_refs} <- ReservationLedger.list_hold_refs(offer_id),
+         {:ok, durable_refs} <- DurableSnapshot.order_public_references(offer_id) do
+      redis_refs
+      |> Enum.reject(&MapSet.member?(durable_refs, &1))
+      |> length()
+    else
+      _ -> 0
     end
+  end
+
+  defp fetch_redis_state(offer_id) do
+    ReservationLedger.get_availability(offer_id)
   end
 
   defp finish_report(report, redis_state, started_at) do
@@ -227,6 +281,7 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
         redis_available: report.redis_available_after,
         sold_count: report.sold_count,
         active_hold_count: report.active_hold_count,
+        orphan_hold_count: report.orphan_hold_count,
         manual_review_required: report.manual_review_required?
       })
     )

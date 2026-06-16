@@ -107,11 +107,23 @@ defmodule FastCheck.Sales.Inventory.Recovery do
     dry_run? = Keyword.get(opts, :dry_run, true)
     allow_repair? = Keyword.get(opts, :allow_repair, false)
 
-    with {:ok, durable} <- DurableSnapshot.fetch(offer_id) do
+    with {:ok, durable} <- DurableSnapshot.fetch(offer_id),
+         {:ok, due_refs} <- ReservationLedger.list_due_hold_refs(offer_id, now) do
+      allowed_refs = DurableSnapshot.expirable_unpaid_hold_refs(offer_id, due_refs)
+
+      planned = %{
+        action: :expire_due_holds,
+        due_count: length(due_refs),
+        allowed_count: length(allowed_refs),
+        allowed_refs: allowed_refs
+      }
+
       if dry_run? or not allow_repair? do
-        {:ok, base_report(offer_id, durable, true, false, [%{action: :expire_due_holds}])}
+        {:ok, base_report(offer_id, durable, true, false, [planned])}
       else
-        case ReservationLedger.expire_due_holds_for_offer(offer_id, now) do
+        case ReservationLedger.expire_due_holds_for_offer(offer_id, now,
+               allowed_refs: allowed_refs
+             ) do
           {:ok, %{expired_count: expired, skipped_count: skipped}} ->
             {:ok,
              %RecoveryReport{
@@ -121,7 +133,7 @@ defmodule FastCheck.Sales.Inventory.Recovery do
                repair_applied?: true,
                expired_count: expired,
                skipped_count: skipped,
-               applied_actions: [%{action: :expire_due_holds, expired_count: expired}],
+               applied_actions: [Map.put(planned, :expired_count, expired)],
                manual_review_required?: false,
                anomalies: []
              }}

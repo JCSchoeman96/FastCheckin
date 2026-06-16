@@ -40,13 +40,22 @@ defmodule FastCheck.Sales.Inventory.RecoveryTest do
     assert snapshot.ledger_state == :healthy
   end
 
-  test "repair_stale_holds releases only expired unpaid holds", %{offer: offer} do
-    order_ref = "ORD-EXP-#{System.unique_integer([:positive])}"
-    idem = "idem-exp-#{System.unique_integer([:positive])}"
+  test "repair_stale_holds releases only durable-proven expired unpaid holds", %{offer: offer} do
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        quantity: 1,
+        idempotency_key: "recovery-unpaid-#{System.unique_integer([:positive])}"
+      })
 
-    assert {:ok, _} = ReservationLedger.reserve(offer.id, order_ref, 1, 1, idem)
+    assert {:ok, %{order: order}} =
+             Checkout.start_checkout(input, Fixtures.system_actor(),
+               effective_sales_channel: "whatsapp"
+             )
 
-    now = System.system_time(:millisecond) + 5_000
+    expire_checkout_session!(order.id)
+
+    now = System.system_time(:millisecond) + 700_000
 
     assert {:ok, report} =
              Recovery.repair_stale_holds(offer.id, now, dry_run: false, allow_repair: true)
@@ -56,6 +65,50 @@ defmodule FastCheck.Sales.Inventory.RecoveryTest do
     assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
     assert snapshot.available_quantity == 10
     assert snapshot.reserved_quantity == 0
+  end
+
+  test "paid_verified expired hold is not released", %{offer: offer} do
+    public_reference = "FC-PAID-#{System.unique_integer([:positive])}"
+    insert_paid_order!(offer.id, public_reference: public_reference, quantity: 1)
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(
+               offer.id,
+               public_reference,
+               1,
+               1,
+               "idem-paid-#{public_reference}"
+             )
+
+    now = System.system_time(:millisecond) + 5_000
+
+    assert {:ok, report} =
+             Recovery.repair_stale_holds(offer.id, now, dry_run: false, allow_repair: true)
+
+    assert report.expired_count == 0
+    assert report.skipped_count >= 1
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
+    assert snapshot.reserved_quantity == 1
+    assert snapshot.available_quantity == 9
+  end
+
+  test "unknown order ref expired hold is not released", %{offer: offer} do
+    unknown_ref = "ORD-UNKNOWN-#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(offer.id, unknown_ref, 1, 1, "idem-unknown-#{unknown_ref}")
+
+    now = System.system_time(:millisecond) + 5_000
+
+    assert {:ok, report} =
+             Recovery.repair_stale_holds(offer.id, now, dry_run: false, allow_repair: true)
+
+    assert report.expired_count == 0
+    assert report.skipped_count >= 1
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
+    assert snapshot.reserved_quantity == 1
   end
 
   test "repair_stale_holds does not release consumed holds", %{offer: offer} do
@@ -104,5 +157,41 @@ defmodule FastCheck.Sales.Inventory.RecoveryTest do
 
     assert {:manual_review_required, _} =
              Recovery.rebuild_offer_inventory(offer.id, dry_run: false, allow_repair: true)
+  end
+
+  defp expire_checkout_session!(order_id) do
+    Repo.query!(
+      """
+      UPDATE sales_checkout_sessions
+      SET expires_at = now() AT TIME ZONE 'utc' - interval '5 minutes',
+          updated_at = now()
+      WHERE sales_order_id = $1
+      """,
+      [order_id]
+    )
+  end
+
+  defp insert_paid_order!(offer_id, opts) do
+    quantity = Keyword.get(opts, :quantity, 1)
+    public_reference = Keyword.fetch!(opts, :public_reference)
+
+    Repo.query!(
+      """
+      WITH ord AS (
+        INSERT INTO sales_orders
+          (public_reference, event_id, source_channel, status, total_amount_cents, currency, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 'test', 'paid_verified', 100, 'ZAR', now(), now())
+        RETURNING id
+      )
+      INSERT INTO sales_order_lines
+        (sales_order_id, ticket_offer_id, line_number, ticket_type, offer_name_snapshot,
+         event_name_snapshot, quantity, unit_amount_cents, total_amount_cents, currency,
+         metadata, inserted_at, updated_at)
+      SELECT id, $3, 1, 'general', 'Offer', 'Event', $4, 100, 100, 'ZAR', '{}', now(), now()
+      FROM ord
+      """,
+      [public_reference, Fixtures.event_id(), offer_id, quantity]
+    )
   end
 end

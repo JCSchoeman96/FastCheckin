@@ -15,6 +15,59 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
     {:ok, offer: offer}
   end
 
+  test "dry-run reconcile reports missing inventory hash with planned rebuild", %{offer: offer} do
+    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{offer.id}:inventory"])
+
+    assert {:ok, report} = Reconciler.reconcile_offer(offer.id, dry_run: true)
+    assert report.dry_run?
+    assert report.health_before == :reconciliation_required
+    assert report.redis_available_before == nil
+    assert report.expected_available == 10
+    refute report.repair_applied?
+    assert Enum.any?(report.planned_actions, &(&1.action == :rebuild_inventory))
+    assert Enum.any?(report.anomalies, &(&1.code == :missing_redis_inventory))
+  end
+
+  test "repair mode rebuilds missing inventory hash when durable state is safe", %{offer: offer} do
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        quantity: 2,
+        idempotency_key: "recon-missing-#{System.unique_integer([:positive])}"
+      })
+
+    assert {:ok, _} =
+             Checkout.start_checkout(input, Fixtures.system_actor(),
+               effective_sales_channel: "whatsapp"
+             )
+
+    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{offer.id}:inventory"])
+
+    assert {:ok, report} =
+             Reconciler.reconcile_offer(offer.id, dry_run: false, allow_repair: true)
+
+    assert report.repair_applied?
+    assert report.health_after == :healthy
+    assert report.redis_available_after == 8
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
+    assert snapshot.available_quantity == 8
+    assert snapshot.reserved_quantity == 2
+  end
+
+  test "orphan redis hold returns manual_review_required", %{offer: offer} do
+    orphan_ref = "ORD-ORPHAN-#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(offer.id, orphan_ref, 1, 1, "idem-orphan-#{orphan_ref}")
+
+    assert {:manual_review_required, report} = Reconciler.reconcile_offer(offer.id, dry_run: true)
+    assert report.manual_review_required?
+    assert report.orphan_hold_count == 1
+    assert Enum.any?(report.anomalies, &(&1.code == :orphan_redis_holds))
+    refute report.repair_applied?
+  end
+
   test "dry-run reconcile reports drift without mutating redis", %{offer: offer} do
     input =
       Fixtures.checkout_input(%{
