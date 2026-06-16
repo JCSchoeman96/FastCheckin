@@ -5,8 +5,8 @@ defmodule FastCheck.Repo.Migrations.AllowNullableSalesTicketOfferWindows do
 
   def change do
     alter table(:sales_ticket_offers) do
-      modify(:starts_at, :utc_datetime, null: true)
-      modify(:ends_at, :utc_datetime, null: true)
+      modify(:starts_at, :utc_datetime, null: true, from: {:utc_datetime, null: false})
+      modify(:ends_at, :utc_datetime, null: true, from: {:utc_datetime, null: false})
     end
 
     create(

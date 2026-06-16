@@ -96,6 +96,27 @@ defmodule FastCheck.Sales.TicketOfferPolicyTest do
     refute updated.sales_enabled
   end
 
+  test "system actor cannot mutate offers", %{offer_id: offer_id} do
+    offer =
+      TicketOffer
+      |> Query.for_read(
+        :get_by_id,
+        %{id: offer_id},
+        actor: system_actor([@event_id]),
+        authorize?: true
+      )
+      |> Ash.read_one!(authorize?: true)
+
+    assert_raise Ash.Error.Forbidden, fn ->
+      offer
+      |> Changeset.for_update(:disable_sales, %{},
+        actor: system_actor([@event_id]),
+        authorize?: true
+      )
+      |> Ash.update!(authorize?: true)
+    end
+  end
+
   defp insert_offer!(event_id) do
     result =
       Repo.query!(
@@ -123,4 +144,7 @@ defmodule FastCheck.Sales.TicketOfferPolicyTest do
 
   defp customer_actor(event_ids),
     do: %{actor_type: :customer_session, actor_id: "customer-1", allowed_event_ids: event_ids}
+
+  defp system_actor(event_ids),
+    do: %{actor_type: :system, actor_id: "system-1", allowed_event_ids: event_ids}
 end

@@ -76,6 +76,26 @@ defmodule FastCheck.Sales.TicketOfferTest do
     refute disabled.sales_enabled
   end
 
+  test "admin cannot enable_sales on archived offer" do
+    actor = admin_actor([@event_id])
+
+    archived_offer =
+      insert_offer!(
+        event_id: @event_id,
+        sales_enabled: false,
+        archived_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      )
+
+    assert_raise Ash.Error.Invalid, fn ->
+      archived_offer
+      |> Changeset.for_update(:enable_sales, %{},
+        actor: actor,
+        authorize?: true
+      )
+      |> Ash.update!(authorize?: true)
+    end
+  end
+
   test "create_offer rejects invalid currency and window values" do
     actor = admin_actor([@event_id])
 

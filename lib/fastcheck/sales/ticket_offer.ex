@@ -11,6 +11,9 @@ defmodule FastCheck.Sales.TicketOffer do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
+  alias Ash.Changeset
+  alias FastCheck.Sales.Offers.CacheInvalidation
+
   postgres do
     table("sales_ticket_offers")
     repo(FastCheck.Repo)
@@ -82,6 +85,17 @@ defmodule FastCheck.Sales.TicketOffer do
 
     update :enable_sales do
       require_atomic?(false)
+
+      change(fn changeset, _context ->
+        if Changeset.get_data(changeset, :archived_at) do
+          Changeset.add_error(changeset,
+            field: :archived_at,
+            message: "cannot enable archived offer"
+          )
+        else
+          changeset
+        end
+      end)
 
       change(set_attribute(:sales_enabled, true))
       change(optimistic_lock(:lock_version))
@@ -160,13 +174,12 @@ defmodule FastCheck.Sales.TicketOffer do
   end
 
   policies do
-    bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
-      authorize_if(always())
-    end
-
     policy action([:read, :get_by_id]) do
       access_type(:strict)
-      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
+
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator, :system]}
+      )
     end
 
     policy action([:list_active_for_event, :get_available_for_checkout]) do
@@ -174,7 +187,7 @@ defmodule FastCheck.Sales.TicketOffer do
 
       authorize_if(
         {FastCheck.Sales.PolicyChecks.ActorTypeIn,
-         actor_types: [:admin, :operator, :customer_session]}
+         actor_types: [:admin, :operator, :customer_session, :system]}
       )
     end
 
@@ -184,7 +197,9 @@ defmodule FastCheck.Sales.TicketOffer do
     end
 
     policy action([:read, :get_by_id]) do
-      authorize_if(FastCheck.Sales.PolicyChecks.EventAllowed)
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.EventAllowed, actor_types: [:admin, :operator, :system]}
+      )
     end
 
     policy action([:create_offer, :update_offer, :enable_sales, :disable_sales]) do
@@ -285,8 +300,8 @@ defmodule FastCheck.Sales.TicketOffer do
   end
 
   defp attach_cache_invalidation(changeset, _context) do
-    Ash.Changeset.after_action(changeset, fn _changeset, record ->
-      FastCheck.Sales.Offers.CacheInvalidation.invalidate_event_offers(record.event_id)
+    Changeset.after_action(changeset, fn _changeset, record ->
+      CacheInvalidation.invalidate_event_offers(record.event_id)
       {:ok, record}
     end)
   end
