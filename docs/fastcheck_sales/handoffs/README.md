@@ -13,3 +13,4 @@ what future slices can rely on, and what remains deferred.
 - [VS-03 — Ticket Offer Management](./VS-03_IMPLEMENTATION_HANDOFF.md)
 - [VS-04A — Inventory Ledger Contract Finalization](./VS-04A_IMPLEMENTATION_HANDOFF.md)
 - [VS-04B — Atomic Inventory Ledger Implementation](./VS-04B_IMPLEMENTATION_HANDOFF.md)
+- [VS-05 — Order and Checkout Core](./VS-05_IMPLEMENTATION_HANDOFF.md)
