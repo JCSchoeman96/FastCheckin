@@ -10,3 +10,4 @@ what future slices can rely on, and what remains deferred.
 - [VS-01F — Ash Policy Foundation](./VS-01F_IMPLEMENTATION_HANDOFF.md)
 - [VS-01G — Index and Migration Verification](./VS-01G_IMPLEMENTATION_HANDOFF.md)
 - [VS-02 — Attendee Origin Protection](./VS-02_IMPLEMENTATION_HANDOFF.md)
+- [VS-03 — Ticket Offer Management](./VS-03_IMPLEMENTATION_HANDOFF.md)
