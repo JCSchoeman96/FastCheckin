@@ -10,6 +10,11 @@ FastCheck.Sales.Inventory.ReservationLedger
 
 All inventory mutation must go through this boundary.
 
+Result envelope contract:
+
+- `{:ok, result_map}`
+- `{:error, error_code, metadata_map}`
+
 Forbidden operations:
 
 - direct Redis mutation from controllers;
@@ -18,29 +23,6 @@ Forbidden operations:
 - direct Redis mutation from Ash resources;
 - direct increment/decrement outside `ReservationLedger`;
 - manual Redis CLI fixes during live sale without runbook and audit.
-
-## `initialize_offer/4`
-
-```text
-initialize_offer(offer_id, configured_quantity, version, metadata)
-```
-
-Preconditions:
-
-- TicketOffer exists.
-- TicketOffer is not archived.
-- Configured quantity is non-negative.
-- Offer version/lock_version is known.
-- No active inconsistent Redis state exists unless reconcile mode is explicit.
-
-Outcomes:
-
-- Store offer metadata/version.
-- Initialize availability.
-- Mark inventory healthy only after success.
-- Publish availability change.
-
-Must not erase active holds unless recovery policy explicitly allows rebuild.
 
 ## `reserve/5`
 
@@ -63,7 +45,17 @@ Outcomes:
 | Insufficient inventory | No mutation; return `insufficient_inventory`. |
 | Duplicate same idempotency | Return existing hold/idempotent success. |
 | Duplicate different quantity | Return conflict/manual-review-required. |
-| Redis unhealthy | Reject with `inventory_unavailable`. |
+| Redis unhealthy | Reject with `:ledger_unavailable`. |
+
+Required success fields:
+
+- `offer_id`
+- `order_public_reference`
+- `quantity`
+- `available_after`
+- `hold_key`
+- `expires_at`
+- `revision`
 
 ## `consume/4`
 
@@ -84,6 +76,8 @@ Rules:
 - Mark hold consumed/sold.
 - Remove or mark zset hold so expiry cannot release it.
 - Reject missing/expired hold unless recovery policy applies.
+- If hold is expired/released, consume only through approved payment-after-expiry
+  re-reserve policy.
 
 ## `release/3`
 
@@ -133,9 +127,23 @@ mark_offer_health(offer_id, health_state, reason)
 Allowed health states:
 
 - `healthy`
-- `rebuilding`
 - `degraded`
+- `reconciliation_required`
 - `closed`
+
+Optional transient implementation phase:
+
+- `rebuilding` may be used only during reconciliation execution.
+- `rebuilding` fails closed like `reconciliation_required`.
+- `rebuilding` is internal/transient and does not replace
+  `reconciliation_required` in external outcomes.
+
+Also expose explicit convenience operations:
+
+```text
+mark_offer_degraded(offer_id, reason)
+mark_offer_healthy(offer_id)
+```
 
 ## `reconcile_offer/1`
 
@@ -146,7 +154,26 @@ reconcile_offer(offer_id)
 Rules:
 
 - Safe to run repeatedly.
-- Mark inventory rebuilding/degraded during reconciliation.
+- Mark inventory `reconciliation_required` before reconciliation starts.
+- Use optional transient `rebuilding` only while reconciliation runs.
 - Prefer durable issued-ticket/order facts over Redis counters.
 - Produce reconciliation report.
 - Do not reopen sale while inconsistent.
+
+## Required error families
+
+- `:offer_not_found`
+- `:offer_not_active`
+- `:invalid_quantity`
+- `:insufficient_inventory`
+- `:already_reserved`
+- `:already_consumed`
+- `:already_released`
+- `:hold_expired`
+- `:hold_not_found`
+- `:ledger_unavailable`
+- `:ledger_degraded`
+- `:lock_timeout`
+- `:reconciliation_required`
+- `:invalid_idempotency_key`
+- `:unexpected_redis_response`

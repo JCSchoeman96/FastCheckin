@@ -19,6 +19,35 @@
 - Late verified payment after expiry with no inventory moves to manual review.
 - WhatsApp/admin/internal/future web paths all use `ReservationLedger`.
 
+## VS-04B RED and GREEN Expectations
+
+RED until implemented:
+
+- No canonical `ReservationLedger` API contract assertions.
+- No explicit error-family assertions for lock/idempotency/degraded responses.
+- No concurrency race coverage for last-ticket reservation and expiry/consume
+  overlap.
+
+GREEN after implementation:
+
+- `reserve`/`consume`/`release`/`expire_due_holds` implement atomic outcomes.
+- Duplicate operations are idempotent and return stable results.
+- Degraded/unavailable/reconciliation-required states fail closed.
+- No operation drives inventory negative.
+
+## VS-04C RED and GREEN Expectations
+
+RED until implemented:
+
+- No deterministic reconciliation report/assertions.
+- No proof that durable state wins when Redis diverges.
+
+GREEN after implementation:
+
+- `reconcile_offer/1` deterministically repairs safe mismatches.
+- Ambiguous inventory remains degraded/manual-review.
+- Reconciliation gates checkout until healthy state restoration.
+
 ## Example RED Tests
 
 - Controller directly decrements Redis availability.
@@ -34,3 +63,4 @@
 - `release` is idempotent.
 - `reconcile_offer` reports and repairs deterministic mismatch.
 - Health `unknown` blocks reservation.
+- No PII or raw provider payloads in inventory keys/events/logs.

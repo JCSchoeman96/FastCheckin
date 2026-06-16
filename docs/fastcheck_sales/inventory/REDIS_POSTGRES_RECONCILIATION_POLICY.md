@@ -11,6 +11,12 @@ Reconciliation uses:
 - TicketIssue issued/revoked states.
 - PaymentAttempt `verified_success` and manual-review states.
 
+Durable precedence rule:
+
+- Postgres/Ash durable state is authoritative when Redis disagrees.
+- Redis is repaired to match durable state or marked degraded/manual-review when
+  ambiguity remains.
+
 ## General Admission Formula
 
 ```text
@@ -53,3 +59,4 @@ Each run must produce:
   availability.
 - Returning refunded/revoked tickets to saleable stock requires explicit policy
   and audit.
+- Reconciliation must increment inventory revision and stamp reconciliation time.

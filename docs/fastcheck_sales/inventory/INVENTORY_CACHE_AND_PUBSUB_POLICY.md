@@ -20,6 +20,23 @@
 - Missed PubSub updates must be recoverable from Redis hot state and durable
   reconciliation.
 
+Recommended topic families:
+
+- `sales:event:{event_id}:offers`
+- `sales:offer:{offer_id}:availability`
+
+Recommended event names:
+
+- `offer_availability_changed`
+- `inventory_ledger_degraded`
+- `inventory_reconciled`
+- `hold_expired`
+
+Payload rules:
+
+- Include identifiers, quantities, health state, and correlation id only.
+- Do not publish PII, provider payloads, or tokens.
+
 ## Forbidden
 
 - Polling loops over large tables during active sales.
