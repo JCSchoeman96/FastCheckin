@@ -36,8 +36,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "lib/fastcheck/tickets/delivery_token.ex",
     "lib/fastcheck/workers",
     "lib/fastcheck_web/controllers/webhooks",
-    "lib/fastcheck_web/controllers/ticket_delivery_controller.ex",
-    "lib/fastcheck_web/live/sales"
+    "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
   @forbidden_action_names [

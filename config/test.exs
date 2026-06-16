@@ -63,3 +63,4 @@ config :fastcheck, :mobile_scan_ingestion,
   store: FastCheck.TestSupport.Scans.InMemoryStore
 
 config :fastcheck, :sales_hold_token_pepper, "test-pepper"
+config :fastcheck, :sales_internal_pilot_enabled, true

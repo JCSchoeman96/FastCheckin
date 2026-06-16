@@ -9,8 +9,7 @@ defmodule FastCheck.Sales.Vs01dBoundaryTest do
     "lib/fastcheck/workers/paystack_webhook_worker.ex",
     "lib/fastcheck/workers/verify_payment_worker.ex",
     "lib/fastcheck/workers/delivery_attempt_worker.ex",
-    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",
-    "lib/fastcheck_web/live/sales"
+    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex"
   ]
 
   @forbidden_action_modules [

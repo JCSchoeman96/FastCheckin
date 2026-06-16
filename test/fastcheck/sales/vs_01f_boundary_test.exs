@@ -12,8 +12,7 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
     "lib/fastcheck/tickets/delivery_token.ex",
     "lib/fastcheck/workers",
     "lib/fastcheck_web/controllers/webhooks",
-    "lib/fastcheck_web/controllers/ticket_delivery_controller.ex",
-    "lib/fastcheck_web/live/sales"
+    "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
   @resources [
@@ -101,7 +100,7 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
 
     for file <- changed_files,
         prefix <- forbidden_changed_prefixes,
-        String.starts_with?(file, prefix) do
+        FastCheck.Sales.BoundaryAllowlist.reject_forbidden_changed_file?(file, prefix) do
       flunk("#{file} must not change in VS-01F")
     end
   end

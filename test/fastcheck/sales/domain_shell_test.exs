@@ -43,6 +43,7 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/payment_attempt.ex",
              "lib/fastcheck/sales/payment_event.ex",
              "lib/fastcheck/sales/policy_checks.ex",
+             "lib/fastcheck/sales/secondary_entrypoints.ex",
              "lib/fastcheck/sales/state_transition.ex",
              "lib/fastcheck/sales/state_transition_support.ex",
              "lib/fastcheck/sales/ticket_issue.ex",

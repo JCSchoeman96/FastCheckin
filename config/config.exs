@@ -29,6 +29,7 @@ config :fastcheck, :mobile_scan_ingestion,
 config :fastcheck, :event_post_grace_days, 14
 
 config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
+config :fastcheck, :sales_internal_pilot_enabled, true
 
 # Configures the endpoint
 config :fastcheck, FastCheckWeb.Endpoint,
