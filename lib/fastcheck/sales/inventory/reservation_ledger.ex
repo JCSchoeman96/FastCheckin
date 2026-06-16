@@ -157,27 +157,145 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
       offer_ids,
       {:ok, %{expired_count: 0, skipped_count: 0, errors: []}},
       fn offer_id, {:ok, acc} ->
-        case command_result(
-               [
-                 "ZRANGEBYSCORE",
-                 holds_key(offer_id),
-                 "-inf",
-                 Integer.to_string(now),
-                 "LIMIT",
-                 "0",
-                 Integer.to_string(@expire_batch_size)
-               ],
-               offer_id
-             ) do
-          {:ok, due_refs} when is_list(due_refs) ->
-            updated = Enum.reduce(due_refs, acc, &expire_one_for_hold(offer_id, &1, now, &2))
-            {:cont, {:ok, updated}}
+        case expire_due_holds_for_offer(offer_id, now) do
+          {:ok, partial} ->
+            merged = %{
+              acc
+              | expired_count: acc.expired_count + partial.expired_count,
+                skipped_count: acc.skipped_count + partial.skipped_count,
+                errors: partial.errors ++ acc.errors
+            }
+
+            {:cont, {:ok, merged}}
 
           {:error, atom, meta} ->
             {:halt, {:error, atom, meta}}
         end
       end
     )
+  end
+
+  @spec expire_due_holds_for_offer(integer(), integer()) ::
+          {:ok,
+           %{expired_count: non_neg_integer(), skipped_count: non_neg_integer(), errors: list()}}
+          | {:error, atom(), map()}
+  def expire_due_holds_for_offer(offer_id, now)
+      when is_integer(offer_id) and is_integer(now) do
+    case command_result(
+           [
+             "ZRANGEBYSCORE",
+             holds_key(offer_id),
+             "-inf",
+             Integer.to_string(now),
+             "LIMIT",
+             "0",
+             Integer.to_string(@expire_batch_size)
+           ],
+           offer_id
+         ) do
+      {:ok, due_refs} when is_list(due_refs) ->
+        acc =
+          Enum.reduce(due_refs, %{expired_count: 0, skipped_count: 0, errors: []}, fn ref, acc ->
+            expire_one_for_hold(offer_id, ref, now, acc)
+          end)
+
+        {:ok, acc}
+
+      {:error, atom, meta} ->
+        {:error, atom, meta}
+    end
+  end
+
+  @spec mark_offer_health(integer(), atom(), String.t() | nil) :: :ok | {:error, atom(), map()}
+  def mark_offer_health(offer_id, health_state, _reason)
+      when is_integer(offer_id) and
+             health_state in [
+               :healthy,
+               :degraded,
+               :reconciliation_required,
+               :closed,
+               :rebuilding
+             ] do
+    now = now_ms()
+    state_string = Atom.to_string(health_state)
+
+    with {:ok, revision} <- current_revision(offer_id),
+         {:ok, _} <-
+           command_result(
+             [
+               "HSET",
+               inventory_key(offer_id),
+               "ledger_state",
+               state_string,
+               "revision",
+               Integer.to_string(revision + 1),
+               "updated_at",
+               Integer.to_string(now)
+             ],
+             offer_id
+           ) do
+      :ok
+    else
+      {:error, _atom, _meta} = error -> error
+    end
+  end
+
+  def mark_offer_health(offer_id, _health_state, _reason),
+    do: {:error, :reconciliation_required, %{offer_id: offer_id}}
+
+  @type rebuild_counts :: %{
+          required(:configured_quantity) => non_neg_integer(),
+          required(:available_quantity) => non_neg_integer(),
+          required(:reserved_quantity) => non_neg_integer(),
+          required(:consumed_quantity) => non_neg_integer(),
+          optional(:ledger_state) => atom()
+        }
+
+  @spec rebuild_inventory(integer(), rebuild_counts()) :: :ok | {:error, atom(), map()}
+  def rebuild_inventory(offer_id, counts) when is_integer(offer_id) and is_map(counts) do
+    now = now_ms()
+    ledger_state = Map.get(counts, :ledger_state, :reconciliation_required)
+    state_string = Atom.to_string(ledger_state)
+
+    with {:ok, revision} <- current_revision(offer_id),
+         {:ok, _} <-
+           command_result(
+             [
+               "HSET",
+               inventory_key(offer_id),
+               "offer_id",
+               Integer.to_string(offer_id),
+               "configured_quantity",
+               Integer.to_string(counts.configured_quantity),
+               "available_quantity",
+               Integer.to_string(counts.available_quantity),
+               "reserved_quantity",
+               Integer.to_string(counts.reserved_quantity),
+               "consumed_quantity",
+               Integer.to_string(counts.consumed_quantity),
+               "ledger_state",
+               state_string,
+               "revision",
+               Integer.to_string(revision + 1),
+               "updated_at",
+               Integer.to_string(now),
+               "last_reconciled_at",
+               Integer.to_string(now)
+             ],
+             offer_id
+           ) do
+      :ok
+    else
+      {:error, _atom, _meta} = error -> error
+    end
+  end
+
+  defp current_revision(offer_id) do
+    case command_result(["HGET", inventory_key(offer_id), "revision"], offer_id) do
+      {:ok, nil} -> {:ok, 0}
+      {:ok, revision} -> {:ok, parse_int(revision)}
+      {:error, _atom, _meta} = error -> error
+    end
   end
 
   @spec get_availability(integer()) :: {:ok, availability_snapshot()} | {:error, atom(), map()}
