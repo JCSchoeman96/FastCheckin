@@ -2,11 +2,14 @@ defmodule FastCheckWeb.SentryFilter do
   @moduledoc """
   Sentry event filter to sanitize sensitive data before sending to Sentry.
 
-  Removes or redacts sensitive fields like passwords, tokens, and encryption keys
-  from exception reports.
+  Recursively redacts Sales-sensitive fields (PII, tokens, provider payloads,
+  payment URLs) from request data, headers, query params, and extra metadata.
+  Delegates map/list redaction to `FastCheck.Observability.Redactor`.
   """
 
   @behaviour Sentry.EventFilter
+
+  alias FastCheck.Observability.Redactor
 
   @impl true
   def exclude_exception?(_exception, _source), do: false
@@ -17,74 +20,70 @@ defmodule FastCheckWeb.SentryFilter do
     |> filter_extra_data()
   end
 
-  # Remove sensitive request data
   defp filter_request_data(%{request: request} = event) when is_map(request) do
     filtered_request =
       request
-      |> Map.update(:data, %{}, &redact_sensitive_fields/1)
-      |> Map.update(:headers, %{}, &redact_sensitive_headers/1)
+      |> Map.update(:data, %{}, &redact_structure/1)
+      |> Map.update(:headers, %{}, &redact_headers/1)
+      |> Map.update(:query_string, nil, &redact_query_string/1)
+      |> Map.update(:query, %{}, &redact_structure/1)
+      |> Map.update(:url, nil, &redact_url_field/1)
 
     %{event | request: filtered_request}
   end
 
   defp filter_request_data(event), do: event
 
-  # Remove sensitive extra data
   defp filter_extra_data(%{extra: extra} = event) when is_map(extra) do
-    %{event | extra: redact_sensitive_fields(extra)}
+    %{event | extra: redact_structure(extra)}
   end
 
   defp filter_extra_data(event), do: event
 
-  # Redact sensitive field values
-  defp redact_sensitive_fields(data) when is_map(data) do
-    Enum.into(data, %{}, fn {key, value} ->
-      if sensitive_key?(key) do
-        {key, "[FILTERED]"}
+  defp redact_structure(data) when is_map(data) do
+    Redactor.redact_map(data, preserve_safe_ids: true)
+  end
+
+  defp redact_structure(data) when is_list(data) do
+    Redactor.redact_value(:list, data, preserve_safe_ids: true)
+  end
+
+  defp redact_structure(data), do: data
+
+  defp redact_headers(headers) when is_map(headers) do
+    Enum.into(headers, %{}, fn {key, value} ->
+      normalized = String.downcase(to_string(key))
+
+      if sensitive_header?(normalized) do
+        {key, Redactor.filtered()}
       else
         {key, value}
       end
     end)
   end
 
-  defp redact_sensitive_fields(data), do: data
+  defp redact_headers(headers), do: headers
 
-  # Redact sensitive headers
-  defp redact_sensitive_headers(headers) when is_map(headers) do
-    headers
-    |> Enum.into(%{}, fn {key, value} ->
-      normalized_key = String.downcase(to_string(key))
-
-      if String.contains?(normalized_key, ["authorization", "cookie", "token"]) do
-        {key, "[FILTERED]"}
-      else
-        {key, value}
-      end
-    end)
-  end
-
-  defp redact_sensitive_headers(headers), do: headers
-
-  # Check if a key contains sensitive information
-  defp sensitive_key?(key) when is_binary(key) do
-    normalized = String.downcase(key)
-
+  defp sensitive_header?(normalized) do
     String.contains?(normalized, [
-      "password",
-      "secret",
-      "token",
-      "key",
       "authorization",
       "cookie",
-      "encrypt"
+      "token",
+      "signature",
+      "secret"
     ])
   end
 
-  defp sensitive_key?(key) when is_atom(key) do
-    key
-    |> Atom.to_string()
-    |> sensitive_key?()
+  defp redact_query_string(nil), do: nil
+
+  defp redact_query_string(query_string) when is_binary(query_string) do
+    Redactor.redact_url("http://localhost/?" <> query_string)
+    |> String.replace_prefix("http://localhost/", "")
   end
 
-  defp sensitive_key?(_), do: false
+  defp redact_query_string(_), do: Redactor.filtered()
+
+  defp redact_url_field(nil), do: nil
+  defp redact_url_field(url) when is_binary(url), do: Redactor.redact_url(url)
+  defp redact_url_field(url), do: url
 end

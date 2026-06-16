@@ -2,6 +2,7 @@ defmodule FastCheck.Sales.StateTransitionSupport do
   @moduledoc false
 
   alias Ash.Changeset
+  alias FastCheck.Observability.Redactor
   alias FastCheck.Sales.StateTransition
 
   @spec record!(
@@ -47,11 +48,6 @@ defmodule FastCheck.Sales.StateTransitionSupport do
   end
 
   defp sanitize_metadata(metadata) when is_map(metadata) do
-    metadata
-    |> Map.drop(["hold_token", :hold_token, "idempotency_key", :idempotency_key])
-    |> Enum.reject(fn {k, _v} ->
-      k in [:buyer_name, :buyer_phone, :buyer_email, "buyer_name", "buyer_phone", "buyer_email"]
-    end)
-    |> Map.new()
+    Redactor.safe_metadata(metadata)
   end
 end
