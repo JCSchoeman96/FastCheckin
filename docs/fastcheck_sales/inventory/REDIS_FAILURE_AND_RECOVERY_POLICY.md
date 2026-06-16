@@ -20,3 +20,14 @@
 - Rebuild/reconcile must not reopen sales until health is explicitly `healthy`.
 - Redis recovery must produce a reconciliation report.
 - Manual Redis intervention during live sale requires runbook and audit.
+- When state is uncertain, fail closed and require explicit recovery flow.
+- `ledger_unavailable`, `ledger_degraded`, and `reconciliation_required` are
+  explicit machine-readable outcomes.
+
+## Restart and Rebuild Contract
+
+- Redis restart must not auto-open checkout for affected offers.
+- Offers transition to `rebuilding` or `degraded` until reconciliation
+  completes.
+- Reconciliation-required offers must reject new reservations for all channels
+  (WhatsApp, admin-assisted, pilot, and future web).
