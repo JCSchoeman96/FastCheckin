@@ -223,6 +223,34 @@ defmodule FastCheck.Events.SyncTest do
              )
     end
 
+    test "full sync does not reconcile fastcheck_sales attendees that are absent from Tickera snapshot" do
+      event = create_event(%{total_tickets: 2})
+
+      sales_attendee =
+        create_attendee(event, %{
+          ticket_code: "SALES-PRESERVE-1",
+          source: "fastcheck_sales",
+          scan_eligibility: "active"
+        })
+
+      mock_tickera_sync_requests(
+        event_total: 0,
+        attendees: []
+      )
+
+      assert {:ok, _message} = Events.sync_event(event.id)
+
+      persisted = Repo.get!(Attendee, sales_attendee.id)
+      assert persisted.scan_eligibility == "active"
+      assert persisted.ineligibility_reason == nil
+
+      refute Repo.exists?(
+               from(i in AttendeeInvalidationEvent,
+                 where: i.attendee_id == ^sales_attendee.id and i.event_id == ^event.id
+               )
+             )
+    end
+
     test "incremental sync does not reconcile locals missing from the remote fetch" do
       last_sync_at =
         DateTime.utc_now() |> DateTime.add(-3600, :second) |> DateTime.truncate(:second)

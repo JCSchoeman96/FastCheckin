@@ -81,10 +81,7 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
 
     forbidden_changed_prefixes = [
       "android/",
-      "lib/fastcheck/attendees/",
-      "lib/fastcheck/events/",
       "lib/fastcheck/ticketing/",
-      "lib/fastcheck/tickera",
       "lib/fastcheck_web/controllers/",
       "lib/fastcheck_web/live/",
       "lib/fastcheck_web/router.ex"

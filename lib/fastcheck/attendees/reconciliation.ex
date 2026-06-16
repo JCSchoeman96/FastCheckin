@@ -18,6 +18,7 @@ defmodule FastCheck.Attendees.Reconciliation do
   @eligibility_active "active"
   @eligibility_not_scannable "not_scannable"
   @change_type_ineligible "ineligible"
+  @source_tickera "tickera"
 
   @doc """
   Normalizes ticket codes for consistent set comparison (matches Tickera import uniqueness).
@@ -59,7 +60,9 @@ defmodule FastCheck.Attendees.Reconciliation do
   defp mark_imported_seen(event_id, imported_list, sync_run_id, now, naive_now) do
     q =
       from(a in Attendee,
-        where: a.event_id == ^event_id and a.ticket_code in ^imported_list
+        where:
+          a.event_id == ^event_id and a.source == ^@source_tickera and
+            a.ticket_code in ^imported_list
       )
 
     Repo.update_all(q,
@@ -77,7 +80,8 @@ defmodule FastCheck.Attendees.Reconciliation do
     q =
       from(a in Attendee,
         where:
-          a.event_id == ^event_id and a.ticket_code in ^imported_list and
+          a.event_id == ^event_id and a.source == ^@source_tickera and
+            a.ticket_code in ^imported_list and
             a.scan_eligibility == ^@eligibility_not_scannable
       )
 
@@ -95,12 +99,15 @@ defmodule FastCheck.Attendees.Reconciliation do
     absent_query =
       if imported_list == [] do
         from(a in Attendee,
-          where: a.event_id == ^event_id and a.scan_eligibility == ^@eligibility_active
+          where:
+            a.event_id == ^event_id and a.source == ^@source_tickera and
+              a.scan_eligibility == ^@eligibility_active
         )
       else
         from(a in Attendee,
           where:
-            a.event_id == ^event_id and a.scan_eligibility == ^@eligibility_active and
+            a.event_id == ^event_id and a.source == ^@source_tickera and
+              a.scan_eligibility == ^@eligibility_active and
               a.ticket_code not in ^imported_list
         )
       end
