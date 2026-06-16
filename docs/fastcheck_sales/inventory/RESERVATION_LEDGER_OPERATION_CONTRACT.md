@@ -45,7 +45,7 @@ Outcomes:
 | Insufficient inventory | No mutation; return `insufficient_inventory`. |
 | Duplicate same idempotency | Return existing hold/idempotent success. |
 | Duplicate different quantity | Return conflict/manual-review-required. |
-| Redis unhealthy | Reject with `inventory_unavailable`. |
+| Redis unhealthy | Reject with `:ledger_unavailable`. |
 
 Required success fields:
 
@@ -127,9 +127,16 @@ mark_offer_health(offer_id, health_state, reason)
 Allowed health states:
 
 - `healthy`
-- `rebuilding`
 - `degraded`
+- `reconciliation_required`
 - `closed`
+
+Optional transient implementation phase:
+
+- `rebuilding` may be used only during reconciliation execution.
+- `rebuilding` fails closed like `reconciliation_required`.
+- `rebuilding` is internal/transient and does not replace
+  `reconciliation_required` in external outcomes.
 
 Also expose explicit convenience operations:
 
@@ -147,7 +154,8 @@ reconcile_offer(offer_id)
 Rules:
 
 - Safe to run repeatedly.
-- Mark inventory rebuilding/degraded during reconciliation.
+- Mark inventory `reconciliation_required` before reconciliation starts.
+- Use optional transient `rebuilding` only while reconciliation runs.
 - Prefer durable issued-ticket/order facts over Redis counters.
 - Produce reconciliation report.
 - Do not reopen sale while inconsistent.

@@ -58,6 +58,19 @@ This policy applies to:
 - `sales:inventory:events:{offer_id}` (bounded event trail)
 - `sales:event:{event_id}:offers` (warm event-offer cache key family)
 
+## Canonical `ledger_state` Values
+
+- `healthy`
+- `degraded`
+- `reconciliation_required`
+- `closed`
+
+Optional transient implementation phase:
+
+- `rebuilding` may be used only while reconciliation is actively executing.
+- `rebuilding` must fail closed like `reconciliation_required`.
+- `rebuilding` must not replace `reconciliation_required` in external outcomes.
+
 ## Canonical ReservationLedger Operations
 
 - `reserve(offer_id, order_public_reference, quantity, ttl_seconds, idempotency_key)`

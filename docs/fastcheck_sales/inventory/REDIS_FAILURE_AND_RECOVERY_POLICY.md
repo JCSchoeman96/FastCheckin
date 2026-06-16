@@ -27,7 +27,9 @@
 ## Restart and Rebuild Contract
 
 - Redis restart must not auto-open checkout for affected offers.
-- Offers transition to `rebuilding` or `degraded` until reconciliation
-  completes.
+- Offers transition to `reconciliation_required` (or optional transient
+  `rebuilding`) until reconciliation completes.
+- Optional transient `rebuilding` must fail closed exactly like
+  `reconciliation_required`.
 - Reconciliation-required offers must reject new reservations for all channels
   (WhatsApp, admin-assisted, pilot, and future web).
