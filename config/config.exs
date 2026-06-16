@@ -18,7 +18,7 @@ config :fastcheck, :mobile_sync_snapshot_isolation, :repeatable_read
 
 config :fastcheck, Oban,
   repo: FastCheck.Repo,
-  queues: [scan_persistence: 10],
+  queues: [scan_persistence: 10, sales_inventory: 5],
   plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
 
 config :fastcheck, :mobile_scan_ingestion,
