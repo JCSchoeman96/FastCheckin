@@ -15,3 +15,4 @@ what future slices can rely on, and what remains deferred.
 - [VS-04B — Atomic Inventory Ledger Implementation](./VS-04B_IMPLEMENTATION_HANDOFF.md)
 - [VS-04C — Inventory Reconciliation and Recovery](./VS-04C_IMPLEMENTATION_HANDOFF.md)
 - [VS-05 — Order and Checkout Core](./VS-05_IMPLEMENTATION_HANDOFF.md)
+- [VS-05A — Secondary Sales Entry Points](./VS-05A_IMPLEMENTATION_HANDOFF.md)
