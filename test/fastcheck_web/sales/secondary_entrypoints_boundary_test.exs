@@ -33,7 +33,12 @@ defmodule FastCheckWeb.Sales.SecondaryEntrypointsBoundaryTest do
   end
 
   test "only SecondaryEntrypoints may call Checkout.start_checkout" do
-    source = File.read!("lib/fastcheck/sales/secondary_entrypoints.ex")
-    assert source =~ "Checkout.start_checkout"
+    adapter_source = File.read!("lib/fastcheck/sales/secondary_entrypoints.ex")
+    admin_source = File.read!("lib/fastcheck_web/live/sales/admin_checkout_live.ex")
+    pilot_source = File.read!("lib/fastcheck_web/live/sales/internal_pilot_checkout_live.ex")
+
+    assert adapter_source =~ "Checkout.start_checkout"
+    refute admin_source =~ "Checkout.start_checkout"
+    refute pilot_source =~ "Checkout.start_checkout"
   end
 end

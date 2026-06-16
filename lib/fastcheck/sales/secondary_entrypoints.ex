@@ -20,10 +20,7 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
 
   @spec parse_event_id(term()) :: {:ok, pos_integer()} | {:error, :invalid}
   def parse_event_id(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, _} when int > 0 -> {:ok, int}
-      _ -> {:error, :invalid}
-    end
+    parse_strict_positive_int(String.trim(value))
   end
 
   def parse_event_id(value) when is_integer(value) and value > 0, do: {:ok, value}
@@ -154,21 +151,31 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
 
   defp parse_quantity(params) do
     case param(params, "quantity") do
-      nil -> {:error, :invalid_quantity}
-      value -> parse_positive_int(value)
+      nil ->
+        {:error, :invalid_quantity}
+
+      value ->
+        case parse_positive_int(value) do
+          {:ok, _} = ok -> ok
+          {:error, _} -> {:error, :invalid_quantity}
+        end
     end
   end
 
   defp parse_positive_int(value) when is_integer(value) and value > 0, do: {:ok, value}
 
   defp parse_positive_int(value) when is_binary(value) do
-    case Integer.parse(String.trim(value)) do
-      {int, _} when int > 0 -> {:ok, int}
-      _ -> {:error, :invalid}
-    end
+    parse_strict_positive_int(String.trim(value))
   end
 
   defp parse_positive_int(_), do: {:error, :invalid}
+
+  defp parse_strict_positive_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} when int > 0 -> {:ok, int}
+      _ -> {:error, :invalid}
+    end
+  end
 
   defp param(params, key) when is_map(params) and is_binary(key) do
     Map.get(params, key) || Map.get(params, safe_existing_atom(key))

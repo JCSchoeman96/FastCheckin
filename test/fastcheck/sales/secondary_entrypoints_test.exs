@@ -237,4 +237,39 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
                SecondaryEntrypoints.generate_idempotency_key()
              )
   end
+
+  describe "strict integer parsing" do
+    test "parse_event_id rejects partial and invalid strings" do
+      for invalid <- ["1abc", " 1x", "abc", "0", "-1", ""] do
+        assert {:error, :invalid} = SecondaryEntrypoints.parse_event_id(invalid)
+      end
+
+      assert {:ok, 1} = SecondaryEntrypoints.parse_event_id("1")
+      assert {:ok, 42} = SecondaryEntrypoints.parse_event_id(" 42 ")
+    end
+
+    test "checkout form integers reject partial parses", %{offer: offer} do
+      idem = SecondaryEntrypoints.generate_idempotency_key()
+
+      for invalid_quantity <- ["1abc", " 1x", "abc", "0", "-1"] do
+        assert {:error, :invalid_quantity} =
+                 SecondaryEntrypoints.start_admin_checkout(
+                   @user,
+                   offer.event_id,
+                   %{"ticket_offer_id" => to_string(offer.id), "quantity" => invalid_quantity},
+                   idem
+                 )
+      end
+
+      for invalid_offer_id <- ["1abc", " 1x", "abc", "0", "-1"] do
+        assert {:error, :invalid_offer} =
+                 SecondaryEntrypoints.start_admin_checkout(
+                   @user,
+                   offer.event_id,
+                   %{"ticket_offer_id" => invalid_offer_id, "quantity" => "1"},
+                   idem
+                 )
+      end
+    end
+  end
 end
