@@ -30,10 +30,11 @@ defmodule FastCheck.Sales.DomainShellTest do
     end
   end
 
-  test "only VS-01F Sales resource and policy helper files exist" do
+  test "only VS-05 Sales resource and policy helper files exist" do
     assert Path.wildcard("priv/repo/migrations/*sales*.exs") != []
 
     assert Path.wildcard("lib/fastcheck/sales/*.ex") |> Enum.sort() == [
+             "lib/fastcheck/sales/checkout.ex",
              "lib/fastcheck/sales/checkout_session.ex",
              "lib/fastcheck/sales/conversation.ex",
              "lib/fastcheck/sales/delivery_attempt.ex",
@@ -43,6 +44,7 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/payment_event.ex",
              "lib/fastcheck/sales/policy_checks.ex",
              "lib/fastcheck/sales/state_transition.ex",
+             "lib/fastcheck/sales/state_transition_support.ex",
              "lib/fastcheck/sales/ticket_issue.ex",
              "lib/fastcheck/sales/ticket_offer.ex"
            ]

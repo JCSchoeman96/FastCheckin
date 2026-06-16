@@ -373,7 +373,14 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
 
   defp inventory_key(offer_id), do: "sales:offer:#{offer_id}:inventory"
   defp holds_key(offer_id), do: "sales:offer:#{offer_id}:holds"
-  defp hold_key(order_public_reference), do: "sales:hold:#{order_public_reference}"
+
+  @doc """
+  Returns the canonical Redis hold key for an order public reference.
+  """
+  @spec hold_key(String.t()) :: String.t()
+  def hold_key(order_public_reference) when is_binary(order_public_reference),
+    do: "sales:hold:#{order_public_reference}"
+
   defp order_lock_key(order_public_reference), do: "sales:order:#{order_public_reference}:lock"
 
   defp dedupe_key(operation, idempotency_key),
