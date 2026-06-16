@@ -7,12 +7,14 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   """
 
   @dedupe_ttl_seconds 86_400
+  @order_lock_ttl_ms 5_000
 
   @reserve_script """
   local inventory_key = KEYS[1]
   local holds_key = KEYS[2]
   local hold_key = KEYS[3]
   local dedupe_key = KEYS[4]
+  local lock_key = KEYS[5]
 
   local offer_id = ARGV[1]
   local order_ref = ARGV[2]
@@ -22,6 +24,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local now_ms = tonumber(ARGV[6])
   local args_sig = ARGV[7]
   local dedupe_ttl = tonumber(ARGV[8])
+  local lock_ttl_ms = tonumber(ARGV[9])
 
   local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
   if existing_sig then
@@ -57,15 +60,21 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"RECONCILIATION_REQUIRED"}
   end
 
+  if redis.call("SET", lock_key, "1", "NX", "PX", lock_ttl_ms) == false then
+    return {"LOCK_TIMEOUT"}
+  end
+
   local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "-1")
   local reserved = tonumber(redis.call("HGET", inventory_key, "reserved_quantity") or "0")
   local consumed = tonumber(redis.call("HGET", inventory_key, "consumed_quantity") or "0")
 
   if available < 0 then
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
   if available < quantity then
+    redis.call("DEL", lock_key)
     return {"INSUFFICIENT_INVENTORY"}
   end
 
@@ -111,6 +120,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     "expires_at", tostring(expires_at)
   )
   redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+  redis.call("DEL", lock_key)
 
   return {"OK", "held", tostring(available_after), tostring(reserved_after), tostring(consumed), tostring(revision), tostring(expires_at)}
   """
@@ -120,12 +130,14 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local holds_key = KEYS[2]
   local hold_key = KEYS[3]
   local dedupe_key = KEYS[4]
+  local lock_key = KEYS[5]
 
   local order_ref = ARGV[1]
   local quantity = tonumber(ARGV[2])
   local now_ms = tonumber(ARGV[3])
   local args_sig = ARGV[4]
   local dedupe_ttl = tonumber(ARGV[5])
+  local lock_ttl_ms = tonumber(ARGV[6])
 
   local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
   if existing_sig then
@@ -160,7 +172,12 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"RECONCILIATION_REQUIRED"}
   end
 
+  if redis.call("SET", lock_key, "1", "NX", "PX", lock_ttl_ms) == false then
+    return {"LOCK_TIMEOUT"}
+  end
+
   if redis.call("EXISTS", hold_key) == 0 then
+    redis.call("DEL", lock_key)
     return {"HOLD_NOT_FOUND"}
   end
 
@@ -168,22 +185,27 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local hold_quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
 
   if hold_status == "consumed" then
+    redis.call("DEL", lock_key)
     return {"ALREADY_CONSUMED"}
   end
 
   if hold_status == "released" then
+    redis.call("DEL", lock_key)
     return {"ALREADY_RELEASED"}
   end
 
   if hold_status == "expired" then
+    redis.call("DEL", lock_key)
     return {"HOLD_EXPIRED"}
   end
 
   if hold_status ~= "held" then
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
   if hold_quantity ~= quantity then
+    redis.call("DEL", lock_key)
     return {"QUANTITY_MISMATCH"}
   end
 
@@ -195,6 +217,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local reserved_after = reserved - quantity
   local consumed_after = consumed + quantity
   if reserved_after < 0 then
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
@@ -229,6 +252,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     "revision", tostring(revision)
   )
   redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+  redis.call("DEL", lock_key)
 
   return {"OK", "consumed", tostring(available), tostring(reserved_after), tostring(consumed_after), tostring(revision)}
   """
@@ -238,11 +262,13 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local holds_key = KEYS[2]
   local hold_key = KEYS[3]
   local dedupe_key = KEYS[4]
+  local lock_key = KEYS[5]
 
   local order_ref = ARGV[1]
   local now_ms = tonumber(ARGV[2])
   local args_sig = ARGV[3]
   local dedupe_ttl = tonumber(ARGV[4])
+  local lock_ttl_ms = tonumber(ARGV[5])
 
   local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
   if existing_sig then
@@ -277,7 +303,12 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"RECONCILIATION_REQUIRED"}
   end
 
+  if redis.call("SET", lock_key, "1", "NX", "PX", lock_ttl_ms) == false then
+    return {"LOCK_TIMEOUT"}
+  end
+
   if redis.call("EXISTS", hold_key) == 0 then
+    redis.call("DEL", lock_key)
     return {"HOLD_NOT_FOUND"}
   end
 
@@ -285,18 +316,22 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local hold_quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
 
   if hold_status == "consumed" then
+    redis.call("DEL", lock_key)
     return {"ALREADY_CONSUMED"}
   end
 
   if hold_status == "released" then
+    redis.call("DEL", lock_key)
     return {"ALREADY_RELEASED"}
   end
 
   if hold_status == "expired" then
+    redis.call("DEL", lock_key)
     return {"ALREADY_EXPIRED"}
   end
 
   if hold_status ~= "held" then
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
@@ -308,6 +343,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local available_after = available + hold_quantity
   local reserved_after = reserved - hold_quantity
   if reserved_after < 0 then
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
@@ -342,6 +378,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     "revision", tostring(revision)
   )
   redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+  redis.call("DEL", lock_key)
 
   return {"OK", "released", tostring(available_after), tostring(reserved_after), tostring(consumed), tostring(revision)}
   """
@@ -350,37 +387,48 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local inventory_key = KEYS[1]
   local holds_key = KEYS[2]
   local hold_key = KEYS[3]
+  local lock_key = KEYS[4]
 
   local order_ref = ARGV[1]
   local now_ms = tonumber(ARGV[2])
+  local lock_ttl_ms = tonumber(ARGV[3])
 
   if redis.call("EXISTS", inventory_key) == 0 then
     return {"RECONCILIATION_REQUIRED"}
   end
 
+  if redis.call("SET", lock_key, "1", "NX", "PX", lock_ttl_ms) == false then
+    return {"LOCK_TIMEOUT"}
+  end
+
   if redis.call("EXISTS", hold_key) == 0 then
     redis.call("ZREM", holds_key, order_ref)
+    redis.call("DEL", lock_key)
     return {"SKIP_MISSING"}
   end
 
   local hold_status = redis.call("HGET", hold_key, "status")
   if hold_status == "consumed" then
     redis.call("ZREM", holds_key, order_ref)
+    redis.call("DEL", lock_key)
     return {"SKIP_CONSUMED"}
   end
 
   if hold_status == "released" then
     redis.call("ZREM", holds_key, order_ref)
+    redis.call("DEL", lock_key)
     return {"SKIP_RELEASED"}
   end
 
   if hold_status == "expired" then
     redis.call("ZREM", holds_key, order_ref)
+    redis.call("DEL", lock_key)
     return {"SKIP_EXPIRED"}
   end
 
   if hold_status ~= "held" then
     redis.call("ZREM", holds_key, order_ref)
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
@@ -393,6 +441,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local available_after = available + hold_quantity
   local reserved_after = reserved - hold_quantity
   if reserved_after < 0 then
+    redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
   end
 
@@ -415,6 +464,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   )
 
   redis.call("ZREM", holds_key, order_ref)
+  redis.call("DEL", lock_key)
   return {"EXPIRED"}
   """
 
@@ -437,9 +487,10 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
 
     case Process.whereis(redix_name) do
       pid when is_pid(pid) ->
-        with {:ok, response} <- Redix.command(redix_name, [command | args]) do
-          decode_response(response, offer_id)
-        else
+        case Redix.command(redix_name, [command | args]) do
+          {:ok, response} ->
+            decode_response(response, offer_id)
+
           {:error, reason} ->
             {:error, :ledger_unavailable, %{offer_id: offer_id, reason: inspect(reason)}}
         end
@@ -470,7 +521,10 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     {:ok, payload}
   end
 
-  defp decode_response(["IDEMPOTENT", status, available, reserved, consumed, revision | rest], _offer_id) do
+  defp decode_response(
+         ["IDEMPOTENT", status, available, reserved, consumed, revision | rest],
+         _offer_id
+       ) do
     payload = %{
       status: parse_status(status),
       available_after: parse_int(available),
@@ -494,16 +548,34 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     do: {:error, :insufficient_inventory, %{offer_id: offer_id}}
 
   defp decode_response(["DUPLICATE_CONFLICT"], offer_id),
-    do: {:error, :duplicate_conflict, %{offer_id: offer_id}}
+    do: {:error, :invalid_idempotency_key, %{offer_id: offer_id, reason: :duplicate_conflict}}
 
-  defp decode_response(["HOLD_NOT_FOUND"], offer_id), do: {:error, :hold_not_found, %{offer_id: offer_id}}
-  defp decode_response(["HOLD_EXPIRED"], offer_id), do: {:error, :hold_expired, %{offer_id: offer_id}}
-  defp decode_response(["ALREADY_CONSUMED"], offer_id), do: {:error, :already_consumed, %{offer_id: offer_id}}
-  defp decode_response(["ALREADY_RELEASED"], _offer_id), do: {:ok, :already_released}
-  defp decode_response(["ALREADY_EXPIRED"], _offer_id), do: {:ok, :already_expired}
-  defp decode_response(["QUANTITY_MISMATCH"], offer_id), do: {:error, :quantity_mismatch, %{offer_id: offer_id}}
-  defp decode_response(["LEDGER_DEGRADED"], offer_id), do: {:error, :ledger_degraded, %{offer_id: offer_id}}
-  defp decode_response(["RECONCILIATION_REQUIRED"], offer_id), do: {:error, :reconciliation_required, %{offer_id: offer_id}}
+  defp decode_response(["HOLD_NOT_FOUND"], offer_id),
+    do: {:error, :hold_not_found, %{offer_id: offer_id}}
+
+  defp decode_response(["HOLD_EXPIRED"], offer_id),
+    do: {:error, :hold_expired, %{offer_id: offer_id}}
+
+  defp decode_response(["ALREADY_CONSUMED"], offer_id),
+    do: {:error, :already_consumed, %{offer_id: offer_id}}
+
+  defp decode_response(["ALREADY_RELEASED"], offer_id),
+    do: {:error, :already_released, %{offer_id: offer_id}}
+
+  defp decode_response(["ALREADY_EXPIRED"], offer_id),
+    do: {:error, :hold_expired, %{offer_id: offer_id}}
+
+  defp decode_response(["QUANTITY_MISMATCH"], offer_id),
+    do: {:error, :invalid_quantity, %{offer_id: offer_id, reason: :quantity_mismatch}}
+
+  defp decode_response(["LOCK_TIMEOUT"], offer_id),
+    do: {:error, :lock_timeout, %{offer_id: offer_id}}
+
+  defp decode_response(["LEDGER_DEGRADED"], offer_id),
+    do: {:error, :ledger_degraded, %{offer_id: offer_id}}
+
+  defp decode_response(["RECONCILIATION_REQUIRED"], offer_id),
+    do: {:error, :reconciliation_required, %{offer_id: offer_id}}
 
   defp decode_response(["UNEXPECTED_RESPONSE"], offer_id),
     do: {:error, :unexpected_redis_response, %{offer_id: offer_id}}
@@ -531,4 +603,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
 
   @spec dedupe_ttl_seconds() :: pos_integer()
   def dedupe_ttl_seconds, do: @dedupe_ttl_seconds
+
+  @spec order_lock_ttl_ms() :: pos_integer()
+  def order_lock_ttl_ms, do: @order_lock_ttl_ms
 end

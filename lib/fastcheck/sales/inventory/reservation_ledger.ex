@@ -24,53 +24,51 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   @spec initialize_offer(integer(), integer()) :: :ok | {:error, atom(), map()}
   def initialize_offer(offer_id, configured_quantity)
       when is_integer(offer_id) and is_integer(configured_quantity) do
-    cond do
-      configured_quantity < 0 ->
-        {:error, :invalid_quantity, %{offer_id: offer_id}}
+    if configured_quantity < 0 do
+      {:error, :invalid_quantity, %{offer_id: offer_id}}
+    else
+      now = now_ms()
 
-      true ->
-        now = now_ms()
-
-        command_result(
-          [
-            "HSET",
-            inventory_key(offer_id),
-            "offer_id",
-            Integer.to_string(offer_id),
-            "configured_quantity",
-            Integer.to_string(configured_quantity),
-            "available_quantity",
-            Integer.to_string(configured_quantity),
-            "reserved_quantity",
-            "0",
-            "consumed_quantity",
-            "0",
-            "revision",
-            "1",
-            "ledger_state",
-            "healthy",
-            "updated_at",
-            Integer.to_string(now)
-          ],
-          offer_id
-        )
-        |> case do
-          {:ok, _} -> :ok
-          {:error, _atom, _meta} = error -> error
-        end
+      command_result(
+        [
+          "HSET",
+          inventory_key(offer_id),
+          "offer_id",
+          Integer.to_string(offer_id),
+          "configured_quantity",
+          Integer.to_string(configured_quantity),
+          "available_quantity",
+          Integer.to_string(configured_quantity),
+          "reserved_quantity",
+          "0",
+          "consumed_quantity",
+          "0",
+          "revision",
+          "1",
+          "ledger_state",
+          "healthy",
+          "updated_at",
+          Integer.to_string(now)
+        ],
+        offer_id
+      )
+      |> case do
+        {:ok, _} -> :ok
+        {:error, _atom, _meta} = error -> error
+      end
     end
   end
 
-  def initialize_offer(offer_id, _configured_quantity), do: {:error, :invalid_quantity, %{offer_id: offer_id}}
+  def initialize_offer(offer_id, _configured_quantity),
+    do: {:error, :invalid_quantity, %{offer_id: offer_id}}
 
   @spec reserve(integer(), String.t(), integer(), integer(), String.t()) ::
           {:ok, map()} | {:error, atom(), map()}
   def reserve(offer_id, order_public_reference, quantity, ttl_seconds, idempotency_key) do
     with :ok <- validate_positive(quantity, :invalid_quantity, offer_id),
-         :ok <- validate_positive(ttl_seconds, :invalid_ttl, offer_id),
+         :ok <- validate_ttl(ttl_seconds, offer_id),
          :ok <- validate_idempotency(idempotency_key, offer_id) do
       now = now_ms()
-      dedupe_key = dedupe_key(:reserve, idempotency_key)
 
       RedisScripts.reserve(
         offer_id: offer_id,
@@ -78,7 +76,8 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
           inventory_key(offer_id),
           holds_key(offer_id),
           hold_key(order_public_reference),
-          dedupe_key
+          dedupe_key(:reserve, idempotency_key),
+          order_lock_key(order_public_reference)
         ],
         argv: [
           Integer.to_string(offer_id),
@@ -88,14 +87,16 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
           idempotency_key,
           Integer.to_string(now),
           args_sig("reserve", [offer_id, order_public_reference, quantity, ttl_seconds]),
-          Integer.to_string(RedisScripts.dedupe_ttl_seconds())
+          Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
+          Integer.to_string(RedisScripts.order_lock_ttl_ms())
         ]
       )
       |> map_hold_snapshot(offer_id, order_public_reference, quantity)
     end
   end
 
-  @spec consume(integer(), String.t(), integer(), String.t()) :: {:ok, map()} | {:error, atom(), map()}
+  @spec consume(integer(), String.t(), integer(), String.t()) ::
+          {:ok, map()} | {:error, atom(), map()}
   def consume(offer_id, order_public_reference, quantity, idempotency_key) do
     with :ok <- validate_positive(quantity, :invalid_quantity, offer_id),
          :ok <- validate_idempotency(idempotency_key, offer_id) do
@@ -105,21 +106,23 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
           inventory_key(offer_id),
           holds_key(offer_id),
           hold_key(order_public_reference),
-          dedupe_key(:consume, idempotency_key)
+          dedupe_key(:consume, idempotency_key),
+          order_lock_key(order_public_reference)
         ],
         argv: [
           order_public_reference,
           Integer.to_string(quantity),
           Integer.to_string(now_ms()),
           args_sig("consume", [offer_id, order_public_reference, quantity]),
-          Integer.to_string(RedisScripts.dedupe_ttl_seconds())
+          Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
+          Integer.to_string(RedisScripts.order_lock_ttl_ms())
         ]
       )
       |> map_hold_snapshot(offer_id, order_public_reference, quantity)
     end
   end
 
-  @spec release(integer(), String.t(), String.t()) :: {:ok, map() | :already_released | :already_expired} | {:error, atom(), map()}
+  @spec release(integer(), String.t(), String.t()) :: {:ok, map()} | {:error, atom(), map()}
   def release(offer_id, order_public_reference, idempotency_key) do
     with :ok <- validate_idempotency(idempotency_key, offer_id) do
       RedisScripts.release(
@@ -128,13 +131,15 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
           inventory_key(offer_id),
           holds_key(offer_id),
           hold_key(order_public_reference),
-          dedupe_key(:release, idempotency_key)
+          dedupe_key(:release, idempotency_key),
+          order_lock_key(order_public_reference)
         ],
         argv: [
           order_public_reference,
           Integer.to_string(now_ms()),
           args_sig("release", [offer_id, order_public_reference]),
-          Integer.to_string(RedisScripts.dedupe_ttl_seconds())
+          Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
+          Integer.to_string(RedisScripts.order_lock_ttl_ms())
         ]
       )
       |> map_release_snapshot(offer_id, order_public_reference)
@@ -142,38 +147,37 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   end
 
   @spec expire_due_holds(integer()) ::
-          {:ok, %{expired_count: non_neg_integer(), skipped_count: non_neg_integer(), errors: list()}}
+          {:ok,
+           %{expired_count: non_neg_integer(), skipped_count: non_neg_integer(), errors: list()}}
           | {:error, atom(), map()}
   def expire_due_holds(now) when is_integer(now) do
     offer_ids = discover_offer_ids()
 
-    Enum.reduce_while(offer_ids, {:ok, %{expired_count: 0, skipped_count: 0, errors: []}}, fn offer_id, {:ok, acc} ->
-      case command_result(["ZRANGEBYSCORE", holds_key(offer_id), "-inf", Integer.to_string(now), "LIMIT", "0", Integer.to_string(@expire_batch_size)], offer_id) do
-        {:ok, due_refs} when is_list(due_refs) ->
-          updated =
-            Enum.reduce(due_refs, acc, fn order_ref, inner_acc ->
-              case RedisScripts.expire_one(
-                     offer_id: offer_id,
-                     keys: [inventory_key(offer_id), holds_key(offer_id), hold_key(order_ref)],
-                     argv: [order_ref, Integer.to_string(now)]
-                   ) do
-                {:ok, %{expired: true}} ->
-                  %{inner_acc | expired_count: inner_acc.expired_count + 1}
+    Enum.reduce_while(
+      offer_ids,
+      {:ok, %{expired_count: 0, skipped_count: 0, errors: []}},
+      fn offer_id, {:ok, acc} ->
+        case command_result(
+               [
+                 "ZRANGEBYSCORE",
+                 holds_key(offer_id),
+                 "-inf",
+                 Integer.to_string(now),
+                 "LIMIT",
+                 "0",
+                 Integer.to_string(@expire_batch_size)
+               ],
+               offer_id
+             ) do
+          {:ok, due_refs} when is_list(due_refs) ->
+            updated = Enum.reduce(due_refs, acc, &expire_one_for_hold(offer_id, &1, now, &2))
+            {:cont, {:ok, updated}}
 
-                {:ok, %{skipped: _}} ->
-                  %{inner_acc | skipped_count: inner_acc.skipped_count + 1}
-
-                {:error, atom, meta} ->
-                  %{inner_acc | errors: [%{offer_id: offer_id, error: atom, meta: meta} | inner_acc.errors]}
-              end
-            end)
-
-          {:cont, {:ok, updated}}
-
-        {:error, atom, meta} ->
-          {:halt, {:error, atom, meta}}
+          {:error, atom, meta} ->
+            {:halt, {:error, atom, meta}}
+        end
       end
-    end)
+    )
   end
 
   @spec get_availability(integer()) :: {:ok, availability_snapshot()} | {:error, atom(), map()}
@@ -213,16 +217,47 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
     end
   end
 
+  defp expire_one_for_hold(offer_id, order_ref, now, acc) do
+    case RedisScripts.expire_one(
+           offer_id: offer_id,
+           keys: [
+             inventory_key(offer_id),
+             holds_key(offer_id),
+             hold_key(order_ref),
+             order_lock_key(order_ref)
+           ],
+           argv: [
+             order_ref,
+             Integer.to_string(now),
+             Integer.to_string(RedisScripts.order_lock_ttl_ms())
+           ]
+         ) do
+      {:ok, %{expired: true}} ->
+        %{acc | expired_count: acc.expired_count + 1}
+
+      {:ok, %{skipped: _}} ->
+        %{acc | skipped_count: acc.skipped_count + 1}
+
+      {:error, atom, meta} ->
+        %{acc | errors: [%{offer_id: offer_id, error: atom, meta: meta} | acc.errors]}
+    end
+  end
+
   defp map_hold_snapshot({:ok, payload}, offer_id, order_public_reference, quantity) do
-    {:ok,
-     %{
-       offer_id: offer_id,
-       order_public_reference: order_public_reference,
-       quantity: quantity,
-       status: payload.status,
-       expires_at: payload.expires_at,
-       revision: payload.revision
-     }}
+    snapshot = %{
+      offer_id: offer_id,
+      order_public_reference: order_public_reference,
+      quantity: quantity,
+      status: payload.status,
+      expires_at: payload.expires_at,
+      revision: payload.revision
+    }
+
+    if Map.get(payload, :idempotent) do
+      {:ok, Map.put(snapshot, :idempotent, true)}
+    else
+      {:ok, snapshot}
+    end
   end
 
   defp map_hold_snapshot({:error, :hold_not_found, _meta}, offer_id, _order_ref, _quantity),
@@ -231,19 +266,22 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   defp map_hold_snapshot({:error, :hold_expired, _meta}, offer_id, _order_ref, _quantity),
     do: {:error, :hold_expired, %{offer_id: offer_id}}
 
-  defp map_hold_snapshot({:error, atom, meta}, _offer_id, _order_ref, _quantity), do: {:error, atom, meta}
-
-  defp map_release_snapshot({:ok, :already_released}, _offer_id, _order_ref), do: {:ok, :already_released}
-  defp map_release_snapshot({:ok, :already_expired}, _offer_id, _order_ref), do: {:ok, :already_expired}
+  defp map_hold_snapshot({:error, atom, meta}, _offer_id, _order_ref, _quantity),
+    do: {:error, atom, meta}
 
   defp map_release_snapshot({:ok, payload}, offer_id, order_public_reference) do
-    {:ok,
-     %{
-       offer_id: offer_id,
-       order_public_reference: order_public_reference,
-       status: payload.status,
-       revision: payload.revision
-     }}
+    snapshot = %{
+      offer_id: offer_id,
+      order_public_reference: order_public_reference,
+      status: payload.status,
+      revision: payload.revision
+    }
+
+    if Map.get(payload, :idempotent) do
+      {:ok, Map.put(snapshot, :idempotent, true)}
+    else
+      {:ok, snapshot}
+    end
   end
 
   defp map_release_snapshot({:error, atom, meta}, _offer_id, _order_ref), do: {:error, atom, meta}
@@ -252,8 +290,11 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
     case Process.whereis(FastCheck.Redix) do
       pid when is_pid(pid) ->
         case Redix.command(FastCheck.Redix, command) do
-          {:ok, value} -> {:ok, value}
-          {:error, reason} -> {:error, :ledger_unavailable, %{offer_id: offer_id, reason: inspect(reason)}}
+          {:ok, value} ->
+            {:ok, value}
+
+          {:error, reason} ->
+            {:error, :ledger_unavailable, %{offer_id: offer_id, reason: inspect(reason)}}
         end
 
       _ ->
@@ -292,14 +333,25 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
     end
   end
 
-  defp validate_positive(value, _error_atom, _offer_id) when is_integer(value) and value > 0, do: :ok
-  defp validate_positive(_value, error_atom, offer_id), do: {:error, error_atom, %{offer_id: offer_id}}
+  defp validate_positive(value, _error_atom, _offer_id) when is_integer(value) and value > 0,
+    do: :ok
+
+  defp validate_positive(_value, error_atom, offer_id),
+    do: {:error, error_atom, %{offer_id: offer_id}}
+
+  defp validate_ttl(value, _offer_id) when is_integer(value) and value > 0, do: :ok
+
+  defp validate_ttl(_value, offer_id),
+    do: {:error, :invalid_quantity, %{offer_id: offer_id, field: :ttl_seconds}}
 
   defp validate_idempotency(value, offer_id) when is_binary(value) do
-    if String.trim(value) == "", do: {:error, :invalid_idempotency_key, %{offer_id: offer_id}}, else: :ok
+    if String.trim(value) == "",
+      do: {:error, :invalid_idempotency_key, %{offer_id: offer_id}},
+      else: :ok
   end
 
-  defp validate_idempotency(_value, offer_id), do: {:error, :invalid_idempotency_key, %{offer_id: offer_id}}
+  defp validate_idempotency(_value, offer_id),
+    do: {:error, :invalid_idempotency_key, %{offer_id: offer_id}}
 
   defp parse_int(nil), do: 0
 
@@ -322,6 +374,10 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   defp inventory_key(offer_id), do: "sales:offer:#{offer_id}:inventory"
   defp holds_key(offer_id), do: "sales:offer:#{offer_id}:holds"
   defp hold_key(order_public_reference), do: "sales:hold:#{order_public_reference}"
-  defp dedupe_key(operation, idempotency_key), do: "sales:inventory:dedupe:#{operation}:#{idempotency_key}"
+  defp order_lock_key(order_public_reference), do: "sales:order:#{order_public_reference}:lock"
+
+  defp dedupe_key(operation, idempotency_key),
+    do: "sales:inventory:dedupe:#{operation}:#{idempotency_key}"
+
   defp now_ms, do: System.system_time(:millisecond)
 end

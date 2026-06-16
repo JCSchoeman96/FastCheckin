@@ -20,6 +20,7 @@ defmodule FastCheck.Sales.Inventory.InventoryBoundaryTest do
           {:ok, content} ->
             if String.contains?(content, "sales:offer:") or
                  String.contains?(content, "sales:hold:") or
+                 String.contains?(content, "sales:order:") or
                  String.contains?(content, "sales:inventory:dedupe:") do
               [file]
             else
