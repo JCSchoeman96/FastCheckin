@@ -64,6 +64,45 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
              ReservationLedger.reserve(@offer_id, "ORD-TTL", 1, 0, idem("idem-ttl", run_id))
   end
 
+  test "reserve with different idempotency key for same order does not double-decrement availability",
+       %{run_id: run_id} do
+    order_ref = "ORD-DEDUP-REF"
+
+    assert {:ok, first} =
+             ReservationLedger.reserve(@offer_id, order_ref, 2, 120, idem("idem-a", run_id))
+
+    assert first.status == :held
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(@offer_id)
+    assert snapshot.available_quantity == 8
+    assert snapshot.reserved_quantity == 2
+
+    assert {:ok, second} =
+             ReservationLedger.reserve(@offer_id, order_ref, 2, 120, idem("idem-b", run_id))
+
+    assert second.status == :held
+    assert second.idempotent == true
+
+    assert {:ok, snapshot_after} = ReservationLedger.get_availability(@offer_id)
+    assert snapshot_after.available_quantity == 8
+    assert snapshot_after.reserved_quantity == 2
+  end
+
+  test "reserve with different idempotency key and different quantity returns quantity_mismatch",
+       %{run_id: run_id} do
+    order_ref = "ORD-DEDUP-QTY"
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(@offer_id, order_ref, 2, 120, idem("idem-qty-a", run_id))
+
+    assert {:error, :invalid_quantity, %{reason: :quantity_mismatch}} =
+             ReservationLedger.reserve(@offer_id, order_ref, 3, 120, idem("idem-qty-b", run_id))
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(@offer_id)
+    assert snapshot.available_quantity == 8
+    assert snapshot.reserved_quantity == 2
+  end
+
   test "release is idempotent and cannot release consumed hold", %{run_id: run_id} do
     assert {:ok, _held} =
              ReservationLedger.reserve(@offer_id, "ORD-4", 1, 120, idem("idem-rel-1", run_id))
@@ -148,27 +187,26 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
     ]
 
     _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
+    scan_delete_all("sales:hold:*")
+    scan_delete_all("sales:order:*:lock")
+    scan_delete_all("sales:inventory:dedupe:*")
+    :ok
+  end
 
-    case Redix.command(FastCheck.Redix, ["SCAN", "0", "MATCH", "sales:hold:*", "COUNT", "500"]) do
-      {:ok, [_cursor, hold_keys]} when hold_keys != [] ->
-        _ = Redix.command(FastCheck.Redix, ["DEL" | hold_keys])
-        :ok
+  defp scan_delete_all(pattern) do
+    do_scan_delete_all("0", pattern)
+  end
 
-      _ ->
-        :ok
-    end
+  defp do_scan_delete_all(cursor, pattern) do
+    case Redix.command(FastCheck.Redix, ["SCAN", cursor, "MATCH", pattern, "COUNT", "500"]) do
+      {:ok, [next_cursor, keys]} ->
+        if keys != [], do: _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
 
-    case Redix.command(FastCheck.Redix, [
-           "SCAN",
-           "0",
-           "MATCH",
-           "sales:order:*:lock",
-           "COUNT",
-           "500"
-         ]) do
-      {:ok, [_cursor, lock_keys]} when lock_keys != [] ->
-        _ = Redix.command(FastCheck.Redix, ["DEL" | lock_keys])
-        :ok
+        if next_cursor == "0" do
+          :ok
+        else
+          do_scan_delete_all(next_cursor, pattern)
+        end
 
       _ ->
         :ok

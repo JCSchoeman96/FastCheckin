@@ -64,6 +64,66 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"LOCK_TIMEOUT"}
   end
 
+  if redis.call("EXISTS", hold_key) == 1 then
+    local hold_status = redis.call("HGET", hold_key, "status")
+    local hold_quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
+
+    if hold_status == "held" then
+      if hold_quantity ~= quantity then
+        redis.call("DEL", lock_key)
+        return {"QUANTITY_MISMATCH"}
+      end
+
+      local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "0")
+      local reserved = tonumber(redis.call("HGET", inventory_key, "reserved_quantity") or "0")
+      local consumed = tonumber(redis.call("HGET", inventory_key, "consumed_quantity") or "0")
+      local revision = tonumber(redis.call("HGET", inventory_key, "revision") or "0")
+      local expires_at = redis.call("HGET", hold_key, "expires_at")
+
+      redis.call(
+        "HSET",
+        dedupe_key,
+        "args_sig", args_sig,
+        "status", "held",
+        "available_after", tostring(available),
+        "reserved_after", tostring(reserved),
+        "consumed_after", tostring(consumed),
+        "revision", tostring(revision),
+        "expires_at", expires_at
+      )
+      redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+      redis.call("DEL", lock_key)
+
+      return {
+        "IDEMPOTENT",
+        "held",
+        tostring(available),
+        tostring(reserved),
+        tostring(consumed),
+        tostring(revision),
+        expires_at
+      }
+    end
+
+    if hold_status == "consumed" then
+      redis.call("DEL", lock_key)
+      return {"ALREADY_CONSUMED"}
+    end
+
+    if hold_status == "released" then
+      redis.call("DEL", lock_key)
+      return {"ALREADY_RELEASED"}
+    end
+
+    if hold_status == "expired" then
+      redis.call("DEL", lock_key)
+      return {"ALREADY_EXPIRED"}
+    end
+
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
   local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "-1")
   local reserved = tonumber(redis.call("HGET", inventory_key, "reserved_quantity") or "0")
   local consumed = tonumber(redis.call("HGET", inventory_key, "consumed_quantity") or "0")
