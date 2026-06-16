@@ -218,6 +218,14 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       assert Map.has_key?(first_attendee, "checkins_remaining")
       assert Map.has_key?(first_attendee, "is_currently_inside")
       assert Map.has_key?(first_attendee, "updated_at")
+
+      # VS-02 origin/linkage/revocation metadata is internal and must not be serialized.
+      refute Map.has_key?(first_attendee, "source")
+      refute Map.has_key?(first_attendee, "source_reference")
+      refute Map.has_key?(first_attendee, "sales_order_id")
+      refute Map.has_key?(first_attendee, "sales_ticket_issue_id")
+      refute Map.has_key?(first_attendee, "revoked_at")
+      refute Map.has_key?(first_attendee, "revocation_reason")
     end
 
     test "supports incremental sync with since parameter", %{

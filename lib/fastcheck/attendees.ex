@@ -12,11 +12,14 @@ defmodule FastCheck.Attendees do
 
   require Logger
 
+  import Ecto.Query
+
   alias FastCheck.Attendees.{Attendee, Cache, Query, Scan}
   alias FastCheck.Repo
   alias FastCheck.TickeraClient
 
   @bulk_insert_chunk_size 500
+  @source_tickera "tickera"
 
   # Orchestration Functions (true implementation)
 
@@ -55,6 +58,8 @@ defmodule FastCheck.Attendees do
 
         parsed
         |> Map.put(:event_id, event_id)
+        |> Map.put(:source, @source_tickera)
+        |> Map.put_new(:source_reference, Map.get(parsed, :ticket_code))
         |> Map.put_new(:checkins_remaining, allowed)
         |> Map.put(:allowed_checkins, allowed)
         |> Map.put_new(:daily_scan_count, 0)
@@ -89,20 +94,30 @@ defmodule FastCheck.Attendees do
                   insert_batch_fun.(
                     chunk,
                     on_conflict:
-                      {:replace_all_except,
-                       [
-                         :id,
-                         :checked_in_at,
-                         :last_checked_in_at,
-                         :checkins_remaining,
-                         :is_currently_inside,
-                         :inserted_at,
-                         :scan_eligibility,
-                         :ineligibility_reason,
-                         :ineligible_since,
-                         :source_last_seen_at,
-                         :last_authoritative_sync_run_id
-                       ]},
+                      from(a in Attendee,
+                        where: a.source == ^@source_tickera,
+                        update: [
+                          set: [
+                            first_name: fragment("EXCLUDED.first_name"),
+                            last_name: fragment("EXCLUDED.last_name"),
+                            email: fragment("EXCLUDED.email"),
+                            ticket_type_id: fragment("EXCLUDED.ticket_type_id"),
+                            ticket_type: fragment("EXCLUDED.ticket_type"),
+                            allowed_checkins: fragment("EXCLUDED.allowed_checkins"),
+                            payment_status: fragment("EXCLUDED.payment_status"),
+                            custom_fields: fragment("EXCLUDED.custom_fields"),
+                            checked_out_at: fragment("EXCLUDED.checked_out_at"),
+                            last_checked_in_date: fragment("EXCLUDED.last_checked_in_date"),
+                            daily_scan_count: fragment("EXCLUDED.daily_scan_count"),
+                            weekly_scan_count: fragment("EXCLUDED.weekly_scan_count"),
+                            monthly_scan_count: fragment("EXCLUDED.monthly_scan_count"),
+                            last_entrance: fragment("EXCLUDED.last_entrance"),
+                            source: fragment("EXCLUDED.source"),
+                            source_reference: fragment("EXCLUDED.source_reference"),
+                            updated_at: fragment("EXCLUDED.updated_at")
+                          ]
+                        ]
+                      ),
                     conflict_target: conflict_target
                   )
 

@@ -31,6 +31,17 @@ defmodule FastCheck.Attendees.Attendee do
           monthly_scan_count: integer() | nil,
           is_currently_inside: boolean() | nil,
           last_entrance: String.t() | nil,
+          scan_eligibility: String.t() | nil,
+          ineligibility_reason: String.t() | nil,
+          ineligible_since: DateTime.t() | nil,
+          source_last_seen_at: DateTime.t() | nil,
+          last_authoritative_sync_run_id: Ecto.UUID.t() | nil,
+          source: String.t() | nil,
+          source_reference: String.t() | nil,
+          sales_order_id: integer() | nil,
+          sales_ticket_issue_id: integer() | nil,
+          revoked_at: DateTime.t() | nil,
+          revocation_reason: String.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil,
           event: Event.t() | Ecto.Association.NotLoaded.t()
@@ -81,6 +92,13 @@ defmodule FastCheck.Attendees.Attendee do
     field :ineligible_since, :utc_datetime
     field :source_last_seen_at, :utc_datetime
     field :last_authoritative_sync_run_id, Ecto.UUID
+    # Origin and downstream linkage metadata for Sales/Tickera ownership boundaries.
+    field :source, :string, default: "tickera"
+    field :source_reference, :string
+    field :sales_order_id, :integer
+    field :sales_ticket_issue_id, :integer
+    field :revoked_at, :utc_datetime
+    field :revocation_reason, :string
 
     # inserted_at/updated_at timestamps for auditing changes
     timestamps()
@@ -118,9 +136,17 @@ defmodule FastCheck.Attendees.Attendee do
       :ineligibility_reason,
       :ineligible_since,
       :source_last_seen_at,
-      :last_authoritative_sync_run_id
+      :last_authoritative_sync_run_id,
+      :source,
+      :source_reference,
+      :sales_order_id,
+      :sales_ticket_issue_id,
+      :revoked_at,
+      :revocation_reason
     ])
     |> validate_required([:ticket_code, :event_id])
     |> unique_constraint(:ticket_code, name: :unique_ticket_per_event)
+    |> check_constraint(:source, name: :attendees_source_valid)
+    |> unique_constraint(:sales_ticket_issue_id, name: :attendees_sales_ticket_issue_id_uidx)
   end
 end
