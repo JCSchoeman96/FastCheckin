@@ -46,12 +46,17 @@ defmodule FastCheck.Sales.Inventory.Recovery do
     with {:ok, durable} <- DurableSnapshot.fetch(offer_id),
          analysis <- reconciler_analysis(offer_id, durable) do
       if analysis.manual_review_required? do
-        report = base_report(offer_id, durable, dry_run?, false, [])
+        report = manual_review_report(offer_id, durable, dry_run?, analysis)
 
         :telemetry.execute(
           [:fastcheck, :sales, :inventory, :manual_review_required],
           %{count: 1},
-          %{offer_id: offer_id, event_id: durable.event_id, manual_review_required: true}
+          %{
+            offer_id: offer_id,
+            event_id: durable.event_id,
+            manual_review_required: true,
+            orphan_hold_count: analysis.orphan_hold_count
+          }
         )
 
         {:manual_review_required, report}
@@ -181,16 +186,37 @@ defmodule FastCheck.Sales.Inventory.Recovery do
 
   defp reconciler_analysis(offer_id, durable) do
     expected = max(durable.safe_available, 0)
+    orphan_hold_count = orphan_hold_count(offer_id)
+    orphan_holds? = orphan_hold_count > 0
+
+    manual_review_required? = durable.manual_review_required? or orphan_holds?
+
+    anomalies =
+      durable.anomalies
+      |> maybe_add(orphan_holds?, %{code: :orphan_redis_holds, count: orphan_hold_count})
 
     %{
-      manual_review_required?: durable.manual_review_required?,
+      manual_review_required?: manual_review_required?,
       expected_available: expected,
       missing_redis?:
         match?(
           {:error, :reconciliation_required, _},
           ReservationLedger.get_availability(offer_id)
-        )
+        ),
+      orphan_hold_count: orphan_hold_count,
+      anomalies: anomalies
     }
+  end
+
+  defp orphan_hold_count(offer_id) do
+    with {:ok, redis_refs} <- ReservationLedger.list_hold_refs(offer_id),
+         {:ok, durable_refs} <- DurableSnapshot.order_public_references(offer_id) do
+      redis_refs
+      |> Enum.reject(&MapSet.member?(durable_refs, &1))
+      |> length()
+    else
+      _ -> 0
+    end
   end
 
   defp rebuild_counts(durable, expected_available) do
@@ -200,6 +226,20 @@ defmodule FastCheck.Sales.Inventory.Recovery do
       reserved_quantity: durable.active_hold_count,
       consumed_quantity: durable.sold_count,
       ledger_state: :healthy
+    }
+  end
+
+  defp manual_review_report(offer_id, durable, dry_run?, analysis, actions \\ []) do
+    %RecoveryReport{
+      offer_id: offer_id,
+      event_id: durable.event_id,
+      dry_run?: dry_run?,
+      repair_applied?: false,
+      expired_count: 0,
+      skipped_count: 0,
+      applied_actions: actions,
+      manual_review_required?: true,
+      anomalies: analysis.anomalies
     }
   end
 
@@ -220,4 +260,7 @@ defmodule FastCheck.Sales.Inventory.Recovery do
   defp mode_label(true, _), do: "dry_run"
   defp mode_label(false, true), do: "repair"
   defp mode_label(false, false), do: "dry_run"
+
+  defp maybe_add(list, false, _item), do: list
+  defp maybe_add(list, true, item), do: [item | list]
 end

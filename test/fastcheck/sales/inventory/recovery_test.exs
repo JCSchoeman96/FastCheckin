@@ -133,6 +133,41 @@ defmodule FastCheck.Sales.Inventory.RecoveryTest do
     assert snapshot.reserved_quantity == 0
   end
 
+  test "rebuild refuses direct rebuild when orphan redis holds exist", %{offer: offer} do
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        quantity: 2,
+        idempotency_key: "recovery-orphan-#{System.unique_integer([:positive])}"
+      })
+
+    assert {:ok, _} =
+             Checkout.start_checkout(input, Fixtures.system_actor(),
+               effective_sales_channel: "whatsapp"
+             )
+
+    orphan_ref = "ORD-REBUILD-ORPHAN-#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(offer.id, orphan_ref, 1, 120, "idem-orphan-#{orphan_ref}")
+
+    assert {:ok, before} = ReservationLedger.get_availability(offer.id)
+    assert before.available_quantity == 7
+    assert before.reserved_quantity == 3
+
+    assert {:manual_review_required, report} =
+             Recovery.rebuild_offer_inventory(offer.id, dry_run: false, allow_repair: true)
+
+    assert report.manual_review_required?
+    refute report.repair_applied?
+    assert Enum.any?(report.anomalies, &(&1.code == :orphan_redis_holds and &1.count == 1))
+
+    assert {:ok, after_snapshot} = ReservationLedger.get_availability(offer.id)
+    assert after_snapshot.available_quantity == before.available_quantity
+    assert after_snapshot.reserved_quantity == before.reserved_quantity
+    assert after_snapshot.consumed_quantity == before.consumed_quantity
+  end
+
   test "rebuild refuses when durable safe available is negative", %{offer: offer} do
     public_reference = "FC-NEG-#{System.unique_integer([:positive])}"
 
