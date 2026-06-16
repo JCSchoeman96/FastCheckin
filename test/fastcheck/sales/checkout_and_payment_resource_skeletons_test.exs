@@ -22,12 +22,13 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :update_state
   ]
 
-  @checkout_forbidden_action_names [
+  @checkout_expected_action_names [
     :create_session,
     :attach_inventory_hold,
     :mark_payment_link_sent,
     :expire_session,
-    :release_session
+    :release_session,
+    :mark_manual_review
   ]
 
   @payment_attempt_forbidden_action_names [
@@ -70,9 +71,9 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     end
   end
 
-  test "resources expose read-only actions only" do
+  test "resources expose expected action surfaces" do
     forbidden_by_resource = %{
-      FastCheck.Sales.CheckoutSession => @checkout_forbidden_action_names,
+      FastCheck.Sales.CheckoutSession => [],
       FastCheck.Sales.PaymentAttempt => @payment_attempt_forbidden_action_names,
       FastCheck.Sales.PaymentEvent => @payment_event_forbidden_action_names
     }
@@ -84,8 +85,15 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
       assert MapSet.subset?(MapSet.new(@read_action_names), action_names),
              "#{inspect(resource)} must expose basic read actions"
 
-      refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
-             "#{inspect(resource)} must not expose mutating Ash actions"
+      if resource == FastCheck.Sales.CheckoutSession do
+        for expected <- @checkout_expected_action_names do
+          assert expected in action_names,
+                 "#{inspect(resource)} must expose #{inspect(expected)}"
+        end
+      else
+        refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
+               "#{inspect(resource)} must not expose mutating Ash actions"
+      end
 
       for forbidden <-
             @shared_forbidden_action_names ++ Map.fetch!(forbidden_by_resource, resource) do

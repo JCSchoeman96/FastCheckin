@@ -61,3 +61,5 @@ config :fastcheck, :mobile_scan_ingestion,
   chunk_size: 100,
   live_namespace: "live",
   store: FastCheck.TestSupport.Scans.InMemoryStore
+
+config :fastcheck, :sales_hold_token_pepper, "test-pepper"

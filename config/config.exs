@@ -28,6 +28,9 @@ config :fastcheck, :mobile_scan_ingestion,
 
 config :fastcheck, :event_post_grace_days, 14
 
+config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
+config :fastcheck, :sales_hold_token_pepper, "dev-pepper-change-in-prod"
+
 # Configures the endpoint
 config :fastcheck, FastCheckWeb.Endpoint,
   url: [host: "localhost"],

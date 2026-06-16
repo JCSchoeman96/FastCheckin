@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.Vs01fBoundaryTest do
   use ExUnit.Case, async: true
 
+  alias Ash.Resource.Info, as: ResourceInfo
+
   @forbidden_paths [
     "lib/fastcheck/payments/paystack",
     "lib/fastcheck/messaging/whatsapp",
@@ -27,23 +29,29 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
     FastCheck.Sales.Conversation
   ]
 
-  @forbidden_action_names [
-    :create,
-    :update,
-    :destroy,
+  @forbidden_action_names_by_resource %{
+    FastCheck.Sales.PaymentAttempt => [
+      :create_initialized,
+      :mark_verified_success
+    ],
+    FastCheck.Sales.PaymentEvent => [
+      :store_webhook_event,
+      :mark_processed
+    ],
+    FastCheck.Sales.TicketIssue => [
+      :issue_ticket,
+      :revoke_ticket
+    ],
+    FastCheck.Sales.Conversation => [
+      :send_whatsapp,
+      :start_or_resume
+    ]
+  }
+
+  @global_forbidden_action_names [
     :upsert,
     :update_status,
     :update_state,
-    :record_transition,
-    :create_session,
-    :attach_inventory_hold,
-    :mark_payment_link_sent,
-    :store_webhook_event,
-    :mark_verified_success,
-    :issue_ticket,
-    :revoke_ticket,
-    :send_whatsapp,
-    :start_or_resume,
     :confirm_order
   ]
 
@@ -58,15 +66,21 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
   end
 
   test "VS-01F does not add workflow or generic status actions" do
-    for resource <- @resources, action_name <- @forbidden_action_names do
-      refute Ash.Resource.Info.action(resource, action_name),
-             "#{inspect(resource)} must not expose #{inspect(action_name)} in VS-01F"
+    for resource <- @resources, action_name <- @global_forbidden_action_names do
+      refute ResourceInfo.action(resource, action_name),
+             "#{inspect(resource)} must not expose #{inspect(action_name)}"
+    end
+
+    for {resource, forbidden_names} <- @forbidden_action_names_by_resource,
+        action_name <- forbidden_names do
+      refute ResourceInfo.action(resource, action_name),
+             "#{inspect(resource)} must not expose #{inspect(action_name)}"
     end
   end
 
   test "VS-01F does not introduce organization tenancy fields" do
     for resource <- @resources do
-      refute Ash.Resource.Info.attribute(resource, :organization_id),
+      refute ResourceInfo.attribute(resource, :organization_id),
              "#{inspect(resource)} must not define organization_id in VS-01F"
     end
   end

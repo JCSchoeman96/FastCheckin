@@ -13,8 +13,6 @@ defmodule FastCheck.Sales.Vs01cBoundaryTest do
   ]
 
   @forbidden_action_modules [
-    {FastCheck.Sales.CheckoutSession, :create_session},
-    {FastCheck.Sales.CheckoutSession, :attach_inventory_hold},
     {FastCheck.Sales.PaymentAttempt, :create_initialized},
     {FastCheck.Sales.PaymentAttempt, :mark_verified_success},
     {FastCheck.Sales.PaymentEvent, :store_webhook_event},
