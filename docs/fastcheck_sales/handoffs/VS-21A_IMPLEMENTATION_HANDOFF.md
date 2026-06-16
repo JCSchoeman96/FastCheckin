@@ -165,14 +165,21 @@ Results reported at merge:
 **Authoritative tests:** observability tests above plus existing checkout log-
 redaction tests.
 
-## Next Slice
+## Next Slice Guidance
 
-Recommended next slice: **VS-21B — Operational Metrics and Audit Views**
+VS-21A unblocks provider and channel slices that require safe observability/redaction.
 
-Entry condition:
+Recommended next executable slice:
+**VS-06A — Paystack Client Boundary**
 
-- VS-21A merged (this handoff).
-- Use `TelemetryNames` and `Redactor` when adding metrics/logging in VS-21B; do
-  not rename the 23 approved events.
-- Extend existing `FastCheckWeb.Telemetry` / metrics surfaces per VS-21B feature
-  pack; no parallel metrics supervisor.
+Reason:
+VS-06A was blocked on VS-21A or an accepted equivalent logging/redaction baseline. That gate is now satisfied by this handoff.
+
+Observability-track follow-up:
+**VS-21B — Operational Metrics and Audit Views** remains deferred until its dependencies are satisfied: VS-07C, VS-09D, VS-12, and VS-21A.
+
+Entry condition for VS-06A:
+
+- Reuse `FastCheck.Observability.Redactor` for Paystack logs/errors/Sentry metadata.
+- Reuse `FastCheck.Observability.Correlation` for bounded provider-boundary metadata.
+- Do not add Sales checkout integration in VS-06A; provider boundary only.
