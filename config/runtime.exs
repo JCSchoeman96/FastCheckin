@@ -27,6 +27,33 @@ end
 
 config :fastcheck, :encryption_key, encryption_key
 
+sales_hold_token_pepper =
+  case System.get_env("SALES_HOLD_TOKEN_PEPPER") do
+    nil ->
+      if config_env() == :prod do
+        raise """
+        environment variable SALES_HOLD_TOKEN_PEPPER is missing.
+        Generate one with: mix phx.gen.secret
+        """
+      else
+        "dev fastcheck sales hold token pepper"
+      end
+
+    value ->
+      String.trim(value)
+  end
+
+if config_env() == :prod and byte_size(sales_hold_token_pepper) < 32 do
+  raise """
+  SALES_HOLD_TOKEN_PEPPER must be at least 32 bytes in production.
+  Generate one with: mix phx.gen.secret
+  """
+end
+
+unless config_env() == :test do
+  config :fastcheck, :sales_hold_token_pepper, sales_hold_token_pepper
+end
+
 mobile_token_secret =
   case System.get_env("MOBILE_JWT_SECRET") do
     nil ->

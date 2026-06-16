@@ -430,7 +430,7 @@ defmodule FastCheck.Sales.Checkout do
   end
 
   defp hash_hold_token(opaque_token) when is_binary(opaque_token) do
-    pepper = Application.get_env(:fastcheck, :sales_hold_token_pepper, "test-pepper")
+    pepper = Application.fetch_env!(:fastcheck, :sales_hold_token_pepper)
 
     :crypto.hash(:sha256, opaque_token <> pepper)
     |> Base.encode16(case: :lower)

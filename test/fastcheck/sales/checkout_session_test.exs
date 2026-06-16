@@ -13,6 +13,10 @@ defmodule FastCheck.Sales.CheckoutSessionTest do
     {:ok, offer: offer}
   end
 
+  test "sales hold token pepper is configured from test config" do
+    assert Application.fetch_env!(:fastcheck, :sales_hold_token_pepper) == "test-pepper"
+  end
+
   test "attach_inventory_hold stores hold details and hashed token", %{offer: offer} do
     actor = Fixtures.system_actor()
 
@@ -39,8 +43,10 @@ defmodule FastCheck.Sales.CheckoutSessionTest do
 
     hold_key = ReservationLedger.hold_key(order.public_reference)
 
+    pepper = Application.fetch_env!(:fastcheck, :sales_hold_token_pepper)
+
     token_hash =
-      :crypto.hash(:sha256, "opaque" <> Application.get_env(:fastcheck, :sales_hold_token_pepper))
+      :crypto.hash(:sha256, "opaque" <> pepper)
       |> Base.encode16(case: :lower)
 
     expires_at = DateTime.add(DateTime.utc_now(), 600, :second) |> DateTime.truncate(:second)
