@@ -38,7 +38,7 @@ defmodule FastCheckWeb.SentryFilterTest do
     refute filtered.request.query_string =~ "access_code"
     assert filtered.request.query["access_code"] == Redactor.filtered()
     assert filtered.request.query["order_id"] == "order-1"
-    assert filtered.request.url == "https://example.com/tickets/secret-token"
+    assert filtered.request.url == Redactor.filtered()
 
     assert get_in(filtered.extra, [:provider_payload, :message_body]) ==
              Redactor.filtered_message()

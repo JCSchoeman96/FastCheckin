@@ -37,7 +37,7 @@ defmodule FastCheck.Observability.RedactorTest do
 
       result = Redactor.redact_map(input)
 
-      assert result[:authorization_url] == "https://checkout.paystack.com/secret"
+      assert result[:authorization_url] == Redactor.filtered()
       assert result[:access_code] == Redactor.filtered()
       assert result[:delivery_token] == Redactor.filtered()
       assert result[:delivery_token_hash] == Redactor.filtered()
@@ -111,9 +111,24 @@ defmodule FastCheck.Observability.RedactorTest do
       assert Redactor.redact_token("any-token") == Redactor.filtered()
     end
 
-    test "redact_url/1 strips query params" do
-      assert Redactor.redact_url("https://example.com/path?token=secret") ==
-               "https://example.com/path"
+    test "redact_url/1 fails closed on token-bearing and provider URLs" do
+      assert Redactor.redact_url("https://checkout.paystack.com/secret?access_code=abc") ==
+               Redactor.filtered()
+
+      assert Redactor.redact_url("https://example.com/tickets/secret-delivery-token") ==
+               Redactor.filtered()
+
+      assert Redactor.redact_url("https://example.com/delivery/secret-delivery-token") ==
+               Redactor.filtered()
+
+      assert Redactor.redact_url("not a valid url %%") == Redactor.filtered()
+    end
+
+    test "redact_url/1 strips query params from clearly safe URLs" do
+      assert Redactor.redact_url("https://example.com/events/123?utm_source=x") ==
+               "https://example.com/events/123"
+
+      assert Redactor.redact_url("https://example.com/path?token=secret") == Redactor.filtered()
     end
 
     test "redact_ticket_code/1 keeps suffix only" do

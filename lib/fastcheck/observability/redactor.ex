@@ -275,13 +275,15 @@ defmodule FastCheck.Observability.Redactor do
   def redact_url(nil), do: @filtered
 
   def redact_url(url) when is_binary(url) do
-    url
-    |> String.split("?", parts: 2)
-    |> List.first()
-    |> case do
-      nil -> @filtered
-      base -> base
+    trimmed = String.trim(url)
+
+    if trimmed == "" do
+      @filtered
+    else
+      classify_and_redact_url(trimmed)
     end
+  rescue
+    _ -> @filtered
   end
 
   def redact_url(_), do: @filtered
@@ -403,4 +405,108 @@ defmodule FastCheck.Observability.Redactor do
   defp normalize_key(key), do: key |> to_string() |> String.downcase()
 
   defp preserve_safe_ids?(opts), do: Keyword.get(opts, :preserve_safe_ids, false)
+
+  @sensitive_query_param_names MapSet.new([
+                                 "token",
+                                 "access_code",
+                                 "authorization_url",
+                                 "delivery_token",
+                                 "qr_token",
+                                 "session_key",
+                                 "trxref",
+                                 "reference",
+                                 "signature",
+                                 "client_secret",
+                                 "app_secret",
+                                 "paystack_signature",
+                                 "code"
+                               ])
+
+  @sensitive_path_pattern ~r/(?:tickets?|deliveries|delivery|payments?|checkout|authorize|secure-ticket|ticket-page|customer-portal)(?:\/|$)/i
+
+  @sensitive_host_fragments [
+    "paystack.com",
+    "checkout.paystack",
+    "graph.facebook.com",
+    "whatsapp.com"
+  ]
+
+  defp classify_and_redact_url(url) do
+    uri = URI.parse(url)
+
+    cond do
+      sensitive_query_params?(uri.query) -> @filtered
+      sensitive_host?(uri.host) -> @filtered
+      sensitive_path?(uri.path) -> @filtered
+      opaque_token_path?(uri.path) -> @filtered
+      not classifiable_uri?(uri) -> @filtered
+      true -> rebuild_without_query(uri)
+    end
+  end
+
+  defp sensitive_query_params?(nil), do: false
+
+  defp sensitive_query_params?(query) when is_binary(query) do
+    query
+    |> URI.decode_query()
+    |> Map.keys()
+    |> Enum.any?(&sensitive_query_param_name?/1)
+  rescue
+    _ -> true
+  end
+
+  defp sensitive_query_param_name?(name) when is_binary(name) do
+    normalized = String.downcase(name)
+
+    MapSet.member?(@sensitive_query_param_names, normalized) or
+      String.contains?(normalized, ["token", "secret", "signature", "session"])
+  end
+
+  defp sensitive_host?(nil), do: false
+
+  defp sensitive_host?(host) when is_binary(host) do
+    normalized = String.downcase(host)
+
+    Enum.any?(@sensitive_host_fragments, &String.contains?(normalized, &1))
+  end
+
+  defp sensitive_path?(nil), do: false
+
+  defp sensitive_path?(path) when is_binary(path) do
+    String.match?(path, @sensitive_path_pattern)
+  end
+
+  defp opaque_token_path?(nil), do: false
+
+  defp opaque_token_path?(path) when is_binary(path) do
+    path
+    |> String.split("/", trim: true)
+    |> Enum.any?(&opaque_path_segment?/1)
+  end
+
+  defp opaque_path_segment?(segment) do
+    String.length(segment) >= 16 and not numeric_segment?(segment)
+  end
+
+  defp numeric_segment?(segment) do
+    String.match?(segment, ~r/^\d+$/)
+  end
+
+  defp classifiable_uri?(%URI{scheme: scheme, host: host, path: path})
+       when scheme in ["http", "https"] do
+    is_binary(host) and host != "" and is_binary(path)
+  end
+
+  defp classifiable_uri?(%URI{scheme: nil, path: path}) when is_binary(path) and path != "" do
+    String.starts_with?(path, "/")
+  end
+
+  defp classifiable_uri?(_), do: false
+
+  defp rebuild_without_query(%URI{} = uri) do
+    uri
+    |> Map.put(:query, nil)
+    |> Map.put(:fragment, nil)
+    |> URI.to_string()
+  end
 end
