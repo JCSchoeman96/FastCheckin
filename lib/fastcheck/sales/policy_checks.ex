@@ -31,10 +31,16 @@ defmodule FastCheck.Sales.PolicyChecks do
     end
 
     def filter(%{actor_type: actor_type, allowed_event_ids: allowed_event_ids}, _context, opts)
-        when actor_type in [:admin, :operator] and is_list(allowed_event_ids) do
-      case Keyword.get(opts, :relationship_path, []) do
-        [] -> expr(event_id in ^allowed_event_ids)
-        path -> expr(^ref(path, :event_id) in ^allowed_event_ids)
+        when is_list(allowed_event_ids) do
+      actor_types = Keyword.get(opts, :actor_types, [:admin, :operator])
+
+      if actor_type in actor_types do
+        case Keyword.get(opts, :relationship_path, []) do
+          [] -> expr(event_id in ^allowed_event_ids)
+          path -> expr(^ref(path, :event_id) in ^allowed_event_ids)
+        end
+      else
+        expr(false)
       end
     end
 

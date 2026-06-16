@@ -1,9 +1,9 @@
 defmodule FastCheck.Sales.TicketOffer do
   @moduledoc """
-  Durable ticket offer configuration skeleton for FastCheck Sales.
+  Durable ticket offer configuration for FastCheck Sales.
 
-  This resource stores configured offer facts only. Live inventory remains owned
-  by future Redis/ReservationLedger slices.
+  This resource owns admin-managed offer setup only. Live inventory remains owned
+  by Redis/ReservationLedger slices.
   """
 
   use Ash.Resource,
@@ -21,6 +21,81 @@ defmodule FastCheck.Sales.TicketOffer do
   actions do
     defaults([:read])
 
+    create :create_offer do
+      primary?(true)
+
+      accept([
+        :event_id,
+        :name,
+        :ticket_type,
+        :price_cents,
+        :currency,
+        :configured_quantity_available,
+        :initial_quantity,
+        :max_per_order,
+        :sales_enabled,
+        :sales_channel,
+        :starts_at,
+        :ends_at,
+        :archived_at
+      ])
+
+      validate(present([:event_id, :name, :ticket_type, :sales_channel]))
+      validate(compare(:price_cents, greater_than_or_equal_to: 0))
+      validate(compare(:configured_quantity_available, greater_than_or_equal_to: 0))
+      validate(compare(:initial_quantity, greater_than_or_equal_to: 0))
+      validate(compare(:max_per_order, greater_than_or_equal_to: 1))
+      validate(compare(:max_per_order, less_than_or_equal_to: :configured_quantity_available))
+      validate(match(:currency, ~r/^[A-Z]{3}$/))
+      validate(one_of(:sales_channel, ["whatsapp", "admin", "web", "all", "internal"]))
+      change(&attach_cache_invalidation/2)
+    end
+
+    update :update_offer do
+      require_atomic?(false)
+
+      accept([
+        :name,
+        :ticket_type,
+        :price_cents,
+        :currency,
+        :configured_quantity_available,
+        :initial_quantity,
+        :max_per_order,
+        :sales_channel,
+        :starts_at,
+        :ends_at,
+        :archived_at
+      ])
+
+      change(optimistic_lock(:lock_version))
+      change(&attach_cache_invalidation/2)
+
+      validate(compare(:price_cents, greater_than_or_equal_to: 0))
+      validate(compare(:configured_quantity_available, greater_than_or_equal_to: 0))
+      validate(compare(:initial_quantity, greater_than_or_equal_to: 0))
+      validate(compare(:max_per_order, greater_than_or_equal_to: 1))
+      validate(compare(:max_per_order, less_than_or_equal_to: :configured_quantity_available))
+      validate(match(:currency, ~r/^[A-Z]{3}$/))
+      validate(one_of(:sales_channel, ["whatsapp", "admin", "web", "all", "internal"]))
+    end
+
+    update :enable_sales do
+      require_atomic?(false)
+
+      change(set_attribute(:sales_enabled, true))
+      change(optimistic_lock(:lock_version))
+      change(&attach_cache_invalidation/2)
+    end
+
+    update :disable_sales do
+      require_atomic?(false)
+
+      change(set_attribute(:sales_enabled, false))
+      change(optimistic_lock(:lock_version))
+      change(&attach_cache_invalidation/2)
+    end
+
     read :get_by_id do
       get?(true)
 
@@ -30,6 +105,58 @@ defmodule FastCheck.Sales.TicketOffer do
 
       filter(expr(id == ^arg(:id)))
     end
+
+    read :list_active_for_event do
+      argument :event_id, :integer do
+        allow_nil?(false)
+      end
+
+      argument :sales_channel, :string do
+        allow_nil?(false)
+      end
+
+      argument :as_of, :utc_datetime do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(
+          event_id == ^arg(:event_id) and sales_enabled == true and is_nil(archived_at) and
+            (is_nil(starts_at) or starts_at <= ^arg(:as_of)) and
+            (is_nil(ends_at) or ends_at > ^arg(:as_of)) and
+            (sales_channel == "all" or sales_channel == ^arg(:sales_channel))
+        )
+      )
+    end
+
+    read :get_available_for_checkout do
+      get?(true)
+
+      argument :id, :integer do
+        allow_nil?(false)
+      end
+
+      argument :event_id, :integer do
+        allow_nil?(false)
+      end
+
+      argument :sales_channel, :string do
+        allow_nil?(false)
+      end
+
+      argument :as_of, :utc_datetime do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(
+          id == ^arg(:id) and event_id == ^arg(:event_id) and sales_enabled == true and
+            is_nil(archived_at) and (is_nil(starts_at) or starts_at <= ^arg(:as_of)) and
+            (is_nil(ends_at) or ends_at > ^arg(:as_of)) and
+            (sales_channel == "all" or sales_channel == ^arg(:sales_channel))
+        )
+      )
+    end
   end
 
   policies do
@@ -37,13 +164,38 @@ defmodule FastCheck.Sales.TicketOffer do
       authorize_if(always())
     end
 
-    policy action_type(:read) do
+    policy action([:read, :get_by_id]) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
     end
 
-    policy action_type(:read) do
+    policy action([:list_active_for_event, :get_available_for_checkout]) do
+      access_type(:strict)
+
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn,
+         actor_types: [:admin, :operator, :customer_session]}
+      )
+    end
+
+    policy action([:create_offer, :update_offer, :enable_sales, :disable_sales]) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
+    end
+
+    policy action([:read, :get_by_id]) do
       authorize_if(FastCheck.Sales.PolicyChecks.EventAllowed)
+    end
+
+    policy action([:create_offer, :update_offer, :enable_sales, :disable_sales]) do
+      authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, actor_types: [:admin]})
+    end
+
+    policy action([:list_active_for_event, :get_available_for_checkout]) do
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.EventAllowed,
+         actor_types: [:admin, :operator, :customer_session]}
+      )
     end
   end
 
@@ -102,11 +254,11 @@ defmodule FastCheck.Sales.TicketOffer do
     end
 
     attribute :starts_at, :utc_datetime do
-      allow_nil?(false)
+      allow_nil?(true)
     end
 
     attribute :ends_at, :utc_datetime do
-      allow_nil?(false)
+      allow_nil?(true)
     end
 
     attribute :lock_version, :integer do
@@ -130,5 +282,12 @@ defmodule FastCheck.Sales.TicketOffer do
     identity :unique_active_name_per_event, [:event_id, :name] do
       where(expr(is_nil(archived_at)))
     end
+  end
+
+  defp attach_cache_invalidation(changeset, _context) do
+    Ash.Changeset.after_action(changeset, fn _changeset, record ->
+      FastCheck.Sales.Offers.CacheInvalidation.invalidate_event_offers(record.event_id)
+      {:ok, record}
+    end)
   end
 end

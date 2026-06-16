@@ -21,10 +21,6 @@ defmodule FastCheck.Sales.CoreResourceSkeletonsTest do
     :update_status,
     :update_state,
     :record_transition,
-    :create_offer,
-    :update_offer,
-    :enable_sales,
-    :disable_sales,
     :create_draft,
     :confirm_checkout,
     :mark_awaiting_payment,
@@ -50,14 +46,31 @@ defmodule FastCheck.Sales.CoreResourceSkeletonsTest do
       assert MapSet.subset?(MapSet.new(@read_action_names), action_names),
              "#{inspect(resource)} must expose basic read actions"
 
-      refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
-             "#{inspect(resource)} must not expose mutating Ash actions"
+      if resource == FastCheck.Sales.TicketOffer do
+        assert Enum.any?(actions, &(&1.type in [:create, :update])),
+               "FastCheck.Sales.TicketOffer should expose VS-03 management actions"
+      else
+        refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
+               "#{inspect(resource)} must not expose mutating Ash actions"
+      end
 
       for forbidden <- @forbidden_action_names do
         refute forbidden in action_names,
                "#{inspect(resource)} must not expose #{inspect(forbidden)}"
       end
     end
+  end
+
+  test "TicketOffer exposes VS-03 named management actions" do
+    actions = ResourceInfo.actions(FastCheck.Sales.TicketOffer)
+    action_names = MapSet.new(actions, & &1.name)
+
+    assert :create_offer in action_names
+    assert :update_offer in action_names
+    assert :enable_sales in action_names
+    assert :disable_sales in action_names
+    assert :list_active_for_event in action_names
+    assert :get_available_for_checkout in action_names
   end
 
   test "ticket offers expose required attributes and relationships" do
