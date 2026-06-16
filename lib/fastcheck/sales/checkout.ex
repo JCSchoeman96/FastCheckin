@@ -42,32 +42,38 @@ defmodule FastCheck.Sales.Checkout do
     input = Map.new(input)
     context = build_context(actor, input, opts)
 
-    with :ok <- validate_quantity(input) do
-      case maybe_replay_idempotent(input, actor, context) do
-        {:error, _} = error ->
-          error
-
-        {:ok, existing} when not is_nil(existing) ->
-          {:ok, existing}
-
-        {:ok, nil} ->
-          with :ok <- authorize_actor(actor, input),
-               :ok <- validate_effective_sales_channel(input, opts),
-               {:ok, offer} <- validate_offer(input, opts, context),
-               :ok <- validate_quantity_against_offer(input, offer) do
-            create_checkout(offer, input, actor, context)
+    with :ok <- validate_quantity(input),
+         {:ok, existing_order} <- lookup_idempotent_order(input) do
+      if existing_order && not idempotent_inputs_match?(existing_order, input, opts) do
+        {:error, :duplicate_idempotency_conflict}
+      else
+        with :ok <- authorize_actor(actor, input),
+             :ok <- validate_effective_sales_channel(input, opts) do
+          if existing_order do
+            build_idempotent_replay(existing_order)
+          else
+            with {:ok, offer} <- validate_offer(input, opts, context),
+                 :ok <- validate_quantity_against_offer(input, offer) do
+              create_checkout(offer, input, actor, context)
+            end
           end
+        end
       end
     end
   end
 
   defp build_context(actor, input, opts) do
+    effective_channel = effective_sales_channel(Map.get(input, :source_channel), opts)
+
     %{
       actor: actor,
       correlation_id: Map.get(input, :correlation_id),
       source_channel: Map.get(input, :source_channel),
-      transition_metadata: %{source_channel: Map.get(input, :source_channel)},
-      effective_sales_channel: effective_sales_channel(Map.get(input, :source_channel), opts)
+      transition_metadata: %{
+        source_channel: Map.get(input, :source_channel),
+        effective_sales_channel: effective_channel
+      },
+      effective_sales_channel: effective_channel
     }
   end
 
@@ -99,41 +105,65 @@ defmodule FastCheck.Sales.Checkout do
     if quantity > max, do: {:error, :max_per_order_exceeded}, else: :ok
   end
 
-  defp maybe_replay_idempotent(%{idempotency_key: key} = input, actor, context)
-       when is_binary(key) and key != "" do
-    case Order
-         |> Query.for_read(:get_by_idempotency_key, %{idempotency_key: key})
-         |> Ash.read_one(authorize?: false) do
-      {:ok, nil} ->
-        {:ok, nil}
+  defp lookup_idempotent_order(%{idempotency_key: key}) when is_binary(key) and key != "" do
+    Order
+    |> Query.for_read(:get_by_idempotency_key, %{idempotency_key: key})
+    |> Ash.read_one(authorize?: false)
+  end
 
-      {:ok, order} ->
-        replay_or_conflict(order, input, actor, context)
+  defp lookup_idempotent_order(_input), do: {:ok, nil}
 
-      {:error, _} = error ->
-        error
+  defp build_idempotent_replay(order) do
+    case {order.status, load_checkout_session(order)} do
+      {"awaiting_payment", {:ok, %{status: "hold_attached"} = session}} ->
+        {:ok, %{order: order, checkout_session: sanitize_session(session)}}
+
+      _ ->
+        {:error, :duplicate_idempotency_conflict}
     end
   end
 
-  defp maybe_replay_idempotent(_input, _actor, _context), do: {:ok, nil}
+  defp idempotent_inputs_match?(order, input, opts) do
+    case load_primary_order_line(order) do
+      {:ok, line} ->
+        stored_effective_channel = metadata_value(line.metadata, :effective_sales_channel)
 
-  defp replay_or_conflict(order, input, _actor, _context) do
-    if idempotent_inputs_match?(order, input) do
-      case {order.status, load_checkout_session(order)} do
-        {"awaiting_payment", {:ok, %{status: "hold_attached"} = session}} ->
-          {:ok, %{order: order, checkout_session: sanitize_session(session)}}
+        effective_channel =
+          stored_effective_channel || effective_sales_channel(order.source_channel, [])
 
-        _ ->
-          {:error, :duplicate_idempotency_conflict}
-      end
-    else
-      {:error, :duplicate_idempotency_conflict}
+        order.event_id == Map.get(input, :event_id) and
+          order.source_channel == Map.get(input, :source_channel) and
+          line.ticket_offer_id == Map.get(input, :ticket_offer_id) and
+          line.quantity == Map.get(input, :quantity) and
+          line.event_name_snapshot == Map.get(input, :event_name) and
+          effective_channel == effective_sales_channel(Map.get(input, :source_channel), opts) and
+          buyer_fields_match?(order, input)
+
+      _ ->
+        false
     end
   end
 
-  defp idempotent_inputs_match?(order, input) do
-    order.event_id == Map.get(input, :event_id) and
-      order.source_channel == Map.get(input, :source_channel)
+  defp load_primary_order_line(order) do
+    case OrderLine
+         |> Query.for_read(:list_for_order, %{sales_order_id: order.id})
+         |> Ash.read(authorize?: false) do
+      {:ok, [line]} -> {:ok, line}
+      {:ok, _} -> {:error, :invalid_order_state}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp metadata_value(metadata, key) when is_map(metadata) do
+    Map.get(metadata, key) || Map.get(metadata, Atom.to_string(key))
+  end
+
+  defp metadata_value(_, _), do: nil
+
+  defp buyer_fields_match?(order, input) do
+    Map.get(input, :buyer_name) == order.buyer_name and
+      Map.get(input, :buyer_phone) == order.buyer_phone and
+      Map.get(input, :buyer_email) == order.buyer_email
   end
 
   defp load_checkout_session(order) do
@@ -278,7 +308,10 @@ defmodule FastCheck.Sales.Checkout do
       quantity: quantity,
       unit_amount_cents: offer.price_cents,
       total_amount_cents: offer.price_cents * quantity,
-      currency: offer.currency
+      currency: offer.currency,
+      metadata: %{
+        effective_sales_channel: Map.get(context, :effective_sales_channel)
+      }
     }
 
     OrderLine

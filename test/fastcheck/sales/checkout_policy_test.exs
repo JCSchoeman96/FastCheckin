@@ -55,6 +55,50 @@ defmodule FastCheck.Sales.CheckoutPolicyTest do
              )
   end
 
+  test "operator cannot replay checkout by idempotency key", %{offer: offer} do
+    idem = "policy-operator-replay-#{System.unique_integer([:positive])}"
+
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        idempotency_key: idem
+      })
+
+    assert {:ok, _} =
+             Checkout.start_checkout(input, Fixtures.system_actor(),
+               effective_sales_channel: "whatsapp"
+             )
+
+    assert {:error, :forbidden} =
+             Checkout.start_checkout(input, Fixtures.operator_actor(),
+               effective_sales_channel: "whatsapp"
+             )
+  end
+
+  test "customer_session cannot replay checkout by idempotency key without event access", %{
+    offer: offer
+  } do
+    idem = "policy-customer-replay-#{System.unique_integer([:positive])}"
+
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        idempotency_key: idem
+      })
+
+    assert {:ok, _} =
+             Checkout.start_checkout(input, Fixtures.system_actor(),
+               effective_sales_channel: "whatsapp"
+             )
+
+    assert {:error, :forbidden} =
+             Checkout.start_checkout(
+               input,
+               Fixtures.customer_session_actor([offer.event_id + 99]),
+               effective_sales_channel: "whatsapp"
+             )
+  end
+
   test "customer_session cannot broadly read orders", %{offer: offer} do
     input =
       Fixtures.checkout_input(%{

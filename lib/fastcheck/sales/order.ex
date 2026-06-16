@@ -324,7 +324,7 @@ defmodule FastCheck.Sales.Order do
           entity_id: Integer.to_string(record.id),
           from_state: nil,
           to_state: "draft",
-          metadata: %{source_channel: record.source_channel},
+          metadata: transition_metadata(context, record),
           correlation_id: transition_correlation_id(context),
           idempotency_key: record.idempotency_key,
           source: "order.create_draft"
