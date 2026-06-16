@@ -54,6 +54,14 @@ unless config_env() == :test do
   config :fastcheck, :sales_hold_token_pepper, sales_hold_token_pepper
 end
 
+sales_internal_pilot_enabled =
+  case System.get_env("SALES_INTERNAL_PILOT_ENABLED") do
+    nil -> config_env() != :prod
+    value -> value in ["1", "true", "TRUE", "yes", "YES"]
+  end
+
+config :fastcheck, :sales_internal_pilot_enabled, sales_internal_pilot_enabled
+
 mobile_token_secret =
   case System.get_env("MOBILE_JWT_SECRET") do
     nil ->

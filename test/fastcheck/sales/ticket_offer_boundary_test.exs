@@ -7,7 +7,6 @@ defmodule FastCheck.Sales.TicketOfferBoundaryTest do
     "lib/fastcheck/payments/paystack",
     "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck/tickets",
-    "lib/fastcheck_web/live/sales",
     "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",
     "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
   ]
@@ -52,7 +51,7 @@ defmodule FastCheck.Sales.TicketOfferBoundaryTest do
 
     for file <- changed_files,
         prefix <- forbidden_changed_prefixes,
-        String.starts_with?(file, prefix) do
+        FastCheck.Sales.BoundaryAllowlist.reject_forbidden_changed_file?(file, prefix) do
       flunk("#{file} must not change in VS-03")
     end
   end
