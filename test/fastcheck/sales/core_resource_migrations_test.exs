@@ -154,7 +154,7 @@ defmodule FastCheck.Sales.CoreResourceMigrationsTest do
           (event_id, name, ticket_type, price_cents, currency, configured_quantity_available,
            initial_quantity, max_per_order, sales_channel, starts_at, ends_at, inserted_at, updated_at)
         VALUES
-          (1, 'General', 'general', -1, 'ZAR', 10, 10, 1, 'whatsapp', now(), now(), now(), now())
+          (1, 'General', 'general', -1, 'ZAR', 10, 10, 1, 'whatsapp', now(), now() + interval '1 day', now(), now())
         """,
         []
       )

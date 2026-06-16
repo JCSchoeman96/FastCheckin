@@ -238,7 +238,7 @@ defmodule FastCheck.Sales.Vs01fPolicyTest do
            initial_quantity, max_per_order, sales_enabled, sales_channel, starts_at, ends_at,
            inserted_at, updated_at)
         VALUES
-          ($1, $2, 'general', 100, 'ZAR', 10, 10, 2, true, 'whatsapp', now(), now(), now(), now())
+          ($1, $2, 'general', 100, 'ZAR', 10, 10, 2, true, 'whatsapp', now(), now() + interval '1 day', now(), now())
         RETURNING id
         """,
         [event_id, "General #{System.unique_integer([:positive])}"]
