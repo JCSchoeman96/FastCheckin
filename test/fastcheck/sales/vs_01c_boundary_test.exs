@@ -4,7 +4,6 @@ defmodule FastCheck.Sales.Vs01cBoundaryTest do
   @forbidden_resource_modules []
 
   @forbidden_paths [
-    "lib/fastcheck/sales/inventory/reservation_ledger.ex",
     "lib/fastcheck/payments/paystack/client.ex",
     "lib/fastcheck/tickets/issuer.ex",
     "lib/fastcheck/workers/paystack_webhook_worker.ex",

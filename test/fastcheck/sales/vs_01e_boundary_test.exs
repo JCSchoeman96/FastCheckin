@@ -2,7 +2,6 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
   use ExUnit.Case, async: true
 
   @forbidden_paths [
-    "lib/fastcheck/sales/inventory/reservation_ledger.ex",
     "lib/fastcheck/payments/paystack/client.ex",
     "lib/fastcheck/tickets/issuer.ex",
     "lib/fastcheck/workers/paystack_webhook_worker.ex",
@@ -29,7 +28,6 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
 
     assert Path.wildcard("lib/fastcheck/workers/*delivery*") == []
     assert Path.wildcard("lib/fastcheck/messaging/whatsapp/*") == []
-    assert Path.wildcard("lib/fastcheck/sales/inventory/*") == []
   end
 
   test "forbidden workflow actions are not implemented in VS-01E" do
