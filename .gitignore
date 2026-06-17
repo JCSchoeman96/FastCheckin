@@ -53,6 +53,7 @@ android/scanner-app/app/build/
 .idea/
 *.iml
 .vscode/
+.cursor/plans/
 
 # OS/editor cruft
 .DS_Store
