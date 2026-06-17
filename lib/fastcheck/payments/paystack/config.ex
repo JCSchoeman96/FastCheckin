@@ -20,7 +20,19 @@ defmodule FastCheck.Payments.Paystack.Config do
 
   @reference_regex ~r/^[A-Za-z0-9.\-=]+$/
 
-  @type t :: %{
+  defstruct [
+    :enabled,
+    :environment,
+    :base_url,
+    :public_key,
+    :secret_key,
+    :timeout_ms,
+    :allowed_channels,
+    :callback_url,
+    :webhook_url
+  ]
+
+  @type t :: %__MODULE__{
           enabled: boolean(),
           environment: String.t(),
           base_url: String.t(),
@@ -33,19 +45,20 @@ defmodule FastCheck.Payments.Paystack.Config do
         }
 
   @spec enabled?() :: boolean()
-  def enabled?, do: Application.get_env(:fastcheck, :paystack_enabled, false)
+  def enabled? do
+    Application.get_env(:fastcheck, :paystack_enabled, false)
+  end
 
   @spec get() :: t()
   def get do
-    %{
+    %__MODULE__{
       enabled: enabled?(),
       environment: Application.get_env(:fastcheck, :paystack_environment, "test"),
       base_url: Application.get_env(:fastcheck, :paystack_base_url, "https://api.paystack.co"),
       public_key: present(Application.get_env(:fastcheck, :paystack_public_key)),
       secret_key: present(Application.get_env(:fastcheck, :paystack_secret_key)),
       timeout_ms: Application.get_env(:fastcheck, :paystack_timeout_ms, 10_000),
-      allowed_channels:
-        parse_allowed_channels(Application.get_env(:fastcheck, :paystack_allowed_channels, [])),
+      allowed_channels: parse_allowed_channels(Application.get_env(:fastcheck, :paystack_allowed_channels, [])),
       callback_url: present(Application.get_env(:fastcheck, :paystack_callback_url)),
       webhook_url: present(Application.get_env(:fastcheck, :paystack_webhook_url))
     }
@@ -54,7 +67,12 @@ defmodule FastCheck.Payments.Paystack.Config do
   @spec validate_for_boot() :: :ok | {:error, Error.t()}
   def validate_for_boot do
     config = get()
-    if config.enabled, do: validate_required_config(config), else: :ok
+
+    if config.enabled do
+      validate_required_config(config)
+    else
+      :ok
+    end
   end
 
   @spec validate_for_call() :: {:ok, t()} | {:error, Error.t()}
@@ -86,13 +104,19 @@ defmodule FastCheck.Payments.Paystack.Config do
     end
   end
 
-  def normalize_reference(_), do: {:error, invalid_reference_error("reference must be a string")}
+  def normalize_reference(_reference) do
+    {:error, invalid_reference_error("reference must be a string")}
+  end
 
   @spec valid_reference?(term()) :: boolean()
-  def valid_reference?(reference), do: match?({:ok, _}, normalize_reference(reference))
+  def valid_reference?(reference) do
+    match?({:ok, _}, normalize_reference(reference))
+  end
 
   @spec known_channels() :: [String.t()]
-  def known_channels, do: @known_channels |> MapSet.to_list() |> Enum.sort()
+  def known_channels do
+    @known_channels |> MapSet.to_list() |> Enum.sort()
+  end
 
   @spec parse_allowed_channels(term()) :: [String.t()]
   def parse_allowed_channels(channels) when is_binary(channels) do
@@ -111,70 +135,71 @@ defmodule FastCheck.Payments.Paystack.Config do
 
   def parse_allowed_channels(_), do: []
 
-  defp validate_enabled(%{enabled: true}), do: :ok
+  defp validate_enabled(%__MODULE__{enabled: true}), do: :ok
 
-  defp validate_enabled(_) do
+  defp validate_enabled(_config) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :missing_config,
        message: "Paystack is disabled",
        safe_metadata: %{provider: :paystack, reason: :disabled}
-     }}
+     })}
   end
 
   defp validate_required_config(config) do
     with :ok <- require_present(config.secret_key, :paystack_secret_key),
          :ok <- require_present(config.public_key, :paystack_public_key),
          :ok <- require_present(config.base_url, :paystack_base_url),
-         :ok <- require_timeout(config.timeout_ms),
-         :ok <- validate_channels(config.allowed_channels) do
-      :ok
+         :ok <- require_timeout(config.timeout_ms) do
+      validate_channels(config.allowed_channels)
     end
   end
 
   defp validate_channels(channels) do
-    invalid = Enum.reject(channels, &MapSet.member?(@known_channels, &1))
+    invalid =
+      channels
+      |> Enum.reject(&MapSet.member?(@known_channels, &1))
 
     if invalid == [] do
       :ok
     else
       {:error,
-       %Error{
+       Error.new(%{
          type: :invalid_request,
          message: "PAYSTACK_ALLOWED_CHANNELS contains unsupported values",
          safe_metadata: %{provider: :paystack, invalid_channels: invalid}
-       }}
+       })}
     end
   end
 
   defp require_timeout(timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0, do: :ok
 
-  defp require_timeout(_) do
+  defp require_timeout(_timeout_ms) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :missing_config,
        message: "paystack_timeout_ms must be a positive integer",
        safe_metadata: %{provider: :paystack, key: :paystack_timeout_ms}
-     }}
+     })}
   end
 
   defp require_present(value, _key) when is_binary(value) and value != "", do: :ok
 
-  defp require_present(_, key) do
+  defp require_present(_value, key) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :missing_config,
        message: "missing required Paystack config",
        safe_metadata: %{provider: :paystack, key: key}
-     }}
+     })}
   end
 
   defp invalid_reference_error(message) do
-    %Error{
+    Error.new(%{
       type: :invalid_request,
       message: message,
       safe_metadata: %{provider: :paystack, field: :reference}
-    }
+    })
   end
 
   defp present(value) when is_binary(value) do
@@ -185,4 +210,19 @@ defmodule FastCheck.Payments.Paystack.Config do
   end
 
   defp present(_), do: nil
+end
+
+defimpl Inspect, for: FastCheck.Payments.Paystack.Config do
+  @filtered "[FILTERED]"
+
+  def inspect(%FastCheck.Payments.Paystack.Config{} = config, opts) do
+    config
+    |> Map.from_struct()
+    |> Map.update!(:secret_key, &redact_key/1)
+    |> Map.update!(:public_key, &redact_key/1)
+    |> Inspect.Map.inspect(opts)
+  end
+
+  defp redact_key(nil), do: nil
+  defp redact_key(_), do: @filtered
 end

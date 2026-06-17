@@ -73,4 +73,17 @@ defmodule FastCheck.Payments.Paystack.ConfigTest do
     assert Config.valid_reference?("FC-ORD-1")
     refute Config.valid_reference?("FC ORD 1")
   end
+
+  test "inspect redacts paystack keys" do
+    Application.put_env(:fastcheck, :paystack_enabled, true)
+    Application.put_env(:fastcheck, :paystack_public_key, "pk_test_fake")
+    Application.put_env(:fastcheck, :paystack_secret_key, "sk_test_fake")
+    Application.put_env(:fastcheck, :paystack_base_url, "https://api.paystack.co")
+    Application.put_env(:fastcheck, :paystack_timeout_ms, 10_000)
+
+    inspected = inspect(Config.get())
+
+    refute inspected =~ "sk_"
+    assert inspected =~ "[FILTERED]"
+  end
 end

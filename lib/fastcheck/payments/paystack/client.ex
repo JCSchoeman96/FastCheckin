@@ -13,15 +13,13 @@ defmodule FastCheck.Payments.Paystack.Client do
   alias Req.Response
   alias Req.TransportError
 
-  @request_fun Application.compile_env(:fastcheck, :paystack_request_fun, &Req.request/1)
-
   @spec request(atom(), String.t(), map() | keyword() | nil, keyword()) ::
           {:ok, map()} | {:error, Error.t()}
   def request(method, path, payload \\ nil, opts \\ []) when method in [:get, :post] do
     with {:ok, config} <- Config.validate_for_call() do
       correlation_id = correlation_id(opts)
       started_at = System.monotonic_time(:millisecond)
-      request_fun = Application.get_env(:fastcheck, :paystack_request_fun, @request_fun)
+      request_fun = Application.get_env(:fastcheck, :paystack_request_fun, &Req.request/1)
 
       req =
         Req.new(
@@ -89,7 +87,7 @@ defmodule FastCheck.Payments.Paystack.Client do
 
       {:error, _} ->
         {:error,
-         %Error{
+         Error.new(%{
            type: :decode_error,
            message: "unable to decode Paystack response body",
            retryable?: false,
@@ -98,7 +96,7 @@ defmodule FastCheck.Payments.Paystack.Client do
              correlation_id: correlation_id,
              http_status: status
            }
-         }}
+         })}
     end
   end
 
@@ -147,13 +145,18 @@ defmodule FastCheck.Payments.Paystack.Client do
       })
     )
 
-    %Error{type: type, message: message, retryable?: retryable?, safe_metadata: safe_metadata}
+    Error.new(%{
+      type: type,
+      message: message,
+      retryable?: retryable?,
+      safe_metadata: safe_metadata
+    })
   end
 
   defp transport_error(reason, correlation_id, retryable?) do
     type = if(reason == :timeout, do: :timeout, else: :provider_unavailable)
 
-    %Error{
+    Error.new(%{
       type: type,
       message: "paystack request transport failure",
       retryable?: retryable?,
@@ -163,7 +166,7 @@ defmodule FastCheck.Payments.Paystack.Client do
           reason: inspect(reason),
           correlation_id: correlation_id
         })
-    }
+    })
   end
 
   defp extract_provider_message(%{"message" => msg}) when is_binary(msg), do: msg

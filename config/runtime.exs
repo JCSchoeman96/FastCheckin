@@ -85,10 +85,25 @@ paystack_base_url =
     value -> value
   end
 
-paystack_timeout_ms =
+paystack_timeout_raw =
   System.get_env("PAYSTACK_TIMEOUT_MS", "10000")
   |> String.trim()
-  |> String.to_integer()
+
+paystack_timeout_ms =
+  case Integer.parse(paystack_timeout_raw) do
+    {timeout, ""} when timeout > 0 ->
+      timeout
+
+    _ ->
+      if paystack_enabled do
+        raise """
+        PAYSTACK_TIMEOUT_MS must be a positive integer when PAYSTACK_ENABLED=true.
+        Got: #{inspect(paystack_timeout_raw)}
+        """
+      else
+        10_000
+      end
+  end
 
 paystack_allowed_channels =
   System.get_env("PAYSTACK_ALLOWED_CHANNELS", "")

@@ -6,15 +6,15 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializer do
   alias FastCheck.Payments.Paystack.Client
   alias FastCheck.Payments.Paystack.Config
   alias FastCheck.Payments.Paystack.Error
+  alias FastCheck.Payments.Paystack.InitializeResult
   alias FastCheck.Payments.Paystack.ResponseSanitizer
 
-  @spec initialize(map(), keyword()) :: {:ok, map()} | {:error, Error.t()}
+  @spec initialize(map(), keyword()) :: {:ok, InitializeResult.t()} | {:error, Error.t()}
   def initialize(params, opts \\ [])
 
   def initialize(params, opts) when is_map(params) do
     with {:ok, config} <- Config.validate_for_call(),
-         {:ok, reference} <-
-           Config.normalize_reference(Map.get(params, :reference) || Map.get(params, "reference")),
+         {:ok, reference} <- Config.normalize_reference(Map.get(params, :reference) || Map.get(params, "reference")),
          {:ok, payload} <- build_payload(params, config, reference) do
       case Client.post("/transaction/initialize", payload, opts) do
         {:ok, response} -> {:ok, normalize_initialize_response(response)}
@@ -24,7 +24,7 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializer do
   end
 
   def initialize(_params, _opts) do
-    {:error, %Error{type: :invalid_request, message: "initialize params must be a map"}}
+    {:error, Error.new(%{type: :invalid_request, message: "initialize params must be a map"})}
   end
 
   defp build_payload(params, config, reference) do
@@ -62,7 +62,7 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializer do
   defp normalize_initialize_response(response) do
     data = response["data"] || %{}
 
-    %{
+    %InitializeResult{
       provider_reference: data["reference"],
       authorization_url: data["authorization_url"],
       access_code: data["access_code"],
@@ -76,33 +76,33 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializer do
 
   defp require_positive_integer(_value, field) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :invalid_request,
        message: "#{field} must be a positive integer",
        safe_metadata: %{provider: :paystack, field: field}
-     }}
+     })}
   end
 
   defp require_non_empty(value, _field) when is_binary(value) and value != "", do: :ok
 
   defp require_non_empty(_value, field) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :invalid_request,
        message: "#{field} is required",
        safe_metadata: %{provider: :paystack, field: field}
-     }}
+     })}
   end
 
   defp require_map(value, _field) when is_map(value), do: :ok
 
   defp require_map(_value, field) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :invalid_request,
        message: "#{field} must be a map",
        safe_metadata: %{provider: :paystack, field: field}
-     }}
+     })}
   end
 
   defp fetch(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))

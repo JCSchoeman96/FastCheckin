@@ -67,6 +67,11 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializerTest do
     assert result.authorization_url =~ "paystack"
     assert result.access_code == "AC_123"
     assert result.safe_data["authorization_url"] == "[FILTERED]"
+
+    inspected = inspect(result)
+    refute inspected =~ "authorization_url"
+    refute inspected =~ "checkout.paystack"
+    refute inspected =~ "access_code"
   end
 
   test "omits channels when config channel list is empty" do

@@ -40,32 +40,32 @@ defmodule FastCheck.Payments.Paystack.WebhookVerifier do
     cond do
       not is_binary(secret_key) or secret_key == "" ->
         {:error,
-         %Error{
+         Error.new(%{
            type: :missing_config,
            message: "missing paystack webhook secret",
            safe_metadata: %{provider: :paystack}
-         }}
+         })}
 
       valid_signature?(raw_body, signature_header, secret_key) ->
         {:ok, :valid}
 
       true ->
         {:error,
-         %Error{
+         Error.new(%{
            type: :invalid_signature,
            message: "invalid paystack webhook signature",
            safe_metadata: %{provider: :paystack}
-         }}
+         })}
     end
   end
 
   def verify(_raw_body, _headers_or_signature, _opts) do
     {:error,
-     %Error{
+     Error.new(%{
        type: :invalid_request,
        message: "raw webhook body must be a binary",
        safe_metadata: %{provider: :paystack}
-     }}
+     })}
   end
 
   defp normalize_signature(signature) when is_binary(signature) do
