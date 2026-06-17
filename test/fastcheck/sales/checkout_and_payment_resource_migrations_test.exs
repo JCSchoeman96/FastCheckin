@@ -112,6 +112,7 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
     assert_index("sales_payment_attempts_sales_order_id_status_idx")
     assert_index("sales_payment_attempts_provider_status_idx")
     assert_index("sales_payment_attempts_last_verified_at_idx")
+    assert_index("sales_payment_attempts_idempotency_key_active_uidx")
     assert_index("sales_payment_events_provider_event_id_uidx")
     assert_index("sales_payment_events_provider_payload_hash_uidx")
     assert_index("sales_payment_events_provider_reference_idx")
@@ -131,6 +132,47 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
       "sales_payment_events_provider_payload_hash_uidx",
       "provider_event_id IS NULL"
     )
+
+    assert_index_where(
+      "sales_payment_attempts_idempotency_key_active_uidx",
+      "idempotency_key IS NOT NULL"
+    )
+  end
+
+  test "initializing status and active idempotency index allow failed retry slot" do
+    order_id = insert_order!()
+    key = "paystack:init:#{order_id}:99"
+
+    insert_payment_attempt!(order_id, "initializing",
+      idempotency_key: key,
+      provider_reference: "FC-active-1"
+    )
+
+    assert_db_error(~r/sales_payment_attempts_idempotency_key_active_uidx/, fn ->
+      insert_payment_attempt!(order_id, "initialized",
+        idempotency_key: key,
+        provider_reference: "FC-active-2"
+      )
+    end)
+
+    FastCheck.Repo.query!(
+      """
+      UPDATE sales_payment_attempts
+      SET status = 'failed'
+      WHERE sales_order_id = $1 AND idempotency_key = $2
+      """,
+      [order_id, key]
+    )
+
+    insert_payment_attempt!(order_id, "initializing",
+      idempotency_key: key,
+      provider_reference: "FC-retry-#{System.unique_integer([:positive])}"
+    )
+  end
+
+  test "payment attempt status constraint accepts initializing" do
+    order_id = insert_order!()
+    insert_payment_attempt!(order_id, "initializing")
   end
 
   test "checkout and payment tables enforce foreign keys" do
@@ -225,17 +267,21 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
   defp insert_payment_attempt!(order_id, status, opts \\ []) do
     amount_cents = Keyword.get(opts, :amount_cents, 100)
     currency = Keyword.get(opts, :currency, "ZAR")
-    reference = "ref-#{System.unique_integer([:positive])}"
+
+    reference =
+      Keyword.get(opts, :provider_reference, "ref-#{System.unique_integer([:positive])}")
+
+    idempotency_key = Keyword.get(opts, :idempotency_key)
 
     Repo.query!(
       """
       INSERT INTO sales_payment_attempts
-        (sales_order_id, provider, provider_reference, status, amount_cents, currency,
+        (sales_order_id, provider, provider_reference, idempotency_key, status, amount_cents, currency,
          verification_attempt_count, inserted_at, updated_at)
       VALUES
-        ($1, 'paystack', $2, $3, $4, $5, 0, now(), now())
+        ($1, 'paystack', $2, $3, $4, $5, $6, 0, now(), now())
       """,
-      [order_id, reference, status, amount_cents, currency]
+      [order_id, reference, idempotency_key, status, amount_cents, currency]
     )
   end
 
