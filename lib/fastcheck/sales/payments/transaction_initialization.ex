@@ -139,7 +139,7 @@ defmodule FastCheck.Sales.Payments.TransactionInitialization do
         validate_session_expiry(expires_at)
 
       status in @valid_session_statuses_for_replay ->
-        :ok
+        validate_session_expiry(expires_at)
 
       true ->
         {:error, invalid_session_error(status)}

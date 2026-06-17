@@ -8,6 +8,7 @@ defmodule FastCheck.Sales.Payments.TransactionInitializationTest do
   import Ash.Expr
 
   alias Ash.Query
+  alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.PaymentAttempt
   alias FastCheck.Sales.Payments.TestSupport
@@ -83,7 +84,7 @@ defmodule FastCheck.Sales.Payments.TransactionInitializationTest do
   test "cancelled order does not call paystack", %{offer: offer} do
     {order, session} = TestSupport.checkout_ready_for_payment!(offer)
 
-    FastCheck.Repo.query!(
+    Repo.query!(
       "UPDATE sales_orders SET status = 'cancelled', cancelled_at = now() WHERE id = $1",
       [order.id]
     )
@@ -110,7 +111,7 @@ defmodule FastCheck.Sales.Payments.TransactionInitializationTest do
     {order, session} = TestSupport.checkout_ready_for_payment!(offer)
     idempotency_key = "paystack:init:#{order.id}:#{session.id}"
 
-    FastCheck.Repo.query!(
+    Repo.query!(
       """
       INSERT INTO sales_payment_attempts
         (sales_order_id, provider, provider_reference, idempotency_key, status,
@@ -143,6 +144,49 @@ defmodule FastCheck.Sales.Payments.TransactionInitializationTest do
       |> Ash.read!(authorize?: false)
 
     assert reviewed.manual_review_reason == "stale_initialization"
+  end
+
+  test "expired payment_link_sent session with initialized attempt does not replay paystack link",
+       %{
+         offer: offer
+       } do
+    {_order, session} = TestSupport.checkout_ready_for_payment!(offer)
+
+    Application.put_env(:fastcheck, :paystack_request_fun, TestSupport.success_request_fun())
+
+    assert {:ok, first} =
+             TransactionInitialization.initialize_for_checkout_session(
+               session.id,
+               Fixtures.system_actor()
+             )
+
+    Repo.query!(
+      "UPDATE sales_checkout_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1",
+      [session.id]
+    )
+
+    call_count = :counters.new(1, [])
+
+    Application.put_env(:fastcheck, :paystack_request_fun, fn _req ->
+      :counters.add(call_count, 1, 1)
+      flunk("paystack should not be called for expired payment_link_sent replay")
+    end)
+
+    assert {:error, :checkout_session_expired} =
+             TransactionInitialization.initialize_for_checkout_session(
+               session.id,
+               Fixtures.system_actor()
+             )
+
+    assert :counters.get(call_count, 1) == 0
+
+    attempt =
+      PaymentAttempt
+      |> Query.for_read(:get_by_id, %{id: first.payment_attempt_id})
+      |> Ash.read_one!(authorize?: false)
+
+    assert attempt.status == "initialized"
+    assert is_binary(attempt.authorization_url)
   end
 
   test "logs do not contain authorization_url or buyer_email", %{offer: offer} do
