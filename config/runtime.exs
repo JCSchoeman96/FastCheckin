@@ -62,6 +62,89 @@ sales_internal_pilot_enabled =
 
 config :fastcheck, :sales_internal_pilot_enabled, sales_internal_pilot_enabled
 
+paystack_enabled =
+  case System.get_env("PAYSTACK_ENABLED", "false") |> String.trim() |> String.downcase() do
+    value when value in ["1", "true", "yes", "on"] -> true
+    _ -> false
+  end
+
+paystack_environment =
+  System.get_env("PAYSTACK_ENVIRONMENT", "test")
+  |> String.trim()
+  |> case do
+    "sandbox" -> "test"
+    "" -> "test"
+    value -> value
+  end
+
+paystack_base_url =
+  System.get_env("PAYSTACK_BASE_URL", "https://api.paystack.co")
+  |> String.trim()
+  |> case do
+    "" -> "https://api.paystack.co"
+    value -> value
+  end
+
+paystack_timeout_ms =
+  System.get_env("PAYSTACK_TIMEOUT_MS", "10000")
+  |> String.trim()
+  |> String.to_integer()
+
+paystack_allowed_channels =
+  System.get_env("PAYSTACK_ALLOWED_CHANNELS", "")
+  |> String.split(",", trim: true)
+  |> Enum.map(&String.trim/1)
+  |> Enum.reject(&(&1 == ""))
+
+paystack_public_key =
+  case System.get_env("PAYSTACK_PUBLIC_KEY") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+paystack_secret_key =
+  case System.get_env("PAYSTACK_SECRET_KEY") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+paystack_callback_url =
+  case System.get_env("PAYSTACK_CALLBACK_URL") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+paystack_webhook_url =
+  case System.get_env("PAYSTACK_WEBHOOK_URL") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+if config_env() == :prod and paystack_enabled do
+  if !is_binary(paystack_public_key) or paystack_public_key == "" do
+    raise """
+    PAYSTACK_PUBLIC_KEY is required when PAYSTACK_ENABLED=true.
+    """
+  end
+
+  if !is_binary(paystack_secret_key) or paystack_secret_key == "" do
+    raise """
+    PAYSTACK_SECRET_KEY is required when PAYSTACK_ENABLED=true.
+    """
+  end
+end
+
+config :fastcheck,
+  paystack_enabled: paystack_enabled,
+  paystack_environment: paystack_environment,
+  paystack_base_url: paystack_base_url,
+  paystack_public_key: paystack_public_key,
+  paystack_secret_key: paystack_secret_key,
+  paystack_timeout_ms: paystack_timeout_ms,
+  paystack_allowed_channels: paystack_allowed_channels,
+  paystack_callback_url: paystack_callback_url,
+  paystack_webhook_url: paystack_webhook_url
+
 mobile_token_secret =
   case System.get_env("MOBILE_JWT_SECRET") do
     nil ->

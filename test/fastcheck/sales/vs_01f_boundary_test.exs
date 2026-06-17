@@ -4,7 +4,6 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
   alias Ash.Resource.Info, as: ResourceInfo
 
   @forbidden_paths [
-    "lib/fastcheck/payments/paystack",
     "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck/tickets/issuer.ex",
     "lib/fastcheck/tickets/code_generator.ex",
@@ -59,7 +58,6 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
       refute File.exists?(path), "#{path} is out of scope for VS-01F"
     end
 
-    assert Path.wildcard("lib/fastcheck/payments/paystack/*") == []
     assert Path.wildcard("lib/fastcheck/messaging/whatsapp/*") == []
     assert Path.wildcard("lib/fastcheck/workers/*") == []
   end

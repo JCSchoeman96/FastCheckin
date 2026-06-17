@@ -64,3 +64,23 @@ config :fastcheck, :mobile_scan_ingestion,
 
 config :fastcheck, :sales_hold_token_pepper, "test-pepper"
 config :fastcheck, :sales_internal_pilot_enabled, true
+config :fastcheck, :paystack_enabled, true
+config :fastcheck, :paystack_environment, "test"
+config :fastcheck, :paystack_base_url, "https://api.paystack.co"
+config :fastcheck, :paystack_public_key, "pk_test_fake_key"
+config :fastcheck, :paystack_secret_key, "sk_test_fake_key"
+config :fastcheck, :paystack_timeout_ms, 10_000
+
+config :fastcheck, :paystack_allowed_channels, [
+  "card",
+  "bank",
+  "bank_transfer",
+  "eft",
+  "capitec_pay"
+]
+
+config :fastcheck,
+       :paystack_callback_url,
+       "https://scan.voelgoed.co.za/sales/payments/paystack/callback"
+
+config :fastcheck, :paystack_webhook_url, "https://scan.voelgoed.co.za/api/sales/paystack/webhook"
