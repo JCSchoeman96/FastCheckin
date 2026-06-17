@@ -30,6 +30,25 @@ config :fastcheck, :event_post_grace_days, 14
 
 config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
 config :fastcheck, :sales_internal_pilot_enabled, true
+config :fastcheck, :paystack_enabled, false
+config :fastcheck, :paystack_environment, "test"
+config :fastcheck, :paystack_base_url, "https://api.paystack.co"
+config :fastcheck, :paystack_timeout_ms, 10_000
+
+config :fastcheck, :paystack_allowed_channels, [
+  "card",
+  "bank",
+  "bank_transfer",
+  "eft",
+  "capitec_pay"
+]
+
+config :fastcheck,
+       :paystack_callback_url,
+       "https://scan.voelgoed.co.za/sales/payments/paystack/callback"
+
+config :fastcheck, :paystack_webhook_url, "https://scan.voelgoed.co.za/api/sales/paystack/webhook"
+config :fastcheck, :paystack_request_fun, &Req.request/1
 
 # Configures the endpoint
 config :fastcheck, FastCheckWeb.Endpoint,
