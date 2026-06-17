@@ -1,15 +1,18 @@
 defmodule FastCheck.Sales.PaymentAttempt do
   @moduledoc """
-  Durable payment attempt skeleton for FastCheck Sales.
+  Durable payment attempt for FastCheck Sales.
 
-  VS-01C stores provider transaction attempt shape only. Paystack HTTP calls,
-  verification, webhook handling, and workflow actions are deferred.
+  VS-06B adds initialization workflow actions. Paystack HTTP calls remain in the
+  service layer; verification and webhook handling are deferred to later slices.
   """
 
   use Ash.Resource,
     domain: FastCheck.Sales,
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
+
+  alias Ash.Changeset
+  alias FastCheck.Sales.StateTransitionSupport
 
   postgres do
     table("sales_payment_attempts")
@@ -32,6 +35,85 @@ defmodule FastCheck.Sales.PaymentAttempt do
 
       filter(expr(id == ^arg(:id)))
     end
+
+    read :get_active_by_idempotency_key do
+      get?(true)
+
+      argument :idempotency_key, :string do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(
+          idempotency_key == ^arg(:idempotency_key) and
+            status in ["initializing", "initialized"]
+        )
+      )
+    end
+
+    create :create_initializing do
+      accept([
+        :sales_order_id,
+        :provider,
+        :provider_reference,
+        :idempotency_key,
+        :amount_cents,
+        :currency
+      ])
+
+      change(set_attribute(:status, "initializing"))
+      change(set_attribute(:verification_attempt_count, 0))
+      change(&record_create_transition/2)
+    end
+
+    update :mark_initialized do
+      require_atomic?(false)
+
+      accept([
+        :authorization_url,
+        :access_code,
+        :raw_initialize_response,
+        :initialized_at
+      ])
+
+      change(&transition_status(&1, &2, "initialized", allowed_from: ["initializing"]))
+    end
+
+    update :mark_failed do
+      require_atomic?(false)
+
+      accept([:failure_code, :failure_message])
+
+      change(&transition_status(&1, &2, "failed", allowed_from: ["initializing"]))
+    end
+
+    update :mark_manual_review do
+      require_atomic?(false)
+
+      accept([:manual_review_reason, :failure_code, :failure_message])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason =
+          Changeset.get_argument(changeset, :reason) ||
+            Changeset.get_attribute(changeset, :manual_review_reason)
+
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "manual_review" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "manual_review",
+            allowed_from: nil,
+            reason: reason,
+            extra_attrs: %{manual_review_reason: reason}
+          )
+        end
+      end)
+    end
   end
 
   policies do
@@ -46,6 +128,28 @@ defmodule FastCheck.Sales.PaymentAttempt do
 
     policy action_type(:read) do
       authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, relationship_path: [:order]})
+    end
+
+    policy action([
+             :create_initializing,
+             :mark_initialized,
+             :mark_failed,
+             :mark_manual_review
+           ]) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
+    end
+
+    policy action([
+             :create_initializing,
+             :mark_initialized,
+             :mark_failed,
+             :mark_manual_review
+           ]) do
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.EventAllowed,
+         relationship_path: [:order], actor_types: [:admin]}
+      )
     end
   end
 
@@ -129,5 +233,93 @@ defmodule FastCheck.Sales.PaymentAttempt do
 
   identities do
     identity(:unique_provider_reference, [:provider, :provider_reference])
+  end
+
+  defp record_create_transition(changeset, context) do
+    Changeset.after_action(changeset, fn _changeset, record ->
+      StateTransitionSupport.record!(
+        %{
+          entity_type: "PaymentAttempt",
+          entity_id: Integer.to_string(record.id),
+          from_state: nil,
+          to_state: record.status,
+          metadata: transition_metadata(context, record),
+          correlation_id: transition_correlation_id(context),
+          idempotency_key: record.idempotency_key,
+          source: "payment_attempt.create_initializing"
+        },
+        context
+      )
+
+      {:ok, record}
+    end)
+  end
+
+  defp transition_status(changeset, context, to_status, opts) do
+    from_state = Changeset.get_data(changeset, :status)
+    allowed_from = Keyword.get(opts, :allowed_from)
+    reason = Keyword.get(opts, :reason)
+    extra_attrs = Keyword.get(opts, :extra_attrs, %{})
+
+    changeset =
+      if allowed_from && from_state not in allowed_from do
+        Changeset.add_error(changeset,
+          field: :status,
+          message: "invalid transition from #{from_state}"
+        )
+      else
+        changeset
+      end
+
+    if changeset.valid? do
+      changeset =
+        changeset
+        |> Changeset.force_change_attribute(:status, to_status)
+        |> then(fn cs ->
+          Enum.reduce(
+            extra_attrs,
+            cs,
+            &Changeset.force_change_attribute(&2, elem(&1, 0), elem(&1, 1))
+          )
+        end)
+
+      Changeset.after_action(changeset, fn _changeset, record ->
+        case StateTransitionSupport.record!(
+               %{
+                 entity_type: "PaymentAttempt",
+                 entity_id: Integer.to_string(record.id),
+                 from_state: from_state,
+                 to_state: record.status,
+                 reason: reason || record.manual_review_reason,
+                 metadata: transition_metadata(context, record),
+                 correlation_id: transition_correlation_id(context),
+                 idempotency_key: record.idempotency_key,
+                 source: "payment_attempt.#{record.status}"
+               },
+               context
+             ) do
+          {:ok, _} -> {:ok, record}
+          {:error, error} -> {:error, error}
+        end
+      end)
+    else
+      changeset
+    end
+  end
+
+  defp transition_correlation_id(context) do
+    actor = Map.get(context, :actor, %{})
+    Map.get(context, :correlation_id) || Map.get(actor, :correlation_id)
+  end
+
+  defp transition_metadata(context, record) do
+    base = %{
+      provider: record.provider,
+      provider_reference: record.provider_reference
+    }
+
+    context
+    |> Map.get(:transition_metadata, %{})
+    |> Map.merge(base)
   end
 end

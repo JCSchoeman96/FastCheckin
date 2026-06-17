@@ -30,7 +30,8 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
   @forbidden_action_names_by_resource %{
     FastCheck.Sales.PaymentAttempt => [
       :create_initialized,
-      :mark_verified_success
+      :mark_verified_success,
+      :mark_webhook_received
     ],
     FastCheck.Sales.PaymentEvent => [
       :store_webhook_event,

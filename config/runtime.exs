@@ -149,6 +149,18 @@ if config_env() == :prod and paystack_enabled do
   end
 end
 
+paystack_initializing_stale_after_seconds =
+  case System.get_env("PAYSTACK_INITIALIZING_STALE_AFTER_SECONDS", "120") |> String.trim() do
+    "" ->
+      120
+
+    value ->
+      case Integer.parse(value) do
+        {seconds, ""} when seconds > 0 -> seconds
+        _ -> 120
+      end
+  end
+
 config :fastcheck,
   paystack_enabled: paystack_enabled,
   paystack_environment: paystack_environment,
@@ -158,7 +170,8 @@ config :fastcheck,
   paystack_timeout_ms: paystack_timeout_ms,
   paystack_allowed_channels: paystack_allowed_channels,
   paystack_callback_url: paystack_callback_url,
-  paystack_webhook_url: paystack_webhook_url
+  paystack_webhook_url: paystack_webhook_url,
+  paystack_initializing_stale_after_seconds: paystack_initializing_stale_after_seconds
 
 mobile_token_secret =
   case System.get_env("MOBILE_JWT_SECRET") do

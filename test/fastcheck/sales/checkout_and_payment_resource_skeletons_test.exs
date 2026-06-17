@@ -31,6 +31,14 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_manual_review
   ]
 
+  @payment_attempt_expected_action_names [
+    :get_active_by_idempotency_key,
+    :create_initializing,
+    :mark_initialized,
+    :mark_failed,
+    :mark_manual_review
+  ]
+
   @payment_attempt_forbidden_action_names [
     :create_initialized,
     :mark_authorization_url_sent,
@@ -39,9 +47,7 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_verified_success,
     :mark_amount_mismatch,
     :mark_currency_mismatch,
-    :mark_failed,
-    :mark_duplicate,
-    :mark_manual_review
+    :mark_duplicate
   ]
 
   @payment_event_forbidden_action_names [
@@ -85,14 +91,22 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
       assert MapSet.subset?(MapSet.new(@read_action_names), action_names),
              "#{inspect(resource)} must expose basic read actions"
 
-      if resource == FastCheck.Sales.CheckoutSession do
-        for expected <- @checkout_expected_action_names do
-          assert expected in action_names,
-                 "#{inspect(resource)} must expose #{inspect(expected)}"
-        end
-      else
-        refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
-               "#{inspect(resource)} must not expose mutating Ash actions"
+      cond do
+        resource == FastCheck.Sales.CheckoutSession ->
+          for expected <- @checkout_expected_action_names do
+            assert expected in action_names,
+                   "#{inspect(resource)} must expose #{inspect(expected)}"
+          end
+
+        resource == FastCheck.Sales.PaymentAttempt ->
+          for expected <- @payment_attempt_expected_action_names do
+            assert expected in action_names,
+                   "#{inspect(resource)} must expose #{inspect(expected)}"
+          end
+
+        true ->
+          refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
+                 "#{inspect(resource)} must not expose mutating Ash actions"
       end
 
       for forbidden <-

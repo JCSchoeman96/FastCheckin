@@ -49,6 +49,7 @@ config :fastcheck,
 
 config :fastcheck, :paystack_webhook_url, "https://scan.voelgoed.co.za/api/sales/paystack/webhook"
 config :fastcheck, :paystack_request_fun, &Req.request/1
+config :fastcheck, :paystack_initializing_stale_after_seconds, 120
 
 # Configures the endpoint
 config :fastcheck, FastCheckWeb.Endpoint,

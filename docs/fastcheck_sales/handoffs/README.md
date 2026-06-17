@@ -17,4 +17,5 @@ what future slices can rely on, and what remains deferred.
 - [VS-05 — Order and Checkout Core](./VS-05_IMPLEMENTATION_HANDOFF.md)
 - [VS-05A — Secondary Sales Entry Points](./VS-05A_IMPLEMENTATION_HANDOFF.md)
 - [VS-06A — Paystack Client Boundary](./VS-06A_IMPLEMENTATION_HANDOFF.md)
+- [VS-06B — Paystack Transaction Initialization](./VS-06B_IMPLEMENTATION_HANDOFF.md)
 - [VS-21A — Observability Naming and Log Redaction Foundation](./VS-21A_IMPLEMENTATION_HANDOFF.md)
