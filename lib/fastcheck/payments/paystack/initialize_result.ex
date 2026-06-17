@@ -23,7 +23,7 @@ defmodule FastCheck.Payments.Paystack.InitializeResult do
 end
 
 defimpl Inspect, for: FastCheck.Payments.Paystack.InitializeResult do
-  @redacted_fields [:authorization_url, :access_code]
+  @redacted_fields [:authorization_url, :access_code, :safe_data]
 
   def inspect(result, opts) do
     result

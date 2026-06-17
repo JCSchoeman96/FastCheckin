@@ -8,8 +8,7 @@ defmodule FastCheck.Payments.Paystack.WebhookVerifierTest do
     secret = "sk_test_fake_key"
 
     signature =
-      :sha512
-      |> :crypto.mac(:hmac, secret, raw_body)
+      :crypto.mac(:hmac, :sha512, secret, raw_body)
       |> Base.encode16(case: :lower)
 
     assert WebhookVerifier.valid_signature?(raw_body, signature, secret)
@@ -24,14 +23,13 @@ defmodule FastCheck.Payments.Paystack.WebhookVerifierTest do
   end
 
   test "signature check uses raw body bytes (re-encoding changes digest)" do
-    raw_body = "{\"a\":1, \"b\":2}"
+    raw_body = ~S({"a":1, "b":2})
     secret = "sk_test_fake_key"
 
     signature =
-      :sha512
-      |> :crypto.mac(:hmac, secret, raw_body)
+      :crypto.mac(:hmac, :sha512, secret, raw_body)
       |> Base.encode16(case: :lower)
 
-    refute WebhookVerifier.valid_signature?("{\"a\":1,\"b\":2}", signature, secret)
+    refute WebhookVerifier.valid_signature?(~S({"a":1,"b":2}), signature, secret)
   end
 end

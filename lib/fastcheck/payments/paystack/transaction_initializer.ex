@@ -14,7 +14,8 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializer do
 
   def initialize(params, opts) when is_map(params) do
     with {:ok, config} <- Config.validate_for_call(),
-         {:ok, reference} <- Config.normalize_reference(Map.get(params, :reference) || Map.get(params, "reference")),
+         {:ok, reference} <-
+           Config.normalize_reference(Map.get(params, :reference) || Map.get(params, "reference")),
          {:ok, payload} <- build_payload(params, config, reference) do
       case Client.post("/transaction/initialize", payload, opts) do
         {:ok, response} -> {:ok, normalize_initialize_response(response)}

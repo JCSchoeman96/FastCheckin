@@ -13,8 +13,7 @@ defmodule FastCheck.Payments.Paystack.WebhookVerifier do
     with {:ok, signature} <- normalize_signature(signature_header),
          true <- byte_size(secret_key) > 0 do
       expected =
-        :sha512
-        |> :crypto.mac(:hmac, secret_key, raw_body)
+        :crypto.mac(:hmac, :sha512, secret_key, raw_body)
         |> Base.encode16(case: :lower)
 
       Plug.Crypto.secure_compare(expected, signature)

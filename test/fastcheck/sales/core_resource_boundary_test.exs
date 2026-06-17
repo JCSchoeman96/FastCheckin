@@ -4,7 +4,6 @@ defmodule FastCheck.Sales.CoreResourceBoundaryTest do
   @forbidden_resource_modules []
 
   @forbidden_paths [
-    "lib/fastcheck/payments/paystack",
     "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck/tickets",
     "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",

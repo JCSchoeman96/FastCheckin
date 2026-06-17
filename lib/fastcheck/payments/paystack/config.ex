@@ -58,7 +58,8 @@ defmodule FastCheck.Payments.Paystack.Config do
       public_key: present(Application.get_env(:fastcheck, :paystack_public_key)),
       secret_key: present(Application.get_env(:fastcheck, :paystack_secret_key)),
       timeout_ms: Application.get_env(:fastcheck, :paystack_timeout_ms, 10_000),
-      allowed_channels: parse_allowed_channels(Application.get_env(:fastcheck, :paystack_allowed_channels, [])),
+      allowed_channels:
+        parse_allowed_channels(Application.get_env(:fastcheck, :paystack_allowed_channels, [])),
       callback_url: present(Application.get_env(:fastcheck, :paystack_callback_url)),
       webhook_url: present(Application.get_env(:fastcheck, :paystack_webhook_url))
     }

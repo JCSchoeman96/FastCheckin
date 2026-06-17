@@ -78,7 +78,7 @@ defmodule FastCheck.Payments.Paystack.TransactionInitializerTest do
     Application.put_env(:fastcheck, :paystack_allowed_channels, [])
 
     Application.put_env(:fastcheck, :paystack_request_fun, fn req ->
-      refute Keyword.has_key?(req.options.json, :channels)
+      refute Map.has_key?(req.options.json, :channels)
 
       {:ok,
        %Req.Response{status: 200, body: ~s({"status": true, "data": {"reference":"FC-REF-2"}})}}
