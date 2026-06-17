@@ -51,6 +51,44 @@ defmodule FastCheck.Sales.Payments.PaystackInitializationSecurityTest do
              )
   end
 
+  test "admin actor can initialize scoped event checkout", %{offer: offer} do
+    {_order, session} = TestSupport.checkout_ready_for_payment!(offer)
+
+    Application.put_env(:fastcheck, :paystack_request_fun, TestSupport.success_request_fun())
+
+    assert {:ok, result} =
+             TransactionInitialization.initialize_for_checkout_session(
+               session.id,
+               Fixtures.admin_actor()
+             )
+
+    refute Map.has_key?(result, :access_code)
+    refute Map.has_key?(result, :raw_initialize_response)
+  end
+
+  test "provider errors do not expose raw provider bodies", %{offer: offer} do
+    {_order, session} = TestSupport.checkout_ready_for_payment!(offer)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.status_request_fun(
+        400,
+        ~s({"status": false, "message": "invalid", "meta": {"secret": "raw-body"}})
+      )
+    )
+
+    assert {:error, error} =
+             TransactionInitialization.initialize_for_checkout_session(
+               session.id,
+               Fixtures.system_actor()
+             )
+
+    assert is_map(error)
+    refute inspect(error) =~ "raw-body"
+    refute Map.has_key?(error, :raw_initialize_response)
+  end
+
   test "captured logs redact paystack secrets and sensitive payment fields", %{offer: offer} do
     {_order, session} =
       TestSupport.checkout_ready_for_payment!(offer, %{buyer_email: "pii-buyer@example.com"})

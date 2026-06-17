@@ -101,4 +101,44 @@ defmodule FastCheck.Sales.Payments.TestSupport do
 
     {fun, counter}
   end
+
+  def flunk_paystack_request_fun do
+    counter = :counters.new(1, [])
+
+    fun = fn _req ->
+      :counters.add(counter, 1, 1)
+      raise "paystack should not be called"
+    end
+
+    {fun, counter}
+  end
+
+  def status_request_fun(status, body) when is_integer(status) and is_binary(body) do
+    fn _req ->
+      {:ok, %Req.Response{status: status, body: body}}
+    end
+  end
+
+  def timeout_request_fun do
+    fn _req ->
+      {:error, %Req.TransportError{reason: :timeout}}
+    end
+  end
+
+  def malformed_success_request_fun do
+    fn req ->
+      reference = req.options.json[:reference]
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body:
+           Jason.encode!(%{
+             status: true,
+             message: "ok",
+             data: %{reference: reference}
+           })
+       }}
+    end
+  end
 end
