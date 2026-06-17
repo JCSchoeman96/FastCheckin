@@ -406,13 +406,28 @@ defmodule FastCheck.Sales.Payments.TransactionInitialization do
 
     case TransactionInitializer.initialize(params, correlation_opts) do
       {:ok, result} ->
-        {:ok, result}
+        if blank_authorization_url?(result.authorization_url) do
+          error =
+            PaystackError.new(%{
+              type: :invalid_provider_response,
+              message: "provider response missing authorization_url",
+              retryable?: false
+            })
+
+          _ = mark_provider_failure(attempt, order, error, context)
+          {:error, normalize_provider_error(error)}
+        else
+          {:ok, result}
+        end
 
       {:error, %PaystackError{} = error} ->
         _ = mark_provider_failure(attempt, order, error, context)
         {:error, normalize_provider_error(error)}
     end
   end
+
+  defp blank_authorization_url?(url) when is_binary(url), do: String.trim(url) == ""
+  defp blank_authorization_url?(_), do: true
 
   defp finalize_success(session, attempt, result, context) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
