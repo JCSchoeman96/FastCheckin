@@ -17,7 +17,7 @@ defmodule FastCheck.Repo.Migrations.AddPaymentAttemptInitializingAndActiveIdempo
   ]
 
   def up do
-    drop constraint(:sales_payment_attempts, :sales_payment_attempts_status_valid)
+    drop(constraint(:sales_payment_attempts, :sales_payment_attempts_status_valid))
 
     create(
       constraint(:sales_payment_attempts, :sales_payment_attempts_status_valid,
@@ -40,7 +40,7 @@ defmodule FastCheck.Repo.Migrations.AddPaymentAttemptInitializingAndActiveIdempo
       )
     )
 
-    drop constraint(:sales_payment_attempts, :sales_payment_attempts_status_valid)
+    drop(constraint(:sales_payment_attempts, :sales_payment_attempts_status_valid))
 
     old_statuses =
       @payment_attempt_statuses
