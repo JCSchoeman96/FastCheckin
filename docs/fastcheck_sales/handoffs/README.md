@@ -20,4 +20,5 @@ what future slices can rely on, and what remains deferred.
 - [VS-06B — Paystack Transaction Initialization](./VS-06B_IMPLEMENTATION_HANDOFF.md)
 - [VS-06C — Paystack Initialization Tests](./VS-06C_IMPLEMENTATION_HANDOFF.md)
 - [VS-07A — Paystack Webhook Ingestion](./VS-07A_IMPLEMENTATION_HANDOFF.md)
+- [VS-07B — Paystack Transaction Verification](./VS-07B_IMPLEMENTATION_HANDOFF.md)
 - [VS-21A — Observability Naming and Log Redaction Foundation](./VS-21A_IMPLEMENTATION_HANDOFF.md)
