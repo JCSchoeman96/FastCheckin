@@ -2,9 +2,10 @@ defmodule FastCheckWeb.Webhooks.PaystackControllerTest do
   use FastCheckWeb.ConnCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  import ExUnit.CaptureLog
+
   alias FastCheck.Sales.Payments.PaystackWebhookWorker
   alias FastCheck.Sales.Payments.TestSupport, as: PaystackSupport
-  alias FastCheck.Sales.Payments.WebhookIngestion
 
   @webhook_path "/api/sales/paystack/webhook"
 
@@ -44,13 +45,23 @@ defmodule FastCheckWeb.Webhooks.PaystackControllerTest do
     refute_enqueued(worker: PaystackWebhookWorker)
   end
 
-  test "malformed JSON returns 400 without row or job" do
+  test "malformed JSON returns 400 without row or job", %{conn: conn} do
     body = "{not-json"
     signature = PaystackSupport.sign_webhook_body(body)
 
-    assert {:error, :malformed_payload} =
-             WebhookIngestion.ingest(body, %{"x-paystack-signature" => signature})
+    log =
+      capture_log(fn ->
+        conn =
+          conn
+          |> put_req_header("content-type", "application/json")
+          |> put_req_header("x-paystack-signature", signature)
+          |> post(@webhook_path, body)
 
+        assert response(conn, 400)
+      end)
+
+    refute log =~ signature
+    refute log =~ body
     assert count_payment_events() == 0
     refute_enqueued(worker: PaystackWebhookWorker)
   end

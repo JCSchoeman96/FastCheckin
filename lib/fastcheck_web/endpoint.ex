@@ -88,4 +88,24 @@ defmodule FastCheckWeb.Endpoint do
   plug CORSPlug, origin: &__MODULE__.cors_origins/0
 
   plug FastCheckWeb.Router
+
+  @paystack_webhook_path "/api/sales/paystack/webhook"
+
+  @doc false
+  def call(conn, opts) do
+    super(conn, opts)
+  rescue
+    e in Plug.Parsers.ParseError ->
+      if paystack_webhook_request?(conn) do
+        conn
+        |> Plug.Conn.send_resp(400, "")
+        |> Plug.Conn.halt()
+      else
+        reraise e, __STACKTRACE__
+      end
+  end
+
+  defp paystack_webhook_request?(conn) do
+    conn.method == "POST" and conn.request_path == @paystack_webhook_path
+  end
 end
