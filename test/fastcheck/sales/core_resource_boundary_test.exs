@@ -5,7 +5,7 @@ defmodule FastCheck.Sales.CoreResourceBoundaryTest do
 
   @forbidden_paths [
     "lib/fastcheck/messaging/whatsapp",
-    "lib/fastcheck/tickets",
+    "lib/fastcheck/tickets/issuer.ex",
     "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
   ]
 

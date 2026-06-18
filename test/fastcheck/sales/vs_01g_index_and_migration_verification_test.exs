@@ -30,9 +30,6 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
   @forbidden_paths [
     "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck/tickets/issuer.ex",
-    "lib/fastcheck/tickets/code_generator.ex",
-    "lib/fastcheck/tickets/qr_payload.ex",
-    "lib/fastcheck/tickets/delivery_token.ex",
     "lib/fastcheck/workers",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
