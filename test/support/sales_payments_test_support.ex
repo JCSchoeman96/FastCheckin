@@ -290,6 +290,41 @@ defmodule FastCheck.Sales.Payments.TestSupport do
     |> Ash.create!(authorize?: false)
   end
 
+  def insert_initialized_attempt!(order, attrs \\ %{}) do
+    alias Ash.Changeset
+    alias FastCheck.Sales.PaymentAttempt
+    alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+
+    defaults = %{
+      sales_order_id: order.id,
+      provider: "paystack",
+      provider_reference: "FC-INIT-#{System.unique_integer([:positive])}",
+      idempotency_key: "paystack:init:#{order.id}:#{System.unique_integer([:positive])}",
+      amount_cents: order.total_amount_cents,
+      currency: order.currency
+    }
+
+    attrs = Map.merge(defaults, attrs)
+
+    {:ok, attempt} =
+      PaymentAttempt
+      |> Changeset.for_create(:create_initializing, attrs, actor: Fixtures.system_actor())
+      |> Ash.create(authorize?: false)
+
+    attempt
+    |> Changeset.for_update(
+      :mark_initialized,
+      %{
+        authorization_url: "https://checkout.paystack.com/x",
+        access_code: "AC",
+        raw_initialize_response: %{"reference" => attrs.provider_reference},
+        initialized_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      },
+      actor: Fixtures.system_actor()
+    )
+    |> Ash.update!(authorize?: false)
+  end
+
   def webhook_secret do
     Application.get_env(:fastcheck, :paystack_secret_key, "sk_test_fake_key")
   end

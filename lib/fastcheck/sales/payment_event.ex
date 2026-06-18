@@ -192,6 +192,89 @@ defmodule FastCheck.Sales.PaymentEvent do
 
       transaction?(false)
     end
+
+    update :mark_duplicate do
+      require_atomic?(false)
+      accept([:last_processing_error])
+
+      change(fn changeset, _context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        if from_state == "duplicate" do
+          changeset
+        else
+          transition_processing_status(
+            changeset,
+            %{},
+            "duplicate",
+            allowed_from: nil,
+            extra_attrs: %{
+              processed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            }
+          )
+        end
+      end)
+
+      transaction?(false)
+    end
+
+    update :retry_processing do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, _context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        cond do
+          from_state == "processing_started" ->
+            changeset
+
+          from_state in ["unmatched", "failed"] ->
+            count = Changeset.get_data(changeset, :processing_attempt_count) || 0
+
+            transition_processing_status(
+              changeset,
+              %{},
+              "processing_started",
+              allowed_from: nil,
+              extra_attrs: %{processing_attempt_count: count + 1}
+            )
+
+          true ->
+            Changeset.add_error(changeset,
+              field: :processing_status,
+              message: "invalid transition from #{from_state}"
+            )
+        end
+      end)
+
+      transaction?(false)
+    end
+
+    update :mark_manual_review do
+      require_atomic?(false)
+      accept([:last_processing_error])
+
+      change(fn changeset, _context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        if from_state == "manual_review" do
+          changeset
+        else
+          transition_processing_status(
+            changeset,
+            %{},
+            "manual_review",
+            allowed_from: ["processing_started", "unmatched", "failed"],
+            extra_attrs: %{
+              last_processing_error_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            }
+          )
+        end
+      end)
+
+      transaction?(false)
+    end
   end
 
   policies do

@@ -121,7 +121,7 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
     assert attempt.status == "verification_started"
   end
 
-  test "amount mismatch leaves order unpaid", %{offer: offer} do
+  test "amount mismatch moves order to manual_review and leaves unpaid", %{offer: offer} do
     %{order: order, attempt: attempt} = TestSupport.initialized_payment!(offer)
 
     Application.put_env(
@@ -146,10 +146,11 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
       |> Ash.read_one!(authorize?: false)
 
     assert attempt.status == "verified_amount_mismatch"
-    assert order.status == "awaiting_payment"
+    assert order.status == "manual_review"
+    assert order.manual_review_reason == "payment_amount_mismatch"
   end
 
-  test "currency mismatch leaves order unpaid", %{offer: offer} do
+  test "currency mismatch moves order to manual_review and leaves unpaid", %{offer: offer} do
     %{order: order, attempt: attempt} = TestSupport.initialized_payment!(offer)
 
     Application.put_env(
@@ -174,10 +175,12 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
       |> Ash.read_one!(authorize?: false)
 
     assert attempt.status == "verified_currency_mismatch"
-    assert order.status == "awaiting_payment"
+    assert order.status == "manual_review"
+    assert order.manual_review_reason == "payment_currency_mismatch"
   end
 
-  test "expired checkout with provider success verifies attempt only", %{offer: offer} do
+  test "expired checkout with provider success applies late-payment recovery when inventory allows",
+       %{offer: offer} do
     %{order: order, session: session, attempt: attempt} = TestSupport.initialized_payment!(offer)
 
     session
@@ -211,8 +214,8 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
       |> Ash.read_one!(authorize?: false)
 
     assert attempt.status == "verified_success"
-    assert order.status == "awaiting_payment"
-    assert session.status == "expired"
+    assert order.status == "paid_verified"
+    assert session.status == "paid"
   end
 
   test "provider timeout is retryable", %{offer: offer} do
@@ -254,9 +257,9 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
       |> Ash.read_one!(authorize?: false)
 
     assert attempt.status == "manual_review"
-    assert attempt.manual_review_reason == "provider_reference_mismatch"
+    assert attempt.manual_review_reason == "payment_reference_mismatch"
     refute attempt.status == "verified_success"
-    assert order.status == "awaiting_payment"
+    assert order.status == "manual_review"
     refute session.status == "paid"
   end
 
@@ -286,7 +289,7 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
       |> Ash.read_one!(authorize?: false)
 
     assert attempt.status == "manual_review"
-    assert order.status == "awaiting_payment"
+    assert order.status == "manual_review"
   end
 
   test "non-retryable verify decode error marks attempt failed and leaves order unpaid", %{

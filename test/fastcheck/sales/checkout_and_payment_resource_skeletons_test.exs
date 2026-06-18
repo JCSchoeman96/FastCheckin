@@ -43,7 +43,8 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_verified_success,
     :mark_verified_amount_mismatch,
     :mark_verified_currency_mismatch,
-    :mark_verification_failed
+    :mark_verification_failed,
+    :mark_duplicate
   ]
 
   @payment_attempt_forbidden_action_names [
@@ -51,8 +52,7 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_authorization_url_sent,
     :mark_webhook_received,
     :mark_amount_mismatch,
-    :mark_currency_mismatch,
-    :mark_duplicate
+    :mark_currency_mismatch
   ]
 
   @payment_event_expected_action_names [
@@ -62,12 +62,13 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_processing_started,
     :mark_processed,
     :mark_unmatched,
-    :mark_failed
+    :mark_failed,
+    :mark_duplicate,
+    :retry_processing,
+    :mark_manual_review
   ]
 
-  @payment_event_forbidden_action_names [
-    :mark_duplicate
-  ]
+  @payment_event_forbidden_action_names []
 
   @sensitive_attributes %{
     FastCheck.Sales.CheckoutSession => [:hold_token],

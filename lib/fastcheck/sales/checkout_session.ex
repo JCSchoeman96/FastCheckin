@@ -158,6 +158,49 @@ defmodule FastCheck.Sales.CheckoutSession do
         end
       end)
     end
+
+    update :recover_expired_paid_session_to_paid do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "paid" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "paid",
+            allowed_from: ["expired"]
+          )
+        end
+      end)
+    end
+
+    update :recover_expired_paid_session_to_manual_review do
+      require_atomic?(false)
+      accept([:state_data])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason = Changeset.get_argument(changeset, :reason)
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "manual_review" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "manual_review",
+            allowed_from: ["expired", "payment_link_sent", "payment_started"],
+            reason: reason
+          )
+        end
+      end)
+    end
   end
 
   policies do
