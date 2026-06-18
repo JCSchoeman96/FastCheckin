@@ -28,23 +28,28 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_payment_link_sent,
     :expire_session,
     :release_session,
-    :mark_manual_review
+    :mark_manual_review,
+    :mark_paid
   ]
 
   @payment_attempt_expected_action_names [
     :get_active_by_idempotency_key,
+    :get_by_provider_reference,
     :create_initializing,
     :mark_initialized,
     :mark_failed,
-    :mark_manual_review
+    :mark_manual_review,
+    :mark_verification_started,
+    :mark_verified_success,
+    :mark_verified_amount_mismatch,
+    :mark_verified_currency_mismatch,
+    :mark_verification_failed
   ]
 
   @payment_attempt_forbidden_action_names [
     :create_initialized,
     :mark_authorization_url_sent,
     :mark_webhook_received,
-    :mark_verification_started,
-    :mark_verified_success,
     :mark_amount_mismatch,
     :mark_currency_mismatch,
     :mark_duplicate
@@ -53,15 +58,15 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
   @payment_event_expected_action_names [
     :store_webhook_event,
     :get_by_provider_event_id,
-    :get_by_provider_payload_hash
+    :get_by_provider_payload_hash,
+    :mark_processing_started,
+    :mark_processed,
+    :mark_unmatched,
+    :mark_failed
   ]
 
   @payment_event_forbidden_action_names [
-    :mark_processing_started,
-    :mark_processed,
-    :mark_duplicate,
-    :mark_unmatched,
-    :mark_failed
+    :mark_duplicate
   ]
 
   @sensitive_attributes %{

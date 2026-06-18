@@ -138,6 +138,26 @@ defmodule FastCheck.Sales.CheckoutSession do
         end
       end)
     end
+
+    update :mark_paid do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "paid" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "paid",
+            allowed_from: ["payment_link_sent", "payment_started"]
+          )
+        end
+      end)
+    end
   end
 
   policies do

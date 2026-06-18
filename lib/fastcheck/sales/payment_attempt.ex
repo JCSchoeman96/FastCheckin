@@ -2,8 +2,8 @@ defmodule FastCheck.Sales.PaymentAttempt do
   @moduledoc """
   Durable payment attempt for FastCheck Sales.
 
-  VS-06B adds initialization workflow actions. Paystack HTTP calls remain in the
-  service layer; verification and webhook handling are deferred to later slices.
+  VS-06B adds initialization workflow actions. VS-07B adds verification workflow
+  actions. Paystack HTTP calls remain in the service layer only.
   """
 
   use Ash.Resource,
@@ -34,6 +34,22 @@ defmodule FastCheck.Sales.PaymentAttempt do
       end
 
       filter(expr(id == ^arg(:id)))
+    end
+
+    read :get_by_provider_reference do
+      get?(true)
+
+      argument :provider, :string do
+        allow_nil?(false)
+      end
+
+      argument :provider_reference, :string do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(provider == ^arg(:provider) and provider_reference == ^arg(:provider_reference))
+      )
     end
 
     read :get_active_by_idempotency_key do
@@ -114,6 +130,124 @@ defmodule FastCheck.Sales.PaymentAttempt do
         end
       end)
     end
+
+    update :mark_verification_started do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        cond do
+          from_state == "verification_started" ->
+            changeset
+
+          from_state in ["initialized", "authorization_url_sent", "webhook_received", "failed"] ->
+            count = Changeset.get_data(changeset, :verification_attempt_count) || 0
+
+            transition_status(
+              changeset,
+              context,
+              "verification_started",
+              allowed_from: nil,
+              extra_attrs: %{verification_attempt_count: count + 1}
+            )
+
+          true ->
+            Changeset.add_error(changeset,
+              field: :status,
+              message: "invalid transition from #{from_state}"
+            )
+        end
+      end)
+    end
+
+    update :mark_verified_success do
+      require_atomic?(false)
+
+      accept([
+        :provider_status,
+        :provider_paid_at,
+        :verified_at,
+        :last_verified_at,
+        :raw_verify_response
+      ])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "verified_success" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "verified_success",
+            allowed_from: ["verification_started"]
+          )
+        end
+      end)
+    end
+
+    update :mark_verified_amount_mismatch do
+      require_atomic?(false)
+      accept([:provider_status, :last_verified_at, :raw_verify_response])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "verified_amount_mismatch" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "verified_amount_mismatch",
+            allowed_from: ["verification_started"]
+          )
+        end
+      end)
+    end
+
+    update :mark_verified_currency_mismatch do
+      require_atomic?(false)
+      accept([:provider_status, :last_verified_at, :raw_verify_response])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "verified_currency_mismatch" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "verified_currency_mismatch",
+            allowed_from: ["verification_started"]
+          )
+        end
+      end)
+    end
+
+    update :mark_verification_failed do
+      require_atomic?(false)
+      accept([:provider_status, :failure_code, :failure_message, :last_verified_at])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "failed" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "failed",
+            allowed_from: ["verification_started"]
+          )
+        end
+      end)
+    end
   end
 
   policies do
@@ -160,10 +294,13 @@ defmodule FastCheck.Sales.PaymentAttempt do
       :authorization_url,
       :access_code,
       :idempotency_key,
-      :raw_initialize_response,
-      :raw_verify_response
+      :raw_initialize_response
     ] do
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin]})
+    end
+
+    field_policy [:raw_verify_response] do
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
     end
 
     field_policy :* do

@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.Payments.TestSupport do
   @moduledoc false
 
+  alias Ash.Query
+
   def setup_paystack! do
     keys = [
       :paystack_enabled,
@@ -140,6 +142,152 @@ defmodule FastCheck.Sales.Payments.TestSupport do
            })
        }}
     end
+  end
+
+  def verify_success_request_fun(opts \\ []) do
+    fn req ->
+      reference = Path.basename(req.url.path)
+      provider_status = Keyword.get(opts, :provider_status, "success")
+      amount = Keyword.get(opts, :amount, 12_500)
+      currency = Keyword.get(opts, :currency, "ZAR")
+      reference_value = verify_reference_value(opts, reference)
+
+      data =
+        %{
+          status: provider_status,
+          amount: amount,
+          currency: currency,
+          paid_at: "2026-06-17T08:00:00Z",
+          email: "buyer-secret@example.com",
+          authorization_url: "https://checkout.paystack.com/secret"
+        }
+        |> maybe_put_reference(reference_value)
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{status: true, message: "ok", data: data})
+       }}
+    end
+  end
+
+  defp verify_reference_value(opts, reference) do
+    cond do
+      Keyword.get(opts, :omit_reference, false) -> :omit
+      Keyword.has_key?(opts, :reference) -> Keyword.get(opts, :reference)
+      true -> reference
+    end
+  end
+
+  defp maybe_put_reference(data, :omit), do: data
+
+  defp maybe_put_reference(data, reference) when is_binary(reference) or is_nil(reference) do
+    Map.put(data, :reference, reference)
+  end
+
+  def verify_http_error_request_fun(status, body \\ ~s({"status":false,"message":"bad"})) do
+    error_fun = status_request_fun(status, body)
+
+    fn req ->
+      path = URI.parse(to_string(req.url)).path || ""
+
+      if String.contains?(path, "/transaction/verify/") do
+        error_fun.(req)
+      else
+        success_request_fun().(req)
+      end
+    end
+  end
+
+  def verify_decode_error_request_fun do
+    fn req ->
+      path = URI.parse(to_string(req.url)).path || ""
+
+      if String.contains?(path, "/transaction/verify/") do
+        {:ok, %Req.Response{status: 200, body: "not-json"}}
+      else
+        success_request_fun().(req)
+      end
+    end
+  end
+
+  def init_and_verify_request_fun(opts \\ []) do
+    init_fun = success_request_fun(opts)
+    verify_fun = verify_success_request_fun(opts)
+
+    fn req ->
+      path = URI.parse(to_string(req.url)).path || ""
+
+      if String.contains?(path, "/transaction/verify/") do
+        verify_fun.(req)
+      else
+        init_fun.(req)
+      end
+    end
+  end
+
+  def initialized_payment!(offer, opts \\ []) do
+    alias FastCheck.Sales.CheckoutSession
+    alias FastCheck.Sales.Order
+    alias FastCheck.Sales.PaymentAttempt
+    alias FastCheck.Sales.Payments.TransactionInitialization
+    alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+
+    {order, session} = checkout_ready_for_payment!(offer)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      init_and_verify_request_fun(opts)
+    )
+
+    case TransactionInitialization.initialize_for_checkout_session(
+           session.id,
+           Fixtures.system_actor()
+         ) do
+      {:ok, init_result} ->
+        attempt =
+          PaymentAttempt
+          |> Query.for_read(:get_by_id, %{id: init_result.payment_attempt_id})
+          |> Ash.read_one!(authorize?: false)
+
+        order =
+          Order
+          |> Query.for_read(:get_by_id, %{id: order.id})
+          |> Ash.read_one!(authorize?: false)
+
+        session =
+          CheckoutSession
+          |> Query.for_read(:get_by_id, %{id: session.id})
+          |> Ash.read_one!(authorize?: false)
+
+        %{order: order, session: session, attempt: attempt, init: init_result}
+
+      other ->
+        raise "payment initialization failed: #{inspect(other)}"
+    end
+  end
+
+  def insert_payment_event!(attrs \\ %{}) do
+    alias Ash.Changeset
+    alias FastCheck.Sales.PaymentEvent
+
+    defaults = %{
+      provider: "paystack",
+      provider_event_id: "evt-#{System.unique_integer([:positive])}",
+      provider_reference: "ref-#{System.unique_integer([:positive])}",
+      event_type: "charge.success",
+      payload_hash: "hash-#{System.unique_integer([:positive])}",
+      raw_payload: %{"event" => "charge.success"},
+      processing_status: "stored",
+      processing_attempt_count: 0
+    }
+
+    attrs = Map.merge(defaults, attrs)
+
+    PaymentEvent
+    |> Changeset.for_create(:store_webhook_event, attrs)
+    |> Ash.create!(authorize?: false)
   end
 
   def webhook_secret do

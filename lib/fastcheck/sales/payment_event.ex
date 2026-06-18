@@ -2,14 +2,16 @@ defmodule FastCheck.Sales.PaymentEvent do
   @moduledoc """
   Durable raw payment provider event for FastCheck Sales.
 
-  VS-07A adds webhook ingestion storage. Verification and order/payment mutation
-  are deferred to later slices.
+  VS-07A adds webhook ingestion storage. VS-07B adds processing-status workflow
+  actions for verification handoff.
   """
 
   use Ash.Resource,
     domain: FastCheck.Sales,
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
+
+  alias Ash.Changeset
 
   postgres do
     table("sales_payment_events")
@@ -80,6 +82,113 @@ defmodule FastCheck.Sales.PaymentEvent do
         :processing_status,
         :processing_attempt_count
       ])
+
+      transaction?(false)
+    end
+
+    update :mark_processing_started do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        cond do
+          from_state == "processing_started" ->
+            changeset
+
+          from_state in ["stored", "failed"] ->
+            count = Changeset.get_data(changeset, :processing_attempt_count) || 0
+
+            transition_processing_status(
+              changeset,
+              context,
+              "processing_started",
+              extra_attrs: %{processing_attempt_count: count + 1}
+            )
+
+          true ->
+            Changeset.add_error(changeset,
+              field: :processing_status,
+              message: "invalid transition from #{from_state}"
+            )
+        end
+      end)
+
+      transaction?(false)
+    end
+
+    update :mark_processed do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        if from_state == "processed" do
+          changeset
+        else
+          transition_processing_status(
+            changeset,
+            context,
+            "processed",
+            allowed_from: ["processing_started"],
+            extra_attrs: %{
+              processed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            }
+          )
+        end
+      end)
+
+      transaction?(false)
+    end
+
+    update :mark_unmatched do
+      require_atomic?(false)
+      accept([:last_processing_error])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        if from_state == "unmatched" do
+          changeset
+        else
+          transition_processing_status(
+            changeset,
+            context,
+            "unmatched",
+            allowed_from: ["stored", "processing_started"],
+            extra_attrs: %{
+              last_processing_error_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            }
+          )
+        end
+      end)
+
+      transaction?(false)
+    end
+
+    update :mark_failed do
+      require_atomic?(false)
+      accept([:last_processing_error])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :processing_status)
+
+        if from_state == "failed" do
+          changeset
+        else
+          transition_processing_status(
+            changeset,
+            context,
+            "failed",
+            allowed_from: ["processing_started"],
+            extra_attrs: %{
+              last_processing_error_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            }
+          )
+        end
+      end)
 
       transaction?(false)
     end
@@ -159,6 +268,36 @@ defmodule FastCheck.Sales.PaymentEvent do
 
     identity :unique_provider_payload_hash, [:provider, :payload_hash] do
       where(expr(is_nil(provider_event_id)))
+    end
+  end
+
+  defp transition_processing_status(changeset, _context, to_status, opts) do
+    from_state = Changeset.get_data(changeset, :processing_status)
+    allowed_from = Keyword.get(opts, :allowed_from)
+    extra_attrs = Keyword.get(opts, :extra_attrs, %{})
+
+    changeset =
+      if allowed_from && from_state not in allowed_from do
+        Changeset.add_error(changeset,
+          field: :processing_status,
+          message: "invalid transition from #{from_state}"
+        )
+      else
+        changeset
+      end
+
+    if changeset.valid? do
+      changeset
+      |> Changeset.force_change_attribute(:processing_status, to_status)
+      |> then(fn cs ->
+        Enum.reduce(
+          extra_attrs,
+          cs,
+          &Changeset.force_change_attribute(&2, elem(&1, 0), elem(&1, 1))
+        )
+      end)
+    else
+      changeset
     end
   end
 end

@@ -100,7 +100,27 @@ defmodule FastCheck.Sales.Vs01fPolicyTest do
     assert attempt.authorization_url == "https://paystack.example/checkout"
     assert attempt.access_code == "paystack-access-code"
     assert attempt.raw_initialize_response == %{"provider" => "initialize"}
-    assert attempt.raw_verify_response == %{"provider" => "verify"}
+    assert %Ash.ForbiddenField{} = attempt.raw_verify_response
+  end
+
+  test "admin can read summarized payment attempt fields but not raw_verify_response" do
+    assert [attempt] =
+             read(FastCheck.Sales.PaymentAttempt, admin_actor([@event_id]),
+               select: [
+                 :id,
+                 :status,
+                 :provider_status,
+                 :verified_at,
+                 :last_verified_at,
+                 :failure_code,
+                 :failure_message,
+                 :manual_review_reason,
+                 :raw_verify_response
+               ]
+             )
+
+    assert attempt.status == "initialized"
+    assert %Ash.ForbiddenField{} = attempt.raw_verify_response
   end
 
   test "operator cannot access restricted ticket and delivery fields" do
