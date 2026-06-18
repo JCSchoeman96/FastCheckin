@@ -54,6 +54,7 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   def perform(_job), do: {:error, :invalid_args}
 
   defp handoff_verification(%{processing_status: "processed"}), do: :ok
+  defp handoff_verification(%{processing_status: "duplicate"}), do: :ok
 
   defp handoff_verification(event) do
     case find_payment_attempt(event) do
@@ -69,9 +70,14 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   end
 
   defp atomic_handoff_with_attempt(event, attempt) do
+    action =
+      if event.processing_status == "unmatched",
+        do: :retry_processing,
+        else: :mark_processing_started
+
     Multi.new()
     |> Multi.run(:payment_event, fn _repo, _changes ->
-      update_event(event, :mark_processing_started)
+      update_event(event, action)
     end)
     |> Multi.run(:verify_job, fn _repo, _changes ->
       VerifyPaymentWorker.new(%{

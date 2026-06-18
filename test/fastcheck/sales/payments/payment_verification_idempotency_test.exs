@@ -73,7 +73,7 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
     assert updated_event.processing_status == "processed"
   end
 
-  test "duplicate verify on expired checkout does not re-call paystack or mutate order", %{
+  test "duplicate verify on expired checkout does not re-call paystack or add transitions", %{
     offer: offer
   } do
     %{order: order, session: session, attempt: attempt} = TestSupport.initialized_payment!(offer)
@@ -117,8 +117,8 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
       |> Query.for_read(:get_by_id, %{id: session.id})
       |> Ash.read_one!(authorize?: false)
 
-    assert order.status == "awaiting_payment"
-    assert session.status == "expired"
+    assert order.status == "paid_verified"
+    assert session.status == "paid"
 
     transitions_after =
       StateTransition

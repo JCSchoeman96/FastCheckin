@@ -248,6 +248,26 @@ defmodule FastCheck.Sales.PaymentAttempt do
         end
       end)
     end
+
+    update :mark_duplicate do
+      require_atomic?(false)
+      accept([:failure_code, :failure_message])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "duplicate" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "duplicate",
+            allowed_from: nil
+          )
+        end
+      end)
+    end
   end
 
   policies do

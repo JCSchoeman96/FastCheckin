@@ -192,6 +192,27 @@ defmodule FastCheck.Sales.Order do
         end
       end)
     end
+
+    update :mark_paid_verified_from_late_recovery do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "paid_verified" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "paid_verified",
+            allowed_from: ["awaiting_payment", "payment_pending", "paid_unverified", "expired"],
+            extra_attrs: %{paid_at: DateTime.utc_now() |> DateTime.truncate(:second)}
+          )
+        end
+      end)
+    end
   end
 
   policies do
