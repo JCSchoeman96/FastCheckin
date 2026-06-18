@@ -54,6 +54,33 @@ unless config_env() == :test do
   config :fastcheck, :sales_hold_token_pepper, sales_hold_token_pepper
 end
 
+ticket_token_pepper =
+  case System.get_env("TICKET_TOKEN_PEPPER") do
+    nil ->
+      if config_env() == :prod do
+        raise """
+        environment variable TICKET_TOKEN_PEPPER is missing.
+        Generate one with: mix phx.gen.secret
+        """
+      else
+        "dev fastcheck ticket token pepper"
+      end
+
+    value ->
+      String.trim(value)
+  end
+
+if config_env() == :prod and byte_size(ticket_token_pepper) < 32 do
+  raise """
+  TICKET_TOKEN_PEPPER must be at least 32 bytes in production.
+  Generate one with: mix phx.gen.secret
+  """
+end
+
+unless config_env() == :test do
+  config :fastcheck, :ticket_token_pepper, ticket_token_pepper
+end
+
 sales_internal_pilot_enabled =
   case System.get_env("SALES_INTERNAL_PILOT_ENABLED") do
     nil -> config_env() != :prod

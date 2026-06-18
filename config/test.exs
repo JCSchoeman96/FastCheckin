@@ -63,6 +63,7 @@ config :fastcheck, :mobile_scan_ingestion,
   store: FastCheck.TestSupport.Scans.InMemoryStore
 
 config :fastcheck, :sales_hold_token_pepper, "test-pepper"
+config :fastcheck, :ticket_token_pepper, "test-ticket-token-pepper"
 config :fastcheck, :sales_internal_pilot_enabled, true
 config :fastcheck, :paystack_enabled, true
 config :fastcheck, :paystack_environment, "test"

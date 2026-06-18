@@ -18,7 +18,9 @@ defmodule FastCheck.Sales.TicketIssue do
     identity_index_names(
       unique_ticket_code: "sales_ticket_issues_ticket_code_uidx",
       unique_line_item_sequence: "sales_ticket_issues_order_line_sequence_uidx",
-      unique_attendee_id: "sales_ticket_issues_attendee_id_uidx"
+      unique_attendee_id: "sales_ticket_issues_attendee_id_uidx",
+      unique_qr_token_hash: "sales_ticket_issues_qr_token_hash_uidx",
+      unique_delivery_token_hash: "sales_ticket_issues_delivery_token_hash_uidx"
     )
   end
 
@@ -135,6 +137,14 @@ defmodule FastCheck.Sales.TicketIssue do
 
     identity :unique_attendee_id, [:attendee_id] do
       where(expr(not is_nil(attendee_id)))
+    end
+
+    identity :unique_qr_token_hash, [:qr_token_hash] do
+      where(expr(not is_nil(qr_token_hash)))
+    end
+
+    identity :unique_delivery_token_hash, [:delivery_token_hash] do
+      where(expr(not is_nil(delivery_token_hash)))
     end
   end
 end
