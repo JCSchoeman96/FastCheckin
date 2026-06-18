@@ -31,6 +31,14 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  # Paystack provider webhook only: machine-to-machine POST authenticated via HMAC on the raw
+  # request body. Accepts JSON/text provider payloads only (no browser HTML responses).
+  pipeline :webhook do
+    plug :accepts, ["json", "text", "*/*"]
+    plug FastCheckWeb.Plugs.LoggerMetadata
+    plug FastCheckWeb.Plugs.RateLimiter
+  end
+
   pipeline :api_authenticated do
     plug :accepts, ["json"]
     plug FastCheckWeb.Plugs.LoggerMetadata
@@ -93,6 +101,12 @@ defmodule FastCheckWeb.Router do
     scope "/mobile", Mobile do
       post "/login", AuthController, :login
     end
+  end
+
+  scope "/api/sales", FastCheckWeb.Webhooks do
+    pipe_through :webhook
+
+    post "/paystack/webhook", PaystackController, :create
   end
 
   scope "/api/v1", FastCheckWeb do

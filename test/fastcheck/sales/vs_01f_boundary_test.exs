@@ -10,7 +10,6 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
     "lib/fastcheck/tickets/qr_payload.ex",
     "lib/fastcheck/tickets/delivery_token.ex",
     "lib/fastcheck/workers",
-    "lib/fastcheck_web/controllers/webhooks",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
@@ -34,7 +33,6 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
       :mark_webhook_received
     ],
     FastCheck.Sales.PaymentEvent => [
-      :store_webhook_event,
       :mark_processed
     ],
     FastCheck.Sales.TicketIssue => [

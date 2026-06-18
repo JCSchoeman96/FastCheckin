@@ -5,15 +5,12 @@ defmodule FastCheck.Sales.Vs01cBoundaryTest do
 
   @forbidden_paths [
     "lib/fastcheck/tickets/issuer.ex",
-    "lib/fastcheck/workers/paystack_webhook_worker.ex",
-    "lib/fastcheck/workers/verify_payment_worker.ex",
-    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex"
+    "lib/fastcheck/workers/verify_payment_worker.ex"
   ]
 
   @forbidden_action_modules [
     {FastCheck.Sales.PaymentAttempt, :create_initialized},
     {FastCheck.Sales.PaymentAttempt, :mark_verified_success},
-    {FastCheck.Sales.PaymentEvent, :store_webhook_event},
     {FastCheck.Sales.PaymentEvent, :mark_processed}
   ]
 
@@ -28,8 +25,8 @@ defmodule FastCheck.Sales.Vs01cBoundaryTest do
       refute File.exists?(path), "#{path} is out of scope for VS-01C"
     end
 
-    assert Path.wildcard("lib/fastcheck/workers/*paystack*") == []
     assert Path.wildcard("lib/fastcheck/workers/*payment*") == []
+    refute File.exists?("lib/fastcheck/workers/paystack_webhook_worker.ex")
   end
 
   test "forbidden workflow actions are not implemented in VS-01C" do
