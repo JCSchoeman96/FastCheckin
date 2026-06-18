@@ -28,7 +28,7 @@ defmodule FastCheck.Payments.Paystack.TransactionVerifier do
       gateway_response: data["gateway_response"],
       status: response["status"],
       message: response["message"],
-      safe_data: ResponseSanitizer.sanitize(data)
+      safe_data: ResponseSanitizer.drop_sensitive(data)
     }
   end
 end

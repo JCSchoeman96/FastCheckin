@@ -10,8 +10,7 @@ defmodule FastCheck.Sales.Vs01cBoundaryTest do
 
   @forbidden_action_modules [
     {FastCheck.Sales.PaymentAttempt, :create_initialized},
-    {FastCheck.Sales.PaymentAttempt, :mark_verified_success},
-    {FastCheck.Sales.PaymentEvent, :mark_processed}
+    {FastCheck.Sales.PaymentEvent, :mark_duplicate}
   ]
 
   test "later Sales resources remain absent in VS-01C" do

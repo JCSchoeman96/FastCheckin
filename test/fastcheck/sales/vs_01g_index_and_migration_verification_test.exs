@@ -37,7 +37,25 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
-  @payment_event_allowed_actions [:store_webhook_event]
+  @allowed_actions_by_resource %{
+    FastCheck.Sales.PaymentEvent => [
+      :store_webhook_event,
+      :mark_processing_started,
+      :mark_processed,
+      :mark_unmatched,
+      :mark_failed
+    ],
+    FastCheck.Sales.PaymentAttempt => [
+      :mark_verification_started,
+      :mark_verified_success,
+      :mark_verified_amount_mismatch,
+      :mark_verified_currency_mismatch,
+      :mark_verification_failed,
+      :get_by_provider_reference
+    ],
+    FastCheck.Sales.Order => [:mark_paid_verified],
+    FastCheck.Sales.CheckoutSession => [:mark_paid]
+  }
 
   @forbidden_action_names [
     :create,
@@ -414,8 +432,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
              "#{inspect(resource)} must not define organization_id in VS-01G"
 
       for action_name <- @forbidden_action_names,
-          resource != FastCheck.Sales.PaymentEvent or
-            action_name not in @payment_event_allowed_actions do
+          action_name not in Map.get(@allowed_actions_by_resource, resource, []) do
         refute Ash.Resource.Info.action(resource, action_name),
                "#{inspect(resource)} must not expose #{inspect(action_name)} in VS-01G"
       end

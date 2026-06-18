@@ -5,10 +5,25 @@ defmodule FastCheck.Payments.Paystack.WebhookBoundaryTest do
   @worker_path "lib/fastcheck/sales/payments/paystack_webhook_worker.ex"
   @controller_path "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex"
 
-  @forbidden_tokens [
+  @ingestion_forbidden_tokens [
     "TransactionVerifier",
+    "VerifyPaymentWorker",
+    "PaymentVerification",
     "mark_verified_success",
     "mark_webhook_received",
+    "mark_paid",
+    "ReservationLedger",
+    "IssueTickets",
+    "TicketIssue",
+    "DeliveryAttempt",
+    "WhatsApp",
+    "Attendee"
+  ]
+
+  @worker_forbidden_tokens [
+    "TransactionVerifier",
+    "PaymentVerification",
+    "mark_verified_success",
     "mark_paid",
     "ReservationLedger",
     "IssueTickets",
@@ -28,7 +43,7 @@ defmodule FastCheck.Payments.Paystack.WebhookBoundaryTest do
   test "ingestion orchestrator does not couple to verification ticketing or inventory" do
     source = File.read!(@ingestion_path)
 
-    for token <- @forbidden_tokens do
+    for token <- @ingestion_forbidden_tokens do
       refute String.contains?(source, token),
              "#{@ingestion_path} must not reference #{token} in VS-07A scope"
     end
@@ -38,12 +53,15 @@ defmodule FastCheck.Payments.Paystack.WebhookBoundaryTest do
     assert source =~ "validate_for_webhook"
   end
 
-  test "worker does not verify transactions or mutate paid state" do
+  test "webhook worker enqueues verify worker but does not call paystack directly" do
     source = File.read!(@worker_path)
 
-    for token <- @forbidden_tokens do
+    for token <- @worker_forbidden_tokens do
       refute String.contains?(source, token),
-             "#{@worker_path} must not reference #{token} in VS-07A scope"
+             "#{@worker_path} must not reference #{token} in VS-07B scope"
     end
+
+    assert source =~ "VerifyPaymentWorker"
+    assert source =~ "Ecto.Multi"
   end
 end

@@ -22,6 +22,19 @@ defmodule FastCheck.Payments.Paystack.ResponseSanitizer do
   def sanitize(value) when is_list(value), do: Enum.map(value, &sanitize/1)
   def sanitize(value), do: value
 
+  @doc """
+  Removes sensitive keys entirely for persisted provider snapshots (e.g. verify responses).
+  """
+  @spec drop_sensitive(term()) :: term()
+  def drop_sensitive(value) when is_map(value) do
+    value
+    |> Enum.reject(fn {key, _} -> sensitive_key?(key) end)
+    |> Enum.into(%{}, fn {key, raw_value} -> {key, drop_sensitive(raw_value)} end)
+  end
+
+  def drop_sensitive(value) when is_list(value), do: Enum.map(value, &drop_sensitive/1)
+  def drop_sensitive(value), do: value
+
   defp sensitive_key?(key) when is_atom(key), do: sensitive_key?(Atom.to_string(key))
   defp sensitive_key?(key) when is_binary(key), do: String.downcase(key) in @sensitive_keys
   defp sensitive_key?(_), do: false
