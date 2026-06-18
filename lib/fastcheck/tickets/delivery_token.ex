@@ -85,7 +85,7 @@ defmodule FastCheck.Tickets.DeliveryToken do
   @spec rotate(keyword()) :: %{token: String.t(), hash: String.t(), expires_at: DateTime.t()}
   def rotate(opts \\ []), do: generate(opts)
 
-  defp verify_expiry(nil), do: :ok
+  defp verify_expiry(nil), do: {:error, :expired}
 
   defp verify_expiry(%DateTime{} = expires_at) do
     if DateTime.compare(DateTime.utc_now(), expires_at) == :gt do

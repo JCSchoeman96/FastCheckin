@@ -32,6 +32,23 @@ defmodule FastCheck.Tickets.DeliveryTokenTest do
     assert {:error, :expired} = DeliveryToken.verify_context(token, ticket_issue)
   end
 
+  test "verify_context/2 rejects missing delivery_token_expires_at" do
+    %{token: token, hash: hash} = DeliveryToken.generate()
+
+    assert {:error, :expired} =
+             DeliveryToken.verify_context(token, %{
+               delivery_token_hash: hash,
+               status: "issued"
+             })
+
+    assert {:error, :expired} =
+             DeliveryToken.verify_context(token, %{
+               delivery_token_hash: hash,
+               delivery_token_expires_at: nil,
+               status: "issued"
+             })
+  end
+
   test "verify_context/2 rejects revoked tickets" do
     %{token: token, hash: hash, expires_at: expires_at} = DeliveryToken.generate()
 
