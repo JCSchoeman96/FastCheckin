@@ -31,8 +31,10 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  # Paystack provider webhook only: machine-to-machine POST authenticated via HMAC on the raw
+  # request body. Accepts JSON/text provider payloads only (no browser HTML responses).
   pipeline :webhook do
-    plug :accepts, ["json", "text", "html", "*/*"]
+    plug :accepts, ["json", "text", "*/*"]
     plug FastCheckWeb.Plugs.LoggerMetadata
     plug FastCheckWeb.Plugs.RateLimiter
   end
