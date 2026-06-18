@@ -34,9 +34,10 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "lib/fastcheck/tickets/qr_payload.ex",
     "lib/fastcheck/tickets/delivery_token.ex",
     "lib/fastcheck/workers",
-    "lib/fastcheck_web/controllers/webhooks",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
+
+  @payment_event_allowed_actions [:store_webhook_event]
 
   @forbidden_action_names [
     :create,
@@ -412,7 +413,9 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
       refute Ash.Resource.Info.attribute(resource, :organization_id),
              "#{inspect(resource)} must not define organization_id in VS-01G"
 
-      for action_name <- @forbidden_action_names do
+      for action_name <- @forbidden_action_names,
+          resource != FastCheck.Sales.PaymentEvent or
+            action_name not in @payment_event_allowed_actions do
         refute Ash.Resource.Info.action(resource, action_name),
                "#{inspect(resource)} must not expose #{inspect(action_name)} in VS-01G"
       end

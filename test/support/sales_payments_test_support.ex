@@ -141,4 +141,53 @@ defmodule FastCheck.Sales.Payments.TestSupport do
        }}
     end
   end
+
+  def webhook_secret do
+    Application.get_env(:fastcheck, :paystack_secret_key, "sk_test_fake_key")
+  end
+
+  def sign_webhook_body(body, secret \\ webhook_secret()) when is_binary(body) do
+    :crypto.mac(:hmac, :sha512, secret, body)
+    |> Base.encode16(case: :lower)
+  end
+
+  def charge_success_webhook_body(opts \\ []) do
+    provider_event_id =
+      Keyword.get(opts, :provider_event_id, "evt-#{System.unique_integer([:positive])}")
+
+    reference = Keyword.get(opts, :reference, "ref-#{System.unique_integer([:positive])}")
+    no_event_id = Keyword.get(opts, :no_event_id, false)
+
+    payload =
+      if no_event_id do
+        %{
+          "event" => "charge.success",
+          "data" => %{"reference" => reference}
+        }
+      else
+        %{
+          "id" => provider_event_id,
+          "event" => "charge.success",
+          "data" => %{"reference" => reference}
+        }
+      end
+
+    Jason.encode!(payload)
+  end
+
+  def flush_webhook_dedupe_keys! do
+    pattern = "sales:payments:paystack:webhook:*"
+
+    case Redix.command(FastCheck.Redix, ["KEYS", pattern]) do
+      {:ok, []} ->
+        :ok
+
+      {:ok, keys} ->
+        _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
 end

@@ -18,9 +18,12 @@ defmodule FastCheck.Sales.Vs01fPolicyTest do
   ]
 
   @system_only_resources [
-    FastCheck.Sales.PaymentEvent,
     FastCheck.Sales.StateTransition,
     FastCheck.Sales.Conversation
+  ]
+
+  @payment_event_summarized_resources [
+    FastCheck.Sales.PaymentEvent
   ]
 
   setup do
@@ -29,7 +32,8 @@ defmodule FastCheck.Sales.Vs01fPolicyTest do
   end
 
   test "customer_session cannot broadly read any Sales resource" do
-    for resource <- @event_scoped_resources ++ @system_only_resources do
+    for resource <-
+          @event_scoped_resources ++ @system_only_resources ++ @payment_event_summarized_resources do
       assert_forbidden_read(resource, customer_session_actor())
     end
   end
@@ -49,6 +53,19 @@ defmodule FastCheck.Sales.Vs01fPolicyTest do
       assert_forbidden_read(resource, admin_actor([@event_id]))
       assert_forbidden_read(resource, operator_actor([@event_id]))
       assert [_record] = read(resource, system_actor())
+    end
+  end
+
+  test "admin and operator can read summarized payment event fields but not raw payload" do
+    for actor <- [admin_actor([@event_id]), operator_actor([@event_id])] do
+      assert [payment_event] =
+               read(FastCheck.Sales.PaymentEvent, actor,
+                 select: [:id, :event_type, :processing_status, :raw_payload]
+               )
+
+      assert payment_event.event_type == "charge.success"
+      assert payment_event.processing_status == "stored"
+      assert %Ash.ForbiddenField{} = payment_event.raw_payload
     end
   end
 

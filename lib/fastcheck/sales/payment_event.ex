@@ -1,9 +1,9 @@
 defmodule FastCheck.Sales.PaymentEvent do
   @moduledoc """
-  Durable raw payment provider event skeleton for FastCheck Sales.
+  Durable raw payment provider event for FastCheck Sales.
 
-  VS-01C stores webhook/event audit shape only. Signature verification,
-  processing workers, and order/payment mutation are deferred.
+  VS-07A adds webhook ingestion storage. Verification and order/payment mutation
+  are deferred to later slices.
   """
 
   use Ash.Resource,
@@ -33,20 +33,85 @@ defmodule FastCheck.Sales.PaymentEvent do
 
       filter(expr(id == ^arg(:id)))
     end
+
+    read :get_by_provider_event_id do
+      get?(true)
+
+      argument :provider, :string do
+        allow_nil?(false)
+      end
+
+      argument :provider_event_id, :string do
+        allow_nil?(false)
+      end
+
+      filter(expr(provider == ^arg(:provider) and provider_event_id == ^arg(:provider_event_id)))
+    end
+
+    read :get_by_provider_payload_hash do
+      get?(true)
+
+      argument :provider, :string do
+        allow_nil?(false)
+      end
+
+      argument :payload_hash, :string do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(
+          provider == ^arg(:provider) and is_nil(provider_event_id) and
+            payload_hash == ^arg(:payload_hash)
+        )
+      )
+    end
+
+    create :store_webhook_event do
+      accept([
+        :provider,
+        :provider_event_id,
+        :provider_reference,
+        :event_type,
+        :signature_valid,
+        :payload_hash,
+        :raw_payload,
+        :received_at,
+        :processing_status,
+        :processing_attempt_count
+      ])
+
+      transaction?(false)
+    end
   end
 
   policies do
-    policy action_type(:read) do
+    bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
+      authorize_if(always())
+    end
+
+    policy action(:store_webhook_event) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
+    end
+
+    policy action_type(:read) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
     end
   end
 
   field_policies do
     private_fields(:include)
 
-    field_policy :* do
+    field_policy [:raw_payload, :last_processing_error] do
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
+    end
+
+    field_policy :* do
+      authorize_if(
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin, :operator]}
+      )
     end
   end
 

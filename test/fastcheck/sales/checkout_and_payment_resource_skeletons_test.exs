@@ -50,8 +50,13 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
     :mark_duplicate
   ]
 
-  @payment_event_forbidden_action_names [
+  @payment_event_expected_action_names [
     :store_webhook_event,
+    :get_by_provider_event_id,
+    :get_by_provider_payload_hash
+  ]
+
+  @payment_event_forbidden_action_names [
     :mark_processing_started,
     :mark_processed,
     :mark_duplicate,
@@ -100,6 +105,12 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceSkeletonsTest do
 
         resource == FastCheck.Sales.PaymentAttempt ->
           for expected <- @payment_attempt_expected_action_names do
+            assert expected in action_names,
+                   "#{inspect(resource)} must expose #{inspect(expected)}"
+          end
+
+        resource == FastCheck.Sales.PaymentEvent ->
+          for expected <- @payment_event_expected_action_names do
             assert expected in action_names,
                    "#{inspect(resource)} must expose #{inspect(expected)}"
           end

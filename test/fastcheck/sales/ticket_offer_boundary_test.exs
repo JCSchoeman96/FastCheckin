@@ -6,7 +6,6 @@ defmodule FastCheck.Sales.TicketOfferBoundaryTest do
   @forbidden_paths [
     "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck/tickets",
-    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",
     "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
   ]
 

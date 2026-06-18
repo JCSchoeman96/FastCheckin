@@ -21,18 +21,6 @@ defmodule FastCheck.Sales.Payments.PaystackInitializationBoundaryTest do
     "queue_fulfillment"
   ]
 
-  @forbidden_paths [
-    "lib/fastcheck_web/controllers/webhooks/paystack_controller.ex",
-    "lib/fastcheck/workers/paystack_webhook_worker.ex",
-    "lib/fastcheck/workers/verify_payment_worker.ex"
-  ]
-
-  test "vs-06c does not add paystack webhook controllers or workers" do
-    for path <- @forbidden_paths do
-      refute File.exists?(path), "#{path} is out of scope for initialization"
-    end
-  end
-
   test "initialization orchestrator does not couple to verification, ticketing, or inventory" do
     source = File.read!(@orchestrator_path)
 
@@ -42,5 +30,10 @@ defmodule FastCheck.Sales.Payments.PaystackInitializationBoundaryTest do
     end
 
     assert source =~ "FastCheck.Payments.Paystack.TransactionInitializer"
+  end
+
+  test "legacy worker path remains unused after VS-07A sales worker promotion" do
+    refute File.exists?("lib/fastcheck/workers/paystack_webhook_worker.ex")
+    assert File.exists?("lib/fastcheck/sales/payments/paystack_webhook_worker.ex")
   end
 end

@@ -86,6 +86,16 @@ defmodule FastCheck.Payments.Paystack.Config do
     end
   end
 
+  @spec validate_for_webhook() :: {:ok, t()} | {:error, Error.t()}
+  def validate_for_webhook do
+    config = get()
+
+    with :ok <- validate_enabled(config),
+         :ok <- require_present(config.secret_key, :paystack_secret_key) do
+      {:ok, config}
+    end
+  end
+
   @spec normalize_reference(term()) :: {:ok, String.t()} | {:error, Error.t()}
   def normalize_reference(reference) when is_binary(reference) do
     trimmed = String.trim(reference)

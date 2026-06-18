@@ -31,6 +31,12 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  pipeline :webhook do
+    plug :accepts, ["json", "text", "html", "*/*"]
+    plug FastCheckWeb.Plugs.LoggerMetadata
+    plug FastCheckWeb.Plugs.RateLimiter
+  end
+
   pipeline :api_authenticated do
     plug :accepts, ["json"]
     plug FastCheckWeb.Plugs.LoggerMetadata
@@ -93,6 +99,12 @@ defmodule FastCheckWeb.Router do
     scope "/mobile", Mobile do
       post "/login", AuthController, :login
     end
+  end
+
+  scope "/api/sales", FastCheckWeb.Webhooks do
+    pipe_through :webhook
+
+    post "/paystack/webhook", PaystackController, :create
   end
 
   scope "/api/v1", FastCheckWeb do
