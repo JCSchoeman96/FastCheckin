@@ -147,6 +147,31 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
                :count
              ) == 0
     end
+
+    test "source-reference conflict on later unit rolls back earlier attendee insert" do
+      %{event: event, order_id: order_id, line_id: line_id} = paid_order_fixture(quantity: 2)
+
+      _conflicting_attendee =
+        create_attendee(event, %{
+          ticket_code: "SALES-CONFLICT-2",
+          source: "fastcheck_sales",
+          source_reference: "sales:#{order_id}:#{line_id}:2",
+          sales_order_id: order_id + 10_000,
+          payment_status: "completed",
+          scan_eligibility: "active"
+        })
+
+      assert {:error, {:manual_review_required, :attendee_source_reference_conflict}} =
+               Issuer.issue_order(order_id)
+
+      refute Repo.exists?(
+               from(a in Attendee,
+                 where:
+                   a.source == "fastcheck_sales" and
+                     a.source_reference == ^"sales:#{order_id}:#{line_id}:1"
+               )
+             )
+    end
   end
 
   defp paid_order_fixture(opts) do

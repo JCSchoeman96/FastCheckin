@@ -67,8 +67,7 @@ defmodule FastCheck.Tickets.Issuer do
            {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines) do
         build_success_result(order.id, attendee_results)
       else
-        {:error, {:manual_review_required, _reason}} = error -> Repo.rollback(error)
-        {:error, reason} -> {:error, reason}
+        {:error, _reason} = error -> Repo.rollback(error)
       end
     end)
     |> normalize_transaction_result()
