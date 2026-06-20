@@ -14,15 +14,15 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
 
       assert %{
                order_id: ^order_id,
-               status: :attendees_ready,
+               status: :ticket_issued,
                attendee_count: 3,
-               attendees: attendees
+               ticket_issue_count: 3,
+               ticket_issues: ticket_issues
              } = result
 
-      refute result.status == :ticket_issued
-      assert length(attendees) == 3
+      assert length(ticket_issues) == 3
 
-      source_refs = Enum.map(attendees, & &1.source_reference)
+      source_refs = Enum.map(ticket_issues, & &1.source_reference)
 
       assert source_refs == [
                "sales:#{order_id}:#{line_id}:1",
@@ -42,7 +42,7 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
       for attendee <- rows do
         assert attendee.event_id == event.id
         assert attendee.source == "fastcheck_sales"
-        assert attendee.sales_ticket_issue_id == nil
+        assert attendee.sales_ticket_issue_id
         assert attendee.payment_status == "completed"
         assert attendee.scan_eligibility == "active"
         assert attendee.allowed_checkins == 1
@@ -51,7 +51,7 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
         assert String.starts_with?(attendee.ticket_code, "FC-")
       end
 
-      assert sales_ticket_issue_count() == 0
+      assert sales_ticket_issue_count() == 3
     end
 
     test "second issue_order call reuses the same attendees" do
@@ -60,10 +60,10 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
       assert {:ok, first} = Issuer.issue_order(order_id)
       assert {:ok, second} = Issuer.issue_order(order_id)
 
-      assert first.status == :attendees_ready
-      assert second.status == :attendees_already_ready
+      assert first.status == :ticket_issued
+      assert second.status == :already_issued
       assert second.attendee_count == 2
-      assert Enum.map(second.attendees, & &1.id) == Enum.map(first.attendees, & &1.id)
+      assert Enum.map(second.ticket_issues, & &1.id) == Enum.map(first.ticket_issues, & &1.id)
 
       assert Repo.aggregate(
                from(a in Attendee,
@@ -97,7 +97,7 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
 
       results = Enum.map(tasks, &Task.await(&1, 5_000))
 
-      assert Enum.all?(results, &match?({:ok, %{attendee_count: 2}}, &1))
+      assert Enum.all?(results, &match?({:ok, %{attendee_count: 2, ticket_issue_count: 2}}, &1))
 
       assert Repo.aggregate(
                from(a in Attendee,

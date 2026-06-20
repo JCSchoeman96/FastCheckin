@@ -213,6 +213,27 @@ defmodule FastCheck.Sales.Order do
         end
       end)
     end
+
+    update :mark_ticket_issued do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "ticket_issued" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "ticket_issued",
+            allowed_from: ["paid_verified", "fulfillment_queued", "partially_issued"],
+            extra_attrs: %{ticket_issued_at: DateTime.utc_now() |> DateTime.truncate(:second)}
+          )
+        end
+      end)
+    end
   end
 
   policies do

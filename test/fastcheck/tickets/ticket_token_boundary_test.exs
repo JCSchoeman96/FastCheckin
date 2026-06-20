@@ -18,24 +18,26 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
     FastCheck.Tickets.Issuer
   ]
 
-  test "VS-08 ticket foundation modules exist with VS-09B attendee bridge issuer" do
+  test "VS-08 ticket foundation modules exist with VS-09C ticket issue linker" do
     for module <- @allowed_ticket_modules do
       assert Code.ensure_loaded?(module)
     end
   end
 
-  test "VS-09B issuer implements attendee bridge without TicketIssue or delivery behavior" do
+  test "VS-09C issuer links TicketIssue rows without delivery behavior" do
     assert File.exists?(@issuer_path)
-    assert @issuer_source =~ "VS-09B implements the Attendee creation bridge only"
-    assert @issuer_source =~ ":attendees_ready"
-    refute @issuer_source =~ "alias FastCheck.Sales.TicketIssue"
-    refute @issuer_source =~ "Ash.create"
-    refute @issuer_source =~ "DeliveryToken"
+    assert @issuer_source =~ "VS-09C links the VS-09B attendee bridge results"
+    assert @issuer_source =~ ":ticket_issued"
+    assert @issuer_source =~ "alias FastCheck.Sales.TicketIssue"
+    assert @issuer_source =~ "DeliveryToken"
+    assert @issuer_source =~ "QrPayload"
+    refute @issuer_source =~ "DeliveryAttempt"
+    refute @issuer_source =~ "IssueTicketsWorker"
   end
 
   test "forbidden issuance and delivery paths remain absent" do
     for path <- @forbidden_paths do
-      refute File.exists?(path), "#{path} is out of scope for VS-09B attendee bridge"
+      refute File.exists?(path), "#{path} is out of scope for VS-09C ticket issue linking"
     end
   end
 
