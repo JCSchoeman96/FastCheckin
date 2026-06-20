@@ -37,16 +37,19 @@ defmodule FastCheck.Tickets.IssuerPartialFailureTest do
       assert ticket_issue_count(order_id) == 2
       assert Enum.any?(result.ticket_issues, &(&1.id == existing_issue_id))
       assert_attendee_backlinked(attendee_2.id)
+      assert_ticket_issue_has_vs09c_fields(ticket_issue_row(existing_issue_id))
     end
 
     test "finalizes order when all attendees and ticket issues already exist" do
       %{event: event, order_id: order_id, line_id: line_id} = paid_order_fixture(quantity: 2)
 
-      for sequence <- 1..2 do
-        attendee = insert_sales_attendee!(event, order_id, line_id, sequence)
-        issue_id = insert_ticket_issue!(order_id, line_id, sequence, attendee)
-        backlink_attendee!(attendee.id, issue_id)
-      end
+      issue_ids =
+        for sequence <- 1..2 do
+          attendee = insert_sales_attendee!(event, order_id, line_id, sequence)
+          issue_id = insert_ticket_issue!(order_id, line_id, sequence, attendee)
+          backlink_attendee!(attendee.id, issue_id)
+          issue_id
+        end
 
       assert Repo.get!(Order, order_id).status == "paid_verified"
       assert ticket_issue_count(order_id) == 2
@@ -57,6 +60,10 @@ defmodule FastCheck.Tickets.IssuerPartialFailureTest do
       assert Repo.get!(Order, order_id).status == "ticket_issued"
       assert ticket_issue_count(order_id) == 2
       assert order_transition_count(order_id, "ticket_issued") == 1
+
+      for issue_id <- issue_ids do
+        assert_ticket_issue_has_vs09c_fields(ticket_issue_row(issue_id))
+      end
     end
 
     test "conflicting attendee scanner state moves order to manual_review without overwrite" do
@@ -77,6 +84,28 @@ defmodule FastCheck.Tickets.IssuerPartialFailureTest do
       assert ticket_issue_count(order_id) == 0
       assert Repo.get!(Order, order_id).status == "manual_review"
       assert Repo.get!(Order, order_id).manual_review_reason == "issuer_attendee_conflict"
+    end
+
+    test "source-reference ownership conflict moves order to manual_review without overwrite" do
+      %{event: event, order_id: order_id, line_id: line_id} = paid_order_fixture(quantity: 1)
+
+      conflicting_attendee =
+        insert_sales_attendee!(event, order_id + 10_000, line_id, 1, %{
+          source_reference: "sales:#{order_id}:#{line_id}:1"
+        })
+
+      assert {:error, {:manual_review_required, :attendee_source_reference_conflict}} =
+               Issuer.issue_order(order_id)
+
+      reloaded = Repo.get!(Attendee, conflicting_attendee.id)
+      assert reloaded.sales_order_id == order_id + 10_000
+      assert reloaded.source_reference == "sales:#{order_id}:#{line_id}:1"
+      assert reloaded.ticket_code == conflicting_attendee.ticket_code
+      assert ticket_issue_count(order_id) == 0
+      assert Repo.get!(Order, order_id).status == "manual_review"
+
+      assert Repo.get!(Order, order_id).manual_review_reason ==
+               "attendee_source_reference_conflict"
     end
 
     test "conflicting ticket issue row moves order to manual_review without overwrite" do
@@ -113,6 +142,7 @@ defmodule FastCheck.Tickets.IssuerPartialFailureTest do
       transition = order_transition!(order_id, "manual_review")
       assert transition.correlation_id == correlation_id
       assert transition.idempotency_key == idempotency_key
+      assert_ticket_issue_has_vs09c_fields(issue)
     end
 
     test "issuer recovery does not create delivery attempts" do
@@ -243,17 +273,30 @@ defmodule FastCheck.Tickets.IssuerPartialFailureTest do
   end
 
   defp insert_ticket_issue!(order_id, line_id, sequence, attendee) do
+    qr_token_hash = "qr-fixture-#{order_id}-#{line_id}-#{sequence}"
+    delivery_token_hash = "delivery-fixture-#{order_id}-#{line_id}-#{sequence}"
+
     %{rows: [[id]]} =
       Repo.query!(
         """
         INSERT INTO sales_ticket_issues
           (sales_order_id, sales_order_line_id, line_item_sequence, attendee_id, ticket_code,
-           status, scanner_status, inserted_at, updated_at)
+           qr_token_hash, delivery_token_hash, delivery_token_expires_at, status, scanner_status,
+           issued_at, inserted_at, updated_at)
         VALUES
-          ($1, $2, $3, $4, $5, 'issued', 'valid', now(), now())
+          ($1, $2, $3, $4, $5, $6, $7, now() + interval '90 days',
+           'issued', 'valid', now(), now(), now())
         RETURNING id
         """,
-        [order_id, line_id, sequence, attendee.id, attendee.ticket_code]
+        [
+          order_id,
+          line_id,
+          sequence,
+          attendee.id,
+          attendee.ticket_code,
+          qr_token_hash,
+          delivery_token_hash
+        ]
       )
 
     id
@@ -292,8 +335,23 @@ defmodule FastCheck.Tickets.IssuerPartialFailureTest do
     Repo.one!(
       from t in "sales_ticket_issues",
         where: t.id == ^issue_id,
-        select: %{id: t.id, attendee_id: t.attendee_id, ticket_code: t.ticket_code}
+        select: %{
+          id: t.id,
+          attendee_id: t.attendee_id,
+          ticket_code: t.ticket_code,
+          qr_token_hash: t.qr_token_hash,
+          delivery_token_hash: t.delivery_token_hash,
+          delivery_token_expires_at: t.delivery_token_expires_at,
+          issued_at: t.issued_at
+        }
     )
+  end
+
+  defp assert_ticket_issue_has_vs09c_fields(issue) do
+    assert issue.qr_token_hash
+    assert issue.delivery_token_hash
+    assert issue.delivery_token_expires_at
+    assert issue.issued_at
   end
 
   defp order_transition_count(order_id, to_state) do
