@@ -2,9 +2,8 @@ defmodule FastCheck.Tickets.Issuer do
   @moduledoc """
   Approved ticket issuance orchestration entrypoint for FastCheck Sales.
 
-  VS-09B implements the Attendee creation bridge only. It creates or reuses
-  existing Ecto attendees for verified paid Sales orders, then returns the
-  attendee identifiers for VS-09C to link `TicketIssue` audit rows later.
+  VS-09C links the VS-09B attendee bridge results to durable TicketIssue audit
+  rows and finalizes fully issued orders.
   """
 
   require Ash.Expr
@@ -13,6 +12,7 @@ defmodule FastCheck.Tickets.Issuer do
   import Ash.Expr
   import Ecto.Query, only: [from: 2]
 
+  alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
@@ -21,12 +21,20 @@ defmodule FastCheck.Tickets.Issuer do
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.OrderLine
   alias FastCheck.Sales.PaymentAttempt
+  alias FastCheck.Sales.TicketIssue
   alias FastCheck.Tickets.CodeGenerator
+  alias FastCheck.Tickets.DeliveryToken
+  alias FastCheck.Tickets.QrPayload
 
   @source_fastcheck_sales "fastcheck_sales"
   @payment_status_completed "completed"
   @scan_eligibility_active "active"
-  @allowed_order_states ["paid_verified", "fulfillment_queued"]
+  @allowed_order_states [
+    "paid_verified",
+    "fulfillment_queued",
+    "partially_issued",
+    "ticket_issued"
+  ]
   @paid_checkout_states ["paid"]
   @ticket_code_attempts 5
 
@@ -40,9 +48,12 @@ defmodule FastCheck.Tickets.Issuer do
           {:ok,
            %{
              order_id: integer(),
-             status: :attendees_ready | :attendees_already_ready,
+             status: :ticket_issued | :already_issued,
              attendee_count: non_neg_integer(),
-             attendees: [%{id: integer(), source_reference: String.t()}]
+             ticket_issue_count: non_neg_integer(),
+             ticket_issues: [
+               %{id: integer(), attendee_id: integer(), source_reference: String.t()}
+             ]
            }}
           | {:error,
              {:invalid_order_state, String.t()}
@@ -64,16 +75,19 @@ defmodule FastCheck.Tickets.Issuer do
            :ok <- require_verified_payment(payment_attempts, order),
            {:ok, checkout_session} <- load_checkout_session(order.id),
            :ok <- require_paid_checkout(checkout_session),
-           {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines) do
-        build_success_result(order.id, attendee_results)
+           {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines),
+           {:ok, ticket_issue_result} <-
+             create_or_reuse_ticket_issues(order, order_lines, attendee_results) do
+        ticket_issue_result
       else
+        {:manual_review, {:error, _reason} = error} -> error
         {:error, _reason} = error -> Repo.rollback(error)
       end
     end)
     |> normalize_transaction_result()
     |> tap(fn
-      {:ok, %{order_id: _order_id, attendees: attendees}} ->
-        maybe_invalidate_attendee_caches(order_id, attendees, opts)
+      {:ok, %{order_id: _order_id, ticket_issues: ticket_issues}} ->
+        maybe_invalidate_attendee_caches(order_id, ticket_issues, opts)
 
       _other ->
         :ok
@@ -177,6 +191,296 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
+  defp create_or_reuse_ticket_issues(%Order{} = order, order_lines, attendee_results) do
+    expected_units = expected_units(order.id, order_lines)
+    attendees_by_source_reference = Map.new(attendee_results, &{&1.source_reference, &1})
+
+    with {:ok, existing_issues} <- load_ticket_issues(order.id),
+         {:ok, linked_issues} <-
+           link_expected_units(
+             order,
+             expected_units,
+             attendees_by_source_reference,
+             existing_issues
+           ),
+         :ok <- ensure_all_units_linked(expected_units, linked_issues),
+         {:ok, updated_order} <- mark_order_ticket_issued(order) do
+      {:ok,
+       build_ticket_issue_result(
+         order,
+         updated_order,
+         attendee_results,
+         linked_issues,
+         complete_existing_issue_set?(expected_units, existing_issues)
+       )}
+    end
+  end
+
+  defp expected_units(order_id, order_lines) do
+    Enum.flat_map(order_lines, fn line ->
+      for sequence <- 1..line.quantity do
+        %{
+          line: line,
+          sequence: sequence,
+          source_reference: source_reference(order_id, line.id, sequence)
+        }
+      end
+    end)
+  end
+
+  defp load_ticket_issues(order_id) do
+    case TicketIssue
+         |> Query.for_read(:list_by_order, %{sales_order_id: order_id})
+         |> Ash.read(authorize?: false) do
+      {:ok, issues} ->
+        {:ok, Map.new(issues, &{{&1.sales_order_line_id, &1.line_item_sequence}, &1})}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp link_expected_units(order, expected_units, attendees_by_source_reference, existing_issues) do
+    Enum.reduce_while(expected_units, {:ok, []}, fn unit, {:ok, acc} ->
+      case link_expected_unit(order, unit, attendees_by_source_reference, existing_issues) do
+        {:ok, issue} ->
+          {:cont, {:ok, [issue | acc]}}
+
+        {:manual_review, _error} = manual_review_error ->
+          {:halt, manual_review_error}
+
+        {:error, _reason} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, issues} -> {:ok, Enum.reverse(issues)}
+      other -> other
+    end
+  end
+
+  defp link_expected_unit(order, unit, attendees_by_source_reference, existing_issues) do
+    with {:ok, attendee_result} <- fetch_attendee_result(unit, attendees_by_source_reference),
+         {:ok, attendee} <- load_and_validate_attendee(order, unit, attendee_result) do
+      key = {unit.line.id, unit.sequence}
+
+      case Map.get(existing_issues, key) do
+        %TicketIssue{} = issue ->
+          verify_existing_issue(order, attendee, issue)
+
+        nil ->
+          create_issue_and_link_attendee(order, unit, attendee)
+      end
+    end
+  end
+
+  defp fetch_attendee_result(unit, attendees_by_source_reference) do
+    case Map.get(attendees_by_source_reference, unit.source_reference) do
+      nil -> {:error, {:missing_attendee_for_unit, unit.source_reference}}
+      attendee_result -> {:ok, attendee_result}
+    end
+  end
+
+  defp load_and_validate_attendee(order, unit, attendee_result) do
+    case Repo.get(Attendee, attendee_result.id) do
+      %Attendee{} = attendee ->
+        cond do
+          attendee.event_id != order.event_id ->
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+
+          attendee.source != @source_fastcheck_sales ->
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+
+          attendee.source_reference != unit.source_reference ->
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+
+          attendee.scan_eligibility != @scan_eligibility_active ->
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+
+          is_nil(attendee.ticket_code) or attendee.ticket_code == "" ->
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+
+          true ->
+            {:ok, attendee}
+        end
+
+      nil ->
+        {:error, {:missing_attendee_for_unit, unit.source_reference}}
+    end
+  end
+
+  defp verify_existing_issue(order, attendee, issue) do
+    cond do
+      issue.attendee_id != attendee.id ->
+        manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+
+      issue.ticket_code != attendee.ticket_code ->
+        manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+
+      attendee.sales_ticket_issue_id not in [nil, issue.id] ->
+        manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+
+      true ->
+        with {:ok, _attendee} <- ensure_attendee_backlink(attendee, issue) do
+          {:ok, issue}
+        end
+    end
+  end
+
+  defp create_issue_and_link_attendee(order, unit, attendee) do
+    if attendee.sales_ticket_issue_id do
+      manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+    else
+      qr_token = QrPayload.generate_qr_token()
+      delivery_token = DeliveryToken.generate()
+
+      attrs = %{
+        sales_order_id: order.id,
+        sales_order_line_id: unit.line.id,
+        line_item_sequence: unit.sequence,
+        attendee_id: attendee.id,
+        ticket_code: attendee.ticket_code,
+        qr_token_hash: qr_token.hash,
+        delivery_token_hash: delivery_token.hash,
+        delivery_token_expires_at: delivery_token.expires_at
+      }
+
+      TicketIssue
+      |> Changeset.for_create(:create_issued_link, attrs, actor: system_actor())
+      |> ash_create()
+      |> case do
+        {:ok, issue} ->
+          with {:ok, _attendee} <- ensure_attendee_backlink(attendee, issue) do
+            {:ok, issue}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp ensure_attendee_backlink(
+         %Attendee{sales_ticket_issue_id: issue_id} = attendee,
+         %TicketIssue{
+           id: issue_id
+         }
+       )
+       when not is_nil(issue_id),
+       do: {:ok, attendee}
+
+  defp ensure_attendee_backlink(
+         %Attendee{sales_ticket_issue_id: nil} = attendee,
+         %TicketIssue{} = issue
+       ) do
+    attendee
+    |> Attendee.changeset(%{sales_ticket_issue_id: issue.id})
+    |> Repo.update()
+  end
+
+  defp ensure_attendee_backlink(%Attendee{} = attendee, _issue),
+    do: {:error, {:attendee_ticket_issue_conflict, attendee.id}}
+
+  defp ensure_all_units_linked(expected_units, linked_issues) do
+    if length(expected_units) == length(linked_issues) do
+      :ok
+    else
+      {:error, :ticket_issue_count_mismatch}
+    end
+  end
+
+  defp mark_order_ticket_issued(%Order{} = order) do
+    order
+    |> Changeset.for_update(:mark_ticket_issued, %{}, actor: system_actor())
+    |> ash_update()
+  end
+
+  defp build_ticket_issue_result(
+         %Order{} = original_order,
+         %Order{} = updated_order,
+         attendee_results,
+         linked_issues,
+         complete_existing_issue_set?
+       ) do
+    status =
+      if original_order.status == "ticket_issued" and complete_existing_issue_set? and
+           Enum.all?(attendee_results, &(&1.action == :reused)) do
+        :already_issued
+      else
+        :ticket_issued
+      end
+
+    %{
+      order_id: updated_order.id,
+      status: status,
+      attendee_count: length(attendee_results),
+      ticket_issue_count: length(linked_issues),
+      ticket_issues:
+        Enum.map(linked_issues, fn issue ->
+          source_reference =
+            source_reference(
+              updated_order.id,
+              issue.sales_order_line_id,
+              issue.line_item_sequence
+            )
+
+          %{id: issue.id, attendee_id: issue.attendee_id, source_reference: source_reference}
+        end)
+    }
+  end
+
+  defp manual_review(%Order{} = order, reason_string, reason_atom) do
+    case order
+         |> Changeset.for_update(
+           :mark_manual_review,
+           %{manual_review_reason: reason_string},
+           reason: reason_string,
+           actor: system_actor()
+         )
+         |> ash_update() do
+      {:ok, _order} -> {:manual_review, {:error, {:manual_review_required, reason_atom}}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp complete_existing_issue_set?(expected_units, existing_issues) do
+    Enum.all?(expected_units, fn unit ->
+      Map.has_key?(existing_issues, {unit.line.id, unit.sequence})
+    end)
+  end
+
+  defp ash_create(changeset) do
+    case Ash.create(changeset, authorize?: false, return_notifications?: true) do
+      {:ok, record, notifications} ->
+        Ash.Notifier.notify(notifications)
+        {:ok, record}
+
+      {:ok, record} ->
+        {:ok, record}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp ash_update(changeset) do
+    case Ash.update(changeset, authorize?: false, return_notifications?: true) do
+      {:ok, record, notifications} ->
+        Ash.Notifier.notify(notifications)
+        {:ok, record}
+
+      {:ok, record} ->
+        {:ok, record}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp system_actor do
+    %{actor_type: :system, actor_id: "system"}
+  end
+
   defp line_units(%OrderLine{quantity: quantity} = line) do
     for sequence <- 1..quantity, do: {line, sequence}
   end
@@ -277,32 +581,18 @@ defmodule FastCheck.Tickets.Issuer do
     "sales:#{order_id}:#{order_line_id}:#{sequence}"
   end
 
-  defp build_success_result(order_id, attendee_results) do
-    status =
-      if Enum.all?(attendee_results, &(&1.action == :reused)),
-        do: :attendees_already_ready,
-        else: :attendees_ready
-
-    %{
-      order_id: order_id,
-      status: status,
-      attendee_count: length(attendee_results),
-      attendees: Enum.map(attendee_results, &Map.take(&1, [:id, :source_reference]))
-    }
-  end
-
   defp normalize_transaction_result({:ok, {:error, reason}}), do: {:error, reason}
   defp normalize_transaction_result({:ok, result}), do: {:ok, result}
   defp normalize_transaction_result({:error, {:error, reason}}), do: {:error, reason}
   defp normalize_transaction_result({:error, reason}), do: {:error, reason}
 
-  defp maybe_invalidate_attendee_caches(order_id, attendees, _opts) do
-    case attendees do
-      [%{id: attendee_id} | _] ->
+  defp maybe_invalidate_attendee_caches(order_id, ticket_issues, _opts) do
+    case ticket_issues do
+      [%{attendee_id: attendee_id} | _] ->
         case Repo.get(Attendee, attendee_id) do
           %Attendee{event_id: event_id} ->
             _ = Attendees.invalidate_attendees_by_event_cache(event_id)
-            Enum.each(attendees, &Attendees.delete_attendee_id_cache(&1.id))
+            Enum.each(ticket_issues, &Attendees.delete_attendee_id_cache(&1.attendee_id))
             :ok
 
           nil ->

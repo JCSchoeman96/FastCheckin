@@ -11,19 +11,16 @@ defmodule FastCheck.Tickets.IssuerBoundaryTest do
   )
 
   @forbidden_issuer_aliases [
-    "alias FastCheck.Sales.TicketIssue",
     "alias FastCheck.Workers.IssueTicketsWorker"
   ]
 
   @forbidden_issuer_calls [
-    "Ash.create",
-    "Ash.update",
-    "FastCheck.Sales.TicketIssue",
     "Oban.insert",
     "Paystack",
-    "DeliveryToken",
-    "QrPayload",
-    "mark_ticket_issued",
+    "IssueTicketsWorker",
+    "DeliveryAttempt",
+    "ReservationLedger",
+    "Redix.command",
     "mark_partially_issued"
   ]
 
@@ -31,10 +28,18 @@ defmodule FastCheck.Tickets.IssuerBoundaryTest do
   @outcomes_source File.read!("lib/fastcheck/sales/payments/payment_outcomes.ex")
   @verification_source File.read!("lib/fastcheck/sales/payments/payment_verification.ex")
 
-  test "VS-09B issuer attendee bridge entrypoint exists" do
+  test "VS-09C issuer ticket issue linking entrypoint exists" do
     assert File.exists?(@issuer_path)
     assert Code.ensure_loaded?(FastCheck.Tickets.Issuer)
     assert function_exported?(FastCheck.Tickets.Issuer, :issue_order, 2)
+  end
+
+  test "issuer uses approved VS-09C ticket issue and token boundaries" do
+    assert @issuer_source =~ "alias FastCheck.Sales.TicketIssue"
+    assert @issuer_source =~ "alias FastCheck.Tickets.DeliveryToken"
+    assert @issuer_source =~ "alias FastCheck.Tickets.QrPayload"
+    assert @issuer_source =~ "create_issued_link"
+    assert @issuer_source =~ "mark_ticket_issued"
   end
 
   test "issuer attendee bridge does not alias forbidden later-slice modules" do

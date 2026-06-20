@@ -11,6 +11,9 @@ defmodule FastCheck.Sales.TicketIssue do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
+  alias Ash.Changeset
+  alias FastCheck.Sales.StateTransitionSupport
+
   postgres do
     table("sales_ticket_issues")
     repo(FastCheck.Repo)
@@ -51,6 +54,64 @@ defmodule FastCheck.Sales.TicketIssue do
       end
 
       filter(expr(sales_order_line_id == ^arg(:sales_order_line_id)))
+    end
+
+    read :get_by_order_line_sequence do
+      get?(true)
+
+      argument :sales_order_line_id, :integer do
+        allow_nil?(false)
+      end
+
+      argument :line_item_sequence, :integer do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(
+          sales_order_line_id == ^arg(:sales_order_line_id) and
+            line_item_sequence == ^arg(:line_item_sequence)
+        )
+      )
+    end
+
+    create :create_issued_link do
+      accept([
+        :sales_order_id,
+        :sales_order_line_id,
+        :line_item_sequence,
+        :attendee_id,
+        :ticket_code,
+        :qr_token_hash,
+        :delivery_token_hash,
+        :delivery_token_expires_at
+      ])
+
+      validate(
+        present([
+          :sales_order_id,
+          :sales_order_line_id,
+          :line_item_sequence,
+          :attendee_id,
+          :ticket_code,
+          :qr_token_hash,
+          :delivery_token_hash,
+          :delivery_token_expires_at
+        ])
+      )
+
+      change(set_attribute(:status, "issued"))
+      change(set_attribute(:scanner_status, "valid"))
+
+      change(fn changeset, _context ->
+        Changeset.force_change_attribute(
+          changeset,
+          :issued_at,
+          DateTime.utc_now() |> DateTime.truncate(:second)
+        )
+      end)
+
+      change(&record_create_issued_link_transition/2)
     end
   end
 
@@ -146,5 +207,37 @@ defmodule FastCheck.Sales.TicketIssue do
     identity :unique_delivery_token_hash, [:delivery_token_hash] do
       where(expr(not is_nil(delivery_token_hash)))
     end
+  end
+
+  defp record_create_issued_link_transition(changeset, context) do
+    Changeset.after_action(changeset, fn _changeset, record ->
+      StateTransitionSupport.record!(
+        %{
+          entity_type: "TicketIssue",
+          entity_id: Integer.to_string(record.id),
+          from_state: nil,
+          to_state: "issued",
+          reason: "issuer_ticket_issue_linked",
+          metadata: %{
+            sales_order_id: record.sales_order_id,
+            sales_order_line_id: record.sales_order_line_id,
+            line_item_sequence: record.line_item_sequence,
+            attendee_id: record.attendee_id,
+            reason_code: "issuer_ticket_issue_linked"
+          },
+          correlation_id: transition_correlation_id(context),
+          idempotency_key: nil,
+          source: "ticket_issue.create_issued_link"
+        },
+        context
+      )
+
+      {:ok, record}
+    end)
+  end
+
+  defp transition_correlation_id(context) do
+    actor = Map.get(context, :actor, %{})
+    Map.get(context, :correlation_id) || Map.get(actor, :correlation_id)
   end
 end

@@ -11,6 +11,12 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   ]
 
   @read_action_names [:read, :get_by_id]
+  @ticket_issue_expected_action_names [
+    :list_by_order,
+    :list_by_order_line,
+    :get_by_order_line_sequence,
+    :create_issued_link
+  ]
 
   @shared_forbidden_action_names [
     :create,
@@ -69,7 +75,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
     end
   end
 
-  test "resources expose read-only actions only" do
+  test "resources expose only approved ticket and delivery action surfaces" do
     forbidden_by_resource = %{
       FastCheck.Sales.TicketIssue => @ticket_issue_forbidden_action_names,
       FastCheck.Sales.DeliveryAttempt => @delivery_attempt_forbidden_action_names
@@ -82,8 +88,22 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       assert MapSet.subset?(MapSet.new(@read_action_names), action_names),
              "#{inspect(resource)} must expose basic read actions"
 
-      refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
-             "#{inspect(resource)} must not expose mutating Ash actions"
+      if resource == FastCheck.Sales.DeliveryAttempt do
+        refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
+               "#{inspect(resource)} must not expose mutating Ash actions"
+      else
+        assert :create_issued_link in action_names
+
+        refute Enum.any?(actions, &(&1.type in [:update, :destroy])),
+               "#{inspect(resource)} must not expose update/destroy Ash actions"
+      end
+
+      if resource == FastCheck.Sales.TicketIssue do
+        for expected <- @ticket_issue_expected_action_names do
+          assert expected in action_names,
+                 "#{inspect(resource)} must expose #{inspect(expected)}"
+        end
+      end
 
       for forbidden <-
             @shared_forbidden_action_names ++ Map.fetch!(forbidden_by_resource, resource) do
