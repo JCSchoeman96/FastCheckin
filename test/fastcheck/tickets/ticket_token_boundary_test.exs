@@ -18,27 +18,28 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
     FastCheck.Tickets.Issuer
   ]
 
-  test "VS-08 ticket foundation modules exist with VS-09A contract issuer stub" do
+  test "VS-08 ticket foundation modules exist with VS-09B attendee bridge issuer" do
     for module <- @allowed_ticket_modules do
       assert Code.ensure_loaded?(module)
     end
   end
 
-  test "VS-09A issuer stub is contract-only and raises" do
+  test "VS-09B issuer implements attendee bridge without TicketIssue or delivery behavior" do
     assert File.exists?(@issuer_path)
-    assert @issuer_source =~ "VS-09A"
-    assert @issuer_source =~ "not implemented until VS-09B"
-    refute @issuer_source =~ "alias FastCheck.Repo"
+    assert @issuer_source =~ "VS-09B implements the Attendee creation bridge only"
+    assert @issuer_source =~ ":attendees_ready"
+    refute @issuer_source =~ "alias FastCheck.Sales.TicketIssue"
     refute @issuer_source =~ "Ash.create"
+    refute @issuer_source =~ "DeliveryToken"
   end
 
   test "forbidden issuance and delivery paths remain absent" do
     for path <- @forbidden_paths do
-      refute File.exists?(path), "#{path} is out of scope for VS-09A contract slice"
+      refute File.exists?(path), "#{path} is out of scope for VS-09B attendee bridge"
     end
   end
 
-  test "VS-08 does not change scanner, mobile, attendee, or Android surfaces" do
+  test "VS-09B does not change scanner, mobile controller, or Android surfaces" do
     changed_files =
       System.cmd("git", ["diff", "--name-only", "main...HEAD"])
       |> elem(0)
@@ -46,7 +47,6 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
 
     forbidden_changed_prefixes = [
       "android/",
-      "lib/fastcheck/attendees/",
       "lib/fastcheck_web/controllers/mobile/",
       "lib/fastcheck_web/live/scanner",
       "lib/fastcheck_web/router.ex"
@@ -54,7 +54,7 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
 
     for file <- changed_files, prefix <- forbidden_changed_prefixes do
       assert not String.starts_with?(file, prefix),
-             "#{file} must not change in VS-08/VS-09A contract work"
+             "#{file} must not change in VS-09B attendee bridge work"
     end
   end
 end

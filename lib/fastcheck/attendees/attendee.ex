@@ -147,6 +147,9 @@ defmodule FastCheck.Attendees.Attendee do
     |> validate_required([:ticket_code, :event_id])
     |> unique_constraint(:ticket_code, name: :unique_ticket_per_event)
     |> check_constraint(:source, name: :attendees_source_valid)
+    |> unique_constraint(:source_reference,
+      name: :attendees_fastcheck_sales_source_reference_uidx
+    )
     |> unique_constraint(:sales_ticket_issue_id, name: :attendees_sales_ticket_issue_id_uidx)
   end
 end

@@ -52,6 +52,57 @@ defmodule FastCheck.Attendees.OriginProtectionTest do
               [constraint: :unique, constraint_name: "attendees_sales_ticket_issue_id_uidx"]} =
                failed_changeset.errors[:sales_ticket_issue_id]
     end
+
+    test "duplicate fastcheck_sales source_reference is rejected by database constraint" do
+      event = create_event()
+      source_reference = "sales:#{System.unique_integer([:positive])}:10:1"
+
+      _first =
+        create_attendee(event, %{
+          ticket_code: "SALES-SRC-1",
+          source: "fastcheck_sales",
+          source_reference: source_reference
+        })
+
+      changeset =
+        Attendee.changeset(
+          %Attendee{},
+          attendee_params(event, %{
+            ticket_code: "SALES-SRC-2",
+            source: "fastcheck_sales",
+            source_reference: source_reference
+          })
+        )
+
+      assert {:error, failed_changeset} = Repo.insert(changeset)
+
+      assert {"has already been taken",
+              [
+                constraint: :unique,
+                constraint_name: "attendees_fastcheck_sales_source_reference_uidx"
+              ]} = failed_changeset.errors[:source_reference]
+    end
+
+    test "duplicate source_reference outside fastcheck_sales follows existing non-unique behavior" do
+      event = create_event()
+      source_reference = "manual-ref-#{System.unique_integer([:positive])}"
+
+      first =
+        create_attendee(event, %{
+          ticket_code: "MANUAL-SRC-1",
+          source: "manual",
+          source_reference: source_reference
+        })
+
+      second =
+        create_attendee(event, %{
+          ticket_code: "MANUAL-SRC-2",
+          source: "manual",
+          source_reference: source_reference
+        })
+
+      assert first.source_reference == second.source_reference
+    end
   end
 
   describe "tickera upsert ownership protection" do
