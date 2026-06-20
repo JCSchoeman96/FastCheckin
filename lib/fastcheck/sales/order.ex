@@ -389,7 +389,7 @@ defmodule FastCheck.Sales.Order do
           to_state: "draft",
           metadata: transition_metadata(context, record),
           correlation_id: transition_correlation_id(context),
-          idempotency_key: record.idempotency_key,
+          idempotency_key: transition_idempotency_key(context, record),
           source: "order.create_draft"
         },
         context
@@ -437,7 +437,7 @@ defmodule FastCheck.Sales.Order do
                  reason: reason || record.manual_review_reason,
                  metadata: transition_metadata(context, record),
                  correlation_id: transition_correlation_id(context),
-                 idempotency_key: record.idempotency_key,
+                 idempotency_key: transition_idempotency_key(context, record),
                  source: "order.#{record.status}"
                },
                context
@@ -454,6 +454,13 @@ defmodule FastCheck.Sales.Order do
   defp transition_correlation_id(context) do
     actor = Map.get(context, :actor, %{})
     Map.get(context, :correlation_id) || Map.get(actor, :correlation_id)
+  end
+
+  defp transition_idempotency_key(context, record) do
+    actor = Map.get(context, :actor, %{})
+
+    Map.get(context, :idempotency_key) || Map.get(actor, :idempotency_key) ||
+      record.idempotency_key
   end
 
   defp transition_metadata(context, record) do

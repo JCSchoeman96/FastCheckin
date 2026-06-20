@@ -225,7 +225,7 @@ defmodule FastCheck.Sales.TicketIssue do
           reason_code: "issuer_ticket_issue_linked"
         },
         correlation_id: transition_correlation_id(context),
-        idempotency_key: nil,
+        idempotency_key: transition_idempotency_key(context),
         source: "ticket_issue.create_issued_link"
       }
 
@@ -239,5 +239,10 @@ defmodule FastCheck.Sales.TicketIssue do
   defp transition_correlation_id(context) do
     actor = Map.get(context, :actor, %{})
     Map.get(context, :correlation_id) || Map.get(actor, :correlation_id)
+  end
+
+  defp transition_idempotency_key(context) do
+    actor = Map.get(context, :actor, %{})
+    Map.get(context, :idempotency_key) || Map.get(actor, :idempotency_key)
   end
 end

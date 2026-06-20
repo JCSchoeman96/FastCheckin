@@ -65,6 +65,8 @@ defmodule FastCheck.Tickets.Issuer do
   def issue_order(order_id, opts \\ [])
 
   def issue_order(order_id, opts) when is_integer(order_id) do
+    context = issuer_context(opts)
+
     Repo.transaction(fn ->
       Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
 
@@ -75,9 +77,9 @@ defmodule FastCheck.Tickets.Issuer do
            :ok <- require_verified_payment(payment_attempts, order),
            {:ok, checkout_session} <- load_checkout_session(order.id),
            :ok <- require_paid_checkout(checkout_session),
-           {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines),
+           {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines, context),
            {:ok, ticket_issue_result} <-
-             create_or_reuse_ticket_issues(order, order_lines, attendee_results) do
+             create_or_reuse_ticket_issues(order, order_lines, attendee_results, context) do
         ticket_issue_result
       else
         {:manual_review, {:error, _reason} = error} -> error
@@ -173,25 +175,27 @@ defmodule FastCheck.Tickets.Issuer do
   defp require_paid_checkout(%CheckoutSession{status: status}),
     do: {:error, {:invalid_checkout_state, status}}
 
-  defp create_or_reuse_attendees(%Order{} = order, order_lines) do
-    order_lines
-    |> Enum.flat_map(&line_units/1)
-    |> Enum.reduce_while({:ok, []}, fn {line, sequence}, {:ok, acc} ->
-      source_reference = source_reference(order.id, line.id, sequence)
+  defp create_or_reuse_attendees(%Order{} = order, order_lines, context) do
+    units = expected_units(order.id, order_lines)
 
-      case create_or_reuse_attendee(order, line, source_reference) do
-        {:ok, result} -> {:cont, {:ok, [result | acc]}}
-        {:error, {:manual_review_required, _reason}} = error -> {:halt, error}
-        {:error, reason} -> {:halt, {:error, reason}}
+    with :ok <- require_attendee_source_reference_ownership(order, units, context) do
+      units
+      |> Enum.reduce_while({:ok, []}, fn unit, {:ok, acc} ->
+        case create_or_reuse_attendee(order, unit.line, unit.source_reference, context) do
+          {:ok, result} -> {:cont, {:ok, [result | acc]}}
+          {:manual_review, {:error, _reason} = error} -> {:halt, {:manual_review, error}}
+          {:error, {:manual_review_required, _reason}} = error -> {:halt, error}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+      |> case do
+        {:ok, results} -> {:ok, Enum.reverse(results)}
+        error -> error
       end
-    end)
-    |> case do
-      {:ok, results} -> {:ok, Enum.reverse(results)}
-      error -> error
     end
   end
 
-  defp create_or_reuse_ticket_issues(%Order{} = order, order_lines, attendee_results) do
+  defp create_or_reuse_ticket_issues(%Order{} = order, order_lines, attendee_results, context) do
     expected_units = expected_units(order.id, order_lines)
     attendees_by_source_reference = Map.new(attendee_results, &{&1.source_reference, &1})
 
@@ -201,10 +205,11 @@ defmodule FastCheck.Tickets.Issuer do
              order,
              expected_units,
              attendees_by_source_reference,
-             existing_issues
+             existing_issues,
+             context
            ),
          :ok <- ensure_all_units_linked(expected_units, linked_issues),
-         {:ok, updated_order} <- mark_order_ticket_issued(order) do
+         {:ok, updated_order} <- mark_order_ticket_issued(order, context) do
       {:ok,
        build_ticket_issue_result(
          order,
@@ -228,6 +233,33 @@ defmodule FastCheck.Tickets.Issuer do
     end)
   end
 
+  defp require_attendee_source_reference_ownership(%Order{} = order, units, context) do
+    source_references = Enum.map(units, & &1.source_reference)
+
+    conflicting_attendee =
+      Repo.one(
+        from a in Attendee,
+          where:
+            a.source == ^@source_fastcheck_sales and
+              a.source_reference in ^source_references and
+              (a.sales_order_id != ^order.id or a.event_id != ^order.event_id),
+          limit: 1
+      )
+
+    case conflicting_attendee do
+      nil ->
+        :ok
+
+      %Attendee{} ->
+        manual_review(
+          order,
+          "attendee_source_reference_conflict",
+          :attendee_source_reference_conflict,
+          context
+        )
+    end
+  end
+
   defp load_ticket_issues(order_id) do
     case TicketIssue
          |> Query.for_read(:list_by_order, %{sales_order_id: order_id})
@@ -240,9 +272,21 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp link_expected_units(order, expected_units, attendees_by_source_reference, existing_issues) do
+  defp link_expected_units(
+         order,
+         expected_units,
+         attendees_by_source_reference,
+         existing_issues,
+         context
+       ) do
     Enum.reduce_while(expected_units, {:ok, []}, fn unit, {:ok, acc} ->
-      case link_expected_unit(order, unit, attendees_by_source_reference, existing_issues) do
+      case link_expected_unit(
+             order,
+             unit,
+             attendees_by_source_reference,
+             existing_issues,
+             context
+           ) do
         {:ok, issue} ->
           {:cont, {:ok, [issue | acc]}}
 
@@ -259,17 +303,17 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp link_expected_unit(order, unit, attendees_by_source_reference, existing_issues) do
+  defp link_expected_unit(order, unit, attendees_by_source_reference, existing_issues, context) do
     with {:ok, attendee_result} <- fetch_attendee_result(unit, attendees_by_source_reference),
-         {:ok, attendee} <- load_and_validate_attendee(order, unit, attendee_result) do
+         {:ok, attendee} <- load_and_validate_attendee(order, unit, attendee_result, context) do
       key = {unit.line.id, unit.sequence}
 
       case Map.get(existing_issues, key) do
         %TicketIssue{} = issue ->
-          verify_existing_issue(order, attendee, issue)
+          verify_existing_issue(order, attendee, issue, context)
 
         nil ->
-          create_issue_and_link_attendee(order, unit, attendee)
+          create_issue_and_link_attendee(order, unit, attendee, context)
       end
     end
   end
@@ -281,24 +325,24 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp load_and_validate_attendee(order, unit, attendee_result) do
+  defp load_and_validate_attendee(order, unit, attendee_result, context) do
     case Repo.get(Attendee, attendee_result.id) do
       %Attendee{} = attendee ->
         cond do
           attendee.event_id != order.event_id ->
-            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict, context)
 
           attendee.source != @source_fastcheck_sales ->
-            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict, context)
 
           attendee.source_reference != unit.source_reference ->
-            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict, context)
 
           attendee.scan_eligibility != @scan_eligibility_active ->
-            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict, context)
 
           is_nil(attendee.ticket_code) or attendee.ticket_code == "" ->
-            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict)
+            manual_review(order, "issuer_attendee_conflict", :issuer_attendee_conflict, context)
 
           true ->
             {:ok, attendee}
@@ -309,16 +353,31 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp verify_existing_issue(order, attendee, issue) do
+  defp verify_existing_issue(order, attendee, issue, context) do
     cond do
       issue.attendee_id != attendee.id ->
-        manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+        manual_review(
+          order,
+          "issuer_ticket_issue_conflict",
+          :issuer_ticket_issue_conflict,
+          context
+        )
 
       issue.ticket_code != attendee.ticket_code ->
-        manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+        manual_review(
+          order,
+          "issuer_ticket_issue_conflict",
+          :issuer_ticket_issue_conflict,
+          context
+        )
 
       attendee.sales_ticket_issue_id not in [nil, issue.id] ->
-        manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+        manual_review(
+          order,
+          "issuer_ticket_issue_conflict",
+          :issuer_ticket_issue_conflict,
+          context
+        )
 
       true ->
         with {:ok, _attendee} <- ensure_attendee_backlink(attendee, issue) do
@@ -327,9 +386,9 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp create_issue_and_link_attendee(order, unit, attendee) do
+  defp create_issue_and_link_attendee(order, unit, attendee, context) do
     if attendee.sales_ticket_issue_id do
-      manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict)
+      manual_review(order, "issuer_ticket_issue_conflict", :issuer_ticket_issue_conflict, context)
     else
       qr_token = QrPayload.generate_qr_token()
       delivery_token = DeliveryToken.generate()
@@ -346,8 +405,8 @@ defmodule FastCheck.Tickets.Issuer do
       }
 
       TicketIssue
-      |> Changeset.for_create(:create_issued_link, attrs, actor: system_actor())
-      |> ash_create()
+      |> Changeset.for_create(:create_issued_link, attrs, actor: context.actor, context: context)
+      |> ash_create(context)
       |> case do
         {:ok, issue} ->
           with {:ok, _attendee} <- ensure_attendee_backlink(attendee, issue) do
@@ -389,10 +448,10 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp mark_order_ticket_issued(%Order{} = order) do
+  defp mark_order_ticket_issued(%Order{} = order, context) do
     order
-    |> Changeset.for_update(:mark_ticket_issued, %{}, actor: system_actor())
-    |> ash_update()
+    |> Changeset.for_update(:mark_ticket_issued, %{}, actor: context.actor, context: context)
+    |> ash_update(context)
   end
 
   defp build_ticket_issue_result(
@@ -429,15 +488,16 @@ defmodule FastCheck.Tickets.Issuer do
     }
   end
 
-  defp manual_review(%Order{} = order, reason_string, reason_atom) do
+  defp manual_review(%Order{} = order, reason_string, reason_atom, context) do
     case order
          |> Changeset.for_update(
            :mark_manual_review,
            %{manual_review_reason: reason_string},
            reason: reason_string,
-           actor: system_actor()
+           actor: context.actor,
+           context: context
          )
-         |> ash_update() do
+         |> ash_update(context) do
       {:ok, _order} -> {:manual_review, {:error, {:manual_review_required, reason_atom}}}
       {:error, reason} -> {:error, reason}
     end
@@ -449,8 +509,12 @@ defmodule FastCheck.Tickets.Issuer do
     end)
   end
 
-  defp ash_create(changeset) do
-    case Ash.create(changeset, authorize?: false, return_notifications?: true) do
+  defp ash_create(changeset, context) do
+    case Ash.create(changeset,
+           authorize?: false,
+           context: context,
+           return_notifications?: true
+         ) do
       {:ok, record, notifications} ->
         Ash.Notifier.notify(notifications)
         {:ok, record}
@@ -463,8 +527,12 @@ defmodule FastCheck.Tickets.Issuer do
     end
   end
 
-  defp ash_update(changeset) do
-    case Ash.update(changeset, authorize?: false, return_notifications?: true) do
+  defp ash_update(changeset, context) do
+    case Ash.update(changeset,
+           authorize?: false,
+           context: context,
+           return_notifications?: true
+         ) do
       {:ok, record, notifications} ->
         Ash.Notifier.notify(notifications)
         {:ok, record}
@@ -481,20 +549,40 @@ defmodule FastCheck.Tickets.Issuer do
     %{actor_type: :system, actor_id: "system"}
   end
 
-  defp line_units(%OrderLine{quantity: quantity} = line) do
-    for sequence <- 1..quantity, do: {line, sequence}
+  defp issuer_context(opts) do
+    actor =
+      opts
+      |> Keyword.get(:actor, system_actor())
+      |> Map.put_new(:actor_type, :system)
+      |> Map.put_new(:actor_id, "system")
+      |> maybe_put(:correlation_id, Keyword.get(opts, :correlation_id))
+      |> maybe_put(:idempotency_key, Keyword.get(opts, :idempotency_key))
+
+    %{
+      actor: actor,
+      correlation_id: Keyword.get(opts, :correlation_id),
+      idempotency_key: Keyword.get(opts, :idempotency_key)
+    }
   end
 
-  defp create_or_reuse_attendee(%Order{} = order, %OrderLine{} = line, source_reference) do
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp create_or_reuse_attendee(%Order{} = order, %OrderLine{} = line, source_reference, context) do
     case get_attendee_by_source_reference(source_reference) do
       nil ->
-        insert_attendee(order, line, source_reference)
+        insert_attendee(order, line, source_reference, context)
 
       %Attendee{} = attendee ->
         if attendee.sales_order_id == order.id and attendee.event_id == order.event_id do
           {:ok, attendee_result(attendee, source_reference, :reused)}
         else
-          {:error, {:manual_review_required, :attendee_source_reference_conflict}}
+          manual_review(
+            order,
+            "attendee_source_reference_conflict",
+            :attendee_source_reference_conflict,
+            context
+          )
         end
     end
   end
@@ -508,12 +596,24 @@ defmodule FastCheck.Tickets.Issuer do
     )
   end
 
-  defp insert_attendee(order, line, source_reference, attempts_left \\ @ticket_code_attempts)
+  defp insert_attendee(
+         order,
+         line,
+         source_reference,
+         context,
+         attempts_left \\ @ticket_code_attempts
+       )
 
-  defp insert_attendee(_order, _line, _source_reference, 0),
+  defp insert_attendee(_order, _line, _source_reference, _context, 0),
     do: {:error, {:manual_review_required, :ticket_code_collision}}
 
-  defp insert_attendee(%Order{} = order, %OrderLine{} = line, source_reference, attempts_left) do
+  defp insert_attendee(
+         %Order{} = order,
+         %OrderLine{} = line,
+         source_reference,
+         context,
+         attempts_left
+       ) do
     ticket_code = CodeGenerator.generate()
 
     attrs = %{
@@ -542,7 +642,7 @@ defmodule FastCheck.Tickets.Issuer do
       {:error, changeset} ->
         cond do
           constraint_error?(changeset, :ticket_code, :unique) ->
-            insert_attendee(order, line, source_reference, attempts_left - 1)
+            insert_attendee(order, line, source_reference, context, attempts_left - 1)
 
           constraint_error?(changeset, :source_reference, :unique) ->
             case get_attendee_by_source_reference(source_reference) do
@@ -551,7 +651,12 @@ defmodule FastCheck.Tickets.Issuer do
                 {:ok, attendee_result(attendee, source_reference, :reused)}
 
               _other ->
-                {:error, {:manual_review_required, :attendee_source_reference_conflict}}
+                manual_review(
+                  order,
+                  "attendee_source_reference_conflict",
+                  :attendee_source_reference_conflict,
+                  context
+                )
             end
 
           true ->
