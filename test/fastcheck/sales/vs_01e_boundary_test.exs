@@ -2,7 +2,6 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
   use ExUnit.Case, async: true
 
   @forbidden_paths [
-    "lib/fastcheck/tickets/issuer.ex",
     "lib/fastcheck/workers/verify_payment_worker.ex",
     "lib/fastcheck/workers/delivery_attempt_worker.ex",
     "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"

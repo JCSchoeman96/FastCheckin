@@ -4,6 +4,10 @@
 
 Define retry-safe behavior when multi-ticket issuance partially succeeds.
 
+**Authoritative expansion:** [VS-09A failure matrix](../ticket_issuance_failure_matrix.md) and
+[VS-09A issuance contract](../VS-09A_ticket_issuance_contract.md). This policy remains the
+high-level summary; stable `issuer_*` reason codes live in the failure matrix.
+
 ## Policy
 
 | Case | Outcome |

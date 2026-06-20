@@ -5,7 +5,6 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
 
   @forbidden_paths [
     "lib/fastcheck/messaging/whatsapp",
-    "lib/fastcheck/tickets/issuer.ex",
     "lib/fastcheck/workers",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
