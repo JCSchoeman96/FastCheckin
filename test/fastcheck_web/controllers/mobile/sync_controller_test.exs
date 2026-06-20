@@ -228,6 +228,47 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       refute Map.has_key?(first_attendee, "revocation_reason")
     end
 
+    test "includes active fastcheck_sales attendees without exposing internal lineage fields", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
+      sales_attendee =
+        %Attendee{
+          event_id: event.id,
+          ticket_code: "SALES-MOBILE-1",
+          first_name: "Sales",
+          last_name: "Buyer",
+          email: "sales-buyer@example.com",
+          payment_status: "completed",
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          scan_eligibility: "active",
+          source: "fastcheck_sales",
+          source_reference: "sales:#{System.unique_integer([:positive])}:1:1",
+          sales_order_id: System.unique_integer([:positive])
+        }
+        |> Repo.insert!()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
+
+      assert %{"data" => %{"attendees" => attendees}} = json_response(conn, 200)
+
+      attendee_json =
+        Enum.find(attendees, fn attendee ->
+          attendee["ticket_code"] == sales_attendee.ticket_code
+        end)
+
+      assert attendee_json["id"] == sales_attendee.id
+      refute Map.has_key?(attendee_json, "source")
+      refute Map.has_key?(attendee_json, "source_reference")
+      refute Map.has_key?(attendee_json, "sales_order_id")
+      refute Map.has_key?(attendee_json, "sales_ticket_issue_id")
+    end
+
     test "supports incremental sync with since parameter", %{
       conn: conn,
       token: token,

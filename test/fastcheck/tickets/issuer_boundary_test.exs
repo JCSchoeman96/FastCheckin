@@ -10,46 +10,44 @@ defmodule FastCheck.Tickets.IssuerBoundaryTest do
     IssueTicketsWorker
   )
 
-  @forbidden_issuer_aliases ~w(
-    alias FastCheck.Repo
-    alias Ash
-    alias FastCheck.Attendees
-    alias FastCheck.Sales.TicketIssue
-    alias FastCheck.Tickets.CodeGenerator
-  )
+  @forbidden_issuer_aliases [
+    "alias FastCheck.Sales.TicketIssue",
+    "alias FastCheck.Workers.IssueTicketsWorker"
+  ]
 
-  @forbidden_issuer_calls ~w(
-    Repo.
-    Ash.create
-    Ash.update
-    CodeGenerator.generate
-    Oban.insert
-  )
+  @forbidden_issuer_calls [
+    "Ash.create",
+    "Ash.update",
+    "FastCheck.Sales.TicketIssue",
+    "Oban.insert",
+    "Paystack",
+    "DeliveryToken",
+    "QrPayload",
+    "mark_ticket_issued",
+    "mark_partially_issued"
+  ]
 
   @handler_source File.read!("lib/fastcheck/sales/payments/payment_outcome_handler.ex")
   @outcomes_source File.read!("lib/fastcheck/sales/payments/payment_outcomes.ex")
   @verification_source File.read!("lib/fastcheck/sales/payments/payment_verification.ex")
 
-  test "VS-09A issuer contract stub exists and raises not implemented" do
+  test "VS-09B issuer attendee bridge entrypoint exists" do
     assert File.exists?(@issuer_path)
     assert Code.ensure_loaded?(FastCheck.Tickets.Issuer)
-
-    assert_raise RuntimeError, "not implemented until VS-09B", fn ->
-      FastCheck.Tickets.Issuer.issue_order(1)
-    end
+    assert function_exported?(FastCheck.Tickets.Issuer, :issue_order, 2)
   end
 
-  test "issuer stub does not alias forbidden modules" do
+  test "issuer attendee bridge does not alias forbidden later-slice modules" do
     for fragment <- @forbidden_issuer_aliases do
       refute String.contains?(@issuer_source, fragment),
-             "issuer stub must not #{fragment}"
+             "issuer must not #{fragment}"
     end
   end
 
-  test "issuer stub does not call forbidden runtime APIs" do
+  test "issuer attendee bridge does not call forbidden later-slice APIs" do
     for fragment <- @forbidden_issuer_calls do
       refute String.contains?(@issuer_source, fragment),
-             "issuer stub must not reference #{fragment}"
+             "issuer must not reference #{fragment}"
     end
   end
 

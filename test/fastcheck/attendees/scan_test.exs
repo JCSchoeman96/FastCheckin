@@ -6,6 +6,27 @@ defmodule FastCheck.Attendees.ScanTest do
   alias FastCheck.Attendees.Scan
 
   describe "check_in/4" do
+    test "accepts active fastcheck_sales attendees through existing scanner path" do
+      event = create_event()
+
+      _attendee =
+        create_attendee(event, %{
+          ticket_code: "SALES-ACTIVE-1",
+          source: "fastcheck_sales",
+          source_reference: "sales:#{System.unique_integer([:positive])}:1:1",
+          payment_status: "completed",
+          scan_eligibility: "active",
+          allowed_checkins: 1,
+          checkins_remaining: 1
+        })
+
+      assert {:ok, attendee, "SUCCESS"} =
+               Scan.check_in(event.id, "SALES-ACTIVE-1", "Main", nil)
+
+      assert attendee.source == "fastcheck_sales"
+      assert attendee.checkins_remaining == 0
+    end
+
     test "rejects not_scannable tickets with TICKET_NOT_SCANNABLE" do
       event = create_event()
 
