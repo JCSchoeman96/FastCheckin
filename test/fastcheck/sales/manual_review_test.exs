@@ -21,19 +21,71 @@ defmodule FastCheck.Sales.ManualReviewTest do
   test "list_queue returns bounded safe review rows" do
     order_id = insert_review_order!()
 
-    insert_payment_attempt!(order_id, "manual_review",
-      manual_review_reason: "payment_state_conflict"
-    )
+    assert %{entries: entries} = ManualReview.list_queue(%{}, limit: 50)
+    assert [entry | _] = Enum.filter(entries, &(&1.subject_type == "order"))
 
-    assert %{entries: [entry]} = ManualReview.list_queue(%{}, limit: 50)
-
-    assert entry.subject_type == "order"
     assert entry.subject_id == Integer.to_string(order_id)
     assert entry.order_public_reference
     assert entry.reason_code == "payment_state_conflict"
     assert entry.buyer_email_masked != @raw_email
     assert entry.buyer_phone_masked != @raw_phone
     refute unsafe_value_present?(entry)
+  end
+
+  test "list_queue includes manual-review payment attempts and ticket issues" do
+    order_id = insert_review_order!(status: "paid_verified")
+    attempt_id = insert_payment_attempt!(order_id, "manual_review")
+    ticket_issue_id = insert_ticket_issue!(order_id)
+
+    entries = ManualReview.list_queue(%{}, limit: 50).entries
+
+    assert Enum.any?(
+             entries,
+             &(&1.subject_type == "payment_attempt" and
+                 &1.subject_id == Integer.to_string(attempt_id))
+           )
+
+    assert Enum.any?(
+             entries,
+             &(&1.subject_type == "ticket_issue" and
+                 &1.subject_id == Integer.to_string(ticket_issue_id))
+           )
+
+    refute Enum.any?(
+             entries,
+             &(&1.subject_type == "order" and &1.subject_id == Integer.to_string(order_id))
+           )
+  end
+
+  test "get_context returns safe payment and ticket summaries" do
+    order_id = insert_review_order!()
+    attempt_id = insert_payment_attempt!(order_id, "manual_review")
+    ticket_issue_id = insert_ticket_issue!(order_id)
+
+    assert {:ok, payment_context} = ManualReview.get_context("payment_attempt", attempt_id)
+    assert payment_context.payment_attempt_id == attempt_id
+    assert payment_context.payment_summary.status == "manual_review"
+    assert payment_context.payment_summary.provider_reference_masked != "provider-ref"
+    refute unsafe_value_present?(payment_context)
+
+    assert {:ok, ticket_context} = ManualReview.get_context("ticket_issue", ticket_issue_id)
+    assert ticket_context.ticket_issue_summary.ticket_code_suffix == "***CRET"
+    refute unsafe_value_present?(ticket_context)
+  end
+
+  test "return_to_fulfillment_queue succeeds when preconditions are safe" do
+    order_id = insert_review_order!()
+    insert_checkout_session!(order_id, "paid")
+    insert_payment_attempt!(order_id, "verified_success")
+
+    assert {:ok, _} =
+             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+               "reason_code" => "return_to_fulfillment_queue",
+               "note" => "safe after review"
+             })
+
+    assert_order_status(order_id, "fulfillment_queued")
+    assert state_transition?("Order", order_id, "manual_review", "fulfillment_queued")
   end
 
   test "add_note and assignment actions write manual review audit only" do
@@ -186,7 +238,9 @@ defmodule FastCheck.Sales.ManualReviewTest do
              status
   end
 
-  defp insert_review_order! do
+  defp insert_review_order!(opts \\ []) do
+    status = Keyword.get(opts, :status, "manual_review")
+
     %{rows: [[id]]} =
       Repo.query!(
         """
@@ -195,11 +249,11 @@ defmodule FastCheck.Sales.ManualReviewTest do
            status, total_amount_cents, currency, manual_review_reason, lock_version,
            inserted_at, updated_at)
         VALUES
-          ($1, 91001, 'Manual Buyer', $2, $3, 'admin', 'manual_review', 10000, 'ZAR',
+          ($1, 91001, 'Manual Buyer', $2, $3, 'admin', $4, 10000, 'ZAR',
            'payment_state_conflict', 1, now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
         RETURNING id
         """,
-        ["MR-#{System.unique_integer([:positive])}", @raw_phone, @raw_email]
+        ["MR-#{System.unique_integer([:positive])}", @raw_phone, @raw_email, status]
       )
 
     id
@@ -245,5 +299,51 @@ defmodule FastCheck.Sales.ManualReviewTest do
       )
 
     id
+  end
+
+  defp insert_ticket_issue!(order_id) do
+    %{rows: [[line_id]]} =
+      Repo.query!("""
+      INSERT INTO sales_ticket_offers
+        (event_id, name, ticket_type, price_cents, currency, configured_quantity_available,
+         initial_quantity, max_per_order, sales_enabled, sales_channel, starts_at, ends_at,
+         lock_version, inserted_at, updated_at)
+      VALUES
+        (91001, 'Manual Offer', 'General', 10000, 'ZAR', 100, 100, 4, true, 'admin',
+         now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc' + interval '30 days',
+         1, now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+      RETURNING id
+      """)
+
+    %{rows: [[order_line_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_order_lines
+          (sales_order_id, ticket_offer_id, line_number, ticket_type, offer_name_snapshot,
+           event_name_snapshot, quantity, unit_amount_cents, total_amount_cents, currency,
+           metadata, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 1, 'General', 'Manual Offer', 'Manual Event', 1, 10000, 10000,
+           'ZAR', '{}', now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+        RETURNING id
+        """,
+        [order_id, line_id]
+      )
+
+    %{rows: [[issue_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_ticket_issues
+          (sales_order_id, sales_order_line_id, line_item_sequence, attendee_id, ticket_code,
+           qr_token_hash, delivery_token_hash, status, scanner_status, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 1, 123456, $3, $4, $5, 'manual_review', 'valid',
+           now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+        RETURNING id
+        """,
+        [order_id, order_line_id, @ticket_code, @qr_hash, @delivery_hash]
+      )
+
+    issue_id
   end
 end

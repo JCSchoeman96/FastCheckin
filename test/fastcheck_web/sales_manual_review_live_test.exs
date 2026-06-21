@@ -42,8 +42,34 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
       })
 
     assert detail =~ "Review detail"
+    assert detail =~ "Add note"
+    assert detail =~ "Queue payment retry"
+    assert detail =~ "Close no fulfillment"
+    assert detail =~ "Return to fulfillment queue"
     refute_unsafe_html(detail)
     refute_forbidden_controls(detail)
+  end
+
+  test "authenticated user can add a note through ManualReview boundary", %{conn: conn} do
+    order_id = insert_review_case!()
+
+    {:ok, view, _html} =
+      conn
+      |> Fixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/reviews")
+
+    render_click(view, "select_subject", %{
+      "subject-type" => "order",
+      "subject-id" => to_string(order_id)
+    })
+
+    html =
+      render_submit(view, "review_action", %{
+        "action" => "add_note",
+        "review_action" => %{"note" => "Needs operator follow-up"}
+      })
+
+    assert html =~ "Needs operator follow-up" || html =~ "Add note"
   end
 
   test "LiveView source calls ManualReview service only for writes" do

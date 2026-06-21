@@ -17,6 +17,7 @@ defmodule FastCheckWeb.SalesManualReviewLive do
      |> assign(:actor, actor_from_session(session))
      |> assign(:filters, filters)
      |> assign(:form, to_form(filters, as: :filters))
+     |> assign(:action_form, to_form(%{"note" => ""}, as: :review_action))
      |> assign(:selected_subject, nil)
      |> assign(:selected_context, nil)
      |> assign(:action_error, nil)
@@ -48,6 +49,7 @@ defmodule FastCheckWeb.SalesManualReviewLive do
          socket
          |> assign(:selected_subject, %{subject_type: subject_type, subject_id: subject_id})
          |> assign(:selected_context, context)
+         |> assign(:action_form, to_form(%{"note" => ""}, as: :review_action))
          |> assign(:action_error, nil)}
 
       {:error, _reason} ->
@@ -97,6 +99,41 @@ defmodule FastCheckWeb.SalesManualReviewLive do
     end)
   end
 
+  def handle_event("review_action", %{"action" => action, "review_action" => params}, socket) do
+    note = Map.get(params, "note", "")
+
+    case action do
+      "add_note" ->
+        run_subject_action(socket, socket.assigns.selected_subject, fn subject_type,
+                                                                       subject_id,
+                                                                       actor ->
+          ManualReview.add_note(subject_type, subject_id, actor, %{
+            "reason_code" => "operator_note",
+            "note" => note
+          })
+        end)
+
+      "close_no_fulfillment" ->
+        run_order_action(socket, fn order_id, actor ->
+          ManualReview.close_no_fulfillment(order_id, actor, %{
+            "reason_code" => "close_no_fulfillment",
+            "note" => note
+          })
+        end)
+
+      "return_to_fulfillment_queue" ->
+        run_order_action(socket, fn order_id, actor ->
+          ManualReview.return_to_fulfillment_queue(order_id, actor, %{
+            "reason_code" => "return_to_fulfillment_queue",
+            "note" => note
+          })
+        end)
+
+      _ ->
+        {:noreply, assign(socket, :action_error, "Unsupported review action")}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
@@ -142,6 +179,7 @@ defmodule FastCheckWeb.SalesManualReviewLive do
                 <table class="min-w-full text-left text-sm">
                   <thead class="text-xs uppercase text-fc-text-muted">
                     <tr>
+                      <th class="py-2 pr-4">Subject</th>
                       <th class="py-2 pr-4">Reference</th>
                       <th class="py-2 pr-4">Status</th>
                       <th class="py-2 pr-4">Reason</th>
@@ -151,9 +189,10 @@ defmodule FastCheckWeb.SalesManualReviewLive do
                   </thead>
                   <tbody>
                     <tr :if={Enum.empty?(@queue.entries)}>
-                      <td colspan="5" class="py-6 text-fc-text-secondary">No review items.</td>
+                      <td colspan="6" class="py-6 text-fc-text-secondary">No review items.</td>
                     </tr>
                     <tr :for={entry <- @queue.entries} class="border-t border-fc-border">
+                      <td class="py-3 pr-4">{format_subject_type(entry.subject_type)}</td>
                       <td class="py-3 pr-4 font-medium text-fc-text-primary">
                         {entry.order_public_reference}
                       </td>
@@ -194,10 +233,49 @@ defmodule FastCheckWeb.SalesManualReviewLive do
                     {@selected_context.order_public_reference}
                   </p>
                   <p class="text-fc-text-secondary">
-                    {format_status(@selected_context.current_status)}
+                    {format_subject_type(@selected_context.subject_type)} · {format_status(
+                      @selected_context.current_status
+                    )}
                   </p>
                   <p class="text-xs text-fc-text-muted">{@selected_context.buyer_email_masked}</p>
                   <p class="text-xs text-fc-text-muted">{@selected_context.buyer_phone_masked}</p>
+                </div>
+
+                <div
+                  :if={@selected_context.payment_summary}
+                  class="rounded-md border border-fc-border p-3"
+                >
+                  <h3 class="text-sm font-semibold text-fc-text-primary">Payment summary</h3>
+                  <p class="text-xs text-fc-text-muted">
+                    {format_status(@selected_context.payment_summary.status)} · {@selected_context.payment_summary.amount_cents}
+                    {@selected_context.payment_summary.currency}
+                  </p>
+                  <p class="text-xs text-fc-text-muted">
+                    Provider ref {@selected_context.payment_summary.provider_reference_masked}
+                  </p>
+                </div>
+
+                <div
+                  :if={
+                    @selected_context.ticket_issue_summary ||
+                      (@selected_context.ticket_issue_summaries || []) != []
+                  }
+                  class="rounded-md border border-fc-border p-3"
+                >
+                  <h3 class="text-sm font-semibold text-fc-text-primary">Ticket summary</h3>
+                  <div
+                    :if={@selected_context.ticket_issue_summary}
+                    class="text-xs text-fc-text-muted"
+                  >
+                    {format_status(@selected_context.ticket_issue_summary.status)} · scanner {@selected_context.ticket_issue_summary.scanner_status} ·
+                    code {@selected_context.ticket_issue_summary.ticket_code_suffix}
+                  </div>
+                  <div
+                    :for={issue <- List.wrap(@selected_context.ticket_issue_summaries)}
+                    class="text-xs text-fc-text-muted"
+                  >
+                    {format_status(issue.status)} · scanner {issue.scanner_status} · code {issue.ticket_code_suffix}
+                  </div>
                 </div>
 
                 <div class="flex flex-wrap gap-2">
@@ -222,13 +300,14 @@ defmodule FastCheckWeb.SalesManualReviewLive do
                     Unassign
                   </.button>
                   <.button
+                    :if={@selected_context.can_retry_payment?}
                     type="button"
                     variant="outline"
-                    color="warning"
-                    phx-click="hold"
-                    phx-value-order-id={@selected_context.sales_order_id}
+                    color="primary"
+                    phx-click="retry_payment"
+                    phx-value-payment-attempt-id={@selected_context.payment_attempt_id}
                   >
-                    Hold
+                    Queue payment retry
                   </.button>
                   <.button
                     type="button"
@@ -239,7 +318,63 @@ defmodule FastCheckWeb.SalesManualReviewLive do
                   >
                     Queue issuance retry
                   </.button>
+                  <.button
+                    type="button"
+                    variant="outline"
+                    color="warning"
+                    phx-click="hold"
+                    phx-value-order-id={@selected_context.sales_order_id}
+                  >
+                    Hold
+                  </.button>
                 </div>
+
+                <.form
+                  for={@action_form}
+                  id="manual-review-actions"
+                  phx-submit="review_action"
+                  class="space-y-3 rounded-md border border-fc-border p-3"
+                >
+                  <.input
+                    field={@action_form[:note]}
+                    type="textarea"
+                    label="Operator note"
+                    placeholder="Add context for notes, close, or return actions"
+                  />
+                  <div class="flex flex-wrap gap-2">
+                    <.button
+                      type="submit"
+                      name="action"
+                      value="add_note"
+                      variant="outline"
+                      color="primary"
+                    >
+                      Add note
+                    </.button>
+                    <.button
+                      :if={@selected_context.can_close_no_fulfillment?}
+                      type="submit"
+                      name="action"
+                      value="close_no_fulfillment"
+                      variant="outline"
+                      color="danger"
+                      data-confirm="Close this order without fulfillment? This action is audited and cannot be undone from here."
+                    >
+                      Close no fulfillment
+                    </.button>
+                    <.button
+                      :if={@selected_context.can_return_to_fulfillment?}
+                      type="submit"
+                      name="action"
+                      value="return_to_fulfillment_queue"
+                      variant="outline"
+                      color="primary"
+                      data-confirm="Return this order to the fulfillment queue only when payment and issuance preconditions are safe."
+                    >
+                      Return to fulfillment queue
+                    </.button>
+                  </div>
+                </.form>
 
                 <div>
                   <h3 class="text-sm font-semibold text-fc-text-primary">Timeline</h3>
@@ -269,11 +404,25 @@ defmodule FastCheckWeb.SalesManualReviewLive do
 
   defp load_queue(socket, filters), do: assign(socket, :queue, ManualReview.list_queue(filters))
 
+  defp run_subject_action(socket, nil, _fun) do
+    {:noreply, assign(socket, :action_error, "Select a review item first")}
+  end
+
   defp run_subject_action(socket, subject, fun) do
-    subject_type = Map.get(subject, "subject-type")
-    subject_id = Map.get(subject, "subject-id")
+    subject_type = Map.get(subject, :subject_type) || Map.get(subject, "subject-type")
+    subject_id = Map.get(subject, :subject_id) || Map.get(subject, "subject-id")
 
     run_action(socket, fn -> fun.(subject_type, subject_id, socket.assigns.actor) end)
+  end
+
+  defp run_order_action(socket, fun) do
+    case socket.assigns.selected_context do
+      %{sales_order_id: order_id} when not is_nil(order_id) ->
+        run_action(socket, fn -> fun.(order_id, socket.assigns.actor) end)
+
+      _ ->
+        {:noreply, assign(socket, :action_error, "Select a review item first")}
+    end
   end
 
   defp run_action(socket, fun) do
@@ -282,10 +431,28 @@ defmodule FastCheckWeb.SalesManualReviewLive do
         {:noreply,
          socket
          |> assign(:action_error, nil)
-         |> load_queue(socket.assigns.filters)}
+         |> assign(:action_form, to_form(%{"note" => ""}, as: :review_action))
+         |> load_queue(socket.assigns.filters)
+         |> reload_selected_context()}
 
       {:error, reason} ->
         {:noreply, assign(socket, :action_error, format_error(reason))}
+    end
+  end
+
+  defp reload_selected_context(%{assigns: %{selected_subject: nil}} = socket), do: socket
+
+  defp reload_selected_context(socket) do
+    %{subject_type: subject_type, subject_id: subject_id} = socket.assigns.selected_subject
+
+    case ManualReview.get_context(subject_type, subject_id) do
+      {:ok, context} ->
+        assign(socket, :selected_context, context)
+
+      {:error, _} ->
+        socket
+        |> assign(:selected_subject, nil)
+        |> assign(:selected_context, nil)
     end
   end
 
@@ -300,4 +467,9 @@ defmodule FastCheckWeb.SalesManualReviewLive do
 
   defp format_status(status),
     do: status |> to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  defp format_subject_type("order"), do: "Order"
+  defp format_subject_type("payment_attempt"), do: "Payment attempt"
+  defp format_subject_type("ticket_issue"), do: "Ticket issue"
+  defp format_subject_type(subject_type), do: subject_type |> to_string() |> String.capitalize()
 end

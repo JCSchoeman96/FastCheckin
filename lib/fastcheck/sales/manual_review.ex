@@ -34,45 +34,29 @@ defmodule FastCheck.Sales.ManualReview do
   @reason_codes @state_changing_actions ++
                   ~w(operator_note operator_assigned operator_unassigned)
 
+  @order_queue_statuses ~w(manual_review manual_review_held issuance_retry_queued)
+
   @doc "Returns a bounded, safe manual-review queue."
   def list_queue(filters \\ %{}, opts \\ []) do
     limit = opts |> Keyword.get(:limit, @default_limit) |> clamp(1, @max_limit)
     event_id = parse_optional_integer(Map.get(filters, "event_id") || Map.get(filters, :event_id))
 
-    rows =
-      "sales_orders"
-      |> where([o], o.status in ["manual_review", "manual_review_held", "issuance_retry_queued"])
-      |> maybe_filter_event(event_id)
-      |> order_by([o], desc: o.inserted_at, desc: o.id)
-      |> limit(^limit)
-      |> select([o], %{
-        subject_type: "order",
-        subject_id: fragment("?::text", o.id),
-        sales_order_id: o.id,
-        order_public_reference: o.public_reference,
-        event_id: o.event_id,
-        current_status: o.status,
-        reason_code: o.manual_review_reason,
-        buyer_email_private: o.buyer_email,
-        buyer_phone_private: o.buyer_phone,
-        inserted_at: o.inserted_at
-      })
-      |> Repo.all()
+    entries =
+      [
+        order_queue_rows(event_id),
+        payment_attempt_queue_rows(event_id),
+        ticket_issue_queue_rows(event_id)
+      ]
+      |> List.flatten()
+      |> Enum.sort_by(& &1.inserted_at, {:desc, NaiveDateTime})
+      |> Enum.take(limit)
+      |> Enum.map(&safe_queue_row/1)
 
-    %{
-      entries: Enum.map(rows, &safe_queue_row/1),
-      limit: limit
-    }
+    %{entries: entries, limit: limit}
   end
 
   def get_context(subject_type, subject_id, _opts \\ []) do
-    with {:ok, subject_id} <- parse_integer(subject_id),
-         {:ok, order} <- load_order_for_subject(subject_type, subject_id) do
-      {:ok,
-       order
-       |> safe_order_context()
-       |> Map.put(:timeline, timeline("order", Integer.to_string(order.id)))}
-    end
+    get_context_for(subject_type, subject_id)
   end
 
   def assign(subject_type, subject_id, actor, attrs) do
@@ -121,10 +105,10 @@ defmodule FastCheck.Sales.ManualReview do
                  "correlation_id" => review_action.correlation_id
                })
                |> Oban.insert() do
-          broadcast(review_action)
           {:ok, review_action}
         end
       end)
+      |> commit_then_broadcast()
     end
   end
 
@@ -156,10 +140,10 @@ defmodule FastCheck.Sales.ManualReview do
                  "correlation_id" => review_action.correlation_id
                })
                |> Oban.insert() do
-          broadcast(review_action)
           {:ok, review_action}
         end
       end)
+      |> commit_then_broadcast()
     end
   end
 
@@ -205,24 +189,22 @@ defmodule FastCheck.Sales.ManualReview do
         ash_actor = ash_actor(actor, order.event_id)
 
         with {:ok, updated_order} <-
-               transition_order(order, :return_to_fulfillment_queue, reason_code, ash_actor),
-             {:ok, review_action} <-
-               record_action(%{
-                 subject_type: "order",
-                 subject_id: Integer.to_string(order.id),
-                 sales_order_id: order.id,
-                 action: "return_to_fulfillment_queue",
-                 reason_code: reason_code,
-                 note: note,
-                 actor: actor,
-                 previous_status: order.status,
-                 new_status: updated_order.status,
-                 metadata: %{order_id: order.id}
-               }) do
-          broadcast(review_action)
-          {:ok, review_action}
+               transition_order(order, :return_to_fulfillment_queue, reason_code, ash_actor) do
+          record_action(%{
+            subject_type: "order",
+            subject_id: Integer.to_string(order.id),
+            sales_order_id: order.id,
+            action: "return_to_fulfillment_queue",
+            reason_code: reason_code,
+            note: note,
+            actor: actor,
+            previous_status: order.status,
+            new_status: updated_order.status,
+            metadata: %{order_id: order.id}
+          })
         end
       end)
+      |> commit_then_broadcast()
     else
       {:error, :unsafe_manual_review_transition} = error ->
         maybe_record_blocked_return(order_id, actor, attrs)
@@ -240,24 +222,22 @@ defmodule FastCheck.Sales.ManualReview do
       run_transaction(fn ->
         ash_actor = ash_actor(actor, order.event_id)
 
-        with {:ok, updated_order} <- transition_order(order, ash_action, reason_code, ash_actor),
-             {:ok, review_action} <-
-               record_action(%{
-                 subject_type: "order",
-                 subject_id: Integer.to_string(order.id),
-                 sales_order_id: order.id,
-                 action: action,
-                 reason_code: reason_code,
-                 note: note,
-                 actor: actor,
-                 previous_status: order.status,
-                 new_status: updated_order.status,
-                 metadata: %{order_id: order.id}
-               }) do
-          broadcast(review_action)
-          {:ok, review_action}
+        with {:ok, updated_order} <- transition_order(order, ash_action, reason_code, ash_actor) do
+          record_action(%{
+            subject_type: "order",
+            subject_id: Integer.to_string(order.id),
+            sales_order_id: order.id,
+            action: action,
+            reason_code: reason_code,
+            note: note,
+            actor: actor,
+            previous_status: order.status,
+            new_status: updated_order.status,
+            metadata: %{order_id: order.id}
+          })
         end
       end)
+      |> commit_then_broadcast()
     end
   end
 
@@ -278,10 +258,7 @@ defmodule FastCheck.Sales.ManualReview do
         new_status: order.status,
         metadata: %{order_id: order.id}
       })
-      |> tap(fn
-        {:ok, action_record} -> broadcast(action_record)
-        _ -> :ok
-      end)
+      |> commit_then_broadcast()
     end
   end
 
@@ -354,7 +331,8 @@ defmodule FastCheck.Sales.ManualReview do
                id: p.id,
                status: p.status,
                amount_cents: p.amount_cents,
-               currency: p.currency
+               currency: p.currency,
+               provider_reference: p.provider_reference
              }
          ) do
       nil -> {:error, :not_found}
@@ -406,6 +384,7 @@ defmodule FastCheck.Sales.ManualReview do
         new_status: order.status,
         metadata: %{order_id: order.id, blocked: true}
       })
+      |> commit_then_broadcast()
     else
       _ -> :ok
     end
@@ -415,6 +394,10 @@ defmodule FastCheck.Sales.ManualReview do
 
   defp load_order_for_subject("payment_attempt", id) do
     with {:ok, attempt} <- load_payment_attempt(id), do: load_order(attempt.sales_order_id)
+  end
+
+  defp load_order_for_subject("ticket_issue", id) do
+    with {:ok, issue} <- load_ticket_issue(id), do: load_order(issue.sales_order_id)
   end
 
   defp load_order_for_subject(_subject_type, _id), do: {:error, :invalid_subject}
@@ -444,6 +427,190 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
+  defp load_ticket_issue(id) do
+    with {:ok, id} <- parse_integer(id) do
+      case Repo.one(
+             from t in "sales_ticket_issues",
+               where: t.id == ^id,
+               select: %{
+                 id: t.id,
+                 sales_order_id: t.sales_order_id,
+                 status: t.status,
+                 scanner_status: t.scanner_status,
+                 ticket_code: t.ticket_code
+               }
+           ) do
+        nil -> {:error, :not_found}
+        issue -> {:ok, issue}
+      end
+    end
+  end
+
+  defp get_context_for("order", subject_id) do
+    with {:ok, subject_id} <- parse_integer(subject_id),
+         {:ok, order} <- load_order(subject_id) do
+      {:ok, build_order_context(order, "order", Integer.to_string(order.id))}
+    end
+  end
+
+  defp get_context_for("payment_attempt", subject_id) do
+    with {:ok, subject_id} <- parse_integer(subject_id),
+         {:ok, attempt} <- load_payment_attempt(subject_id),
+         {:ok, order} <- load_order(attempt.sales_order_id) do
+      {:ok,
+       order
+       |> build_order_context("payment_attempt", Integer.to_string(attempt.id))
+       |> Map.put(:payment_attempt_id, attempt.id)
+       |> Map.put(:payment_summary, safe_payment_summary(attempt))
+       |> Map.put(:can_retry_payment?, attempt.status == "manual_review")
+       |> Map.put(:timeline, timeline("payment_attempt", Integer.to_string(attempt.id)))}
+    end
+  end
+
+  defp get_context_for("ticket_issue", subject_id) do
+    with {:ok, subject_id} <- parse_integer(subject_id),
+         {:ok, issue} <- load_ticket_issue(subject_id),
+         {:ok, order} <- load_order(issue.sales_order_id) do
+      {:ok,
+       order
+       |> build_order_context("ticket_issue", Integer.to_string(issue.id))
+       |> Map.put(:ticket_issue_summary, safe_ticket_issue_summary(issue))
+       |> Map.put(:timeline, timeline("ticket_issue", Integer.to_string(issue.id)))}
+    end
+  end
+
+  defp get_context_for(_subject_type, _subject_id), do: {:error, :invalid_subject}
+
+  defp build_order_context(order, subject_type, subject_id) do
+    order
+    |> safe_order_context()
+    |> Map.put(:subject_type, subject_type)
+    |> Map.put(:subject_id, subject_id)
+    |> Map.merge(payment_context(order.id))
+    |> Map.merge(ticket_review_context(order.id))
+    |> Map.put(:timeline, timeline(subject_type, subject_id))
+  end
+
+  defp order_queue_rows(event_id) do
+    "sales_orders"
+    |> where([o], o.status in ^@order_queue_statuses)
+    |> maybe_filter_event(event_id)
+    |> select([o], %{
+      subject_type: "order",
+      subject_id: fragment("?::text", o.id),
+      sales_order_id: o.id,
+      order_public_reference: o.public_reference,
+      event_id: o.event_id,
+      current_status: o.status,
+      reason_code: o.manual_review_reason,
+      buyer_email_private: o.buyer_email,
+      buyer_phone_private: o.buyer_phone,
+      inserted_at: o.inserted_at
+    })
+    |> Repo.all()
+  end
+
+  defp payment_attempt_queue_rows(event_id) do
+    from(p in "sales_payment_attempts",
+      join: o in "sales_orders",
+      on: o.id == p.sales_order_id,
+      where: p.status == "manual_review",
+      select: %{
+        subject_type: "payment_attempt",
+        subject_id: fragment("?::text", p.id),
+        sales_order_id: o.id,
+        order_public_reference: o.public_reference,
+        event_id: o.event_id,
+        current_status: p.status,
+        reason_code: p.manual_review_reason,
+        buyer_email_private: o.buyer_email,
+        buyer_phone_private: o.buyer_phone,
+        inserted_at: p.inserted_at
+      }
+    )
+    |> maybe_filter_joined_event(event_id)
+    |> Repo.all()
+  end
+
+  defp ticket_issue_queue_rows(event_id) do
+    from(t in "sales_ticket_issues",
+      join: o in "sales_orders",
+      on: o.id == t.sales_order_id,
+      where: t.status == "manual_review",
+      select: %{
+        subject_type: "ticket_issue",
+        subject_id: fragment("?::text", t.id),
+        sales_order_id: o.id,
+        order_public_reference: o.public_reference,
+        event_id: o.event_id,
+        current_status: t.status,
+        reason_code: o.manual_review_reason,
+        buyer_email_private: o.buyer_email,
+        buyer_phone_private: o.buyer_phone,
+        inserted_at: t.inserted_at
+      }
+    )
+    |> maybe_filter_joined_event(event_id)
+    |> Repo.all()
+  end
+
+  defp payment_context(order_id) do
+    case latest_payment_attempt(order_id) do
+      {:ok, attempt} ->
+        %{
+          payment_attempt_id: attempt.id,
+          payment_summary: safe_payment_summary(attempt),
+          can_retry_payment?: attempt.status == "manual_review"
+        }
+
+      _ ->
+        %{
+          payment_attempt_id: nil,
+          payment_summary: nil,
+          can_retry_payment?: false
+        }
+    end
+  end
+
+  defp ticket_review_context(order_id) do
+    issues =
+      Repo.all(
+        from t in "sales_ticket_issues",
+          where: t.sales_order_id == ^order_id and t.status == "manual_review",
+          order_by: [desc: t.inserted_at, desc: t.id],
+          limit: 5,
+          select: %{
+            id: t.id,
+            status: t.status,
+            scanner_status: t.scanner_status,
+            ticket_code: t.ticket_code
+          }
+      )
+
+    %{
+      ticket_issue_summary: nil,
+      ticket_issue_summaries: Enum.map(issues, &safe_ticket_issue_summary/1)
+    }
+  end
+
+  defp safe_payment_summary(attempt) do
+    %{
+      status: attempt.status,
+      amount_cents: attempt.amount_cents,
+      currency: attempt.currency,
+      provider_reference_masked: mask_provider_reference(attempt.provider_reference)
+    }
+  end
+
+  defp safe_ticket_issue_summary(issue) do
+    %{
+      ticket_issue_id: issue.id,
+      status: issue.status,
+      scanner_status: issue.scanner_status,
+      ticket_code_suffix: mask_ticket_code_suffix(issue.ticket_code)
+    }
+  end
+
   defp safe_queue_row(row) do
     %{
       subject_type: row.subject_type,
@@ -461,8 +628,6 @@ defmodule FastCheck.Sales.ManualReview do
 
   defp safe_order_context(order) do
     %{
-      subject_type: "order",
-      subject_id: Integer.to_string(order.id),
       sales_order_id: order.id,
       order_public_reference: order.public_reference,
       event_id: order.event_id,
@@ -470,11 +635,15 @@ defmodule FastCheck.Sales.ManualReview do
       reason_code: order.manual_review_reason,
       buyer_email_masked: mask_email(order.buyer_email),
       buyer_phone_masked: mask_phone(order.buyer_phone),
-      inserted_at: order.inserted_at
+      inserted_at: order.inserted_at,
+      can_close_no_fulfillment?: order.status in ["manual_review", "manual_review_held"],
+      can_return_to_fulfillment?: order.status in ["manual_review", "manual_review_held"]
     }
   end
 
   defp timeline(subject_type, subject_id) do
+    entity_type = timeline_entity_type(subject_type)
+
     review_actions =
       Repo.all(
         from a in "sales_manual_review_actions",
@@ -493,26 +662,35 @@ defmodule FastCheck.Sales.ManualReview do
       )
 
     transitions =
-      Repo.all(
-        from st in "sales_state_transitions",
-          where: st.entity_type == "Order" and st.entity_id == ^subject_id,
-          order_by: [desc: st.inserted_at],
-          limit: 25,
-          select: %{
-            kind: "state_transition",
-            action: st.source,
-            reason_code: st.reason,
-            actor_id: st.actor_id,
-            previous_status: st.from_state,
-            new_status: st.to_state,
-            inserted_at: st.inserted_at
-          }
-      )
+      if is_nil(entity_type) do
+        []
+      else
+        Repo.all(
+          from st in "sales_state_transitions",
+            where: st.entity_type == ^entity_type and st.entity_id == ^subject_id,
+            order_by: [desc: st.inserted_at],
+            limit: 25,
+            select: %{
+              kind: "state_transition",
+              action: st.source,
+              reason_code: st.reason,
+              actor_id: st.actor_id,
+              previous_status: st.from_state,
+              new_status: st.to_state,
+              inserted_at: st.inserted_at
+            }
+        )
+      end
 
     (review_actions ++ transitions)
-    |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+    |> Enum.sort_by(& &1.inserted_at, {:desc, NaiveDateTime})
     |> Enum.take(25)
   end
+
+  defp timeline_entity_type("order"), do: "Order"
+  defp timeline_entity_type("payment_attempt"), do: "PaymentAttempt"
+  defp timeline_entity_type("ticket_issue"), do: "TicketIssue"
+  defp timeline_entity_type(_), do: nil
 
   defp require_reason(attrs, default) do
     attrs
@@ -610,6 +788,13 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
+  defp commit_then_broadcast({:ok, action}) do
+    broadcast(action)
+    {:ok, action}
+  end
+
+  defp commit_then_broadcast(other), do: other
+
   defp broadcast(action) do
     payload = %{
       subject_type: action.subject_type,
@@ -631,6 +816,12 @@ defmodule FastCheck.Sales.ManualReview do
 
   defp maybe_filter_event(query, nil), do: query
   defp maybe_filter_event(query, event_id), do: where(query, [o], o.event_id == ^event_id)
+
+  defp maybe_filter_joined_event(query, nil), do: query
+
+  defp maybe_filter_joined_event(query, event_id) do
+    where(query, [_row, o], o.event_id == ^event_id)
+  end
 
   defp parse_optional_integer(nil), do: nil
 
@@ -692,6 +883,30 @@ defmodule FastCheck.Sales.ManualReview do
       "hidden"
     end
   end
+
+  defp mask_provider_reference(nil), do: "hidden"
+
+  defp mask_provider_reference(reference) when is_binary(reference) do
+    if String.length(reference) >= 6 do
+      "***" <> String.slice(reference, -6, 6)
+    else
+      "hidden"
+    end
+  end
+
+  defp mask_provider_reference(_), do: "hidden"
+
+  defp mask_ticket_code_suffix(nil), do: "hidden"
+
+  defp mask_ticket_code_suffix(ticket_code) when is_binary(ticket_code) do
+    if String.length(ticket_code) >= 4 do
+      "***" <> String.slice(ticket_code, -4, 4)
+    else
+      "hidden"
+    end
+  end
+
+  defp mask_ticket_code_suffix(_), do: "hidden"
 
   defp clamp(value, min, max), do: value |> max(min) |> min(max)
 end
