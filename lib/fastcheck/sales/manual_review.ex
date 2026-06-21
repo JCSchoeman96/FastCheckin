@@ -43,12 +43,12 @@ defmodule FastCheck.Sales.ManualReview do
 
     entries =
       [
-        order_queue_rows(event_id),
-        payment_attempt_queue_rows(event_id),
-        ticket_issue_queue_rows(event_id)
+        order_queue_rows(event_id, limit),
+        payment_attempt_queue_rows(event_id, limit),
+        ticket_issue_queue_rows(event_id, limit)
       ]
       |> List.flatten()
-      |> Enum.sort_by(& &1.inserted_at, {:desc, NaiveDateTime})
+      |> Enum.sort(&queue_row_before?/2)
       |> Enum.take(limit)
       |> Enum.map(&safe_queue_row/1)
 
@@ -491,10 +491,12 @@ defmodule FastCheck.Sales.ManualReview do
     |> Map.put(:timeline, timeline(subject_type, subject_id))
   end
 
-  defp order_queue_rows(event_id) do
+  defp order_queue_rows(event_id, source_limit) do
     "sales_orders"
     |> where([o], o.status in ^@order_queue_statuses)
     |> maybe_filter_event(event_id)
+    |> order_by([o], desc: o.inserted_at, desc: o.id)
+    |> limit(^source_limit)
     |> select([o], %{
       subject_type: "order",
       subject_id: fragment("?::text", o.id),
@@ -505,16 +507,19 @@ defmodule FastCheck.Sales.ManualReview do
       reason_code: o.manual_review_reason,
       buyer_email_private: o.buyer_email,
       buyer_phone_private: o.buyer_phone,
-      inserted_at: o.inserted_at
+      inserted_at: o.inserted_at,
+      sort_id: o.id
     })
     |> Repo.all()
   end
 
-  defp payment_attempt_queue_rows(event_id) do
+  defp payment_attempt_queue_rows(event_id, source_limit) do
     from(p in "sales_payment_attempts",
       join: o in "sales_orders",
       on: o.id == p.sales_order_id,
       where: p.status == "manual_review",
+      order_by: [desc: p.inserted_at, desc: p.id],
+      limit: ^source_limit,
       select: %{
         subject_type: "payment_attempt",
         subject_id: fragment("?::text", p.id),
@@ -525,18 +530,21 @@ defmodule FastCheck.Sales.ManualReview do
         reason_code: p.manual_review_reason,
         buyer_email_private: o.buyer_email,
         buyer_phone_private: o.buyer_phone,
-        inserted_at: p.inserted_at
+        inserted_at: p.inserted_at,
+        sort_id: p.id
       }
     )
     |> maybe_filter_joined_event(event_id)
     |> Repo.all()
   end
 
-  defp ticket_issue_queue_rows(event_id) do
+  defp ticket_issue_queue_rows(event_id, source_limit) do
     from(t in "sales_ticket_issues",
       join: o in "sales_orders",
       on: o.id == t.sales_order_id,
       where: t.status == "manual_review",
+      order_by: [desc: t.inserted_at, desc: t.id],
+      limit: ^source_limit,
       select: %{
         subject_type: "ticket_issue",
         subject_id: fragment("?::text", t.id),
@@ -547,12 +555,27 @@ defmodule FastCheck.Sales.ManualReview do
         reason_code: o.manual_review_reason,
         buyer_email_private: o.buyer_email,
         buyer_phone_private: o.buyer_phone,
-        inserted_at: t.inserted_at
+        inserted_at: t.inserted_at,
+        sort_id: t.id
       }
     )
     |> maybe_filter_joined_event(event_id)
     |> Repo.all()
   end
+
+  defp queue_row_before?(left, right) do
+    case NaiveDateTime.compare(
+           normalize_queue_timestamp(left.inserted_at),
+           normalize_queue_timestamp(right.inserted_at)
+         ) do
+      :gt -> true
+      :lt -> false
+      :eq -> left.sort_id >= right.sort_id
+    end
+  end
+
+  defp normalize_queue_timestamp(%DateTime{} = value), do: DateTime.to_naive(value)
+  defp normalize_queue_timestamp(%NaiveDateTime{} = value), do: value
 
   defp payment_context(order_id) do
     case latest_payment_attempt(order_id) do

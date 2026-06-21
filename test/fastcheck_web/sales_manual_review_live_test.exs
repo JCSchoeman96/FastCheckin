@@ -1,9 +1,12 @@
 defmodule FastCheckWeb.SalesManualReviewLiveTest do
   use FastCheckWeb.ConnCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
 
   alias FastCheck.Repo
+  alias FastCheck.Sales.Payments.VerifyPaymentWorker
   alias FastCheckWeb.SalesWebFixtures, as: Fixtures
 
   @raw_email "manual.live@example.com"
@@ -70,6 +73,83 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
       })
 
     assert html =~ "Needs operator follow-up" || html =~ "Add note"
+  end
+
+  test "authenticated user can queue payment retry through ManualReview boundary", %{conn: conn} do
+    order_id = insert_review_case!()
+
+    attempt_id =
+      Repo.one!(
+        from p in "sales_payment_attempts",
+          where: p.sales_order_id == ^order_id,
+          select: p.id
+      )
+
+    {:ok, view, _html} =
+      conn
+      |> Fixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/reviews")
+
+    render_click(view, "select_subject", %{
+      "subject-type" => "order",
+      "subject-id" => to_string(order_id)
+    })
+
+    render_click(view, "retry_payment", %{"payment-attempt-id" => to_string(attempt_id)})
+
+    assert Repo.one!(
+             from p in "sales_payment_attempts", where: p.id == ^attempt_id, select: p.status
+           ) == "verification_retry_queued"
+
+    assert_enqueued(worker: VerifyPaymentWorker, args: %{"payment_attempt_id" => attempt_id})
+  end
+
+  test "authenticated user can close without fulfillment through ManualReview boundary", %{
+    conn: conn
+  } do
+    order_id = insert_review_case!()
+
+    {:ok, view, _html} =
+      conn
+      |> Fixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/reviews")
+
+    render_click(view, "select_subject", %{
+      "subject-type" => "order",
+      "subject-id" => to_string(order_id)
+    })
+
+    render_submit(view, "review_action", %{
+      "action" => "close_no_fulfillment",
+      "review_action" => %{"note" => "No safe fulfillment path"}
+    })
+
+    assert Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.status) ==
+             "no_fulfillment_closed"
+  end
+
+  test "authenticated user can return to fulfillment queue through ManualReview boundary", %{
+    conn: conn
+  } do
+    order_id = insert_returnable_review_case!()
+
+    {:ok, view, _html} =
+      conn
+      |> Fixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/reviews")
+
+    render_click(view, "select_subject", %{
+      "subject-type" => "order",
+      "subject-id" => to_string(order_id)
+    })
+
+    render_submit(view, "review_action", %{
+      "action" => "return_to_fulfillment_queue",
+      "review_action" => %{"note" => "Safe to resume fulfillment"}
+    })
+
+    assert Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.status) ==
+             "fulfillment_queued"
   end
 
   test "LiveView source calls ManualReview service only for writes" do
@@ -189,6 +269,30 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
          now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
       """,
       [order_id, order_line_id, @ticket_code, @qr_hash, @delivery_hash]
+    )
+
+    order_id
+  end
+
+  defp insert_returnable_review_case! do
+    order_id = insert_review_case!()
+
+    Repo.query!(
+      """
+      UPDATE sales_checkout_sessions
+      SET status = 'paid', updated_at = now() AT TIME ZONE 'utc'
+      WHERE sales_order_id = $1
+      """,
+      [order_id]
+    )
+
+    Repo.query!(
+      """
+      UPDATE sales_payment_attempts
+      SET status = 'verified_success', updated_at = now() AT TIME ZONE 'utc'
+      WHERE sales_order_id = $1
+      """,
+      [order_id]
     )
 
     order_id
