@@ -62,6 +62,7 @@ defmodule FastCheckWeb.Router do
     live "/dashboard", DashboardLive, :index
     live "/scan/:event_id", ScannerLive, :index
     live "/dashboard/occupancy/:event_id", OccupancyLive, :index
+    live "/dashboard/sales", SalesDashboardLive, :index
     live "/dashboard/sales/checkout/:event_id", Sales.AdminCheckoutLive, :index
 
     live "/dashboard/sales/internal-pilot/checkout/:event_id",
