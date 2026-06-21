@@ -67,6 +67,17 @@ defmodule FastCheck.Events do
   churn from version noise becomes measurable, revisit conditional bumps rather than spreading
   ad-hoc guards here.
   """
+  @spec bump_event_sync_version(integer()) :: :ok | {:error, :event_not_found}
+  def bump_event_sync_version(event_id) when is_integer(event_id) and event_id > 0 do
+    case from(e in Event, where: e.id == ^event_id)
+         |> Repo.update_all(inc: [event_sync_version: 1]) do
+      {1, _} -> :ok
+      {0, _} -> {:error, :event_not_found}
+    end
+  end
+
+  def bump_event_sync_version(_event_id), do: {:error, :event_not_found}
+
   @spec bump_event_sync_version!(integer()) :: :ok
   def bump_event_sync_version!(event_id) when is_integer(event_id) do
     from(e in Event, where: e.id == ^event_id)

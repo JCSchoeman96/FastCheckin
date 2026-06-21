@@ -14,8 +14,8 @@ defmodule FastCheck.Tickets.Issuer do
 
   alias Ash.Changeset
   alias Ash.Query
-  alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Events.MobileSyncVersionAggregator
   alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Order
@@ -79,7 +79,9 @@ defmodule FastCheck.Tickets.Issuer do
            :ok <- require_paid_checkout(checkout_session),
            {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines, context),
            {:ok, ticket_issue_result} <-
-             create_or_reuse_ticket_issues(order, order_lines, attendee_results, context) do
+             create_or_reuse_ticket_issues(order, order_lines, attendee_results, context),
+           :ok <-
+             maybe_bump_mobile_sync_version(order, attendee_results, ticket_issue_result, opts) do
         ticket_issue_result
       else
         {:manual_review, {:error, _reason} = error} -> error
@@ -88,8 +90,8 @@ defmodule FastCheck.Tickets.Issuer do
     end)
     |> normalize_transaction_result()
     |> tap(fn
-      {:ok, %{order_id: _order_id, ticket_issues: ticket_issues}} ->
-        maybe_invalidate_attendee_caches(order_id, ticket_issues, opts)
+      {:ok, %{status: :ticket_issued, order_id: _order_id, ticket_issues: ticket_issues}} ->
+        maybe_invalidate_mobile_sync_caches(order_id, ticket_issues, opts)
 
       _other ->
         :ok
@@ -691,16 +693,58 @@ defmodule FastCheck.Tickets.Issuer do
   defp normalize_transaction_result({:error, {:error, reason}}), do: {:error, reason}
   defp normalize_transaction_result({:error, reason}), do: {:error, reason}
 
-  defp maybe_invalidate_attendee_caches(order_id, ticket_issues, _opts) do
+  defp maybe_bump_mobile_sync_version(
+         %Order{} = order,
+         attendee_results,
+         %{status: :ticket_issued},
+         opts
+       ) do
+    aggregator = Keyword.get(opts, :mobile_sync_version_aggregator, MobileSyncVersionAggregator)
+    ticket_codes = Enum.map(attendee_results, & &1.ticket_code)
+    attendee_ids = Enum.map(attendee_results, & &1.id)
+
+    case aggregator.after_attendees_created(order.event_id, ticket_codes,
+           attendee_ids: attendee_ids,
+           source: :sales_issuer,
+           skip_cache_invalidation: true
+         ) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:mobile_sync_version_aggregation_failed, reason}}
+    end
+  end
+
+  defp maybe_bump_mobile_sync_version(%Order{}, _attendee_results, _ticket_issue_result, _opts),
+    do: :ok
+
+  defp maybe_invalidate_mobile_sync_caches(order_id, ticket_issues, _opts) do
     case ticket_issues do
       [%{attendee_id: attendee_id} | _] ->
-        case Repo.get(Attendee, attendee_id) do
-          %Attendee{event_id: event_id} ->
-            _ = Attendees.invalidate_attendees_by_event_cache(event_id)
-            Enum.each(ticket_issues, &Attendees.delete_attendee_id_cache(&1.attendee_id))
+        attendee_ids = Enum.map(ticket_issues, & &1.attendee_id)
+
+        attendees =
+          Repo.all(
+            from a in Attendee,
+              where: a.id in ^attendee_ids,
+              select: %{id: a.id, event_id: a.event_id, ticket_code: a.ticket_code}
+          )
+
+        case attendees do
+          [%{event_id: event_id} | _] ->
+            ticket_codes = Enum.map(attendees, & &1.ticket_code)
+            attendee_ids = Enum.map(attendees, & &1.id)
+
+            _ =
+              MobileSyncVersionAggregator.invalidate_attendees_created_caches(
+                event_id,
+                ticket_codes,
+                attendee_ids: attendee_ids,
+                source: :sales_issuer
+              )
+
             :ok
 
-          nil ->
+          [] ->
+            _ = attendee_id
             :ok
         end
 
