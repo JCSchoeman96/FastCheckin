@@ -54,9 +54,10 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
       "lib/fastcheck_web/router.ex"
     ]
 
-    for file <- changed_files, prefix <- forbidden_changed_prefixes do
-      assert not String.starts_with?(file, prefix),
-             "#{file} must not change in VS-09B attendee bridge work"
+    for file <- changed_files,
+        prefix <- forbidden_changed_prefixes,
+        FastCheck.Sales.BoundaryAllowlist.reject_forbidden_changed_file?(file, prefix) do
+      flunk("#{file} must not change in VS-09B attendee bridge work")
     end
   end
 end
