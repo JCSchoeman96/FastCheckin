@@ -228,10 +228,124 @@ defmodule FastCheck.Sales.Order do
             changeset,
             context,
             "ticket_issued",
-            allowed_from: ["paid_verified", "fulfillment_queued", "partially_issued"],
+            allowed_from: [
+              "paid_verified",
+              "fulfillment_queued",
+              "partially_issued",
+              "issuance_retry_queued"
+            ],
             extra_attrs: %{ticket_issued_at: DateTime.utc_now() |> DateTime.truncate(:second)}
           )
         end
+      end)
+    end
+
+    update :queue_issuance_retry do
+      require_atomic?(false)
+      accept([])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        transition_status(
+          changeset,
+          context,
+          "issuance_retry_queued",
+          allowed_from: ["manual_review"],
+          reason: Changeset.get_argument(changeset, :reason)
+        )
+      end)
+    end
+
+    update :hold_manual_review do
+      require_atomic?(false)
+      accept([])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        transition_status(
+          changeset,
+          context,
+          "manual_review_held",
+          allowed_from: ["manual_review"],
+          reason: Changeset.get_argument(changeset, :reason)
+        )
+      end)
+    end
+
+    update :return_held_to_manual_review do
+      require_atomic?(false)
+      accept([:manual_review_reason])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason =
+          Changeset.get_argument(changeset, :reason) ||
+            Changeset.get_attribute(changeset, :manual_review_reason)
+
+        transition_status(
+          changeset,
+          context,
+          "manual_review",
+          allowed_from: ["manual_review_held"],
+          reason: reason,
+          extra_attrs: %{manual_review_reason: reason}
+        )
+      end)
+    end
+
+    update :retry_failed_manual_review do
+      require_atomic?(false)
+      accept([:manual_review_reason, :last_error_code, :last_error_message])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason =
+          Changeset.get_argument(changeset, :reason) ||
+            Changeset.get_attribute(changeset, :manual_review_reason)
+
+        transition_status(
+          changeset,
+          context,
+          "manual_review",
+          allowed_from: ["issuance_retry_queued"],
+          reason: reason,
+          extra_attrs: %{manual_review_reason: reason}
+        )
+      end)
+    end
+
+    update :close_no_fulfillment do
+      require_atomic?(false)
+      accept([])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        transition_status(
+          changeset,
+          context,
+          "no_fulfillment_closed",
+          allowed_from: ["manual_review", "manual_review_held"],
+          reason: Changeset.get_argument(changeset, :reason)
+        )
+      end)
+    end
+
+    update :return_to_fulfillment_queue do
+      require_atomic?(false)
+      accept([])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        transition_status(
+          changeset,
+          context,
+          "fulfillment_queued",
+          allowed_from: ["manual_review", "manual_review_held"],
+          reason: Changeset.get_argument(changeset, :reason),
+          extra_attrs: %{
+            fulfillment_queued_at: DateTime.utc_now() |> DateTime.truncate(:second)
+          }
+        )
       end)
     end
   end
@@ -250,12 +364,34 @@ defmodule FastCheck.Sales.Order do
       authorize_if(FastCheck.Sales.PolicyChecks.EventAllowed)
     end
 
-    policy action([:create_draft, :confirm_checkout, :cancel_order, :mark_manual_review]) do
+    policy action([
+             :create_draft,
+             :confirm_checkout,
+             :cancel_order,
+             :mark_manual_review,
+             :queue_issuance_retry,
+             :hold_manual_review,
+             :close_no_fulfillment,
+             :return_to_fulfillment_queue,
+             :return_held_to_manual_review,
+             :retry_failed_manual_review
+           ]) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
     end
 
-    policy action([:create_draft, :confirm_checkout, :cancel_order, :mark_manual_review]) do
+    policy action([
+             :create_draft,
+             :confirm_checkout,
+             :cancel_order,
+             :mark_manual_review,
+             :queue_issuance_retry,
+             :hold_manual_review,
+             :close_no_fulfillment,
+             :return_to_fulfillment_queue,
+             :return_held_to_manual_review,
+             :retry_failed_manual_review
+           ]) do
       authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, actor_types: [:admin]})
     end
   end

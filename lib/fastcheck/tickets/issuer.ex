@@ -33,6 +33,7 @@ defmodule FastCheck.Tickets.Issuer do
     "paid_verified",
     "fulfillment_queued",
     "partially_issued",
+    "issuance_retry_queued",
     "ticket_issued"
   ]
   @paid_checkout_states ["paid"]

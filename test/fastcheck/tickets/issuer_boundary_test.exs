@@ -64,8 +64,9 @@ defmodule FastCheck.Tickets.IssuerBoundaryTest do
     end
   end
 
-  test "IssueTicketsWorker implementation path remains absent" do
-    refute File.exists?("lib/fastcheck/workers/issue_tickets_worker.ex")
-    refute Code.ensure_loaded?(FastCheck.Workers.IssueTicketsWorker)
+  test "VS-13 IssueTicketsWorker exists without coupling the issuer to the worker" do
+    assert File.exists?("lib/fastcheck/workers/issue_tickets_worker.ex")
+    assert Code.ensure_loaded?(FastCheck.Workers.IssueTicketsWorker)
+    refute @issuer_source =~ "IssueTicketsWorker"
   end
 end

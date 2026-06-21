@@ -18,6 +18,7 @@ defmodule FastCheck.Sales do
     resource(FastCheck.Sales.CheckoutSession)
     resource(FastCheck.Sales.PaymentAttempt)
     resource(FastCheck.Sales.PaymentEvent)
+    resource(FastCheck.Sales.ManualReviewAction)
     resource(FastCheck.Sales.TicketIssue)
     resource(FastCheck.Sales.DeliveryAttempt)
     resource(FastCheck.Sales.Conversation)

@@ -4,8 +4,8 @@ defmodule FastCheck.Workers.IssueTicketsWorkerContractTest do
   @contract_path "docs/fastcheck_sales/VS-09A_ticket_issuance_contract.md"
   @worker_path "lib/fastcheck/workers/issue_tickets_worker.ex"
 
-  test "IssueTicketsWorker implementation file is not present in VS-09A" do
-    refute File.exists?(@worker_path)
+  test "IssueTicketsWorker implementation exists after VS-13" do
+    assert File.exists?(@worker_path)
   end
 
   test "contract documents worker queue uniqueness and issuer-only caller" do
@@ -34,5 +34,18 @@ defmodule FastCheck.Workers.IssueTicketsWorkerContractTest do
     assert contract =~ "Load fresh state"
     assert contract =~ "after commit"
     assert contract =~ "EventSyncVersionAggregatorWorker"
+  end
+
+  test "implementation remains a minimal issuer-only Oban boundary" do
+    source = File.read!(@worker_path)
+
+    assert source =~ "use Oban.Worker"
+    assert source =~ "queue: :ticketing"
+    assert source =~ "Issuer.issue_order"
+    refute source =~ "FastCheck.Attendees.Attendee"
+    refute source =~ "FastCheck.Sales.TicketIssue"
+    refute source =~ "DeliveryAttempt"
+    refute source =~ "Paystack"
+    refute source =~ "ReservationLedger"
   end
 end
