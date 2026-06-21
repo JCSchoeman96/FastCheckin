@@ -423,6 +423,7 @@ defmodule FastCheck.Observability.Redactor do
                                ])
 
   @sensitive_path_pattern ~r/(?:tickets?|deliveries|delivery|payments?|checkout|authorize|secure-ticket|ticket-page|customer-portal)(?:\/|$)/i
+  @secure_ticket_path_pattern ~r/^\/t\/.+/
 
   @sensitive_host_fragments [
     "paystack.com",
@@ -473,7 +474,8 @@ defmodule FastCheck.Observability.Redactor do
   defp sensitive_path?(nil), do: false
 
   defp sensitive_path?(path) when is_binary(path) do
-    String.match?(path, @sensitive_path_pattern)
+    String.match?(path, @sensitive_path_pattern) or
+      String.match?(path, @secure_ticket_path_pattern)
   end
 
   defp opaque_token_path?(nil), do: false

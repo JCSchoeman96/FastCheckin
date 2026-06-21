@@ -100,7 +100,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
             ip: ip,
             ban_until: ban_info.ban_until,
             reason: ban_info.reason,
-            path: conn.request_path
+            path: sanitize_request_path(conn.request_path)
           )
 
           {:block, {:auto_banned, ban_info}}
@@ -154,6 +154,20 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
       # Strict limit per minute per IP to prevent brute force
       throttle(key,
         limit: get_limit(:login_limit, 5),
+        period: 60_000,
+        storage: storage_for(conn)
+      )
+    else
+      nil
+    end
+  end
+
+  rule "throttle_secure_ticket", conn do
+    if secure_ticket_operation?(conn) do
+      key = "secure_ticket:#{get_peer_ip(conn)}"
+
+      throttle(key,
+        limit: get_limit(:secure_ticket_limit, 5),
         period: 60_000,
         storage: storage_for(conn)
       )
@@ -239,12 +253,14 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     limit = throttle_value(data, :limit, 0)
     retry_after = max(div(period, 1000), 1)
 
+    sanitized_path = sanitize_request_path(conn.request_path)
+
     # Emit telemetry event BEFORE halting (non-blocking)
     :telemetry.execute(
       [:fastcheck, :rate_limit, :blocked],
       %{count: 1},
       %{
-        path: conn.request_path,
+        path: sanitized_path,
         ip: get_peer_ip(conn),
         limit: limit,
         period: period,
@@ -255,7 +271,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     # Enhanced logging with more context
     Logger.warning("Rate limit blocked request",
       ip: get_peer_ip(conn),
-      path: conn.request_path,
+      path: sanitized_path,
       limit: limit,
       period: period,
       event_id: get_event_id(conn),
@@ -297,6 +313,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   defp login_operation?(conn) do
     conn.request_path == "/login" or
       conn.request_path == "/api/v1/mobile/login"
+  end
+
+  defp secure_ticket_operation?(conn) do
+    String.starts_with?(conn.request_path, "/t/")
   end
 
   defp check_in_operation?(conn) do
@@ -384,6 +404,16 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     do: String.replace(value, ~r/[^a-zA-Z0-9\-_:.]/, "_")
 
   defp normalize_identity_segment(value), do: value |> to_string() |> normalize_identity_segment()
+
+  defp sanitize_request_path(path) when is_binary(path) do
+    if String.starts_with?(path, "/t/") do
+      "/t/[FILTERED]"
+    else
+      path
+    end
+  end
+
+  defp sanitize_request_path(_), do: "unknown"
 
   # Helper: Get peer IP address (handles proxies and IPv6)
   defp get_peer_ip(conn) do

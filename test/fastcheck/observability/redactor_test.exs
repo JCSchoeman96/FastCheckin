@@ -121,6 +121,11 @@ defmodule FastCheck.Observability.RedactorTest do
       assert Redactor.redact_url("https://example.com/delivery/secret-delivery-token") ==
                Redactor.filtered()
 
+      assert Redactor.redact_url("/t/raw-token-value-here") == Redactor.filtered()
+
+      assert Redactor.redact_url("https://domain.test/t/raw-token-value-here") ==
+               Redactor.filtered()
+
       assert Redactor.redact_url("not a valid url %%") == Redactor.filtered()
     end
 

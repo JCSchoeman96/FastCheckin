@@ -47,7 +47,8 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/state_transition.ex",
              "lib/fastcheck/sales/state_transition_support.ex",
              "lib/fastcheck/sales/ticket_issue.ex",
-             "lib/fastcheck/sales/ticket_offer.ex"
+             "lib/fastcheck/sales/ticket_offer.ex",
+             "lib/fastcheck/sales/ticket_page.ex"
            ]
   end
 end
