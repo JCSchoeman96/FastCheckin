@@ -29,4 +29,5 @@ what future slices can rely on, and what remains deferred.
 - [VS-09C — TicketIssue Audit Linking](./VS-09C_IMPLEMENTATION_HANDOFF.md)
 - [VS-09D — Issuance Retry and Partial Failure Tests](./VS-09D_IMPLEMENTATION_HANDOFF.md)
 - [VS-10 — Event Sync Version Aggregator](./VS-10_IMPLEMENTATION_HANDOFF.md)
+- [VS-11 — Secure Ticket Page](./VS-11_IMPLEMENTATION_HANDOFF.md)
 - [VS-21A — Observability Naming and Log Redaction Foundation](./VS-21A_IMPLEMENTATION_HANDOFF.md)
