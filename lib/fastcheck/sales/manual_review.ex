@@ -633,7 +633,13 @@ defmodule FastCheck.Sales.ManualReview do
   defp maybe_filter_event(query, event_id), do: where(query, [o], o.event_id == ^event_id)
 
   defp parse_optional_integer(nil), do: nil
-  defp parse_optional_integer(value), do: elem(parse_integer(value), 1)
+
+  defp parse_optional_integer(value) do
+    case parse_integer(value) do
+      {:ok, int} -> int
+      _ -> nil
+    end
+  end
 
   defp parse_integer(value) when is_integer(value), do: {:ok, value}
 
@@ -646,8 +652,16 @@ defmodule FastCheck.Sales.ManualReview do
 
   defp parse_integer(_value), do: {:error, :invalid_id}
 
-  defp get_attr(attrs, key) do
-    Map.get(attrs, key) || Map.get(attrs, String.to_atom(key))
+  defp get_attr(attrs, "reason_code") do
+    Map.get(attrs, "reason_code") || Map.get(attrs, :reason_code)
+  end
+
+  defp get_attr(attrs, "note") do
+    Map.get(attrs, "note") || Map.get(attrs, :note)
+  end
+
+  defp get_attr(attrs, key) when is_binary(key) do
+    Map.get(attrs, key)
   end
 
   defp blank_to_nil(value) when value in [nil, ""], do: nil
