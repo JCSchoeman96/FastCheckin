@@ -60,7 +60,7 @@ defmodule FastCheck.Sales.AdminDashboard do
         order_status: o.status,
         source_channel: o.source_channel,
         event_id: o.event_id,
-        buyer_name: o.buyer_name,
+        buyer_name_private: o.buyer_name,
         buyer_email_private: o.buyer_email,
         buyer_phone_private: o.buyer_phone,
         amount_cents: o.total_amount_cents,
@@ -188,7 +188,7 @@ defmodule FastCheck.Sales.AdminDashboard do
       order_status: o.status,
       source_channel: o.source_channel,
       event_id: o.event_id,
-      buyer_name: o.buyer_name,
+      buyer_name_private: o.buyer_name,
       buyer_email_private: o.buyer_email,
       buyer_phone_private: o.buyer_phone,
       amount_cents: o.total_amount_cents,
@@ -216,7 +216,8 @@ defmodule FastCheck.Sales.AdminDashboard do
       provider_reference = Map.get(payment, :provider_reference)
 
       row
-      |> Map.drop([:buyer_email_private, :buyer_phone_private])
+      |> Map.drop([:buyer_name_private, :buyer_email_private, :buyer_phone_private])
+      |> Map.put(:buyer_display_name, mask_name(row.buyer_name_private))
       |> Map.put(:buyer_email_masked, mask_email(row.buyer_email_private))
       |> Map.put(:buyer_phone_masked, mask_phone(row.buyer_phone_private))
       |> Map.put(:payment_status_summary, Map.get(payment, :status, "none"))
@@ -332,7 +333,7 @@ defmodule FastCheck.Sales.AdminDashboard do
           counts =
             rows
             |> Map.new(fn row ->
-              {String.to_atom(row.status), row.count}
+              {row.status, row.count}
             end)
 
           {provider_reference, counts}
@@ -589,6 +590,10 @@ defmodule FastCheck.Sales.AdminDashboard do
 
   defp truthy?(value) when value in [true, "true", "1", "on"], do: true
   defp truthy?(_), do: false
+
+  defp mask_name(nil), do: nil
+  defp mask_name(""), do: nil
+  defp mask_name(_name), do: "Buyer"
 
   defp mask_email(nil), do: nil
   defp mask_email(""), do: nil

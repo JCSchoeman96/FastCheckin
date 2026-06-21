@@ -5,6 +5,7 @@ defmodule FastCheck.Sales.AdminDashboardTest do
 
   @raw_email "sensitive.buyer@example.com"
   @raw_phone "+27123456789"
+  @raw_buyer_name "Sensitive Buyer Name"
   @access_code "ACCESS_SECRET_123"
   @authorization_url "https://checkout.paystack.test/pay/secret"
   @ticket_code "TICKET-SECRET-001"
@@ -52,6 +53,9 @@ defmodule FastCheck.Sales.AdminDashboardTest do
              )
 
     assert order.order_public_reference == "FC-ORDER-NEW"
+    refute inspect(order) =~ @raw_buyer_name
+    refute Map.has_key?(order, :buyer_name)
+    assert order.buyer_display_name == "Buyer"
     assert order.buyer_email_masked != @raw_email
     assert order.buyer_phone_masked != @raw_phone
     refute Map.has_key?(order, :buyer_email)
@@ -95,7 +99,8 @@ defmodule FastCheck.Sales.AdminDashboardTest do
 
     assert review.order_public_reference == "FC-REVIEW"
     assert review.reason_code == "payment_state_conflict"
-    assert review.payment_event_status_summary == %{manual_review: 1}
+    assert review.payment_event_status_summary == %{"manual_review" => 1}
+    refute inspect(review) =~ @raw_buyer_name
     refute unsafe_value_present?(review)
   end
 
@@ -114,6 +119,7 @@ defmodule FastCheck.Sales.AdminDashboardTest do
     assert detail.ticket_issue_count == 1
     assert detail.issued_ticket_count == 1
     assert detail.attendee_link_count == 1
+    refute inspect(detail) =~ @raw_buyer_name
     refute unsafe_value_present?(detail)
   end
 
@@ -170,14 +176,15 @@ defmodule FastCheck.Sales.AdminDashboardTest do
            status, total_amount_cents, currency, idempotency_key, manual_review_reason,
            inserted_at, updated_at)
         VALUES
-          ($1, $2, 'Buyer Name', $3, $4, 'admin', $5, 10000, 'ZAR', $6, $7,
-           now() AT TIME ZONE 'utc' - make_interval(days => $8::int),
-           now() AT TIME ZONE 'utc' - make_interval(days => $8::int))
+          ($1, $2, $3, $4, $5, 'admin', $6, 10000, 'ZAR', $7, $8,
+           now() AT TIME ZONE 'utc' - make_interval(days => $9::int),
+           now() AT TIME ZONE 'utc' - make_interval(days => $9::int))
         RETURNING id
         """,
         [
           public_reference,
           event_id,
+          @raw_buyer_name,
           @raw_phone,
           @raw_email,
           status,

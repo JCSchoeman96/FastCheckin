@@ -8,6 +8,7 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
 
   @raw_email "dashboard.raw@example.com"
   @raw_phone "+27987654321"
+  @raw_buyer_name "Dashboard Sensitive Buyer"
   @access_code "LIVE_ACCESS_SECRET"
   @authorization_url "https://checkout.paystack.test/pay/live-secret"
   @ticket_code "LIVE-TICKET-SECRET"
@@ -42,6 +43,7 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
       |> live(~p"/dashboard/sales")
 
     assert html =~ "FC-LIVE-ORDER"
+    assert html =~ "Buyer"
     assert html =~ "d***@example.com"
     assert html =~ "***4321"
     refute_unsafe_html(html)
@@ -151,12 +153,12 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
            status, total_amount_cents, currency, idempotency_key, manual_review_reason,
            inserted_at, updated_at)
         VALUES
-          ('FC-LIVE-ORDER', $1, 'Live Buyer', $2, $3, 'admin', 'manual_review',
-           10000, 'ZAR', $4, 'payment_state_conflict', now() AT TIME ZONE 'utc',
+          ('FC-LIVE-ORDER', $1, $2, $3, $4, 'admin', 'manual_review',
+           10000, 'ZAR', $5, 'payment_state_conflict', now() AT TIME ZONE 'utc',
            now() AT TIME ZONE 'utc')
         RETURNING id
         """,
-        [event_id, @raw_phone, @raw_email, @idempotency_key]
+        [event_id, @raw_buyer_name, @raw_phone, @raw_email, @idempotency_key]
       )
 
     id

@@ -151,7 +151,7 @@ defmodule FastCheckWeb.SalesDashboardLive do
                         {order.issued_ticket_count}/{order.expected_ticket_count}
                       </td>
                       <td class="py-3 pr-4">
-                        <div>{order.buyer_name}</div>
+                        <div>{order.buyer_display_name}</div>
                         <div class="text-xs text-fc-text-muted">{order.buyer_email_masked}</div>
                         <div class="text-xs text-fc-text-muted">{order.buyer_phone_masked}</div>
                       </td>
