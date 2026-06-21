@@ -23,6 +23,10 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
     "docs/fastcheck_sales/slices/VS-07A_PAYSTACK_WEBHOOK_INGESTION.md"
   ]
 
+  @vs_12_allowed_prefixes [
+    "lib/fastcheck_web/live/sales_dashboard_live.ex"
+  ]
+
   @doc false
   def vs_05a_allowed_change?(file) when is_binary(file) do
     Enum.any?(@vs_05a_allowed_prefixes, fn allowed ->
@@ -43,6 +47,7 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
   end
 
   defp allowed_change?(file) do
-    vs_05a_allowed_change?(file) or vs_07a_allowed_change?(file)
+    vs_05a_allowed_change?(file) or vs_07a_allowed_change?(file) or
+      Enum.member?(@vs_12_allowed_prefixes, file)
   end
 end
