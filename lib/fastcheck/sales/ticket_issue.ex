@@ -75,6 +75,16 @@ defmodule FastCheck.Sales.TicketIssue do
       )
     end
 
+    read :get_by_delivery_token_hash do
+      get?(true)
+
+      argument :delivery_token_hash, :string do
+        allow_nil?(false)
+      end
+
+      filter(expr(delivery_token_hash == ^arg(:delivery_token_hash)))
+    end
+
     create :create_issued_link do
       accept([
         :sales_order_id,
