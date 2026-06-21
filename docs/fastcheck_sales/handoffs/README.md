@@ -3,6 +3,7 @@
 Post-merge handoffs summarize what each completed Sales slice actually added,
 what future slices can rely on, and what remains deferred.
 
+- [VS-00A — State Machine and Failure Policy Finalization](./VS-00A_IMPLEMENTATION_HANDOFF.md)
 - [VS-00B — Security, PII, and Token Policy Finalization](./VS-00B_IMPLEMENTATION_HANDOFF.md)
 - [VS-01B — Core Sales Resource Skeletons](./VS-01B_IMPLEMENTATION_HANDOFF.md)
 - [VS-01C — Checkout and Payment Resource Skeletons](./VS-01C_IMPLEMENTATION_HANDOFF.md)
