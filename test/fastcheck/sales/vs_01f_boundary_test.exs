@@ -5,7 +5,6 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
 
   @forbidden_paths [
     "lib/fastcheck/messaging/whatsapp",
-    "lib/fastcheck/workers",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
@@ -17,6 +16,7 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
     FastCheck.Sales.CheckoutSession,
     FastCheck.Sales.PaymentAttempt,
     FastCheck.Sales.PaymentEvent,
+    FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
     FastCheck.Sales.DeliveryAttempt,
     FastCheck.Sales.Conversation
@@ -51,7 +51,10 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
     end
 
     assert Path.wildcard("lib/fastcheck/messaging/whatsapp/*") == []
-    assert Path.wildcard("lib/fastcheck/workers/*") == []
+
+    assert Path.wildcard("lib/fastcheck/workers/*") == [
+             "lib/fastcheck/workers/issue_tickets_worker.ex"
+           ]
   end
 
   test "VS-01F does not add workflow or generic status actions" do

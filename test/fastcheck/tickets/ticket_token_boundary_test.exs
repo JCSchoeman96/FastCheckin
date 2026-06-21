@@ -5,7 +5,6 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
   @issuer_source File.read!("lib/fastcheck/tickets/issuer.ex")
 
   @forbidden_paths [
-    "lib/fastcheck/workers/issue_tickets_worker.ex",
     "lib/fastcheck/workers/send_whatsapp_ticket_worker.ex",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
@@ -36,6 +35,8 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
   end
 
   test "forbidden issuance and delivery paths remain absent" do
+    assert File.exists?("lib/fastcheck/workers/issue_tickets_worker.ex")
+
     for path <- @forbidden_paths do
       refute File.exists?(path), "#{path} is out of scope for VS-09C ticket issue linking"
     end

@@ -5,6 +5,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "sales_checkout_sessions",
     "sales_conversations",
     "sales_delivery_attempts",
+    "sales_manual_review_actions",
     "sales_order_lines",
     "sales_orders",
     "sales_payment_attempts",
@@ -22,6 +23,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     FastCheck.Sales.CheckoutSession,
     FastCheck.Sales.PaymentAttempt,
     FastCheck.Sales.PaymentEvent,
+    FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
     FastCheck.Sales.DeliveryAttempt,
     FastCheck.Sales.Conversation
@@ -29,7 +31,6 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
 
   @forbidden_paths [
     "lib/fastcheck/messaging/whatsapp",
-    "lib/fastcheck/workers",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
@@ -240,6 +241,16 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
 
     assert_index("sales_state_transitions_actor_idx", ["actor_type", "actor_id", "inserted_at"])
     assert_index("sales_state_transitions_correlation_id_idx", ["correlation_id"])
+
+    assert_index("sales_manual_review_actions_subject_idx", [
+      "subject_type",
+      "subject_id",
+      "inserted_at"
+    ])
+
+    assert_index("sales_manual_review_actions_order_idx", ["sales_order_id", "inserted_at"])
+    assert_index("sales_manual_review_actions_actor_idx", ["actor_id", "inserted_at"])
+    assert_index("sales_manual_review_actions_action_idx", ["action", "inserted_at"])
   end
 
   test "relationship paths use foreign keys where the accepted contract requires them" do

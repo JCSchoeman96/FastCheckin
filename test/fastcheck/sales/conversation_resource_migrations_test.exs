@@ -5,6 +5,7 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
     "sales_checkout_sessions",
     "sales_conversations",
     "sales_delivery_attempts",
+    "sales_manual_review_actions",
     "sales_order_lines",
     "sales_orders",
     "sales_payment_attempts",

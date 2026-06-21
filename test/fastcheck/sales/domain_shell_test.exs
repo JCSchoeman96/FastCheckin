@@ -9,6 +9,7 @@ defmodule FastCheck.Sales.DomainShellTest do
     FastCheck.Sales.CheckoutSession,
     FastCheck.Sales.PaymentAttempt,
     FastCheck.Sales.PaymentEvent,
+    FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
     FastCheck.Sales.DeliveryAttempt,
     FastCheck.Sales.Conversation
@@ -39,6 +40,8 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/checkout_session.ex",
              "lib/fastcheck/sales/conversation.ex",
              "lib/fastcheck/sales/delivery_attempt.ex",
+             "lib/fastcheck/sales/manual_review.ex",
+             "lib/fastcheck/sales/manual_review_action.ex",
              "lib/fastcheck/sales/order.ex",
              "lib/fastcheck/sales/order_line.ex",
              "lib/fastcheck/sales/payment_attempt.ex",

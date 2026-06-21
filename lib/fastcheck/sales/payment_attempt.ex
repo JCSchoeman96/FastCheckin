@@ -142,7 +142,13 @@ defmodule FastCheck.Sales.PaymentAttempt do
           from_state == "verification_started" ->
             changeset
 
-          from_state in ["initialized", "authorization_url_sent", "webhook_received", "failed"] ->
+          from_state in [
+            "initialized",
+            "authorization_url_sent",
+            "webhook_received",
+            "failed",
+            "verification_retry_queued"
+          ] ->
             count = Changeset.get_data(changeset, :verification_attempt_count) || 0
 
             transition_status(
@@ -268,6 +274,43 @@ defmodule FastCheck.Sales.PaymentAttempt do
         end
       end)
     end
+
+    update :queue_verification_retry do
+      require_atomic?(false)
+      accept([])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        transition_status(
+          changeset,
+          context,
+          "verification_retry_queued",
+          allowed_from: ["manual_review"],
+          reason: Changeset.get_argument(changeset, :reason)
+        )
+      end)
+    end
+
+    update :retry_failed_manual_review do
+      require_atomic?(false)
+      accept([:manual_review_reason, :failure_code, :failure_message])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason =
+          Changeset.get_argument(changeset, :reason) ||
+            Changeset.get_attribute(changeset, :manual_review_reason)
+
+        transition_status(
+          changeset,
+          context,
+          "manual_review",
+          allowed_from: ["verification_retry_queued"],
+          reason: reason,
+          extra_attrs: %{manual_review_reason: reason}
+        )
+      end)
+    end
   end
 
   policies do
@@ -288,7 +331,9 @@ defmodule FastCheck.Sales.PaymentAttempt do
              :create_initializing,
              :mark_initialized,
              :mark_failed,
-             :mark_manual_review
+             :mark_manual_review,
+             :queue_verification_retry,
+             :retry_failed_manual_review
            ]) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
@@ -298,7 +343,9 @@ defmodule FastCheck.Sales.PaymentAttempt do
              :create_initializing,
              :mark_initialized,
              :mark_failed,
-             :mark_manual_review
+             :mark_manual_review,
+             :queue_verification_retry,
+             :retry_failed_manual_review
            ]) do
       authorize_if(
         {FastCheck.Sales.PolicyChecks.EventAllowed,
