@@ -52,7 +52,9 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
 
     assert Path.wildcard("lib/fastcheck/messaging/whatsapp/*") == []
 
-    assert Path.wildcard("lib/fastcheck/workers/*") == [
+    assert Path.wildcard("lib/fastcheck/workers/*") |> Enum.sort() == [
+             "lib/fastcheck/workers/checkout_expiry_sweeper_worker.ex",
+             "lib/fastcheck/workers/checkout_expiry_worker.ex",
              "lib/fastcheck/workers/issue_tickets_worker.ex"
            ]
   end

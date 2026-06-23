@@ -152,6 +152,11 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
 
     assert_index("sales_checkout_sessions_sales_order_id_status_idx", ["sales_order_id", "status"])
 
+    assert_index("sales_checkout_sessions_expiry_sweep_idx", ["expires_at", "id"],
+      where:
+        "((status)::text = ANY ((ARRAY['hold_attached'::character varying, 'payment_link_sent'::character varying, 'payment_started'::character varying])::text[])) AND (expired_at IS NULL)"
+    )
+
     assert_index(
       "sales_payment_attempts_provider_reference_uidx",
       [
