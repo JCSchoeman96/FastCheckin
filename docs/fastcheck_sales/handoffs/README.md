@@ -33,4 +33,5 @@ what future slices can rely on, and what remains deferred.
 - [VS-11 — Secure Ticket Page](./VS-11_IMPLEMENTATION_HANDOFF.md)
 - [VS-12 — Admin Sales Dashboard](./VS-12_IMPLEMENTATION_HANDOFF.md)
 - [VS-13 — Manual Review Operations](./VS-13_IMPLEMENTATION_HANDOFF.md)
+- [VS-14 — Checkout Expiry and Hold Cleanup](./VS-14_IMPLEMENTATION_HANDOFF.md)
 - [VS-21A — Observability Naming and Log Redaction Foundation](./VS-21A_IMPLEMENTATION_HANDOFF.md)
