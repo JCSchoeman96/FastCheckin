@@ -212,6 +212,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     )
 
     assert_index("sales_ticket_issues_sales_order_id_idx", ["sales_order_id"])
+    assert_index("sales_ticket_issues_sales_order_id_status_idx", ["sales_order_id", "status"])
     assert_index("sales_ticket_issues_sales_order_line_id_idx", ["sales_order_line_id"])
     assert_index("sales_ticket_issues_status_idx", ["status"])
     assert_index("sales_ticket_issues_scanner_status_idx", ["scanner_status"])

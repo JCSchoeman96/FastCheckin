@@ -13,9 +13,11 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   @read_action_names [:read, :get_by_id]
   @ticket_issue_expected_action_names [
     :list_by_order,
+    :list_issued_by_order,
     :list_by_order_line,
     :get_by_order_line_sequence,
-    :create_issued_link
+    :create_issued_link,
+    :mark_revoked
   ]
 
   @shared_forbidden_action_names [
@@ -30,7 +32,6 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   @ticket_issue_forbidden_action_names [
     :create_pending,
     :mark_issued,
-    :mark_revoked,
     :mark_manual_review,
     :generate_ticket_code,
     :generate_qr_token,
@@ -94,8 +95,11 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       else
         assert :create_issued_link in action_names
 
-        refute Enum.any?(actions, &(&1.type in [:update, :destroy])),
-               "#{inspect(resource)} must not expose update/destroy Ash actions"
+        update_actions = Enum.filter(actions, &(&1.type == :update))
+        assert Enum.map(update_actions, & &1.name) == [:mark_revoked]
+
+        refute Enum.any?(actions, &(&1.type == :destroy)),
+               "#{inspect(resource)} must not expose destroy Ash actions"
       end
 
       if resource == FastCheck.Sales.TicketIssue do

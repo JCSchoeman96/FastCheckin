@@ -30,11 +30,15 @@ defmodule FastCheck.Observability.TelemetryNames do
   @ticket_events [
     [:fastcheck, :sales, :ticket, :issued],
     [:fastcheck, :sales, :ticket, :issue_failed],
-    [:fastcheck, :sales, :ticket, :revoked]
+    [:fastcheck, :sales, :ticket, :revoked],
+    [:fastcheck, :sales, :ticket, :revocation_started],
+    [:fastcheck, :sales, :ticket, :revocation_idempotent],
+    [:fastcheck, :sales, :ticket, :revocation_failed]
   ]
 
   @scanner_visibility_events [
-    [:fastcheck, :sales, :scanner_visibility, :sync_queued]
+    [:fastcheck, :sales, :scanner_visibility, :sync_queued],
+    [:fastcheck, :sales, :scanner_visibility, :invalidation_appended]
   ]
 
   @delivery_events [
@@ -62,7 +66,7 @@ defmodule FastCheck.Observability.TelemetryNames do
                 @whatsapp_events ++
                 @manual_review_events
 
-  @doc "Returns all 23 approved Sales telemetry event name lists."
+  @doc "Returns all 27 approved Sales telemetry event name lists."
   @spec all() :: [[atom()]]
   def all, do: @all_events
 
@@ -89,4 +93,23 @@ defmodule FastCheck.Observability.TelemetryNames do
 
   @doc false
   def manual_review_events, do: @manual_review_events
+
+  @doc false
+  def ticket_revocation_started, do: [:fastcheck, :sales, :ticket, :revocation_started]
+
+  @doc false
+  def ticket_revoked, do: [:fastcheck, :sales, :ticket, :revoked]
+
+  @doc false
+  def ticket_revocation_idempotent, do: [:fastcheck, :sales, :ticket, :revocation_idempotent]
+
+  @doc false
+  def ticket_revocation_failed, do: [:fastcheck, :sales, :ticket, :revocation_failed]
+
+  @doc false
+  def scanner_visibility_sync_queued, do: [:fastcheck, :sales, :scanner_visibility, :sync_queued]
+
+  @doc false
+  def scanner_visibility_invalidation_appended,
+    do: [:fastcheck, :sales, :scanner_visibility, :invalidation_appended]
 end

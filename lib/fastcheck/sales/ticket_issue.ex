@@ -48,6 +48,14 @@ defmodule FastCheck.Sales.TicketIssue do
       filter(expr(sales_order_id == ^arg(:sales_order_id)))
     end
 
+    read :list_issued_by_order do
+      argument :sales_order_id, :integer do
+        allow_nil?(false)
+      end
+
+      filter(expr(sales_order_id == ^arg(:sales_order_id) and status == "issued"))
+    end
+
     read :list_by_order_line do
       argument :sales_order_line_id, :integer do
         allow_nil?(false)
@@ -123,11 +131,59 @@ defmodule FastCheck.Sales.TicketIssue do
 
       change(&record_create_issued_link_transition/2)
     end
+
+    update :mark_revoked do
+      require_atomic?(false)
+      accept([])
+      argument(:revocation_reason, :string, allow_nil?: false)
+      argument(:revoked_at, :utc_datetime)
+
+      validate(present(:revocation_reason))
+
+      change(fn changeset, context ->
+        from_status = Changeset.get_data(changeset, :status)
+
+        cond do
+          from_status == "revoked" ->
+            changeset
+
+          from_status in ["issued", "manual_review", "pending"] ->
+            revoked_at =
+              Changeset.get_argument(changeset, :revoked_at) ||
+                DateTime.utc_now() |> DateTime.truncate(:second)
+
+            reason = Changeset.get_argument(changeset, :revocation_reason)
+
+            changeset
+            |> Changeset.force_change_attribute(:status, "revoked")
+            |> Changeset.force_change_attribute(:revoked_at, revoked_at)
+            |> Changeset.force_change_attribute(:revocation_reason, reason)
+            |> Changeset.force_change_attribute(:scanner_status, "revoked")
+            |> Changeset.force_change_attribute(:delivery_token_expires_at, revoked_at)
+            |> record_mark_revoked_transition(from_status, context)
+
+          true ->
+            Changeset.add_error(changeset,
+              field: :status,
+              message: "invalid state for revocation"
+            )
+        end
+      end)
+    end
   end
 
   policies do
     bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
       authorize_if(always())
+    end
+
+    policy action(:mark_revoked) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin, :operator]})
+    end
+
+    policy action(:mark_revoked) do
+      authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, relationship_path: [:order]})
     end
 
     policy action_type(:read) do
@@ -254,5 +310,32 @@ defmodule FastCheck.Sales.TicketIssue do
   defp transition_idempotency_key(context) do
     actor = Map.get(context, :actor, %{})
     Map.get(context, :idempotency_key) || Map.get(actor, :idempotency_key)
+  end
+
+  defp record_mark_revoked_transition(changeset, from_status, context) do
+    Changeset.after_action(changeset, fn _changeset, record ->
+      attrs = %{
+        entity_type: "TicketIssue",
+        entity_id: Integer.to_string(record.id),
+        from_state: from_status,
+        to_state: "revoked",
+        reason: record.revocation_reason,
+        metadata: %{
+          sales_order_id: record.sales_order_id,
+          sales_order_line_id: record.sales_order_line_id,
+          line_item_sequence: record.line_item_sequence,
+          attendee_id: record.attendee_id,
+          reason_code: record.revocation_reason
+        },
+        correlation_id: transition_correlation_id(context),
+        idempotency_key: transition_idempotency_key(context),
+        source: "ticket_issue.mark_revoked"
+      }
+
+      case StateTransitionSupport.record!(attrs, context) do
+        {:ok, _transition} -> {:ok, record}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
   end
 end

@@ -67,6 +67,40 @@ defmodule FastCheck.Events.MobileSyncVersionAggregator do
   def invalidate_attendees_created_caches(_event_id, _ticket_codes, _opts),
     do: {:error, :invalid_event_id}
 
+  @doc """
+  Marks attendee invalidation as visible to mobile sync for an event.
+
+  Mirrors `after_attendees_created/3`: durable bump is correctness-critical;
+  cache invalidation is best-effort unless skipped via `:skip_cache_invalidation`.
+  """
+  @spec after_attendee_invalidated(integer(), integer(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, error_reason()}
+  def after_attendee_invalidated(event_id, attendee_id, ticket_code, _reason_code, opts \\ [])
+
+  def after_attendee_invalidated(event_id, attendee_id, ticket_code, _reason_code, opts)
+      when is_integer(event_id) and event_id > 0 and is_integer(attendee_id) and attendee_id > 0 and
+             is_binary(ticket_code) do
+    attendee_ids =
+      opts
+      |> Keyword.get(:attendee_ids, [attendee_id])
+      |> normalize_attendee_ids()
+
+    attendee_ids =
+      if attendee_id in attendee_ids, do: attendee_ids, else: [attendee_id | attendee_ids]
+
+    after_attendees_created(
+      event_id,
+      [ticket_code],
+      Keyword.merge(opts,
+        attendee_ids: attendee_ids,
+        source: Keyword.get(opts, :source, :sales_revocation)
+      )
+    )
+  end
+
+  def after_attendee_invalidated(_event_id, _attendee_id, _ticket_code, _reason_code, _opts),
+    do: {:error, :invalid_event_id}
+
   defp normalize_ticket_codes(ticket_codes) when is_list(ticket_codes) do
     ticket_codes
     |> Enum.map(&normalize_ticket_code/1)
@@ -98,6 +132,8 @@ defmodule FastCheck.Events.MobileSyncVersionAggregator do
     attendee_ids = opts |> Keyword.get(:attendee_ids, []) |> normalize_attendee_ids()
     source = Keyword.get(opts, :source, :sales_issuer)
     counts = %{ticket_count: length(ticket_codes), attendee_count: length(attendee_ids)}
+
+    Enum.each(ticket_codes, &FastCheck.Cache.EtsLayer.delete_attendee(event_id, &1))
 
     with_cache_failure_logging(event_id, source, counts, fn ->
       case cache_facade.invalidate_attendees_by_event_cache(event_id) do
