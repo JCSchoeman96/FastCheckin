@@ -13,6 +13,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   @read_action_names [:read, :get_by_id]
   @ticket_issue_expected_action_names [
     :list_by_order,
+    :list_issued_by_order,
     :list_by_order_line,
     :get_by_order_line_sequence,
     :create_issued_link,

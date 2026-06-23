@@ -136,6 +136,55 @@ defmodule FastCheck.Tickets.RevocationTest do
                )
     end
 
+    test "admin actor without allowed_event_ids is forbidden" do
+      ticket_issue_id = first_ticket_issue_id(issued_order_fixture().order_id)
+
+      assert {:error, :forbidden} =
+               Revocation.revoke_ticket_issue(ticket_issue_id,
+                 actor_type: :admin,
+                 actor_id: "admin-1",
+                 reason: "manual_review"
+               )
+    end
+
+    test "admin actor cannot revoke ticket outside allowed_event_ids" do
+      %{order_id: order_id} = issued_order_fixture()
+      ticket_issue_id = first_ticket_issue_id(order_id)
+      other_event = create_event()
+
+      assert {:error, :forbidden} =
+               Revocation.revoke_ticket_issue(ticket_issue_id,
+                 actor_type: :admin,
+                 actor_id: "admin-1",
+                 reason: "manual_review",
+                 allowed_event_ids: [other_event.id]
+               )
+    end
+
+    test "operator actor cannot revoke ticket outside allowed_event_ids" do
+      %{order_id: order_id, event: event} = issued_order_fixture()
+      ticket_issue_id = first_ticket_issue_id(order_id)
+      other_event = create_event()
+
+      assert {:error, :forbidden} =
+               Revocation.revoke_ticket_issue(ticket_issue_id,
+                 actor_type: :operator,
+                 actor_id: "op-1",
+                 reason: "cancel",
+                 allowed_event_ids: [other_event.id]
+               )
+
+      assert ticket_issue_row(ticket_issue_id).status == "issued"
+
+      assert {:ok, %{status: :revoked}} =
+               Revocation.revoke_ticket_issue(ticket_issue_id,
+                 actor_type: :operator,
+                 actor_id: "op-1",
+                 reason: "cancel",
+                 allowed_event_ids: [event.id]
+               )
+    end
+
     test "missing attendee returns explicit error" do
       %{order_id: order_id} = issued_order_fixture()
       ticket_issue_id = first_ticket_issue_id(order_id)
@@ -175,9 +224,58 @@ defmodule FastCheck.Tickets.RevocationTest do
     end
   end
 
-  defp issued_order_fixture do
+  describe "revoke_order_tickets/2" do
+    test "revokes multiple issued tickets with one event sync bump" do
+      %{order_id: order_id, event: event} = issued_order_fixture(quantity: 3)
+      version_before = event_sync_version(event.id)
+
+      assert {:ok, %{revoked: revoked, failures: []}} =
+               Revocation.revoke_order_tickets(order_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-batch",
+                 reason: "cancel"
+               )
+
+      assert length(revoked) == 3
+      assert Enum.all?(revoked, &(&1.status == :revoked))
+      assert event_sync_version(event.id) == version_before + 1
+
+      issued_count =
+        Repo.one!(
+          from t in "sales_ticket_issues",
+            where: t.sales_order_id == ^order_id and t.status == "issued",
+            select: count(t.id)
+        )
+
+      assert issued_count == 0
+    end
+
+    test "list_issued_by_order excludes revoked tickets at query layer" do
+      %{order_id: order_id} = issued_order_fixture(quantity: 2)
+      [first_id, second_id] = ticket_issue_ids(order_id)
+
+      assert {:ok, %{status: :revoked}} =
+               Revocation.revoke_ticket_issue(first_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-one",
+                 reason: "cancel"
+               )
+
+      issued_ids =
+        FastCheck.Sales.TicketIssue
+        |> Ash.Query.for_read(:list_issued_by_order, %{sales_order_id: order_id})
+        |> Ash.read!(authorize?: false)
+        |> Enum.map(& &1.id)
+
+      assert issued_ids == [second_id]
+    end
+  end
+
+  defp issued_order_fixture(opts \\ []) do
+    quantity = Keyword.get(opts, :quantity, 1)
     event = create_event()
-    quantity = 1
     unit_amount = 12_500
     total = quantity * unit_amount
     offer_id = insert_offer!(event.id, unit_amount)
@@ -189,6 +287,15 @@ defmodule FastCheck.Tickets.RevocationTest do
     assert {:ok, %{status: :ticket_issued}} = Issuer.issue_order(order_id)
 
     %{event: event, order_id: order_id, line_id: line_id}
+  end
+
+  defp ticket_issue_ids(order_id) do
+    Repo.all(
+      from t in "sales_ticket_issues",
+        where: t.sales_order_id == ^order_id,
+        order_by: [asc: t.id],
+        select: t.id
+    )
   end
 
   defp first_ticket_issue_id(order_id) do

@@ -48,6 +48,14 @@ defmodule FastCheck.Sales.TicketIssue do
       filter(expr(sales_order_id == ^arg(:sales_order_id)))
     end
 
+    read :list_issued_by_order do
+      argument :sales_order_id, :integer do
+        allow_nil?(false)
+      end
+
+      filter(expr(sales_order_id == ^arg(:sales_order_id) and status == "issued"))
+    end
+
     read :list_by_order_line do
       argument :sales_order_line_id, :integer do
         allow_nil?(false)
