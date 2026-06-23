@@ -214,7 +214,7 @@ defmodule FastCheck.Sales.CheckoutExpiryTest do
     paystack_cleanup.()
   end
 
-  test "hold anomaly routes to manual_review instead of silent expire", %{offer: offer} do
+  test "hold anomaly routes to manual_review when redis_hold_key is cleared", %{offer: offer} do
     {order, session} = checkout_with_expiry!(offer, minutes_ago: 5)
 
     Repo.update_all(
@@ -230,6 +230,63 @@ defmodule FastCheck.Sales.CheckoutExpiryTest do
     assert order.status == "manual_review"
     assert session.status == "manual_review"
     assert order.manual_review_reason == "checkout_expiry_hold_state_mismatch"
+  end
+
+  test "completely missing hold facts on held session route to manual_review", %{offer: offer} do
+    for attrs <- [
+          %{redis_hold_key: nil, hold_quantity: nil},
+          %{redis_hold_key: nil, hold_quantity: 0}
+        ] do
+      {order, session} = checkout_with_expiry!(offer, minutes_ago: 5)
+
+      Repo.update_all(
+        from(cs in "sales_checkout_sessions", where: cs.id == ^session.id),
+        set: Keyword.new(attrs)
+      )
+
+      assert {:ok, :manual_review} = CheckoutExpiry.expire_session(session.id)
+
+      order = reload_order!(order.id)
+      session = reload_session!(session.id)
+
+      assert order.status == "manual_review"
+      assert session.status == "manual_review"
+      assert order.manual_review_reason == "checkout_expiry_hold_state_mismatch"
+      refute session.expired_at
+    end
+  end
+
+  test "already_consumed release routes to manual_review without expiring", %{offer: offer} do
+    {order, session} = checkout_with_expiry!(offer, minutes_ago: 5)
+
+    on_exit(fn -> Application.delete_env(:fastcheck, :checkout_expiry_release_fun) end)
+
+    Application.put_env(
+      :fastcheck,
+      :checkout_expiry_release_fun,
+      fn _offer_id, _ref, _key -> {:error, :already_consumed, %{offer_id: offer.id}} end
+    )
+
+    assert {:ok, :manual_review} = CheckoutExpiry.expire_session(session.id)
+
+    assert reload_session!(session.id).status == "manual_review"
+    assert reload_order!(order.id).status == "manual_review"
+    refute reload_session!(session.id).expired_at
+  end
+
+  test "unknown release error fails closed without crashing", %{offer: offer} do
+    {_order, session} = checkout_with_expiry!(offer, minutes_ago: 5)
+
+    on_exit(fn -> Application.delete_env(:fastcheck, :checkout_expiry_release_fun) end)
+
+    Application.put_env(
+      :fastcheck,
+      :checkout_expiry_release_fun,
+      fn _offer_id, _ref, _key -> {:error, :unknown_ledger_state, %{}} end
+    )
+
+    assert {:error, :unknown_ledger_state} = CheckoutExpiry.expire_session(session.id)
+    assert reload_session!(session.id).status == "hold_attached"
   end
 
   test "expire_session uses order-level advisory lock like payment verification" do

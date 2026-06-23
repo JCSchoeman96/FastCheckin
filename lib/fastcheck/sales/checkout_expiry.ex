@@ -113,11 +113,6 @@ defmodule FastCheck.Sales.CheckoutExpiry do
             mark_manual_review!(session, order, reason, correlation_id)
             :manual_review
 
-          {:expire_no_hold, context} ->
-            expire_durable!(session, order, context)
-            emit_expired(:expired_no_hold, session, order, correlation_id)
-            :expired
-
           {:expire_with_hold, hold_context} ->
             case release_hold(hold_context) do
               :ok ->
@@ -149,13 +144,9 @@ defmodule FastCheck.Sales.CheckoutExpiry do
         review
 
       :eligible ->
-        if clear_no_hold?(session) do
-          {:expire_no_hold, context}
-        else
-          case resolve_hold_context(session, order, context) do
-            {:ok, hold_context} -> {:expire_with_hold, hold_context}
-            {:error, :manual_review, reason} -> {:manual_review, reason}
-          end
+        case resolve_hold_context(session, order, context) do
+          {:ok, hold_context} -> {:expire_with_hold, hold_context}
+          {:error, :manual_review, reason} -> {:manual_review, reason}
         end
     end
   end
@@ -239,8 +230,9 @@ defmodule FastCheck.Sales.CheckoutExpiry do
   end
 
   defp hold_state_anomaly?(session, order) do
-    held_status?(session) and not clear_no_hold?(session) and
-      (blank?(order.public_reference) or invalid_hold_facts?(session, order))
+    held_status?(session) and
+      (clear_no_hold?(session) or blank?(order.public_reference) or
+         invalid_hold_facts?(session, order))
   end
 
   defp held_status?(session), do: session.status in @sweeper_statuses
@@ -304,7 +296,13 @@ defmodule FastCheck.Sales.CheckoutExpiry do
       {:error, :hold_not_found, _} ->
         {:manual_review, @hold_anomaly_reason}
 
+      {:error, :already_consumed, _} ->
+        {:manual_review, @hold_anomaly_reason}
+
       {:error, reason, _} when reason in @retryable_release_errors ->
+        {:retry, reason}
+
+      {:error, reason, _} ->
         {:retry, reason}
     end
   end
