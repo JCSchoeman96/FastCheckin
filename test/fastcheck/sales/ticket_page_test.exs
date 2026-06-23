@@ -90,6 +90,26 @@ defmodule FastCheck.Sales.TicketPageTest do
       assert result.qr_payload == nil
     end
 
+    test "revocation writer sets revoked fields and secure page returns ticket_revoked" do
+      %{token: token, ticket_issue_id: ticket_issue_id} = issued_ticket_fixture()
+
+      assert {:ok, %{status: :revoked}} =
+               FastCheck.Tickets.Revocation.revoke_ticket_issue(ticket_issue_id,
+                 actor_type: :system,
+                 actor_id: "ticket_page_test",
+                 correlation_id: "tp-revoke",
+                 reason: "sales_cancelled"
+               )
+
+      row = Repo.get!(TicketIssue, ticket_issue_id)
+      assert row.status == "revoked"
+      assert row.revoked_at
+
+      result = TicketPage.resolve(token)
+      assert result.state == :ticket_revoked
+      assert result.qr_payload == nil
+    end
+
     test "pending ticket issue returns ticket_not_ready without payload" do
       %{token: token} = issued_ticket_fixture(status: "pending")
 

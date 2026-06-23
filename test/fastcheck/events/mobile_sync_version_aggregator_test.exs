@@ -112,6 +112,39 @@ defmodule FastCheck.Events.MobileSyncVersionAggregatorTest do
     end
   end
 
+  describe "after_attendee_invalidated/5" do
+    test "increments event_sync_version once for invalidation visibility" do
+      event = create_event()
+      attendee = create_attendee(event, %{ticket_code: "INV-ONE"})
+
+      assert :ok =
+               MobileSyncVersionAggregator.after_attendee_invalidated(
+                 event.id,
+                 attendee.id,
+                 attendee.ticket_code,
+                 "revoked"
+               )
+
+      assert event_sync_version(event.id) == 1
+    end
+
+    test "supports skip_cache_invalidation for transaction-time bumps" do
+      event = create_event()
+      attendee = create_attendee(event, %{ticket_code: "INV-SKIP"})
+
+      assert :ok =
+               MobileSyncVersionAggregator.after_attendee_invalidated(
+                 event.id,
+                 attendee.id,
+                 attendee.ticket_code,
+                 "revoked",
+                 skip_cache_invalidation: true
+               )
+
+      assert event_sync_version(event.id) == 1
+    end
+  end
+
   defp event_sync_version(event_id) do
     Repo.one!(from(e in Event, where: e.id == ^event_id, select: e.event_sync_version))
   end

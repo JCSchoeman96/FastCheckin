@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.TicketIssueTest do
   use FastCheck.DataCase, async: true
 
+  import Ecto.Query
+
   alias Ash.Changeset
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketIssue
@@ -46,6 +48,48 @@ defmodule FastCheck.Sales.TicketIssueTest do
     refute Map.has_key?(transition.metadata, "buyer_email")
     refute Map.has_key?(transition.metadata, "buyer_phone")
     refute Map.has_key?(transition.metadata, "raw_payload")
+  end
+
+  test "mark_revoked writes safe TicketIssue state transition metadata" do
+    {order_id, order_line_id} = insert_order_with_line!()
+
+    attrs = %{
+      sales_order_id: order_id,
+      sales_order_line_id: order_line_id,
+      line_item_sequence: 1,
+      attendee_id: 42_002,
+      ticket_code: "FC-REVOKE-CODE",
+      qr_token_hash: "qr-revoke-hash",
+      delivery_token_hash: "delivery-revoke-hash",
+      delivery_token_expires_at: DateTime.utc_now() |> DateTime.add(3600, :second)
+    }
+
+    assert {:ok, ticket_issue} =
+             TicketIssue
+             |> Changeset.for_create(:create_issued_link, attrs, actor: system_actor())
+             |> Ash.create(authorize?: false)
+
+    assert {:ok, revoked} =
+             ticket_issue
+             |> Changeset.for_update(
+               :mark_revoked,
+               %{revocation_reason: "sales_refund"},
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    assert revoked.status == "revoked"
+    assert revoked.revoked_at
+    assert revoked.revocation_reason == "sales_refund"
+    assert revoked.scanner_status == "revoked"
+    assert revoked.delivery_token_expires_at
+
+    transition = ticket_issue_revoked_transition!(ticket_issue.id)
+    assert transition.from_state == "issued"
+    assert transition.to_state == "revoked"
+    assert transition.source == "ticket_issue.mark_revoked"
+    refute Map.has_key?(transition.metadata, "ticket_code")
+    refute Map.has_key?(transition.metadata, "delivery_token_hash")
   end
 
   defp insert_order_with_line! do
@@ -110,9 +154,26 @@ defmodule FastCheck.Sales.TicketIssueTest do
       from st in "sales_state_transitions",
         where:
           st.entity_type == "TicketIssue" and
-            st.entity_id == ^Integer.to_string(ticket_issue_id),
+            st.entity_id == ^Integer.to_string(ticket_issue_id) and
+            st.to_state == "issued",
         select: %{
           entity_type: st.entity_type,
+          from_state: st.from_state,
+          to_state: st.to_state,
+          source: st.source,
+          metadata: st.metadata
+        }
+    )
+  end
+
+  defp ticket_issue_revoked_transition!(ticket_issue_id) do
+    Repo.one!(
+      from st in "sales_state_transitions",
+        where:
+          st.entity_type == "TicketIssue" and
+            st.entity_id == ^Integer.to_string(ticket_issue_id) and
+            st.to_state == "revoked",
+        select: %{
           from_state: st.from_state,
           to_state: st.to_state,
           source: st.source,
