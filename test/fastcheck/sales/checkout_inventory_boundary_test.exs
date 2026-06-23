@@ -26,6 +26,14 @@ defmodule FastCheck.Sales.CheckoutInventoryBoundaryTest do
     assert source =~ "ReservationLedger.hold_key"
   end
 
+  test "checkout expiry delegates inventory to ReservationLedger only" do
+    source = File.read!("lib/fastcheck/sales/checkout_expiry.ex")
+    assert source =~ "ReservationLedger.release"
+    refute source =~ ~s|"HSET"|
+    refute source =~ ~s|Redix.command|
+    refute source =~ "sales:offer:"
+  end
+
   test "only approved modules own inventory redis mutation key strings" do
     lib_root = Path.expand("lib", File.cwd!())
 

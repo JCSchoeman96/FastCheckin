@@ -18,8 +18,20 @@ config :fastcheck, :mobile_sync_snapshot_isolation, :repeatable_read
 
 config :fastcheck, Oban,
   repo: FastCheck.Repo,
-  queues: [scan_persistence: 10, sales_inventory: 5, payments: 5, ticketing: 5],
-  plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
+  queues: [
+    scan_persistence: 10,
+    sales_inventory: 5,
+    payments: 5,
+    ticketing: 5,
+    sales_maintenance: 3
+  ],
+  plugins: [
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"*/2 * * * *", FastCheck.Workers.CheckoutExpirySweeperWorker}
+     ]}
+  ]
 
 config :fastcheck, :mobile_scan_ingestion,
   chunk_size: 100,
@@ -29,6 +41,7 @@ config :fastcheck, :mobile_scan_ingestion,
 config :fastcheck, :event_post_grace_days, 14
 
 config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
+config :fastcheck, :sales_checkout_expiry_sweep_batch_size, 200
 config :fastcheck, :sales_delivery_token_ttl_seconds, 90 * 24 * 60 * 60
 config :fastcheck, :sales_internal_pilot_enabled, true
 config :fastcheck, :paystack_enabled, false
