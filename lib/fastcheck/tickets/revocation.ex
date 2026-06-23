@@ -98,13 +98,15 @@ defmodule FastCheck.Tickets.Revocation do
   @doc """
   Revokes issued tickets for an order in a bounded batch.
 
-  Mutates each ticket/attendee in one transaction, then bumps mobile sync version
-  and invalidates caches once per event window. On partial failure, moves the order
-  to `manual_review` without refund transitions.
+  Ticket and attendee mutations run inside one outer database transaction with
+  per-ticket savepoints for partial failures. The mobile sync version bump runs
+  once inside that same outer transaction before commit; if it fails, all batch
+  mutations roll back. Cache invalidation runs once after commit.
   """
   @spec revoke_order_tickets(integer(), keyword()) ::
           {:ok, %{revoked: [revoke_result()], failures: [map()]}}
           | {:error, :not_found | :forbidden | :reason_required | :audit_context_required}
+          | {:error, {:mobile_sync_version_aggregation_failed, term()}}
   def revoke_order_tickets(order_id, opts \\ []) when is_integer(order_id) do
     context = build_context(opts)
 
@@ -123,66 +125,85 @@ defmodule FastCheck.Tickets.Revocation do
   defp revoke_in_transaction(ticket_issue, order, context, opts, txn_opts) do
     reason = revocation_reason(opts)
     sync_bump? = Keyword.get(txn_opts, :sync_bump?, false)
+    aggregator = mobile_sync_aggregator(opts)
 
     Repo.transaction(fn ->
       locked_issue = lock_ticket_issue!(ticket_issue.id)
 
       revoke_locked_ticket_issue(locked_issue, order, context, opts, reason,
-        sync_bump?: sync_bump?
+        sync_bump?: sync_bump?,
+        aggregator: aggregator
       )
     end)
     |> normalize_transaction_result()
   end
 
   defp revoke_order_ticket_batch(order, ticket_issues, context, opts) do
-    initial = %{revoked: [], failures: [], cache_targets: []}
+    reason = revocation_reason(opts)
+    aggregator = mobile_sync_aggregator(opts)
 
-    result =
-      Enum.reduce(ticket_issues, {:ok, initial}, fn ticket_issue, {:ok, acc} ->
-        case revoke_in_transaction(ticket_issue, order, context, opts, sync_bump?: false) do
-          {:ok, %{status: :revoked} = txn_result} ->
-            target = %{
-              event_id: order.event_id,
-              ticket_code: txn_result.ticket_code,
-              attendee_id: txn_result.attendee_id
-            }
+    Repo.transaction(fn ->
+      acc =
+        Enum.reduce(
+          ticket_issues,
+          %{revoked: [], failures: [], cache_targets: []},
+          fn ticket_issue, acc ->
+            revoke_order_ticket_issue_step(ticket_issue, order, context, opts, reason, acc)
+          end
+        )
 
-            {:ok,
-             %{
-               acc
-               | revoked: acc.revoked ++ [format_revoke_result(txn_result)],
-                 cache_targets: acc.cache_targets ++ [target]
-             }}
+      case bump_batch_sync_if_needed(order.event_id, acc.cache_targets, aggregator) do
+        :ok ->
+          Map.merge(acc, %{
+            cache?: acc.cache_targets != [],
+            event_id: order.event_id
+          })
 
-          {:ok, txn_result} ->
-            {:ok, %{acc | revoked: acc.revoked ++ [format_revoke_result(txn_result)]}}
+        {:error, reason} ->
+          Repo.rollback({:mobile_sync_version_aggregation_failed, reason})
+      end
+    end)
+    |> normalize_transaction_result()
+  end
 
-          {:error, reason} ->
-            failure = %{ticket_issue_id: ticket_issue.id, error: reason}
-            {:ok, %{acc | failures: acc.failures ++ [failure]}}
-        end
-      end)
+  defp revoke_order_ticket_issue_step(ticket_issue, order, context, opts, reason, acc) do
+    case Repo.transaction(fn ->
+           locked_issue = lock_ticket_issue!(ticket_issue.id)
 
-    with {:ok, acc} <- result,
-         :ok <- bump_batch_sync_if_needed(order.event_id, acc.cache_targets) do
-      {:ok,
-       %{
-         revoked: acc.revoked,
-         failures: acc.failures,
-         cache?: acc.cache_targets != [],
-         event_id: order.event_id,
-         cache_targets: acc.cache_targets
-       }}
+           revoke_locked_ticket_issue(locked_issue, order, context, opts, reason,
+             sync_bump?: false,
+             aggregator: mobile_sync_aggregator(opts)
+           )
+         end) do
+      {:ok, %{status: :revoked} = result} ->
+        target = %{
+          event_id: order.event_id,
+          ticket_code: result.ticket_code,
+          attendee_id: result.attendee_id
+        }
+
+        %{
+          acc
+          | revoked: acc.revoked ++ [format_revoke_result(result)],
+            cache_targets: acc.cache_targets ++ [target]
+        }
+
+      {:ok, result} ->
+        %{acc | revoked: acc.revoked ++ [format_revoke_result(result)]}
+
+      {:error, error} ->
+        failure = %{ticket_issue_id: ticket_issue.id, error: error}
+        %{acc | failures: acc.failures ++ [failure]}
     end
   end
 
-  defp bump_batch_sync_if_needed(_event_id, []), do: :ok
+  defp bump_batch_sync_if_needed(_event_id, [], _aggregator), do: :ok
 
-  defp bump_batch_sync_if_needed(event_id, cache_targets) do
+  defp bump_batch_sync_if_needed(event_id, cache_targets, aggregator) do
     ticket_codes = Enum.map(cache_targets, & &1.ticket_code)
     attendee_ids = Enum.map(cache_targets, & &1.attendee_id)
 
-    case MobileSyncVersionAggregator.after_attendees_created(
+    case aggregator.after_attendees_created(
            event_id,
            ticket_codes,
            attendee_ids: attendee_ids,
@@ -190,7 +211,7 @@ defmodule FastCheck.Tickets.Revocation do
            skip_cache_invalidation: true
          ) do
       :ok -> :ok
-      {:error, reason} -> {:error, {:mobile_sync_version_aggregation_failed, reason}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -212,13 +233,15 @@ defmodule FastCheck.Tickets.Revocation do
 
   defp revoke_locked_ticket_issue(locked_issue, order, context, opts, reason, txn_opts) do
     sync_bump? = Keyword.get(txn_opts, :sync_bump?, false)
+    aggregator = Keyword.get(txn_opts, :aggregator, MobileSyncVersionAggregator)
 
     with attendee when not is_nil(attendee) <- lock_and_validate_attendee!(locked_issue, order),
          {:ok, revoked_issue} <- mark_ticket_issue_revoked(locked_issue, reason, context, opts),
          {:ok, visibility} <-
            ScannerVisibility.mark_not_scannable(attendee, reason_code: ReasonCodes.revoked()),
          :ok <- maybe_emit_invalidation_telemetry(visibility, context, revoked_issue, order),
-         :ok <- maybe_bump_sync_version(sync_bump?, order.event_id, visibility.attendee) do
+         :ok <-
+           maybe_bump_sync_version(sync_bump?, order.event_id, visibility.attendee, aggregator) do
       %{
         ticket_issue_id: revoked_issue.id,
         attendee_id: visibility.attendee.id,
@@ -232,10 +255,10 @@ defmodule FastCheck.Tickets.Revocation do
     end
   end
 
-  defp maybe_bump_sync_version(false, _event_id, _attendee), do: :ok
+  defp maybe_bump_sync_version(false, _event_id, _attendee, _aggregator), do: :ok
 
-  defp maybe_bump_sync_version(true, event_id, attendee) do
-    bump_invalidated_sync_version(event_id, attendee, ReasonCodes.revoked())
+  defp maybe_bump_sync_version(true, event_id, attendee, aggregator) do
+    bump_invalidated_sync_version(event_id, attendee, ReasonCodes.revoked(), aggregator)
   end
 
   defp format_revoke_result(%{ticket_issue_id: id, attendee_id: attendee_id, status: status}) do
@@ -263,8 +286,8 @@ defmodule FastCheck.Tickets.Revocation do
 
   defp maybe_emit_invalidation_telemetry(_visibility, _context, _revoked_issue, _order), do: :ok
 
-  defp bump_invalidated_sync_version(event_id, attendee, reason_code) do
-    case MobileSyncVersionAggregator.after_attendee_invalidated(
+  defp bump_invalidated_sync_version(event_id, attendee, reason_code, aggregator) do
+    case aggregator.after_attendee_invalidated(
            event_id,
            attendee.id,
            attendee.ticket_code,
@@ -503,6 +526,10 @@ defmodule FastCheck.Tickets.Revocation do
       ids when is_list(ids) and ids != [] -> false
       _ -> true
     end
+  end
+
+  defp mobile_sync_aggregator(opts) do
+    Keyword.get(opts, :mobile_sync_version_aggregator, MobileSyncVersionAggregator)
   end
 
   defp build_context(opts) do

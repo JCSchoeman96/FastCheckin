@@ -271,6 +271,70 @@ defmodule FastCheck.Tickets.RevocationTest do
 
       assert issued_ids == [second_id]
     end
+
+    test "batch sync bump failure rolls back ticket and attendee mutations" do
+      %{order_id: order_id, event: event} = issued_order_fixture(quantity: 3)
+      ticket_ids = ticket_issue_ids(order_id)
+      version_before = event_sync_version(event.id)
+      attendee_ids = Enum.map(ticket_ids, &ticket_issue_row(&1).attendee_id)
+
+      batch_opts = [
+        actor_type: :system,
+        actor_id: "test",
+        correlation_id: "corr-batch-fail",
+        reason: "cancel",
+        mobile_sync_version_aggregator: FastCheck.Tickets.RevocationTest.FailingAggregator
+      ]
+
+      assert {:error, {:mobile_sync_version_aggregation_failed, :forced_failure}} =
+               Revocation.revoke_order_tickets(order_id, batch_opts)
+
+      assert event_sync_version(event.id) == version_before
+
+      for ticket_id <- ticket_ids do
+        assert ticket_issue_row(ticket_id).status == "issued"
+      end
+
+      for attendee_id <- attendee_ids do
+        attendee = Repo.get!(Attendee, attendee_id)
+        assert attendee.scan_eligibility == "active"
+        assert invalidation_count(attendee_id) == 0
+      end
+    end
+
+    test "retry after failed batch sync can still succeed" do
+      %{order_id: order_id, event: event} = issued_order_fixture(quantity: 3)
+      version_before = event_sync_version(event.id)
+
+      assert {:error, {:mobile_sync_version_aggregation_failed, :forced_failure}} =
+               Revocation.revoke_order_tickets(order_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-batch-retry-fail",
+                 reason: "cancel",
+                 mobile_sync_version_aggregator:
+                   FastCheck.Tickets.RevocationTest.FailingAggregator
+               )
+
+      assert {:ok, %{revoked: revoked, failures: []}} =
+               Revocation.revoke_order_tickets(order_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-batch-retry-ok",
+                 reason: "cancel"
+               )
+
+      assert length(revoked) == 3
+      assert Enum.all?(revoked, &(&1.status == :revoked))
+      assert event_sync_version(event.id) == version_before + 1
+    end
+  end
+
+  defmodule FailingAggregator do
+    def after_attendees_created(_event_id, _ticket_codes, _opts), do: {:error, :forced_failure}
+
+    def after_attendee_invalidated(_event_id, _attendee_id, _ticket_code, _reason_code, _opts),
+      do: {:error, :forced_failure}
   end
 
   defp issued_order_fixture(opts \\ []) do
