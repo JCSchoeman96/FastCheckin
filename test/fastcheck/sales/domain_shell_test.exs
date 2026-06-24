@@ -36,6 +36,8 @@ defmodule FastCheck.Sales.DomainShellTest do
 
     assert Path.wildcard("lib/fastcheck/sales/*.ex") |> Enum.sort() == [
              "lib/fastcheck/sales/admin_dashboard.ex",
+             "lib/fastcheck/sales/admin_refunds.ex",
+             "lib/fastcheck/sales/admin_revocations.ex",
              "lib/fastcheck/sales/checkout.ex",
              "lib/fastcheck/sales/checkout_expiry.ex",
              "lib/fastcheck/sales/checkout_session.ex",
