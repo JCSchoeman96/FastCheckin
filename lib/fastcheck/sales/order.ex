@@ -348,6 +348,77 @@ defmodule FastCheck.Sales.Order do
         )
       end)
     end
+
+    update :mark_refunded_manual do
+      require_atomic?(false)
+      accept([:manual_review_reason])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason =
+          Changeset.get_argument(changeset, :reason) ||
+            Changeset.get_attribute(changeset, :manual_review_reason)
+
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "refunded" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "refunded",
+            allowed_from: [
+              "ticket_issued",
+              "partially_issued",
+              "paid_verified",
+              "manual_review",
+              "manual_review_held"
+            ],
+            reason: reason,
+            extra_attrs: %{
+              refunded_at: DateTime.utc_now() |> DateTime.truncate(:second),
+              manual_review_reason: reason
+            }
+          )
+        end
+      end)
+    end
+
+    update :mark_cancelled_manual do
+      require_atomic?(false)
+      accept([:manual_review_reason])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        reason =
+          Changeset.get_argument(changeset, :reason) ||
+            Changeset.get_attribute(changeset, :manual_review_reason)
+
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "cancelled" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "cancelled",
+            allowed_from: [
+              "paid_verified",
+              "fulfillment_queued",
+              "manual_review",
+              "manual_review_held"
+            ],
+            reason: reason,
+            extra_attrs: %{
+              cancelled_at: DateTime.utc_now() |> DateTime.truncate(:second),
+              manual_review_reason: reason
+            }
+          )
+        end
+      end)
+    end
   end
 
   policies do
@@ -374,7 +445,9 @@ defmodule FastCheck.Sales.Order do
              :close_no_fulfillment,
              :return_to_fulfillment_queue,
              :return_held_to_manual_review,
-             :retry_failed_manual_review
+             :retry_failed_manual_review,
+             :mark_refunded_manual,
+             :mark_cancelled_manual
            ]) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
@@ -390,7 +463,9 @@ defmodule FastCheck.Sales.Order do
              :close_no_fulfillment,
              :return_to_fulfillment_queue,
              :return_held_to_manual_review,
-             :retry_failed_manual_review
+             :retry_failed_manual_review,
+             :mark_refunded_manual,
+             :mark_cancelled_manual
            ]) do
       authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, actor_types: [:admin]})
     end

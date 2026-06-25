@@ -45,6 +45,23 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
     "test/support/sales_boundary_allowlist.ex"
   ]
 
+  @vs_15b_allowed_prefixes [
+    "lib/fastcheck/sales/admin_refunds.ex",
+    "lib/fastcheck/sales/admin_revocations.ex",
+    "lib/fastcheck/sales/order.ex",
+    "lib/fastcheck/observability/telemetry_names.ex",
+    "lib/fastcheck_web/live/sales/",
+    "lib/fastcheck_web/live/sales_dashboard_live.ex",
+    "lib/fastcheck_web/router.ex",
+    "test/fastcheck/sales/admin_refunds_test.exs",
+    "test/fastcheck/sales/admin_revocations_test.exs",
+    "test/fastcheck_web/live/sales/order_show_live_test.exs",
+    "test/fastcheck/observability/telemetry_names_test.exs",
+    "test/fastcheck/sales/domain_shell_test.exs",
+    "test/support/admin_refund_fixtures.ex",
+    "test/support/sales_boundary_allowlist.ex"
+  ]
+
   @doc false
   def vs_05a_allowed_change?(file) when is_binary(file) do
     Enum.any?(@vs_05a_allowed_prefixes, fn allowed ->
@@ -66,7 +83,14 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
 
   defp allowed_change?(file) do
     vs_05a_allowed_change?(file) or vs_07a_allowed_change?(file) or
-      Enum.member?(@vs_12_allowed_prefixes, file) or vs_13_allowed_change?(file)
+      Enum.member?(@vs_12_allowed_prefixes, file) or vs_13_allowed_change?(file) or
+      vs_15b_allowed_change?(file)
+  end
+
+  defp vs_15b_allowed_change?(file) do
+    Enum.any?(@vs_15b_allowed_prefixes, fn allowed ->
+      file == allowed or String.starts_with?(file, allowed)
+    end)
   end
 
   defp vs_13_allowed_change?(file) do

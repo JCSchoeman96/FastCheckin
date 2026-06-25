@@ -57,6 +57,14 @@ defmodule FastCheck.Observability.TelemetryNames do
     [:fastcheck, :sales, :manual_review, :closed]
   ]
 
+  @admin_events [
+    [:fastcheck, :sales, :admin, :revocation_requested],
+    [:fastcheck, :sales, :admin, :revocation_completed],
+    [:fastcheck, :sales, :admin, :revocation_failed],
+    [:fastcheck, :sales, :admin, :refund_marked],
+    [:fastcheck, :sales, :admin, :action_denied]
+  ]
+
   @all_events @checkout_events ++
                 @inventory_events ++
                 @payment_events ++
@@ -64,9 +72,10 @@ defmodule FastCheck.Observability.TelemetryNames do
                 @scanner_visibility_events ++
                 @delivery_events ++
                 @whatsapp_events ++
-                @manual_review_events
+                @manual_review_events ++
+                @admin_events
 
-  @doc "Returns all 27 approved Sales telemetry event name lists."
+  @doc "Returns all 32 approved Sales telemetry event name lists."
   @spec all() :: [[atom()]]
   def all, do: @all_events
 
@@ -93,6 +102,24 @@ defmodule FastCheck.Observability.TelemetryNames do
 
   @doc false
   def manual_review_events, do: @manual_review_events
+
+  @doc false
+  def admin_events, do: @admin_events
+
+  @doc false
+  def admin_revocation_requested, do: [:fastcheck, :sales, :admin, :revocation_requested]
+
+  @doc false
+  def admin_revocation_completed, do: [:fastcheck, :sales, :admin, :revocation_completed]
+
+  @doc false
+  def admin_revocation_failed, do: [:fastcheck, :sales, :admin, :revocation_failed]
+
+  @doc false
+  def admin_refund_marked, do: [:fastcheck, :sales, :admin, :refund_marked]
+
+  @doc false
+  def admin_action_denied, do: [:fastcheck, :sales, :admin, :action_denied]
 
   @doc false
   def ticket_revocation_started, do: [:fastcheck, :sales, :ticket, :revocation_started]

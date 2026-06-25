@@ -3,9 +3,9 @@ defmodule FastCheck.Observability.TelemetryNamesTest do
 
   alias FastCheck.Observability.TelemetryNames
 
-  @expected_count 27
+  @expected_count 32
 
-  test "all/0 returns exactly 27 approved list-style events" do
+  test "all/0 returns exactly 32 approved list-style events" do
     events = TelemetryNames.all()
 
     assert length(events) == @expected_count

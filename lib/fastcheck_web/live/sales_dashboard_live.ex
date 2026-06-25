@@ -269,6 +269,12 @@ defmodule FastCheckWeb.SalesDashboardLive do
                     <dd>{@selected_order_detail.attendee_link_count}</dd>
                   </div>
                 </dl>
+                <.link
+                  navigate={~p"/dashboard/sales/orders/#{@selected_order_detail.id}"}
+                  class="inline-block text-sm font-medium text-fc-accent hover:underline"
+                >
+                  Manage order operations
+                </.link>
               </div>
             </.card_content>
           </.card>
