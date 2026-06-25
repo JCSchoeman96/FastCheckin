@@ -31,7 +31,7 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
 
     assert {:ok, %{status: :revoked}} =
              AdminRevocations.revoke_ticket_issue(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                ticket_issue_id,
                Fixtures.admin_attrs(%{"confirmed_bulk" => nil, "admin_password" => nil})
              )
@@ -58,53 +58,111 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
     assert Fixtures.order_status(order_id) == "ticket_issued"
   end
 
-  test "missing reason blocks revocation" do
+  test "operator can revoke single ticket when event is in allowed_event_ids" do
+    %{ticket_issue_ids: [ticket_issue_id | _], event: event} = Fixtures.issued_order_fixture()
+
+    assert {:ok, %{status: :revoked}} =
+             AdminRevocations.revoke_ticket_issue(
+               Fixtures.operator_actor(event_id: event.id),
+               ticket_issue_id,
+               Fixtures.admin_attrs(%{
+                 "confirmed_bulk" => nil,
+                 "admin_password" => nil
+               })
+             )
+  end
+
+  test "admin without allowed_event_ids is denied for ticket revoke" do
     %{ticket_issue_ids: [ticket_issue_id | _]} = Fixtures.issued_order_fixture()
+
+    assert {:error, :forbidden} =
+             AdminRevocations.revoke_ticket_issue(
+               Fixtures.admin_actor(),
+               ticket_issue_id,
+               Fixtures.admin_attrs(%{"confirmed_bulk" => nil, "admin_password" => nil})
+             )
+  end
+
+  test "admin out of scope event is denied for ticket revoke" do
+    %{ticket_issue_ids: [ticket_issue_id | _], event: event} = Fixtures.issued_order_fixture()
+
+    assert {:error, :forbidden} =
+             AdminRevocations.revoke_ticket_issue(
+               Fixtures.out_of_scope_admin_actor(event.id),
+               ticket_issue_id,
+               Fixtures.admin_attrs(%{"confirmed_bulk" => nil, "admin_password" => nil})
+             )
+  end
+
+  test "operator without allowed_event_ids is denied for ticket revoke" do
+    %{ticket_issue_ids: [ticket_issue_id | _]} = Fixtures.issued_order_fixture()
+
+    assert {:error, :forbidden} =
+             AdminRevocations.revoke_ticket_issue(
+               Fixtures.operator_actor(),
+               ticket_issue_id,
+               Fixtures.admin_attrs(%{"confirmed_bulk" => nil, "admin_password" => nil})
+             )
+  end
+
+  test "missing reason blocks revocation" do
+    %{ticket_issue_ids: [ticket_issue_id | _], event: event} = Fixtures.issued_order_fixture()
 
     assert {:error, :reason_required} =
              AdminRevocations.revoke_ticket_issue(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                ticket_issue_id,
                %{"reason" => "  "}
              )
   end
 
   test "order-level revoke requires bulk confirmation and admin password" do
-    %{order_id: order_id} = Fixtures.issued_order_fixture()
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
 
     assert {:error, :bulk_confirmation_required} =
              AdminRevocations.revoke_order_tickets(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs(%{"confirmed_bulk" => nil})
              )
 
     assert {:error, :invalid_admin_password} =
              AdminRevocations.revoke_order_tickets(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs(%{"admin_password" => "wrong-password"})
              )
   end
 
   test "operator cannot perform admin-only order-level revoke" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+
+    assert {:error, :forbidden} =
+             AdminRevocations.revoke_order_tickets(
+               Fixtures.operator_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+  end
+
+  test "admin without allowed_event_ids is denied for order-level revoke" do
     %{order_id: order_id} = Fixtures.issued_order_fixture()
 
     assert {:error, :forbidden} =
              AdminRevocations.revoke_order_tickets(
-               Fixtures.operator_actor(),
+               Fixtures.admin_actor(),
                order_id,
                Fixtures.admin_attrs()
              )
   end
 
   test "sync aggregation failure surfaces error without persisting batch revoke" do
-    %{order_id: order_id, ticket_issue_ids: ticket_issue_ids} =
+    %{order_id: order_id, ticket_issue_ids: ticket_issue_ids, event: event} =
       Fixtures.issued_order_fixture(quantity: 2)
 
     assert {:error, {:mobile_sync_version_aggregation_failed, :forced_failure}} =
              AdminRevocations.revoke_order_tickets(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs(%{
                  "mobile_sync_version_aggregator" => FailingAggregator
@@ -119,8 +177,8 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
     end
   end
 
-  test "order revoke with missing attendee collects failures" do
-    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+  test "order revoke with missing attendee returns revoke_failures error" do
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _], event: event} =
       Fixtures.issued_order_fixture()
 
     Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
@@ -128,9 +186,9 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
       ticket_issue_id
     ])
 
-    assert {:ok, %{failures: [failure | _]}} =
+    assert {:error, {:revoke_failures, [failure | _]}} =
              AdminRevocations.revoke_order_tickets(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs()
              )

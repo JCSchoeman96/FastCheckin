@@ -10,10 +10,10 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
 
   @impl true
   def mount(%{"id" => order_id}, session, socket) do
-    actor = actor_from_session(session)
-
     case AdminRefunds.get_order_operations_context(order_id) do
       {:ok, context} ->
+        actor = actor_from_session(session, context.event_id)
+
         {:ok,
          socket
          |> assign(:page_title, "Sales order")
@@ -276,9 +276,15 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
     end
   end
 
-  defp actor_from_session(session) do
+  defp actor_from_session(session, event_id) do
     username = session["dashboard_username"] || "dashboard"
-    %{id: username, username: username, actor_type: :admin}
+
+    %{
+      id: username,
+      username: username,
+      actor_type: :admin,
+      allowed_event_ids: [event_id]
+    }
   end
 
   defp format_status(nil), do: "None"

@@ -87,13 +87,25 @@ defmodule FastCheck.Sales.AdminRevocations do
          :ok <- authorize_dashboard_actor(actor, order.event_id),
          opts = revocation_opts(actor, order.event_id, attrs),
          {:ok, result} <- invoke_order_ticket_revocation(order_id, opts) do
-      :telemetry.execute(
-        TelemetryNames.admin_revocation_completed(),
-        %{},
-        telemetry_metadata(actor, order_id: order_id, action: "revoke_order_tickets")
-      )
+      case Map.get(result, :failures, []) do
+        [_ | _] = failures ->
+          :telemetry.execute(
+            TelemetryNames.admin_revocation_failed(),
+            %{},
+            telemetry_metadata(actor, order_id: order_id, action: "revoke_order_tickets")
+          )
 
-      {:ok, result}
+          {:error, {:revoke_failures, failures}}
+
+        [] ->
+          :telemetry.execute(
+            TelemetryNames.admin_revocation_completed(),
+            %{},
+            telemetry_metadata(actor, order_id: order_id, action: "revoke_order_tickets")
+          )
+
+          {:ok, result}
+      end
     else
       {:error, :forbidden} = error ->
         emit_denied(actor, order_id: order_id, action: "revoke_order_tickets")
@@ -210,19 +222,39 @@ defmodule FastCheck.Sales.AdminRevocations do
   defp authorize_dashboard_actor(actor, event_id) do
     case actor_type(actor) do
       type when type in [:admin, :operator] ->
-        if is_integer(event_id), do: :ok, else: {:error, :forbidden}
+        cond do
+          not is_integer(event_id) ->
+            {:error, :forbidden}
+
+          event_allowed?(actor, event_id) ->
+            :ok
+
+          true ->
+            {:error, :forbidden}
+        end
 
       _ ->
         {:error, :forbidden}
     end
   end
 
-  defp revocation_opts(actor, event_id, attrs) do
+  defp event_allowed?(actor, event_id) do
+    case allowed_event_ids(actor) do
+      ids when is_list(ids) and ids != [] -> event_id in ids
+      _ -> false
+    end
+  end
+
+  defp allowed_event_ids(actor) do
+    Map.get(actor, :allowed_event_ids) || Map.get(actor, "allowed_event_ids")
+  end
+
+  defp revocation_opts(actor, _event_id, attrs) do
     [
       actor_type: actor_type(actor),
       actor_id: actor_id(actor),
       reason: Map.get(attrs, "reason"),
-      allowed_event_ids: [event_id],
+      allowed_event_ids: allowed_event_ids(actor),
       correlation_id: Map.get(attrs, "correlation_id") || Correlation.ensure_correlation_id(%{}),
       idempotency_key: Map.get(attrs, "idempotency_key"),
       source: @admin_source

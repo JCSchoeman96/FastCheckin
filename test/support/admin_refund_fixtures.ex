@@ -11,12 +11,26 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
 
   def dashboard_password, do: @dashboard_password
 
-  def admin_actor do
-    %{id: "admin", username: "admin", actor_type: :admin}
+  def admin_actor(opts \\ []) do
+    base = %{id: "admin", username: "admin", actor_type: :admin}
+
+    case Keyword.get(opts, :event_id) do
+      nil -> base
+      event_id -> Map.put(base, :allowed_event_ids, [event_id])
+    end
   end
 
-  def operator_actor do
-    %{id: "operator", username: "operator", actor_type: :operator}
+  def operator_actor(opts \\ []) do
+    base = %{id: "operator", username: "operator", actor_type: :operator}
+
+    case Keyword.get(opts, :event_id) do
+      nil -> base
+      event_id -> Map.put(base, :allowed_event_ids, [event_id])
+    end
+  end
+
+  def out_of_scope_admin_actor(in_scope_event_id) do
+    admin_actor(event_id: in_scope_event_id + 999_999)
   end
 
   def admin_attrs(overrides \\ %{}) do

@@ -19,11 +19,11 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   end
 
   test "mark_order_refunded_manual revokes tickets then marks order refunded" do
-    %{order_id: order_id} = Fixtures.issued_order_fixture()
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
 
     assert {:ok, %{order: order, revoke: %{failures: []}}} =
              AdminRefunds.mark_order_refunded_manual(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs()
              )
@@ -39,12 +39,34 @@ defmodule FastCheck.Sales.AdminRefundsTest do
            ) >= 1
   end
 
-  test "operator cannot mark order refunded" do
+  test "admin without allowed_event_ids cannot mark order refunded" do
     %{order_id: order_id} = Fixtures.issued_order_fixture()
 
     assert {:error, :forbidden} =
              AdminRefunds.mark_order_refunded_manual(
-               Fixtures.operator_actor(),
+               Fixtures.admin_actor(),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+  end
+
+  test "admin out of scope event cannot mark order refunded" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+
+    assert {:error, :forbidden} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.out_of_scope_admin_actor(event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+  end
+
+  test "operator cannot mark order refunded" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+
+    assert {:error, :forbidden} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.operator_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs()
              )
@@ -68,14 +90,14 @@ defmodule FastCheck.Sales.AdminRefundsTest do
 
     assert {:error, :verified_payment_required} =
              AdminRefunds.mark_order_refunded_manual(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs()
              )
   end
 
   test "mark_order_refunded_manual blocked when revoke_order_tickets returns failures" do
-    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _], event: event} =
       Fixtures.issued_order_fixture()
 
     Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
@@ -85,7 +107,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
 
     result =
       AdminRefunds.mark_order_refunded_manual(
-        Fixtures.admin_actor(),
+        Fixtures.admin_actor(event_id: event.id),
         order_id,
         Fixtures.admin_attrs()
       )
@@ -95,9 +117,9 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   end
 
   test "already refunded order is idempotent without duplicate StateTransition rows" do
-    %{order_id: order_id} = Fixtures.issued_order_fixture()
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
 
-    actor = Fixtures.admin_actor()
+    actor = Fixtures.admin_actor(event_id: event.id)
 
     assert {:ok, _} =
              AdminRefunds.mark_order_refunded_manual(actor, order_id, Fixtures.admin_attrs())
@@ -155,7 +177,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
 
     assert {:ok, %{order: order}} =
              AdminRefunds.mark_order_cancelled_manual(
-               Fixtures.admin_actor(),
+               Fixtures.admin_actor(event_id: event.id),
                order_id,
                Fixtures.admin_attrs()
              )

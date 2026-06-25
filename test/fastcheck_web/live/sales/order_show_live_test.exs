@@ -91,6 +91,34 @@ defmodule FastCheckWeb.Sales.OrderShowLiveTest do
     assert Fixtures.order_status(order_id) == "refunded"
   end
 
+  test "order revoke failure surfaces blocking error instead of success" do
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+      9_999_999,
+      ticket_issue_id
+    ])
+
+    {:ok, view, _html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{order_id}")
+
+    html =
+      render_submit(view, "revoke_order_tickets", %{
+        "admin_action" => %{
+          "reason" => "Broken attendee link",
+          "confirmed_bulk" => "true",
+          "admin_password" => Fixtures.dashboard_password(),
+          "idempotency_key" => "lv-revoke-order-fail"
+        }
+      })
+
+    assert html =~ "Could not revoke"
+    refute html =~ "Action completed successfully."
+  end
+
   defp refute_unsafe_html(html) do
     refute html =~ @raw_email
     refute html =~ @raw_phone

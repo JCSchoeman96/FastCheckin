@@ -134,7 +134,13 @@ defmodule FastCheck.Sales.AdminRefunds do
         |> Map.put("confirmed_bulk", "true")
         |> Map.put("admin_password", Map.get(attrs, "admin_password"))
 
-      AdminRevocations.revoke_order_tickets(actor, order.id, revoke_attrs)
+      case AdminRevocations.revoke_order_tickets(actor, order.id, revoke_attrs) do
+        {:error, {:revoke_failures, failures}} ->
+          {:ok, %{revoked: [], failures: failures}}
+
+        other ->
+          other
+      end
     end
   end
 
@@ -252,9 +258,32 @@ defmodule FastCheck.Sales.AdminRefunds do
 
   defp authorize_event(actor, event_id) do
     case actor_type(actor) do
-      :admin -> if is_integer(event_id), do: :ok, else: {:error, :forbidden}
-      _ -> {:error, :forbidden}
+      :admin ->
+        cond do
+          not is_integer(event_id) ->
+            {:error, :forbidden}
+
+          event_allowed?(actor, event_id) ->
+            :ok
+
+          true ->
+            {:error, :forbidden}
+        end
+
+      _ ->
+        {:error, :forbidden}
     end
+  end
+
+  defp event_allowed?(actor, event_id) do
+    case allowed_event_ids(actor) do
+      ids when is_list(ids) and ids != [] -> event_id in ids
+      _ -> false
+    end
+  end
+
+  defp allowed_event_ids(actor) do
+    Map.get(actor, :allowed_event_ids) || Map.get(actor, "allowed_event_ids")
   end
 
   defp require_reason(attrs) do
@@ -269,11 +298,11 @@ defmodule FastCheck.Sales.AdminRefunds do
       else: {:error, :invalid_admin_password}
   end
 
-  defp ash_actor(actor, event_id, attrs) do
+  defp ash_actor(actor, _event_id, attrs) do
     %{
       actor_type: actor_type(actor),
       actor_id: actor_id(actor),
-      allowed_event_ids: [event_id],
+      allowed_event_ids: allowed_event_ids(actor),
       correlation_id: Map.get(attrs, "correlation_id"),
       idempotency_key: Map.get(attrs, "idempotency_key")
     }
