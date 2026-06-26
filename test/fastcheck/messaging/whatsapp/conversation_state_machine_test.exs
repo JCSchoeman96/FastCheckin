@@ -1,5 +1,6 @@
 defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   use FastCheck.DataCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   require Ash.Query
 
@@ -10,10 +11,14 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.Order
+  alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
+  alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
   alias FastCheckWeb.SalesWebFixtures
 
   setup do
+    paystack_cleanup = PaymentSupport.setup_paystack!()
+
     WebhookTestSupport.flush_redis_keys!()
 
     event =
@@ -25,6 +30,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "General", max_per_order: 4)
 
     on_exit(fn ->
+      paystack_cleanup.()
       SalesFixtures.flush_inventory_keys(offer.id)
       WebhookTestSupport.flush_redis_keys!()
     end)
@@ -34,7 +40,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     {:ok, event: event, offer: offer, conversation: conversation}
   end
 
-  test "customer can reach awaiting_payment through number-only flow", %{
+  test "customer can reach payment_pending through number-only flow", %{
     conversation: conversation,
     event: event,
     offer: offer
@@ -66,22 +72,25 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert {:ok, result} = handle(result.conversation, "Jan Burger", "wamid.flow-7")
     assert result.conversation.state == "collecting_email"
 
-    assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-8")
+    assert {:ok, result} = handle(result.conversation, "jan@example.com", "wamid.flow-8")
     assert result.conversation.state == "confirming_order"
     assert result.response_body =~ "Bevestig"
 
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
     assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-9")
-    assert result.conversation.state == "awaiting_payment"
+    assert result.conversation.state == "payment_pending"
     assert result.response_body =~ "betaling"
     refute result.response_body =~ "https://"
-    refute result.response_body =~ "Paystack"
 
     state_data = result.conversation.state_data
     assert state_data["selected_event_id"] == event.id
     assert state_data["selected_offer_id"] == offer.id
     assert state_data["quantity"] == 2
     assert state_data["buyer_name"] == "Jan Burger"
+    assert state_data["buyer_email"] == "jan@example.com"
     assert is_integer(state_data["sales_order_id"])
+    assert is_integer(state_data["payment_attempt_id"])
     assert is_binary(state_data["order_public_reference"])
 
     assert {:ok, session} = SessionStore.get_session_by_wa_id("27821234567")
@@ -98,6 +107,15 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert order.status == "awaiting_payment"
     assert order.event_id == event.id
     assert order.buyer_phone == "+27821234567"
+
+    assert_enqueued(
+      worker: SendWhatsAppPaymentLinkWorker,
+      args: %{
+        "conversation_id" => result.conversation.id,
+        "sales_order_id" => state_data["sales_order_id"],
+        "payment_attempt_id" => state_data["payment_attempt_id"]
+      }
+    )
   end
 
   test "duplicate confirm uses checkout idempotency and creates one order", %{
@@ -112,14 +130,17 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("1", "5")
       |> progress("1", "6")
       |> progress("Jan Burger", "7")
-      |> progress("1", "8")
+      |> progress("jan@example.com", "8")
 
     assert result.conversation.state == "confirming_order"
+
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
     assert {:ok, first} = handle(result.conversation, "1", "wamid.dup-9")
     assert {:ok, second} = handle(first.conversation, "1", "wamid.dup-10")
 
-    assert first.conversation.state == "awaiting_payment"
-    assert second.conversation.state == "awaiting_payment"
+    assert first.conversation.state == "payment_pending"
+    assert second.conversation.state == "payment_pending"
 
     assert first.conversation.state_data["sales_order_id"] ==
              second.conversation.state_data["sales_order_id"]

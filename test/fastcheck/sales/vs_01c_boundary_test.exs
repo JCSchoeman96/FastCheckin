@@ -22,7 +22,10 @@ defmodule FastCheck.Sales.Vs01cBoundaryTest do
       refute File.exists?(path), "#{path} is out of scope for VS-01C"
     end
 
-    assert Path.wildcard("lib/fastcheck/workers/*payment*") == []
+    assert Path.wildcard("lib/fastcheck/workers/*payment*") == [
+             "lib/fastcheck/workers/send_whatsapp_payment_link_worker.ex"
+           ]
+
     refute File.exists?("lib/fastcheck/workers/paystack_webhook_worker.ex")
   end
 

@@ -237,6 +237,15 @@ defmodule FastCheck.Sales.Conversation do
       argument(:transition_metadata, :map)
       change(&transition_state(&1, &2, "payment_pending", :mark_conversation_payment_pending))
     end
+
+    update :request_payment_email do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_email", :request_payment_email))
+    end
   end
 
   policies do

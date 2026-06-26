@@ -53,6 +53,26 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "android/scanner-app"
   ]
 
+  @vs_19_payment_modules [
+    "lib/fastcheck/messaging/whatsapp/payment_flow.ex",
+    "lib/fastcheck/workers/send_whatsapp_payment_link_worker.ex",
+    "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex"
+  ]
+
+  @vs_19_forbidden_tokens [
+    "FastCheck.Tickets.Issuer",
+    "Issuer.issue_order",
+    "FastCheck.Attendees.Scan",
+    "FastCheckWeb.Controllers.Mobile",
+    "android/scanner-app",
+    "ReservationLedger",
+    "Req.",
+    "TransactionInitializer.initialize",
+    "mark_paid_verified",
+    "mark_ticket_issued",
+    "mark_refunded"
+  ]
+
   test "vs-16 whatsapp provider modules exist in provider boundary namespace" do
     for path <- @whatsapp_modules do
       assert File.exists?(path), "expected #{path}"
@@ -82,6 +102,17 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
       body = File.read!(file)
 
       for token <- @vs_18_forbidden_tokens do
+        refute String.contains?(body, token), "#{file} must not reference #{token}"
+      end
+    end
+  end
+
+  test "vs-19 whatsapp payment modules do not take over payment ticket or scanner authority" do
+    for file <- @vs_19_payment_modules do
+      assert File.exists?(file), "expected #{file}"
+      body = File.read!(file)
+
+      for token <- @vs_19_forbidden_tokens do
         refute String.contains?(body, token), "#{file} must not reference #{token}"
       end
     end

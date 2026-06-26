@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
   use FastCheck.DataCase, async: true
 
+  import Ecto.Query
+
   @sales_tables [
     "sales_checkout_sessions",
     "sales_delivery_attempts",
@@ -96,6 +98,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_index("sales_delivery_attempts_ticket_issue_id_status_idx")
     assert_index("sales_delivery_attempts_provider_message_id_idx")
     assert_index("sales_delivery_attempts_channel_status_inserted_at_idx")
+    assert_index("sales_delivery_attempts_order_channel_status_inserted_at_idx")
     assert_index("sales_delivery_attempts_correlation_id_idx")
 
     assert_index_where("sales_ticket_issues_ticket_code_uidx", "ticket_code IS NOT NULL")
@@ -107,6 +110,28 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_foreign_key("sales_ticket_issues", "sales_order_line_id", "sales_order_lines")
     assert_foreign_key("sales_delivery_attempts", "sales_order_id", "sales_orders")
     assert_foreign_key("sales_delivery_attempts", "ticket_issue_id", "sales_ticket_issues")
+  end
+
+  test "payment-link delivery attempts may be recorded before ticket issue exists" do
+    {order_id, _order_line_id} = insert_order_with_line!()
+
+    Repo.query!(
+      """
+      INSERT INTO sales_delivery_attempts
+        (sales_order_id, ticket_issue_id, channel, provider, recipient, status, attempt_number,
+         inserted_at, updated_at)
+      VALUES
+        ($1, NULL, 'whatsapp', 'meta', '+27***4567', 'queued', 1, now(), now())
+      """,
+      [order_id]
+    )
+
+    assert %{ticket_issue_id: nil} =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order_id,
+                 select: map(d, [:ticket_issue_id])
+             )
   end
 
   test "database constraints reject unsafe ticket and delivery skeleton data" do

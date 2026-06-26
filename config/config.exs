@@ -24,7 +24,8 @@ config :fastcheck, Oban,
     payments: 5,
     ticketing: 5,
     sales_maintenance: 3,
-    whatsapp_inbound: 5
+    whatsapp_inbound: 5,
+    whatsapp_outbound: 5
   ],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
@@ -44,6 +45,7 @@ config :fastcheck, :event_post_grace_days, 14
 config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
 config :fastcheck, :sales_checkout_expiry_sweep_batch_size, 200
 config :fastcheck, :sales_delivery_token_ttl_seconds, 90 * 24 * 60 * 60
+config :fastcheck, :whatsapp_outbound_dedupe_ttl_seconds, 600
 config :fastcheck, :sales_internal_pilot_enabled, true
 config :fastcheck, :paystack_enabled, false
 config :fastcheck, :paystack_environment, "test"

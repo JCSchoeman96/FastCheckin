@@ -170,6 +170,26 @@ defmodule FastCheck.Sales.TicketIssue do
         end
       end)
     end
+
+    update :rotate_delivery_token_for_delivery do
+      require_atomic?(false)
+      accept([:delivery_token_hash, :delivery_token_expires_at])
+      validate(present([:delivery_token_hash, :delivery_token_expires_at]))
+
+      change(fn changeset, context ->
+        status = Changeset.get_data(changeset, :status)
+        revoked_at = Changeset.get_data(changeset, :revoked_at)
+
+        if status == "issued" and is_nil(revoked_at) do
+          record_delivery_token_rotation_transition(changeset, context)
+        else
+          Changeset.add_error(changeset,
+            field: :status,
+            message: "ticket is not deliverable"
+          )
+        end
+      end)
+    end
   end
 
   policies do
@@ -293,6 +313,30 @@ defmodule FastCheck.Sales.TicketIssue do
         correlation_id: transition_correlation_id(context),
         idempotency_key: transition_idempotency_key(context),
         source: "ticket_issue.create_issued_link"
+      }
+
+      case StateTransitionSupport.record!(attrs, context) do
+        {:ok, _transition} -> {:ok, record}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
+  defp record_delivery_token_rotation_transition(changeset, context) do
+    Changeset.after_action(changeset, fn _changeset, record ->
+      attrs = %{
+        entity_type: "TicketIssue",
+        entity_id: Integer.to_string(record.id),
+        from_state: "issued",
+        to_state: "issued",
+        reason: "delivery_token_rotated_for_whatsapp",
+        metadata: %{
+          sales_order_id: record.sales_order_id,
+          reason_code: "delivery_token_rotated_for_whatsapp"
+        },
+        correlation_id: transition_correlation_id(context),
+        idempotency_key: transition_idempotency_key(context),
+        source: "ticket_issue.rotate_delivery_token_for_delivery"
       }
 
       case StateTransitionSupport.record!(attrs, context) do

@@ -14,9 +14,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias FastCheck.Messaging.WhatsApp.InputNormalizer
   alias FastCheck.Messaging.WhatsApp.MenuRenderer
   alias FastCheck.Messaging.WhatsApp.MessageCommand
+  alias FastCheck.Messaging.WhatsApp.PaymentFlow
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Repo
-  alias FastCheck.Sales.Checkout
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.TicketOffer
 
@@ -319,25 +319,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, {:ok, {:number, 1}})
        when conversation.state == "confirming_order" do
-    data = state_data(conversation)
-
-    with {:ok, checkout} <- start_checkout(command, conversation, data),
-         data <-
-           data
-           |> Map.put("sales_order_id", checkout.order.id)
-           |> Map.put("order_public_reference", checkout.order.public_reference),
-         {:ok, conversation} <-
-           transition(command, conversation, :confirm_order, %{state_data: data}) do
-      {:ok, result(conversation, MenuRenderer.awaiting_payment(language(conversation)), command)}
-    else
-      {:error, _reason} ->
-        {:ok,
-         result(
-           conversation,
-           MenuRenderer.invalid_input(language(conversation), confirm_menu(conversation)),
-           command
-         )}
-    end
+    PaymentFlow.confirm_checkout_from_conversation(command, conversation)
   end
 
   defp dispatch(command, conversation, _normalized)
@@ -351,8 +333,17 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp dispatch(command, conversation, _normalized)
-       when conversation.state in ["awaiting_payment", "payment_pending"] do
-    {:ok, result(conversation, MenuRenderer.payment_pending(language(conversation)), command)}
+       when conversation.state in [
+              "awaiting_payment",
+              "payment_pending",
+              "payment_received",
+              "ticket_issued",
+              "completed",
+              "manual_review",
+              "expired",
+              "cancelled"
+            ] do
+    PaymentFlow.respond_to_status_request(command, conversation)
   end
 
   defp dispatch(command, conversation, _normalized) do
@@ -505,30 +496,6 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       offer -> {:ok, offer}
     end
   end
-
-  defp start_checkout(command, conversation, data) do
-    event_id = Map.fetch!(data, "selected_event_id")
-    offer_id = Map.fetch!(data, "selected_offer_id")
-    quantity = Map.fetch!(data, "quantity")
-
-    input = %{
-      event_id: event_id,
-      ticket_offer_id: offer_id,
-      quantity: quantity,
-      buyer_name: Map.get(data, "buyer_name"),
-      buyer_phone: conversation.phone_e164,
-      buyer_email: Map.get(data, "buyer_email"),
-      source_channel: "whatsapp",
-      idempotency_key: checkout_idempotency_key(conversation),
-      correlation_id: command.correlation_id,
-      event_name: event_label(event_id)
-    }
-
-    Checkout.start_checkout(input, customer_actor(event_id), [])
-  end
-
-  defp checkout_idempotency_key(conversation),
-    do: "whatsapp:conversation:#{conversation.id}:checkout"
 
   defp option_ids(rows),
     do:
