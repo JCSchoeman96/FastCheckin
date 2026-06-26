@@ -17,7 +17,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
     :list_by_order_line,
     :get_by_order_line_sequence,
     :create_issued_link,
-    :mark_revoked
+    :mark_revoked,
+    :rotate_delivery_token_for_delivery
   ]
 
   @shared_forbidden_action_names [
@@ -42,11 +43,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   ]
 
   @delivery_attempt_forbidden_action_names [
-    :create_queued,
-    :mark_sent,
     :mark_delivered,
-    :mark_failed,
-    :mark_fallback_required,
     :send_whatsapp,
     :send_email,
     :send_template,
@@ -90,13 +87,28 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
              "#{inspect(resource)} must expose basic read actions"
 
       if resource == FastCheck.Sales.DeliveryAttempt do
-        refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
-               "#{inspect(resource)} must not expose mutating Ash actions"
+        create_actions = Enum.filter(actions, &(&1.type == :create))
+        update_actions = Enum.filter(actions, &(&1.type == :update))
+
+        assert Enum.map(create_actions, & &1.name) == [:create_queued]
+
+        assert Enum.map(update_actions, & &1.name) == [
+                 :mark_sent,
+                 :mark_failed,
+                 :mark_fallback_required
+               ]
+
+        refute Enum.any?(actions, &(&1.type == :destroy)),
+               "#{inspect(resource)} must not expose destroy Ash actions"
       else
         assert :create_issued_link in action_names
 
         update_actions = Enum.filter(actions, &(&1.type == :update))
-        assert Enum.map(update_actions, & &1.name) == [:mark_revoked]
+
+        assert Enum.map(update_actions, & &1.name) == [
+                 :mark_revoked,
+                 :rotate_delivery_token_for_delivery
+               ]
 
         refute Enum.any?(actions, &(&1.type == :destroy)),
                "#{inspect(resource)} must not expose destroy Ash actions"
@@ -104,6 +116,16 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
 
       if resource == FastCheck.Sales.TicketIssue do
         for expected <- @ticket_issue_expected_action_names do
+          assert expected in action_names,
+                 "#{inspect(resource)} must expose #{inspect(expected)}"
+        end
+      else
+        for expected <- [
+              :create_queued,
+              :mark_sent,
+              :mark_failed,
+              :mark_fallback_required
+            ] do
           assert expected in action_names,
                  "#{inspect(resource)} must expose #{inspect(expected)}"
         end

@@ -12,9 +12,7 @@ defmodule FastCheck.Sales.Vs01dBoundaryTest do
     {FastCheck.Sales.TicketIssue, :issue_ticket},
     {FastCheck.Sales.TicketIssue, :mark_issued},
     {FastCheck.Sales.TicketIssue, :revoke_ticket},
-    {FastCheck.Sales.DeliveryAttempt, :send_whatsapp},
-    {FastCheck.Sales.DeliveryAttempt, :mark_sent},
-    {FastCheck.Sales.DeliveryAttempt, :create_queued}
+    {FastCheck.Sales.DeliveryAttempt, :send_whatsapp}
   ]
 
   test "later Sales resources remain absent in VS-01D" do

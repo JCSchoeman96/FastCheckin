@@ -52,6 +52,41 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
       filter(expr(status == ^arg(:status)))
     end
+
+    create :create_queued do
+      accept([
+        :sales_order_id,
+        :ticket_issue_id,
+        :channel,
+        :provider,
+        :recipient,
+        :template_name,
+        :within_whatsapp_window,
+        :attempt_number,
+        :correlation_id
+      ])
+
+      validate(present([:sales_order_id, :channel, :attempt_number]))
+      change(set_attribute(:status, "queued"))
+    end
+
+    update :mark_sent do
+      require_atomic?(false)
+      accept([:provider_message_id, :sent_at])
+      change(set_attribute(:status, "sent"))
+    end
+
+    update :mark_failed do
+      require_atomic?(false)
+      accept([:provider_error_code, :provider_error_message, :failure_reason])
+      change(set_attribute(:status, "failed"))
+    end
+
+    update :mark_fallback_required do
+      require_atomic?(false)
+      accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
+      change(set_attribute(:status, "fallback_required"))
+    end
   end
 
   policies do
@@ -127,7 +162,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
     belongs_to :ticket_issue, FastCheck.Sales.TicketIssue do
       source_attribute(:ticket_issue_id)
       attribute_type(:integer)
-      allow_nil?(false)
+      allow_nil?(true)
     end
   end
 end

@@ -33,7 +33,8 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     :return_to_main_menu,
     :cancel_conversation,
     :handoff_conversation,
-    :mark_conversation_payment_pending
+    :mark_conversation_payment_pending,
+    :request_payment_email
   ]
 
   @forbidden_action_names [
