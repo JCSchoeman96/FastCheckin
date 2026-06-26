@@ -10,6 +10,7 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
 
   require Logger
 
+  alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.Config
   alias FastCheck.Messaging.WhatsApp.Dedupe
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
@@ -114,19 +115,31 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
     if Application.get_env(:fastcheck, :whatsapp_inbound_force_enqueue_failure, false) do
       {:error, :forced_enqueue_failure}
     else
-      WhatsAppInboundWorker.new(%{
-        "provider_message_id" => command.provider_message_id,
-        "wa_id_hash" => hash_id(command.wa_id),
-        "phone_e164_redacted" =>
-          FastCheck.Observability.Redactor.redact_phone(command.phone_e164),
-        "message_type" => command.message_type,
-        "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
-        "conversation_id" => conversation.id,
-        "correlation_id" => command.correlation_id,
-        "received_at" => DateTime.to_iso8601(command.received_at),
-        "raw_payload_hash" => command.raw_payload_hash
-      })
-      |> Oban.insert()
+      with {:ok, encrypted_text_body} <- encrypted_text_body(command.text_body) do
+        WhatsAppInboundWorker.new(%{
+          "provider_message_id" => command.provider_message_id,
+          "wa_id_hash" => hash_id(command.wa_id),
+          "phone_e164_redacted" =>
+            FastCheck.Observability.Redactor.redact_phone(command.phone_e164),
+          "message_type" => command.message_type,
+          "text_body_encrypted" => encrypted_text_body,
+          "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
+          "conversation_id" => conversation.id,
+          "correlation_id" => command.correlation_id,
+          "received_at" => DateTime.to_iso8601(command.received_at),
+          "raw_payload_hash" => command.raw_payload_hash
+        })
+        |> Oban.insert()
+      end
+    end
+  end
+
+  defp encrypted_text_body(nil), do: {:ok, nil}
+
+  defp encrypted_text_body(text_body) when is_binary(text_body) do
+    case Crypto.encrypt(text_body) do
+      {:ok, encrypted} -> {:ok, encrypted}
+      {:error, _reason} -> {:error, :text_body_encryption_failed}
     end
   end
 

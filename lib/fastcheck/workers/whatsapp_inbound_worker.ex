@@ -14,6 +14,10 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   require Logger
 
   alias Ash.Query
+  alias FastCheck.Crypto
+  alias FastCheck.Messaging.WhatsApp.Client
+  alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
+  alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Observability.Correlation
   alias FastCheck.Sales.Conversation
 
@@ -46,7 +50,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
       )
 
       Logger.info("whatsapp_inbound_worker_received", metadata)
-      :ok
+      handle_flow(args, conversation)
     end
   end
 
@@ -64,6 +68,66 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
     |> Map.put_new("wa_id_hash", provider_hash(Map.get(stringified, "wa_id")))
     |> Map.update("text_body_redacted_or_reference", nil, fn _ -> "[FILTERED_MESSAGE]" end)
   end
+
+  defp handle_flow(args, conversation) do
+    case decrypt_text_body(Map.get(args, "text_body_encrypted")) do
+      {:ok, text_body} ->
+        command = command_from_args(args, conversation, text_body)
+
+        with {:ok, result} <- ConversationStateMachine.handle_inbound(command, conversation),
+             :ok <- maybe_send_reply(conversation, command, result) do
+          :ok
+        else
+          {:error, %{retryable?: true}} -> {:error, :whatsapp_send_retryable}
+          {:error, reason} -> {:error, reason}
+        end
+
+      :no_text ->
+        :ok
+
+      {:error, _reason} ->
+        {:error, :invalid_encrypted_text_body}
+    end
+  end
+
+  defp decrypt_text_body(nil), do: :no_text
+  defp decrypt_text_body(""), do: :no_text
+  defp decrypt_text_body(value) when is_binary(value), do: Crypto.decrypt(value)
+
+  defp maybe_send_reply(_conversation, _command, %{send_reply?: false}), do: :ok
+
+  defp maybe_send_reply(conversation, command, result) do
+    case Client.send_text(conversation.phone_e164, result.response_body,
+           correlation_id: command.correlation_id
+         ) do
+      {:ok, _response} -> :ok
+      {:error, response} -> {:error, response}
+    end
+  end
+
+  defp command_from_args(args, conversation, text_body) do
+    %MessageCommand{
+      provider: "meta",
+      provider_message_id: Map.fetch!(args, "provider_message_id"),
+      phone_e164: conversation.phone_e164,
+      wa_id: conversation.wa_id,
+      message_type: Map.get(args, "message_type", "text"),
+      text_body: text_body,
+      received_at: parse_received_at(Map.get(args, "received_at")),
+      raw_payload_hash: Map.get(args, "raw_payload_hash", ""),
+      correlation_id: Map.get(args, "correlation_id"),
+      metadata: %{}
+    }
+  end
+
+  defp parse_received_at(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} -> DateTime.truncate(datetime, :second)
+      _ -> DateTime.utc_now() |> DateTime.truncate(:second)
+    end
+  end
+
+  defp parse_received_at(_value), do: DateTime.utc_now() |> DateTime.truncate(:second)
 
   defp redact_phone(nil), do: nil
 

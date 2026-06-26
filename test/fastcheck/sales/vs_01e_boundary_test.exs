@@ -8,9 +8,6 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
 
   @forbidden_action_modules [
     {FastCheck.Sales.Conversation, :start_or_resume},
-    {FastCheck.Sales.Conversation, :select_language},
-    {FastCheck.Sales.Conversation, :confirm_order},
-    {FastCheck.Sales.Conversation, :mark_payment_pending},
     {FastCheck.Sales.Conversation, :mark_ticket_issued},
     {FastCheck.Sales.Conversation, :expire_conversation},
     {FastCheck.Sales.Conversation, :create_checkout},

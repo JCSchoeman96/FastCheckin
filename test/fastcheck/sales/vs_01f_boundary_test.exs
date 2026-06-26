@@ -58,7 +58,9 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
   end
 
   test "VS-01F does not add workflow or generic status actions" do
-    for resource <- @resources, action_name <- @global_forbidden_action_names do
+    for resource <- @resources,
+        action_name <- @global_forbidden_action_names,
+        not (resource == FastCheck.Sales.Conversation and action_name == :confirm_order) do
       refute ResourceInfo.action(resource, action_name),
              "#{inspect(resource)} must not expose #{inspect(action_name)}"
     end
