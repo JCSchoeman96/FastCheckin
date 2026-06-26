@@ -3,9 +3,7 @@ defmodule FastCheck.Sales.CoreResourceBoundaryTest do
 
   @forbidden_resource_modules []
 
-  @forbidden_paths [
-    "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
-  ]
+  @forbidden_paths []
 
   test "later Sales resources are not implemented through VS-01D" do
     for module <- @forbidden_resource_modules do

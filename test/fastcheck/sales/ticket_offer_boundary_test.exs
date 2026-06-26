@@ -3,9 +3,7 @@ defmodule FastCheck.Sales.TicketOfferBoundaryTest do
 
   alias Ash.Resource.Info, as: ResourceInfo
 
-  @forbidden_paths [
-    "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
-  ]
+  @forbidden_paths []
 
   @forbidden_action_names [
     :create_session,

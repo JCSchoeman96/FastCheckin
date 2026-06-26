@@ -3,8 +3,7 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
 
   @forbidden_paths [
     "lib/fastcheck/workers/verify_payment_worker.ex",
-    "lib/fastcheck/workers/delivery_attempt_worker.ex",
-    "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
+    "lib/fastcheck/workers/delivery_attempt_worker.ex"
   ]
 
   @forbidden_action_modules [
@@ -13,7 +12,9 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
     {FastCheck.Sales.Conversation, :confirm_order},
     {FastCheck.Sales.Conversation, :mark_payment_pending},
     {FastCheck.Sales.Conversation, :mark_ticket_issued},
-    {FastCheck.Sales.Conversation, :expire_conversation}
+    {FastCheck.Sales.Conversation, :expire_conversation},
+    {FastCheck.Sales.Conversation, :create_checkout},
+    {FastCheck.Sales.Conversation, :send_payment_link}
   ]
 
   test "forbidden runtime paths remain absent in VS-01E" do

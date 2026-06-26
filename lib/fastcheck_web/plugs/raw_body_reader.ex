@@ -1,8 +1,8 @@
 defmodule FastCheckWeb.Plugs.RawBodyReader do
   @moduledoc """
-  Plug.Parsers body reader that preserves raw request bytes for Paystack webhooks.
+  Plug.Parsers body reader that preserves raw request bytes for provider webhooks.
 
-  Only `POST /api/sales/paystack/webhook` stores `conn.private[:raw_body]`. All
+  Only approved provider webhook POSTs store `conn.private[:raw_body]`. All
   other routes read the body without retaining it.
 
   Webhook routes perform a single `read_body/2` call so Plug's `length` and
@@ -12,7 +12,10 @@ defmodule FastCheckWeb.Plugs.RawBodyReader do
 
   alias Plug.Conn
 
-  @webhook_path "/api/sales/paystack/webhook"
+  @webhook_paths MapSet.new([
+                   "/api/sales/paystack/webhook",
+                   "/api/v1/webhooks/whatsapp"
+                 ])
 
   @spec read_body(Plug.Conn.t(), keyword()) ::
           {:ok, binary(), Plug.Conn.t()} | {:more, binary(), Plug.Conn.t()} | {:error, term()}
@@ -35,6 +38,6 @@ defmodule FastCheckWeb.Plugs.RawBodyReader do
   end
 
   defp store_raw_body?(conn) do
-    conn.method == "POST" and conn.request_path == @webhook_path
+    conn.method == "POST" and MapSet.member?(@webhook_paths, conn.request_path)
   end
 end

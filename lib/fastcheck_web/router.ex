@@ -114,6 +114,15 @@ defmodule FastCheckWeb.Router do
     post "/paystack/webhook", PaystackController, :create
   end
 
+  scope "/api/v1/webhooks", FastCheckWeb.Webhooks do
+    # WhatsApp intentionally uses the existing provider webhook pipeline rather than
+    # the generic :api pipeline because Meta POST verification depends on raw bytes.
+    pipe_through :webhook
+
+    get "/whatsapp", WhatsAppController, :verify
+    post "/whatsapp", WhatsAppController, :receive
+  end
+
   scope "/api/v1", FastCheckWeb do
     pipe_through :api_authenticated
 

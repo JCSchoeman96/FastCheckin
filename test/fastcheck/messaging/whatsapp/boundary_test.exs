@@ -48,8 +48,9 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     end
   end
 
-  test "vs-16 does not add webhook routes, workers, or android scanner changes" do
-    refute File.exists?("lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex")
+  test "vs-17 adds only approved inbound webhook and worker paths" do
+    assert File.exists?("lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex")
+    assert File.exists?("lib/fastcheck/workers/whatsapp_inbound_worker.ex")
     refute File.exists?("lib/fastcheck/workers/send_whatsapp_ticket_worker.ex")
     assert Path.wildcard("android/scanner-app/**/*") != []
   end

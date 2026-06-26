@@ -7,7 +7,16 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
 
   @resource FastCheck.Sales.Conversation
 
-  @read_action_names [:read, :get_by_id, :list_recent, :list_needing_human, :list_by_phone]
+  @read_action_names [
+    :read,
+    :get_by_id,
+    :list_recent,
+    :list_needing_human,
+    :list_by_phone,
+    :list_by_wa_id
+  ]
+
+  @checkpoint_action_names [:create_inbound_checkpoint, :update_inbound_checkpoint]
 
   @forbidden_action_names [
     :create,
@@ -48,15 +57,20 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     assert ResourceInfo.data_layer(@resource) == DataLayer
   end
 
-  test "conversation exposes read-only actions only" do
+  test "conversation exposes read and VS-17 checkpoint-only actions" do
     actions = ResourceInfo.actions(@resource)
     action_names = MapSet.new(actions, & &1.name)
 
     assert MapSet.subset?(MapSet.new(@read_action_names), action_names),
            "Conversation must expose basic read/list actions"
 
-    refute Enum.any?(actions, &(&1.type in [:create, :update, :destroy])),
-           "Conversation must not expose mutating Ash actions"
+    mutating_action_names =
+      actions
+      |> Enum.filter(&(&1.type in [:create, :update, :destroy]))
+      |> MapSet.new(& &1.name)
+
+    assert mutating_action_names == MapSet.new(@checkpoint_action_names),
+           "Conversation may only expose VS-17 checkpoint mutating actions"
 
     for forbidden <- @forbidden_action_names do
       refute forbidden in action_names,
