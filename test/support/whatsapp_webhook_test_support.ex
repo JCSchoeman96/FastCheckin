@@ -16,6 +16,7 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
     :whatsapp_session_ttl_seconds,
     :whatsapp_dedupe_ttl_seconds,
     :whatsapp_inbound_queue_enabled,
+    :whatsapp_inbound_force_enqueue_failure,
     :whatsapp_request_fun
   ]
 
@@ -36,6 +37,7 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
     Application.put_env(:fastcheck, :whatsapp_session_ttl_seconds, 86_400)
     Application.put_env(:fastcheck, :whatsapp_dedupe_ttl_seconds, 86_400)
     Application.put_env(:fastcheck, :whatsapp_inbound_queue_enabled, true)
+    Application.put_env(:fastcheck, :whatsapp_inbound_force_enqueue_failure, false)
 
     fn ->
       Enum.each(snapshot, fn {key, value} ->

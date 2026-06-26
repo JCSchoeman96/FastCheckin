@@ -59,9 +59,9 @@ defmodule FastCheck.Messaging.WhatsApp.InboundNormalizer do
        when is_map(message) do
     with id when is_binary(id) and id != "" <- Map.get(message, "id"),
          wa_id when is_binary(wa_id) and wa_id != "" <- Map.get(message, "from"),
-         phone_e164 when is_binary(phone_e164) <- phone_e164(wa_id, contacts_by_wa_id) do
-      message_type = normalize_message_type(Map.get(message, "type"))
-
+         phone_e164 when is_binary(phone_e164) <- phone_e164(wa_id, contacts_by_wa_id),
+         message_type when is_binary(message_type) <-
+           normalize_message_type(Map.get(message, "type")) do
       %MessageCommand{
         provider: "meta",
         provider_message_id: id,
@@ -94,7 +94,7 @@ defmodule FastCheck.Messaging.WhatsApp.InboundNormalizer do
   end
 
   defp normalize_message_type(type) when type in ["text", "interactive", "button"], do: type
-  defp normalize_message_type(_type), do: "unknown"
+  defp normalize_message_type(_type), do: nil
 
   defp text_body(%{"text" => %{"body" => body}}, "text") when is_binary(body) do
     body

@@ -3,11 +3,13 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookVerifier do
   Pure Meta WhatsApp webhook challenge and raw-body signature verification.
   """
 
+  @max_challenge_bytes 256
   @signature_prefix "sha256="
 
   @spec verify_challenge(map(), String.t() | nil) ::
           {:ok, String.t()}
-          | {:error, :invalid_mode | :invalid_verify_token | :missing_challenge}
+          | {:error,
+             :invalid_mode | :invalid_verify_token | :missing_challenge | :invalid_challenge}
   def verify_challenge(params, configured_verify_token) when is_map(params) do
     mode = Map.get(params, "hub.mode")
     token = Map.get(params, "hub.verify_token")
@@ -22,6 +24,9 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookVerifier do
 
       not present?(challenge) ->
         {:error, :missing_challenge}
+
+      not safe_challenge?(challenge) ->
+        {:error, :invalid_challenge}
 
       true ->
         {:ok, challenge}
@@ -73,4 +78,9 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookVerifier do
   defp secure_equal?(_left, _right), do: false
 
   defp present?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp safe_challenge?(challenge) do
+    byte_size(challenge) <= @max_challenge_bytes and
+      String.match?(challenge, ~r/\A[0-9A-Za-z_.-]+\z/)
+  end
 end

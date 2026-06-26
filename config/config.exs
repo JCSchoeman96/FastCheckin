@@ -79,6 +79,7 @@ config :fastcheck, :whatsapp_sandbox_mode, true
 config :fastcheck, :whatsapp_session_ttl_seconds, 86_400
 config :fastcheck, :whatsapp_dedupe_ttl_seconds, 86_400
 config :fastcheck, :whatsapp_inbound_queue_enabled, true
+config :fastcheck, :whatsapp_inbound_force_enqueue_failure, false
 config :fastcheck, :whatsapp_request_fun, &Req.request/1
 
 # Configures the endpoint

@@ -32,20 +32,15 @@ defmodule FastCheck.Messaging.WhatsApp.InboundNormalizerTest do
     assert command.correlation_id == "corr-1"
   end
 
-  test "unsupported message types return safe commands without raw media payloads" do
+  test "unsupported message types are safe no-ops" do
     raw_body = WebhookTestSupport.unsupported_body(provider_message_id: "wamid.image-1")
     payload = Jason.decode!(raw_body)
 
-    assert {:ok, [%MessageCommand{} = command]} =
+    assert {:ok, []} =
              InboundNormalizer.normalize(payload,
                raw_payload_hash: "hash-1",
                correlation_id: "corr-2"
              )
-
-    assert command.message_type == "unknown"
-    assert command.text_body == nil
-    assert command.interactive_payload == %{}
-    refute inspect(command) =~ "media-secret"
   end
 
   test "status-only payloads are safe no-ops" do

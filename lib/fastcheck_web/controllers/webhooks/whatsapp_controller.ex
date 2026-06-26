@@ -21,7 +21,9 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
   def verify(conn, params) do
     with {:ok, config} <- Config.validate_for_webhook(),
          {:ok, challenge} <- WebhookVerifier.verify_challenge(params, config.verify_token) do
-      send_resp(conn, 200, challenge)
+      conn
+      |> put_resp_content_type("text/plain")
+      |> send_resp(200, challenge)
     else
       {:error, %{status: :missing_config}} -> send_resp(conn, 503, "")
       {:error, :invalid_verify_token} -> send_resp(conn, 403, "")
@@ -109,18 +111,23 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
   end
 
   defp enqueue_worker(command, conversation) do
-    WhatsAppInboundWorker.new(%{
-      "provider_message_id" => command.provider_message_id,
-      "wa_id_hash" => hash_id(command.wa_id),
-      "phone_e164_redacted" => FastCheck.Observability.Redactor.redact_phone(command.phone_e164),
-      "message_type" => command.message_type,
-      "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
-      "conversation_id" => conversation.id,
-      "correlation_id" => command.correlation_id,
-      "received_at" => DateTime.to_iso8601(command.received_at),
-      "raw_payload_hash" => command.raw_payload_hash
-    })
-    |> Oban.insert()
+    if Application.get_env(:fastcheck, :whatsapp_inbound_force_enqueue_failure, false) do
+      {:error, :forced_enqueue_failure}
+    else
+      WhatsAppInboundWorker.new(%{
+        "provider_message_id" => command.provider_message_id,
+        "wa_id_hash" => hash_id(command.wa_id),
+        "phone_e164_redacted" =>
+          FastCheck.Observability.Redactor.redact_phone(command.phone_e164),
+        "message_type" => command.message_type,
+        "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
+        "conversation_id" => conversation.id,
+        "correlation_id" => command.correlation_id,
+        "received_at" => DateTime.to_iso8601(command.received_at),
+        "raw_payload_hash" => command.raw_payload_hash
+      })
+      |> Oban.insert()
+    end
   end
 
   defp hash_id(nil), do: nil

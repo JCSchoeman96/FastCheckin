@@ -4,6 +4,7 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
 
   import ExUnit.CaptureLog
 
+  alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Workers.WhatsAppInboundWorker
 
@@ -30,6 +31,18 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
       })
 
     assert response(conn, 200) == "challenge-123"
+    assert get_resp_header(conn, "content-type") == ["text/plain; charset=utf-8"]
+  end
+
+  test "GET verification rejects unsafe challenge values", %{conn: conn} do
+    conn =
+      get(conn, @webhook_path, %{
+        "hub.mode" => "subscribe",
+        "hub.verify_token" => WebhookTestSupport.verify_token(),
+        "hub.challenge" => String.duplicate("a", 257)
+      })
+
+    assert response(conn, 400) == ""
   end
 
   test "GET verification rejects wrong token", %{conn: conn} do
@@ -157,8 +170,71 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     refute_enqueued(worker: WhatsAppInboundWorker)
   end
 
+  test "unsupported media payload is accepted as no-op without state", %{conn: conn} do
+    wa_id = "27821234567"
+
+    body =
+      WebhookTestSupport.unsupported_body(provider_message_id: "wamid.unsupported-controller")
+
+    signature = WebhookTestSupport.sign_body(body)
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", signature)
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 0
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, ["EXISTS", SessionStore.key_for_wa_id(wa_id)])
+
+    refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
+  test "post-dedupe enqueue failure releases claim and allows signed retry", %{conn: conn} do
+    provider_message_id = "wamid.compensation-controller"
+    body = WebhookTestSupport.text_body(provider_message_id: provider_message_id)
+    signature = WebhookTestSupport.sign_body(body)
+
+    Application.put_env(:fastcheck, :whatsapp_inbound_force_enqueue_failure, true)
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", signature)
+      |> post(@webhook_path, body)
+
+    assert response(conn, 503) == ""
+    assert {:ok, nil} = Redix.command(FastCheck.Redix, ["GET", dedupe_key(provider_message_id)])
+    refute_enqueued(worker: WhatsAppInboundWorker)
+
+    Application.put_env(:fastcheck, :whatsapp_inbound_force_enqueue_failure, false)
+
+    build_conn()
+    |> put_req_header("content-type", "application/json")
+    |> put_req_header("x-hub-signature-256", signature)
+    |> post(@webhook_path, body)
+    |> response(200)
+
+    assert count_conversations() == 1
+
+    assert_enqueued(
+      worker: WhatsAppInboundWorker,
+      args: %{
+        "provider_message_id" => provider_message_id,
+        "message_type" => "text"
+      }
+    )
+  end
+
   defp count_conversations do
     %{rows: [[count]]} = FastCheck.Repo.query!("SELECT count(*)::int FROM sales_conversations")
     count
+  end
+
+  defp dedupe_key(provider_message_id) do
+    "fastcheck:whatsapp:dedupe:message:#{provider_message_id}"
   end
 end
