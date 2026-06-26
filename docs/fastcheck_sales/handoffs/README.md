@@ -37,4 +37,5 @@ what future slices can rely on, and what remains deferred.
 - [VS-15A — Core Revocation and Scanner Visibility](./VS-15A_IMPLEMENTATION_HANDOFF.md)
 - [VS-15B — Admin Refund and Revocation Operations](./VS-15B_IMPLEMENTATION_HANDOFF.md)
 - [VS-16 — Meta Cloud API Outbound Client](./VS-16_IMPLEMENTATION_HANDOFF.md)
+- [VS-17 — Meta Inbound Webhook and Session State](./VS-17_IMPLEMENTATION_HANDOFF.md)
 - [VS-21A — Observability Naming and Log Redaction Foundation](./VS-21A_IMPLEMENTATION_HANDOFF.md)
