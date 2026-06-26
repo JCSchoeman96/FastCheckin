@@ -16,7 +16,25 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     :list_by_wa_id
   ]
 
-  @checkpoint_action_names [:create_inbound_checkpoint, :update_inbound_checkpoint]
+  @checkpoint_action_names [
+    :create_inbound_checkpoint,
+    :update_inbound_checkpoint,
+    :start_language_selection,
+    :start_default_main_menu,
+    :select_language,
+    :choose_buy_tickets,
+    :select_event,
+    :select_ticket_type,
+    :submit_quantity,
+    :submit_buyer_name,
+    :submit_buyer_email,
+    :skip_optional_email_after_name,
+    :confirm_order,
+    :return_to_main_menu,
+    :cancel_conversation,
+    :handoff_conversation,
+    :mark_conversation_payment_pending
+  ]
 
   @forbidden_action_names [
     :create,
@@ -26,14 +44,11 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     :update_status,
     :update_state,
     :start_or_resume,
-    :select_language,
     :move_to_main_menu,
-    :select_event,
     :select_offer,
     :select_quantity,
     :collect_buyer_name,
     :collect_email,
-    :confirm_order,
     :mark_awaiting_payment,
     :mark_payment_pending,
     :mark_ticket_issued,
@@ -57,7 +72,7 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     assert ResourceInfo.data_layer(@resource) == DataLayer
   end
 
-  test "conversation exposes read and VS-17 checkpoint-only actions" do
+  test "conversation exposes read plus VS-17 checkpoint and VS-18 named actions" do
     actions = ResourceInfo.actions(@resource)
     action_names = MapSet.new(actions, & &1.name)
 
@@ -70,7 +85,7 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
       |> MapSet.new(& &1.name)
 
     assert mutating_action_names == MapSet.new(@checkpoint_action_names),
-           "Conversation may only expose VS-17 checkpoint mutating actions"
+           "Conversation may only expose VS-17 checkpoint and VS-18 named mutating actions"
 
     for forbidden <- @forbidden_action_names do
       refute forbidden in action_names,

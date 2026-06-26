@@ -229,6 +229,33 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     )
   end
 
+  test "text encryption failure fails closed before enqueue and releases dedupe claim", %{
+    conn: conn
+  } do
+    provider_message_id = "wamid.encrypt-failure-controller"
+    body = WebhookTestSupport.text_body(provider_message_id: provider_message_id, text: "1")
+    signature = WebhookTestSupport.sign_body(body)
+    encryption_key = Application.get_env(:fastcheck, :encryption_key)
+
+    on_exit(fn ->
+      if is_nil(encryption_key),
+        do: Application.delete_env(:fastcheck, :encryption_key),
+        else: Application.put_env(:fastcheck, :encryption_key, encryption_key)
+    end)
+
+    Application.delete_env(:fastcheck, :encryption_key)
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", signature)
+      |> post(@webhook_path, body)
+
+    assert response(conn, 503) == ""
+    refute_enqueued(worker: WhatsAppInboundWorker)
+    assert {:ok, nil} = Redix.command(FastCheck.Redix, ["GET", dedupe_key(provider_message_id)])
+  end
+
   defp count_conversations do
     %{rows: [[count]]} = FastCheck.Repo.query!("SELECT count(*)::int FROM sales_conversations")
     count

@@ -12,6 +12,20 @@ defmodule FastCheck.Sales.Conversation do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
+  alias Ash.Changeset
+  alias FastCheck.Sales.StateTransitionSupport
+
+  @vs_18_checkpoint_fields [
+    :preferred_language,
+    :state_data,
+    :last_inbound_message_id,
+    :last_outbound_message_id,
+    :last_message_at,
+    :expires_at,
+    :needs_human,
+    :handoff_reason
+  ]
+
   postgres do
     table("sales_conversations")
     repo(FastCheck.Repo)
@@ -85,6 +99,143 @@ defmodule FastCheck.Sales.Conversation do
         :needs_human,
         :handoff_reason
       ])
+    end
+
+    update :start_language_selection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "selecting_language", :start_language_selection))
+    end
+
+    update :start_default_main_menu do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "main_menu", :start_default_main_menu))
+    end
+
+    update :select_language do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "main_menu", :select_language))
+    end
+
+    update :choose_buy_tickets do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "selecting_event", :choose_buy_tickets))
+    end
+
+    update :select_event do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "selecting_ticket_type", :select_event))
+    end
+
+    update :select_ticket_type do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_quantity", :select_ticket_type))
+    end
+
+    update :submit_quantity do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_buyer_name", :submit_quantity))
+    end
+
+    update :submit_buyer_name do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_email", :submit_buyer_name))
+    end
+
+    update :submit_buyer_email do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "confirming_order", :submit_buyer_email))
+    end
+
+    update :skip_optional_email_after_name do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "confirming_order", :skip_optional_email_after_name))
+    end
+
+    update :confirm_order do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "awaiting_payment", :confirm_order))
+    end
+
+    update :return_to_main_menu do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "main_menu", :return_to_main_menu))
+    end
+
+    update :cancel_conversation do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:reason, :string)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "cancelled", :cancel_conversation))
+    end
+
+    update :handoff_conversation do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:reason, :string)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "manual_review", :handoff_conversation))
+    end
+
+    update :mark_conversation_payment_pending do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "payment_pending", :mark_conversation_payment_pending))
     end
   end
 
@@ -161,5 +312,58 @@ defmodule FastCheck.Sales.Conversation do
     has_many :orders, FastCheck.Sales.Order do
       destination_attribute(:sales_conversation_id)
     end
+  end
+
+  defp transition_state(changeset, context, to_state, action_name) do
+    from_state = Changeset.get_data(changeset, :state)
+
+    reason =
+      Changeset.get_argument(changeset, :reason) ||
+        Changeset.get_attribute(changeset, :handoff_reason)
+
+    action_context = action_context(changeset, context)
+
+    transition_metadata =
+      Changeset.get_argument(changeset, :transition_metadata) ||
+        Map.get(action_context, :transition_metadata, %{})
+
+    correlation_id =
+      Changeset.get_argument(changeset, :correlation_id) ||
+        Map.get(action_context, :correlation_id)
+
+    idempotency_key =
+      Changeset.get_argument(changeset, :idempotency_key) ||
+        Map.get(action_context, :idempotency_key)
+
+    changeset
+    |> Changeset.force_change_attribute(:state, to_state)
+    |> Changeset.after_action(fn _changeset, record ->
+      case StateTransitionSupport.record!(
+             %{
+               entity_type: "conversation",
+               entity_id: Integer.to_string(record.id),
+               from_state: from_state,
+               to_state: record.state,
+               reason: reason,
+               metadata: transition_metadata,
+               correlation_id: correlation_id,
+               idempotency_key: idempotency_key,
+               source: "whatsapp.conversation.#{action_name}"
+             },
+             action_context
+           ) do
+        {:ok, _transition} -> {:ok, record}
+        {:error, error} -> {:error, error}
+      end
+    end)
+  end
+
+  defp action_context(changeset, context) do
+    changeset_context = Map.get(changeset, :context) || %{}
+    nested_context = Map.get(context, :context) || %{}
+
+    context
+    |> Map.merge(nested_context)
+    |> Map.merge(changeset_context)
   end
 end

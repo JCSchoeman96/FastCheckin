@@ -219,7 +219,8 @@ defmodule FastCheck.Sales.TicketOffer do
 
     field_policy :* do
       authorize_if(
-        {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system, :admin, :operator]}
+        {FastCheck.Sales.PolicyChecks.ActorTypeIn,
+         actor_types: [:system, :admin, :operator, :customer_session]}
       )
     end
   end
