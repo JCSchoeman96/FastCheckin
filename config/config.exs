@@ -23,7 +23,8 @@ config :fastcheck, Oban,
     sales_inventory: 5,
     payments: 5,
     ticketing: 5,
-    sales_maintenance: 3
+    sales_maintenance: 3,
+    whatsapp_inbound: 5
   ],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
@@ -68,11 +69,16 @@ config :fastcheck, :whatsapp_enabled, false
 config :fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.com"
 config :fastcheck, :whatsapp_graph_api_version, nil
 config :fastcheck, :whatsapp_phone_number_id, nil
+config :fastcheck, :whatsapp_business_account_id, nil
 config :fastcheck, :whatsapp_access_token, nil
 config :fastcheck, :whatsapp_app_secret, nil
+config :fastcheck, :whatsapp_verify_token, nil
 config :fastcheck, :whatsapp_request_timeout_ms, 5_000
 config :fastcheck, :whatsapp_receive_timeout_ms, 10_000
 config :fastcheck, :whatsapp_sandbox_mode, true
+config :fastcheck, :whatsapp_session_ttl_seconds, 86_400
+config :fastcheck, :whatsapp_dedupe_ttl_seconds, 86_400
+config :fastcheck, :whatsapp_inbound_queue_enabled, true
 config :fastcheck, :whatsapp_request_fun, &Req.request/1
 
 # Configures the endpoint
@@ -132,6 +138,7 @@ logger_metadata = [
   :conversation_id,
   :provider,
   :provider_reference_redacted,
+  :message_type,
   :channel,
   :reason_code,
   :worker,

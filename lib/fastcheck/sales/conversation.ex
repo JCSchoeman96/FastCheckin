@@ -43,9 +43,56 @@ defmodule FastCheck.Sales.Conversation do
 
       filter(expr(phone_e164 == ^arg(:phone_e164)))
     end
+
+    read :list_by_wa_id do
+      argument :wa_id, :string do
+        allow_nil?(false)
+      end
+
+      filter(expr(wa_id == ^arg(:wa_id)))
+    end
+
+    create :create_inbound_checkpoint do
+      accept([
+        :phone_e164,
+        :wa_id,
+        :session_key,
+        :rate_limit_key,
+        :preferred_language,
+        :state,
+        :state_data,
+        :last_inbound_message_id,
+        :last_message_at,
+        :expires_at,
+        :needs_human,
+        :handoff_reason
+      ])
+    end
+
+    update :update_inbound_checkpoint do
+      require_atomic?(false)
+
+      accept([
+        :phone_e164,
+        :wa_id,
+        :session_key,
+        :rate_limit_key,
+        :preferred_language,
+        :state_data,
+        :last_inbound_message_id,
+        :last_message_at,
+        :expires_at,
+        :needs_human,
+        :handoff_reason
+      ])
+    end
   end
 
   policies do
+    bypass {FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]} do
+      authorize_if(always())
+    end
+
     policy action_type(:read) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})

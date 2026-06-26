@@ -226,6 +226,12 @@ whatsapp_phone_number_id =
     value -> String.trim(value)
   end
 
+whatsapp_business_account_id =
+  case System.get_env("META_WHATSAPP_BUSINESS_ACCOUNT_ID") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
 whatsapp_access_token =
   case System.get_env("META_WHATSAPP_ACCESS_TOKEN") do
     nil -> nil
@@ -234,6 +240,12 @@ whatsapp_access_token =
 
 whatsapp_app_secret =
   case System.get_env("META_WHATSAPP_APP_SECRET") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+whatsapp_verify_token =
+  case System.get_env("META_WHATSAPP_VERIFY_TOKEN") do
     nil -> nil
     value -> String.trim(value)
   end
@@ -286,6 +298,34 @@ whatsapp_sandbox_mode =
     _ -> false
   end
 
+whatsapp_session_ttl_raw =
+  System.get_env("WHATSAPP_SESSION_TTL_SECONDS", "86400")
+  |> String.trim()
+
+whatsapp_session_ttl_seconds =
+  case Integer.parse(whatsapp_session_ttl_raw) do
+    {seconds, ""} when seconds > 0 -> seconds
+    _ -> 86_400
+  end
+
+whatsapp_dedupe_ttl_raw =
+  System.get_env("WHATSAPP_DEDUPE_TTL_SECONDS", "86400")
+  |> String.trim()
+
+whatsapp_dedupe_ttl_seconds =
+  case Integer.parse(whatsapp_dedupe_ttl_raw) do
+    {seconds, ""} when seconds > 0 -> seconds
+    _ -> 86_400
+  end
+
+whatsapp_inbound_queue_enabled =
+  case System.get_env("WHATSAPP_INBOUND_QUEUE_ENABLED", "true")
+       |> String.trim()
+       |> String.downcase() do
+    value when value in ["0", "false", "no", "off"] -> false
+    _ -> true
+  end
+
 if config_env() == :prod and whatsapp_enabled do
   if !is_binary(whatsapp_graph_api_version) or whatsapp_graph_api_version == "" do
     raise """
@@ -304,6 +344,18 @@ if config_env() == :prod and whatsapp_enabled do
     META_WHATSAPP_ACCESS_TOKEN is required when META_WHATSAPP_ENABLED=true.
     """
   end
+
+  if !is_binary(whatsapp_app_secret) or whatsapp_app_secret == "" do
+    raise """
+    META_WHATSAPP_APP_SECRET is required when META_WHATSAPP_ENABLED=true.
+    """
+  end
+
+  if !is_binary(whatsapp_verify_token) or whatsapp_verify_token == "" do
+    raise """
+    META_WHATSAPP_VERIFY_TOKEN is required when META_WHATSAPP_ENABLED=true.
+    """
+  end
 end
 
 config :fastcheck,
@@ -311,11 +363,16 @@ config :fastcheck,
   whatsapp_graph_api_base_url: whatsapp_graph_api_base_url,
   whatsapp_graph_api_version: whatsapp_graph_api_version,
   whatsapp_phone_number_id: whatsapp_phone_number_id,
+  whatsapp_business_account_id: whatsapp_business_account_id,
   whatsapp_access_token: whatsapp_access_token,
   whatsapp_app_secret: whatsapp_app_secret,
+  whatsapp_verify_token: whatsapp_verify_token,
   whatsapp_request_timeout_ms: whatsapp_request_timeout_ms,
   whatsapp_receive_timeout_ms: whatsapp_receive_timeout_ms,
-  whatsapp_sandbox_mode: whatsapp_sandbox_mode
+  whatsapp_sandbox_mode: whatsapp_sandbox_mode,
+  whatsapp_session_ttl_seconds: whatsapp_session_ttl_seconds,
+  whatsapp_dedupe_ttl_seconds: whatsapp_dedupe_ttl_seconds,
+  whatsapp_inbound_queue_enabled: whatsapp_inbound_queue_enabled
 
 mobile_token_secret =
   case System.get_env("MOBILE_JWT_SECRET") do
@@ -646,7 +703,10 @@ config :fastcheck, FastCheck.RateLimiter,
   scan_limit: String.to_integer(System.get_env("RATE_LIMIT_SCAN") || "400"),
   scan_period: 60_000,
   dashboard_limit: String.to_integer(System.get_env("RATE_LIMIT_DASHBOARD") || "100"),
-  dashboard_period: 60_000
+  dashboard_period: 60_000,
+  whatsapp_webhook_limit:
+    String.to_integer(System.get_env("RATE_LIMIT_WHATSAPP_WEBHOOK") || "120"),
+  whatsapp_webhook_period: 60_000
 
 # Alert thresholds for rate limiting monitoring
 config :fastcheck, :rate_limit_alerts,

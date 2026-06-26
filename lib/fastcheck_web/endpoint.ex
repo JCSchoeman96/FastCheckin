@@ -89,14 +89,17 @@ defmodule FastCheckWeb.Endpoint do
 
   plug FastCheckWeb.Router
 
-  @paystack_webhook_path "/api/sales/paystack/webhook"
+  @provider_webhook_paths MapSet.new([
+                            "/api/sales/paystack/webhook",
+                            "/api/v1/webhooks/whatsapp"
+                          ])
 
   @doc false
   def call(conn, opts) do
     super(conn, opts)
   rescue
     e in Plug.Parsers.ParseError ->
-      if paystack_webhook_request?(conn) do
+      if provider_webhook_request?(conn) do
         conn
         |> Plug.Conn.send_resp(400, "")
         |> Plug.Conn.halt()
@@ -105,7 +108,7 @@ defmodule FastCheckWeb.Endpoint do
       end
   end
 
-  defp paystack_webhook_request?(conn) do
-    conn.method == "POST" and conn.request_path == @paystack_webhook_path
+  defp provider_webhook_request?(conn) do
+    conn.method == "POST" and MapSet.member?(@provider_webhook_paths, conn.request_path)
   end
 end

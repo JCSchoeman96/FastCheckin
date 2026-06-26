@@ -176,6 +176,20 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
     end
   end
 
+  rule "throttle_whatsapp_webhook", conn do
+    if whatsapp_webhook_operation?(conn) do
+      key = "whatsapp_webhook:#{request_identity(conn)}"
+
+      throttle(key,
+        limit: get_limit(:whatsapp_webhook_limit, 120),
+        period: 60_000,
+        storage: storage_for(conn)
+      )
+    else
+      nil
+    end
+  end
+
   # Tier 2: High frequency scanner operations
   rule "throttle_check_in", conn do
     if check_in_operation?(conn) do
@@ -317,6 +331,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   defp secure_ticket_operation?(conn) do
     String.starts_with?(conn.request_path, "/t/")
+  end
+
+  defp whatsapp_webhook_operation?(conn) do
+    conn.request_path == "/api/v1/webhooks/whatsapp"
   end
 
   defp check_in_operation?(conn) do
