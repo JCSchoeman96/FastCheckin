@@ -200,6 +200,123 @@ config :fastcheck,
   paystack_webhook_url: paystack_webhook_url,
   paystack_initializing_stale_after_seconds: paystack_initializing_stale_after_seconds
 
+whatsapp_enabled =
+  case System.get_env("META_WHATSAPP_ENABLED", "false") |> String.trim() |> String.downcase() do
+    value when value in ["1", "true", "yes", "on"] -> true
+    _ -> false
+  end
+
+whatsapp_graph_api_base_url =
+  System.get_env("META_GRAPH_API_BASE_URL", "https://graph.facebook.com")
+  |> String.trim()
+  |> case do
+    "" -> "https://graph.facebook.com"
+    value -> value
+  end
+
+whatsapp_graph_api_version =
+  case System.get_env("META_GRAPH_API_VERSION") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+whatsapp_phone_number_id =
+  case System.get_env("META_WHATSAPP_PHONE_NUMBER_ID") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+whatsapp_access_token =
+  case System.get_env("META_WHATSAPP_ACCESS_TOKEN") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+whatsapp_app_secret =
+  case System.get_env("META_WHATSAPP_APP_SECRET") do
+    nil -> nil
+    value -> String.trim(value)
+  end
+
+whatsapp_request_timeout_raw =
+  System.get_env("META_WHATSAPP_REQUEST_TIMEOUT_MS", "5000")
+  |> String.trim()
+
+whatsapp_request_timeout_ms =
+  case Integer.parse(whatsapp_request_timeout_raw) do
+    {timeout, ""} when timeout > 0 ->
+      timeout
+
+    _ ->
+      if whatsapp_enabled do
+        raise """
+        META_WHATSAPP_REQUEST_TIMEOUT_MS must be a positive integer when META_WHATSAPP_ENABLED=true.
+        Got: #{inspect(whatsapp_request_timeout_raw)}
+        """
+      else
+        5_000
+      end
+  end
+
+whatsapp_receive_timeout_raw =
+  System.get_env("META_WHATSAPP_RECEIVE_TIMEOUT_MS", "10000")
+  |> String.trim()
+
+whatsapp_receive_timeout_ms =
+  case Integer.parse(whatsapp_receive_timeout_raw) do
+    {timeout, ""} when timeout > 0 ->
+      timeout
+
+    _ ->
+      if whatsapp_enabled do
+        raise """
+        META_WHATSAPP_RECEIVE_TIMEOUT_MS must be a positive integer when META_WHATSAPP_ENABLED=true.
+        Got: #{inspect(whatsapp_receive_timeout_raw)}
+        """
+      else
+        10_000
+      end
+  end
+
+whatsapp_sandbox_mode =
+  case System.get_env("META_WHATSAPP_SANDBOX_MODE", "true")
+       |> String.trim()
+       |> String.downcase() do
+    value when value in ["1", "true", "yes", "on"] -> true
+    _ -> false
+  end
+
+if config_env() == :prod and whatsapp_enabled do
+  if !is_binary(whatsapp_graph_api_version) or whatsapp_graph_api_version == "" do
+    raise """
+    META_GRAPH_API_VERSION is required when META_WHATSAPP_ENABLED=true.
+    """
+  end
+
+  if !is_binary(whatsapp_phone_number_id) or whatsapp_phone_number_id == "" do
+    raise """
+    META_WHATSAPP_PHONE_NUMBER_ID is required when META_WHATSAPP_ENABLED=true.
+    """
+  end
+
+  if !is_binary(whatsapp_access_token) or whatsapp_access_token == "" do
+    raise """
+    META_WHATSAPP_ACCESS_TOKEN is required when META_WHATSAPP_ENABLED=true.
+    """
+  end
+end
+
+config :fastcheck,
+  whatsapp_enabled: whatsapp_enabled,
+  whatsapp_graph_api_base_url: whatsapp_graph_api_base_url,
+  whatsapp_graph_api_version: whatsapp_graph_api_version,
+  whatsapp_phone_number_id: whatsapp_phone_number_id,
+  whatsapp_access_token: whatsapp_access_token,
+  whatsapp_app_secret: whatsapp_app_secret,
+  whatsapp_request_timeout_ms: whatsapp_request_timeout_ms,
+  whatsapp_receive_timeout_ms: whatsapp_receive_timeout_ms,
+  whatsapp_sandbox_mode: whatsapp_sandbox_mode
+
 mobile_token_secret =
   case System.get_env("MOBILE_JWT_SECRET") do
     nil ->

@@ -30,7 +30,6 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
   ]
 
   @forbidden_paths [
-    "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck_web/controllers/ticket_delivery_controller.ex"
   ]
 
