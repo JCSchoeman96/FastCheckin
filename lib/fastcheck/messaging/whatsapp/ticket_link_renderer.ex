@@ -12,6 +12,15 @@ defmodule FastCheck.Messaging.WhatsApp.TicketLinkRenderer do
     "Jou kaartjie is gereed. Maak jou veilige kaartjieskakel hier oop: #{url}"
   end
 
+  @spec sending_now(String.t() | nil) :: String.t()
+  def sending_now("en") do
+    "Your ticket is ready. We are sending your secure ticket link now."
+  end
+
+  def sending_now(_language) do
+    "Jou kaartjie is gereed. Ons stuur nou jou veilige kaartjie-skakel."
+  end
+
   @spec not_ready(String.t() | nil) :: String.t()
   def not_ready("en"), do: "Your ticket is not ready yet. Please try again shortly."
 

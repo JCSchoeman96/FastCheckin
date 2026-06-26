@@ -2,6 +2,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
   use FastCheck.DataCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  alias Ash.Changeset
+  alias FastCheck.Fixtures
   import Ecto.Query
 
   alias FastCheck.Messaging.WhatsApp.MessageCommand
@@ -11,8 +13,11 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
   alias FastCheck.Sales.Checkout
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
+  alias FastCheck.Sales.TicketIssue
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
+  alias FastCheck.Tickets.{DeliveryToken, TokenHash}
   alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
+  alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
   alias FastCheckWeb.SalesWebFixtures
 
   setup do
@@ -147,6 +152,32 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
     assert_enqueued(worker: SendWhatsAppPaymentLinkWorker)
   end
 
+  test "ticket_issued status says secure ticket link is being sent", %{event: event} do
+    %{order_id: order_id, ticket_issue_id: ticket_issue_id} = issued_ticket_fixture(event)
+
+    conversation =
+      insert_conversation!(
+        state: "ticket_issued",
+        state_data: %{"sales_order_id" => order_id}
+      )
+
+    assert {:ok, result} =
+             PaymentFlow.respond_to_status_request(command("wamid.ticket-ready"), conversation)
+
+    assert result.response_body =~ "veilige kaartjie-skakel"
+    assert result.response_body =~ "stuur"
+    refute result.response_body =~ "nog nie gereed"
+
+    assert_enqueued(
+      worker: SendWhatsAppTicketLinkWorker,
+      args: %{
+        "conversation_id" => conversation.id,
+        "sales_order_id" => order_id,
+        "ticket_issue_id" => ticket_issue_id
+      }
+    )
+  end
+
   defp checkout_state_data(event, offer, buyer_email) do
     %{
       "selected_event_id" => event.id,
@@ -179,6 +210,77 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
     |> Ash.Query.for_read(:get_by_id, %{id: id})
     |> Ash.read_one!(authorize?: false)
   end
+
+  defp issued_ticket_fixture(event) do
+    attendee = Fixtures.create_attendee(event, %{payment_status: "completed"})
+    token = DeliveryToken.generate(ttl_seconds: 3600)
+    {order_id, order_line_id} = insert_order_with_line!(event.id)
+
+    attrs = %{
+      sales_order_id: order_id,
+      sales_order_line_id: order_line_id,
+      line_item_sequence: 1,
+      attendee_id: attendee.id,
+      ticket_code: attendee.ticket_code,
+      qr_token_hash: TokenHash.hash("qr-#{System.unique_integer([:positive])}", :qr),
+      delivery_token_hash: token.hash,
+      delivery_token_expires_at: token.expires_at
+    }
+
+    assert {:ok, issue} =
+             TicketIssue
+             |> Changeset.for_create(:create_issued_link, attrs, actor: system_actor())
+             |> Ash.create(authorize?: false)
+
+    %{order_id: order_id, ticket_issue_id: issue.id}
+  end
+
+  defp insert_order_with_line!(event_id) do
+    %{rows: [[offer_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_ticket_offers
+          (event_id, name, ticket_type, price_cents, currency, configured_quantity_available,
+           initial_quantity, max_per_order, sales_enabled, sales_channel, lock_version, inserted_at, updated_at)
+        VALUES
+          ($1, 'GA', 'general', 100, 'ZAR', 10, 10, 5, true, 'whatsapp', 1, now(), now())
+        RETURNING id
+        """,
+        [event_id]
+      )
+
+    %{rows: [[order_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_orders
+          (public_reference, event_id, buyer_name, buyer_phone, buyer_email, source_channel,
+           status, total_amount_cents, currency, ticket_issued_at, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 'Buyer', '+27821234567', 'buyer@example.com', 'whatsapp',
+           'ticket_issued', 100, 'ZAR', now(), now(), now())
+        RETURNING id
+        """,
+        ["FC-#{System.unique_integer([:positive])}", event_id]
+      )
+
+    %{rows: [[line_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_order_lines
+          (sales_order_id, ticket_offer_id, line_number, ticket_type, offer_name_snapshot,
+           event_name_snapshot, quantity, unit_amount_cents, total_amount_cents, currency,
+           metadata, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 1, 'general', 'GA', 'Event', 1, 100, 100, 'ZAR', '{}', now(), now())
+        RETURNING id
+        """,
+        [order_id, offer_id]
+      )
+
+    {order_id, line_id}
+  end
+
+  defp system_actor, do: %{actor_type: :system, actor_id: "vs-19-payment-flow-test"}
 
   defp command(provider_message_id) do
     %MessageCommand{

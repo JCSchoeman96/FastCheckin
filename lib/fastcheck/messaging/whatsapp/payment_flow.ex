@@ -127,7 +127,9 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
     case load_deliverable_ticket_issue(order.id) do
       {:ok, ticket_issue} ->
         :ok = enqueue_ticket_link(conversation.id, order.id, ticket_issue.id)
-        {:ok, result(conversation, TicketLinkRenderer.not_ready(language(conversation)), command)}
+
+        {:ok,
+         result(conversation, TicketLinkRenderer.sending_now(language(conversation)), command)}
 
       {:error, :not_found} ->
         {:ok, result(conversation, TicketLinkRenderer.not_ready(language(conversation)), command)}

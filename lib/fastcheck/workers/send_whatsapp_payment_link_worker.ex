@@ -39,7 +39,10 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
          {:ok, attempt} <- load_payment_attempt(payment_attempt_id),
          {:ok, delivery_attempt} <- create_delivery_attempt(order, nil, conversation),
          body <- payment_body(conversation.preferred_language, attempt.authorization_url),
-         :ok <- send_and_mark(delivery_attempt, conversation.phone_e164, body) do
+         :ok <-
+           send_and_mark(delivery_attempt, conversation.phone_e164, body, fn ->
+             Dedupe.release_send_payment_link(conversation_id, order_id)
+           end) do
       :ok
     else
       {:ok, :duplicate} ->
@@ -63,7 +66,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     "Betaal veilig met Paystack: #{url}\n\nOns sal jou kaartjie voorberei sodra betaling bevestig is."
   end
 
-  defp send_and_mark(delivery_attempt, phone_e164, body) do
+  defp send_and_mark(delivery_attempt, phone_e164, body, release_dedupe) do
     case Client.send_text(phone_e164, body, correlation_id: delivery_attempt.correlation_id) do
       {:ok, response} ->
         with {:ok, _delivery_attempt} <- mark_sent(delivery_attempt, response.provider_message_id) do
@@ -72,6 +75,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
 
       {:error, reason} = error ->
         _ = mark_failed(delivery_attempt, reason)
+        release_if_retryable(reason, release_dedupe)
         error
     end
   end
@@ -127,6 +131,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
   defp failure_reason({:error, reason}), do: failure_reason(reason)
   defp failure_reason(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp failure_reason(_reason), do: "whatsapp_send_failed"
+
+  defp release_if_retryable(%{retryable?: true}, release_dedupe), do: release_dedupe.()
+  defp release_if_retryable(_reason, _release_dedupe), do: :ok
 
   defp next_attempt_number(order_id, nil) do
     Repo.one!(

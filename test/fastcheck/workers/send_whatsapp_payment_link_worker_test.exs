@@ -122,6 +122,54 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     refute attempt_log =~ attempt.authorization_url
   end
 
+  test "releases outbound dedupe after retryable failure so retry sends", %{offer: offer} do
+    test_pid = self()
+    counter = :counters.new(1, [])
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      case :counters.get(counter, 1) do
+        1 ->
+          {:ok,
+           %Req.Response{
+             status: 500,
+             body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
+           }}
+
+        _ ->
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body: Jason.encode!(%{"messages" => [%{"id" => "wamid.payment-retry"}]})
+           }}
+      end
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order.id,
+      "payment_attempt_id" => attempt.id
+    }
+
+    assert {:error, %{retryable?: true}} = perform_job(SendWhatsAppPaymentLinkWorker, args)
+    assert :ok = perform_job(SendWhatsAppPaymentLinkWorker, args)
+
+    assert_received {:whatsapp_request, _failed_request}
+    assert_received {:whatsapp_request, _retry_request}
+    refute_received {:whatsapp_request, _extra_request}
+
+    assert ["failed", "sent"] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 order_by: [asc: d.id],
+                 select: d.status
+             )
+  end
+
   defp initialized_payment!(offer) do
     {order, session} =
       PaymentSupport.checkout_ready_for_payment!(offer, %{

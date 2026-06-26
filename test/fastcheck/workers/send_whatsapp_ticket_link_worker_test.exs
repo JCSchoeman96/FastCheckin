@@ -74,6 +74,42 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
+  test "duplicate successful execution sends one ticket link inside dedupe TTL" do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.ticket-dedupe"}]})
+       }}
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id
+    }
+
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    assert_received {:whatsapp_request, _request}
+    refute_received {:whatsapp_request, _duplicate}
+
+    assert ["sent"] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: d.status
+             )
+  end
+
   test "does not send active link for revoked ticket issue" do
     %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
       issued_ticket_fixture(status: "revoked", revoked_at: DateTime.utc_now())
@@ -132,6 +168,56 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       )
 
     refute attempt_log =~ updated.delivery_token_hash
+  end
+
+  test "releases outbound dedupe after retryable failure so retry sends ticket link" do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      case :counters.get(counter, 1) do
+        1 ->
+          {:ok,
+           %Req.Response{
+             status: 500,
+             body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
+           }}
+
+        _ ->
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body: Jason.encode!(%{"messages" => [%{"id" => "wamid.ticket-retry"}]})
+           }}
+      end
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id
+    }
+
+    assert {:error, %{retryable?: true}} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    assert_received {:whatsapp_request, _failed_request}
+    assert_received {:whatsapp_request, _retry_request}
+    refute_received {:whatsapp_request, _extra_request}
+
+    assert ["failed", "sent"] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 order_by: [asc: d.id],
+                 select: d.status
+             )
   end
 
   defp issued_ticket_fixture(opts \\ []) do

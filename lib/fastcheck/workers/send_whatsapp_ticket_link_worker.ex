@@ -48,7 +48,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
          :ok <- ensure_secure_page_valid(token.token),
          {:ok, delivery_attempt} <- create_delivery_attempt(order, ticket_issue, conversation),
          body <- TicketLinkRenderer.ticket_link(conversation.preferred_language, url),
-         :ok <- send_and_mark(delivery_attempt, conversation.phone_e164, body) do
+         :ok <-
+           send_and_mark(delivery_attempt, conversation.phone_e164, body, fn ->
+             Dedupe.release_send_ticket_link(conversation_id, ticket_issue_id)
+           end) do
       :ok
     else
       {:ok, :duplicate} ->
@@ -101,7 +104,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   defp ticket_url(token), do: FastCheckWeb.Endpoint.url() <> "/t/" <> token
 
-  defp send_and_mark(delivery_attempt, phone_e164, body) do
+  defp send_and_mark(delivery_attempt, phone_e164, body, release_dedupe) do
     case Client.send_text(phone_e164, body, correlation_id: delivery_attempt.correlation_id) do
       {:ok, response} ->
         with {:ok, _delivery_attempt} <- mark_sent(delivery_attempt, response.provider_message_id) do
@@ -110,6 +113,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
       {:error, reason} = error ->
         _ = mark_failed(delivery_attempt, reason)
+        release_if_retryable(reason, release_dedupe)
         error
     end
   end
@@ -165,6 +169,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   defp failure_reason({:error, reason}), do: failure_reason(reason)
   defp failure_reason(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp failure_reason(_reason), do: "whatsapp_send_failed"
+
+  defp release_if_retryable(%{retryable?: true}, release_dedupe), do: release_dedupe.()
+  defp release_if_retryable(_reason, _release_dedupe), do: :ok
 
   defp next_attempt_number(order_id, ticket_issue_id) do
     Repo.one!(

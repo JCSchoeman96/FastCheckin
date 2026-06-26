@@ -83,6 +83,20 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
   def claim_send_payment_link(_conversation_id, _order_id, _ttl_seconds, _redis_name),
     do: {:error, :invalid_args}
 
+  @spec release_send_payment_link(integer(), integer(), atom()) :: :ok
+  def release_send_payment_link(conversation_id, order_id, redis_name \\ FastCheck.Redix)
+
+  def release_send_payment_link(conversation_id, order_id, redis_name)
+      when is_integer(conversation_id) and is_integer(order_id) do
+    release_key(
+      @send_payment_link_prefix <> "#{conversation_id}:#{order_id}",
+      "whatsapp_payment_link_dedupe_release_failed",
+      redis_name
+    )
+  end
+
+  def release_send_payment_link(_conversation_id, _order_id, _redis_name), do: :ok
+
   @spec claim_send_ticket_link(integer(), integer(), pos_integer(), atom()) ::
           {:ok, :new | :duplicate} | {:error, term()}
   def claim_send_ticket_link(
@@ -105,6 +119,20 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
   def claim_send_ticket_link(_conversation_id, _ticket_issue_id, _ttl_seconds, _redis_name),
     do: {:error, :invalid_args}
 
+  @spec release_send_ticket_link(integer(), integer(), atom()) :: :ok
+  def release_send_ticket_link(conversation_id, ticket_issue_id, redis_name \\ FastCheck.Redix)
+
+  def release_send_ticket_link(conversation_id, ticket_issue_id, redis_name)
+      when is_integer(conversation_id) and is_integer(ticket_issue_id) do
+    release_key(
+      @send_ticket_link_prefix <> "#{conversation_id}:#{ticket_issue_id}",
+      "whatsapp_ticket_link_dedupe_release_failed",
+      redis_name
+    )
+  end
+
+  def release_send_ticket_link(_conversation_id, _ticket_issue_id, _redis_name), do: :ok
+
   defp key(provider_message_id), do: @prefix <> provider_message_id
 
   defp claim_key(key, ttl_seconds, redis_name) do
@@ -114,6 +142,21 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
       {:ok, "OK"} -> {:ok, :new}
       {:ok, nil} -> {:ok, :duplicate}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp release_key(key, event_name, redis_name) do
+    case redix_command(redis_name, ["DEL", key]) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          event_name,
+          Correlation.operational_metadata(%{reason: inspect(reason)})
+        )
+
+        :ok
     end
   end
 
