@@ -64,6 +64,16 @@ config :fastcheck,
 config :fastcheck, :paystack_webhook_url, "https://scan.voelgoed.co.za/api/sales/paystack/webhook"
 config :fastcheck, :paystack_request_fun, &Req.request/1
 config :fastcheck, :paystack_initializing_stale_after_seconds, 120
+config :fastcheck, :whatsapp_enabled, false
+config :fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.com"
+config :fastcheck, :whatsapp_graph_api_version, nil
+config :fastcheck, :whatsapp_phone_number_id, nil
+config :fastcheck, :whatsapp_access_token, nil
+config :fastcheck, :whatsapp_app_secret, nil
+config :fastcheck, :whatsapp_request_timeout_ms, 5_000
+config :fastcheck, :whatsapp_receive_timeout_ms, 10_000
+config :fastcheck, :whatsapp_sandbox_mode, true
+config :fastcheck, :whatsapp_request_fun, &Req.request/1
 
 # Configures the endpoint
 config :fastcheck, FastCheckWeb.Endpoint,

@@ -29,7 +29,6 @@ defmodule FastCheck.Sales.Vs01dBoundaryTest do
     end
 
     assert Path.wildcard("lib/fastcheck/workers/*delivery*") == []
-    assert Path.wildcard("lib/fastcheck/messaging/whatsapp/*") == []
   end
 
   test "forbidden workflow actions are not implemented in VS-01D" do

@@ -4,7 +4,6 @@ defmodule FastCheck.Sales.TicketOfferBoundaryTest do
   alias Ash.Resource.Info, as: ResourceInfo
 
   @forbidden_paths [
-    "lib/fastcheck/messaging/whatsapp",
     "lib/fastcheck_web/controllers/webhooks/whatsapp_controller.ex"
   ]
 
