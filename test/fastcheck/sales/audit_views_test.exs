@@ -12,6 +12,7 @@ defmodule FastCheck.Sales.AuditViewsTest do
   @qr_hash "audit-qr-hash"
   @delivery_hash "audit-delivery-hash"
   @idempotency_key "audit-idempotency-secret"
+  @raw_processing_error "provider said card holder audit.raw@example.com failed with token secret"
 
   test "timeline rejects unknown entity types and invalid ids" do
     assert {:error, :invalid_entity_type} = AuditViews.timeline("unknown", "123")
@@ -38,6 +39,28 @@ defmodule FastCheck.Sales.AuditViewsTest do
     assert [%{to_state: "manual_review"}] = second_page.entries
   end
 
+  test "state transition pagination is applied by the database query" do
+    order_id = insert_order!()
+
+    for index <- 1..4 do
+      insert_transition!("Order", order_id, "state_#{index}", "state_#{index + 1}",
+        seconds_ago: index
+      )
+    end
+
+    {result, transition_queries} =
+      capture_transition_queries(fn ->
+        AuditViews.timeline("order", Integer.to_string(order_id), limit: 1, page: 2)
+      end)
+
+    assert {:ok, %{entries: [%{to_state: "state_3"}], next_page: 3}} = result
+
+    assert Enum.any?(transition_queries, fn query ->
+             String.contains?(query, ~s(FROM "sales_state_transitions")) and
+               String.contains?(query, "LIMIT") and String.contains?(query, "OFFSET")
+           end)
+  end
+
   test "payment, ticket, and delivery summaries redact sensitive fields" do
     order_id = insert_order!()
     offer_id = insert_offer!()
@@ -60,6 +83,16 @@ defmodule FastCheck.Sales.AuditViewsTest do
     end
   end
 
+  test "payment event timeline does not expose raw processing errors as reason text" do
+    payment_event_id = insert_payment_event!("provider-ref-raw-error")
+
+    assert {:ok, %{entries: [entry]}} =
+             AuditViews.timeline("payment_event", Integer.to_string(payment_event_id), limit: 5)
+
+    assert entry.reason_code == "manual_review"
+    refute inspect(entry) =~ @raw_processing_error
+  end
+
   defp refute_unsafe(term) do
     encoded = inspect(term)
 
@@ -72,6 +105,7 @@ defmodule FastCheck.Sales.AuditViewsTest do
           @qr_hash,
           @delivery_hash,
           @idempotency_key,
+          @raw_processing_error,
           "raw_payload",
           "raw_initialize_response",
           "raw_verify_response",
@@ -203,21 +237,56 @@ defmodule FastCheck.Sales.AuditViewsTest do
         INSERT INTO sales_payment_events
           (provider, provider_event_id, provider_reference, event_type, signature_valid,
            payload_hash, raw_payload, received_at, processing_status, processing_attempt_count,
-           inserted_at, updated_at)
+           last_processing_error, inserted_at, updated_at)
         VALUES
           ('paystack', $1, $2, 'charge.success', true, $3, '{"secret":"raw-payload"}',
-           now() AT TIME ZONE 'utc', 'manual_review', 1, now() AT TIME ZONE 'utc',
+           now() AT TIME ZONE 'utc', 'manual_review', 1, $4, now() AT TIME ZONE 'utc',
            now() AT TIME ZONE 'utc')
         RETURNING id
         """,
         [
           "evt-#{System.unique_integer([:positive])}",
           provider_reference,
-          "payload-#{System.unique_integer([:positive])}"
+          "payload-#{System.unique_integer([:positive])}",
+          @raw_processing_error
         ]
       )
 
     id
+  end
+
+  defp capture_transition_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "audit-views-test-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, metadata, _config ->
+        if is_binary(metadata.query) and
+             String.contains?(metadata.query, ~s(FROM "sales_state_transitions")) do
+          send(parent, {:transition_query, ref, metadata.query})
+        end
+      end,
+      nil
+    )
+
+    result = fun.()
+    queries = drain_transition_queries(ref, [])
+
+    :telemetry.detach(handler_id)
+
+    {result, Enum.reverse(queries)}
+  end
+
+  defp drain_transition_queries(ref, queries) do
+    receive do
+      {:transition_query, ^ref, query} -> drain_transition_queries(ref, [query | queries])
+    after
+      0 -> queries
+    end
   end
 
   defp insert_ticket_issue!(order_id, line_id) do

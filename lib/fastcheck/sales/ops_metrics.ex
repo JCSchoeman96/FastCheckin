@@ -246,7 +246,12 @@ defmodule FastCheck.Sales.OpsMetrics do
 
   defp normalize_filters(_), do: normalize_filters(%{})
 
-  defp get_filter(map, key), do: Map.get(map, key) || Map.get(map, String.to_atom(key))
+  defp get_filter(map, "event_id"), do: Map.get(map, "event_id") || Map.get(map, :event_id)
+
+  defp get_filter(map, "source_channel"),
+    do: Map.get(map, "source_channel") || Map.get(map, :source_channel)
+
+  defp get_filter(map, "window"), do: Map.get(map, "window") || Map.get(map, :window)
 
   defp normalize_window(value) when is_binary(value) do
     if Map.has_key?(@windows, value), do: value, else: @default_window
