@@ -255,6 +255,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
       issued_ticket_fixture()
 
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
     Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
       {:ok,
        %Req.Response{
@@ -263,12 +265,18 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
        }}
     end)
 
-    assert {:discard, :manual_review} =
-             perform_job(SendWhatsAppTicketLinkWorker, %{
-               "conversation_id" => conversation_id,
-               "sales_order_id" => order_id,
-               "ticket_issue_id" => issue_id
-             })
+    log =
+      capture_log(fn ->
+        assert {:discard, :manual_review} =
+                 perform_job(SendWhatsAppTicketLinkWorker, %{
+                   "conversation_id" => conversation_id,
+                   "sales_order_id" => order_id,
+                   "ticket_issue_id" => issue_id
+                 })
+      end)
+
+    updated = Repo.get!(TicketIssue, issue_id)
+    assert updated.delivery_token_hash != old_hash
 
     assert [
              %{
@@ -277,7 +285,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                provider_error_message: "whatsapp send failed",
                failure_reason: "auth_error",
                fallback_channel: "manual_review"
-             }
+             } = attempt
            ] =
              Repo.all(
                from d in "sales_delivery_attempts",
@@ -291,6 +299,11 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                      :fallback_channel
                    ])
              )
+
+    refute attempt.provider_error_message =~ updated.delivery_token_hash
+    refute attempt.failure_reason =~ updated.delivery_token_hash
+    refute log =~ updated.delivery_token_hash
+    refute log =~ "/t/"
   end
 
   test "releases outbound dedupe after retryable failure so retry sends ticket link" do
