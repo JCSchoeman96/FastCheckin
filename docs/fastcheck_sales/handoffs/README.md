@@ -42,3 +42,4 @@ what future slices can rely on, and what remains deferred.
 - [VS-19 — WhatsApp Payment and Ticket Flow](./VS-19_IMPLEMENTATION_HANDOFF.md)
 - [VS-20 — WhatsApp Delivery Window Handling](./VS-20_IMPLEMENTATION_HANDOFF.md)
 - [VS-21A — Observability Naming and Log Redaction Foundation](./VS-21A_IMPLEMENTATION_HANDOFF.md)
+- [VS-21B — Operational Metrics and Audit Views](./VS-21B_IMPLEMENTATION_HANDOFF.md)
