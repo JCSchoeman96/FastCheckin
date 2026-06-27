@@ -152,6 +152,37 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
           </.card_content>
         </.card>
 
+        <.card variant="outline" color="natural" rounded="large" padding="large">
+          <.card_content>
+            <h2 class="mb-2 text-base font-semibold text-fc-text-primary">Delivery attempts</h2>
+            <p
+              :if={Enum.empty?(@context.delivery_attempt_rows)}
+              class="text-sm text-fc-text-secondary"
+            >
+              No delivery attempts recorded.
+            </p>
+            <ul class="space-y-2 text-sm">
+              <li
+                :for={attempt <- @context.delivery_attempt_rows}
+                class="flex flex-col gap-1 border-t border-fc-border py-2 first:border-t-0 first:pt-0"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {attempt.channel} / {attempt.provider} · {delivery_status(attempt.status)}
+                  </span>
+                  <span class="text-xs text-fc-text-muted">
+                    {format_delivery_window(attempt.within_whatsapp_window)}
+                  </span>
+                </div>
+                <div class="text-xs text-fc-text-muted">
+                  Template {attempt.template_name || "none"} · Fallback {attempt.fallback_channel ||
+                    "none"} · Reason {attempt.failure_reason || attempt.provider_error_code || "none"}
+                </div>
+              </li>
+            </ul>
+          </.card_content>
+        </.card>
+
         <.card
           :if={@context.available_actions.can_revoke_ticket}
           variant="outline"
@@ -291,6 +322,13 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
 
   defp format_status(status),
     do: status |> to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  defp delivery_status(nil), do: "none"
+  defp delivery_status(status), do: status |> to_string() |> String.replace("_", " ")
+
+  defp format_delivery_window(true), do: "inside window"
+  defp format_delivery_window(false), do: "outside window"
+  defp format_delivery_window(_), do: "window unknown"
 
   defp format_datetime(nil), do: "—"
 

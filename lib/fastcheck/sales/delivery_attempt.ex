@@ -87,6 +87,12 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
       change(set_attribute(:status, "fallback_required"))
     end
+
+    update :mark_manual_review do
+      require_atomic?(false)
+      accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
+      change(set_attribute(:status, "manual_review"))
+    end
   end
 
   policies do
