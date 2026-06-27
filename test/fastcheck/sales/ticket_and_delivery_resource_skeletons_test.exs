@@ -95,7 +95,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
         assert Enum.map(update_actions, & &1.name) == [
                  :mark_sent,
                  :mark_failed,
-                 :mark_fallback_required
+                 :mark_fallback_required,
+                 :mark_manual_review
                ]
 
         refute Enum.any?(actions, &(&1.type == :destroy)),
@@ -124,7 +125,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
               :create_queued,
               :mark_sent,
               :mark_failed,
-              :mark_fallback_required
+              :mark_fallback_required,
+              :mark_manual_review
             ] do
           assert expected in action_names,
                  "#{inspect(resource)} must expose #{inspect(expected)}"

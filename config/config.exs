@@ -46,6 +46,7 @@ config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
 config :fastcheck, :sales_checkout_expiry_sweep_batch_size, 200
 config :fastcheck, :sales_delivery_token_ttl_seconds, 90 * 24 * 60 * 60
 config :fastcheck, :whatsapp_outbound_dedupe_ttl_seconds, 600
+config :fastcheck, :whatsapp_ticket_delivery_dedupe_ttl_seconds, 86_400
 config :fastcheck, :sales_internal_pilot_enabled, true
 config :fastcheck, :paystack_enabled, false
 config :fastcheck, :paystack_environment, "test"

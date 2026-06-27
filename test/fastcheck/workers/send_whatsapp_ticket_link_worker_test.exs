@@ -54,6 +54,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       end)
 
     assert_received {:whatsapp_request, request}
+    assert request.options.json["type"] == "text"
     body = request.options.json["text"]["body"]
     assert body =~ "/t/"
     refute body =~ "QR"
@@ -70,7 +71,79 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
-                 select: map(d, [:status, :provider_message_id])
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_message_id,
+                     :within_whatsapp_window,
+                     :template_name
+                   ])
+             )
+             |> Enum.map(fn row ->
+               assert row.within_whatsapp_window == true
+               assert row.template_name == nil
+               Map.take(row, [:status, :provider_message_id])
+             end)
+  end
+
+  test "sends ticket link with approved template outside the 24 hour window" do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture(
+        last_message_at: DateTime.utc_now() |> DateTime.add(-25, :hour),
+        preferred_language: "en"
+      )
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.ticket-template"}]})
+       }}
+    end)
+
+    assert :ok =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id
+             })
+
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["type"] == "template"
+    assert request.options.json["template"]["name"] == "fastcheck_ticket_ready_en"
+    assert request.options.json["template"]["language"]["code"] == "en_US"
+
+    body_param =
+      request.options.json["template"]["components"]
+      |> hd()
+      |> get_in(["parameters"])
+      |> hd()
+
+    assert body_param["type"] == "text"
+    assert body_param["text"] =~ "/t/"
+
+    assert [
+             %{
+               status: "sent",
+               provider_message_id: "wamid.ticket-template",
+               within_whatsapp_window: false,
+               template_name: "fastcheck_ticket_ready_en"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_message_id,
+                     :within_whatsapp_window,
+                     :template_name
+                   ])
              )
   end
 
@@ -101,6 +174,14 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert_received {:whatsapp_request, _request}
     refute_received {:whatsapp_request, _duplicate}
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+             ])
+
+    assert ttl > 80_000
 
     assert ["sent"] =
              Repo.all(
@@ -168,6 +249,61 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       )
 
     refute attempt_log =~ updated.delivery_token_hash
+  end
+
+  test "marks DeliveryAttempt manual_review for Meta auth errors without retrying forever" do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      {:ok,
+       %Req.Response{
+         status: 401,
+         body: Jason.encode!(%{"error" => %{"code" => 190, "message" => "bad token"}})
+       }}
+    end)
+
+    log =
+      capture_log(fn ->
+        assert {:discard, :manual_review} =
+                 perform_job(SendWhatsAppTicketLinkWorker, %{
+                   "conversation_id" => conversation_id,
+                   "sales_order_id" => order_id,
+                   "ticket_issue_id" => issue_id
+                 })
+      end)
+
+    updated = Repo.get!(TicketIssue, issue_id)
+    assert updated.delivery_token_hash != old_hash
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_code: "190",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "auth_error",
+               fallback_channel: "manual_review"
+             } = attempt
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_error_code,
+                     :provider_error_message,
+                     :failure_reason,
+                     :fallback_channel
+                   ])
+             )
+
+    refute attempt.provider_error_message =~ updated.delivery_token_hash
+    refute attempt.failure_reason =~ updated.delivery_token_hash
+    refute log =~ updated.delivery_token_hash
+    refute log =~ "/t/"
   end
 
   test "releases outbound dedupe after retryable failure so retry sends ticket link" do
@@ -249,16 +385,19 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       )
     end
 
+    preferred_language = Keyword.get(opts, :preferred_language, "af")
+    last_message_at = Keyword.get(opts, :last_message_at, DateTime.utc_now())
+
     %{rows: [[conversation_id]]} =
       Repo.query!(
         """
         INSERT INTO sales_conversations
-          (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
+          (phone_e164, wa_id, preferred_language, state, state_data, last_message_at, needs_human, inserted_at, updated_at)
         VALUES
-          ('+27821234567', '27821234567', 'af', 'ticket_issued', $1, false, now(), now())
+          ('+27821234567', '27821234567', $1, 'ticket_issued', $2, $3, false, now(), now())
         RETURNING id
         """,
-        [%{"sales_order_id" => order_id}]
+        [preferred_language, %{"sales_order_id" => order_id}, last_message_at]
       )
 
     %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue.id}

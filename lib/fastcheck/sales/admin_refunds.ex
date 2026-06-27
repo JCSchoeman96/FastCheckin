@@ -40,6 +40,7 @@ defmodule FastCheck.Sales.AdminRefunds do
        base
        |> Map.put(:timeline, timeline)
        |> Map.put(:ticket_rows, tickets)
+       |> Map.put(:delivery_attempt_rows, bounded_delivery_attempt_summaries(order.id, limit))
        |> Map.put(:issued_ticket_count, ticket_counts.issued)
        |> Map.put(:revoked_ticket_count, ticket_counts.revoked)
        |> Map.put(:available_actions, available_actions(order, ticket_counts))}
@@ -229,6 +230,29 @@ defmodule FastCheck.Sales.AdminRefunds do
     |> Enum.map(fn row ->
       Map.put(row, :ticket_code_suffix, "***#{row.ticket_code_suffix}")
     end)
+  end
+
+  defp bounded_delivery_attempt_summaries(order_id, limit) do
+    Repo.all(
+      from d in "sales_delivery_attempts",
+        where: d.sales_order_id == ^order_id,
+        order_by: [desc: d.inserted_at, desc: d.id],
+        limit: ^limit,
+        select: %{
+          delivery_attempt_id: d.id,
+          ticket_issue_id: d.ticket_issue_id,
+          channel: d.channel,
+          provider: d.provider,
+          status: d.status,
+          template_name: d.template_name,
+          within_whatsapp_window: d.within_whatsapp_window,
+          provider_error_code: d.provider_error_code,
+          failure_reason: d.failure_reason,
+          fallback_channel: d.fallback_channel,
+          sent_at: d.sent_at,
+          inserted_at: d.inserted_at
+        }
+    )
   end
 
   defp available_actions(order, counts) do

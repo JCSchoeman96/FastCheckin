@@ -44,6 +44,43 @@ defmodule FastCheckWeb.Sales.OrderShowLiveTest do
     refute_unsafe_html(html)
   end
 
+  test "authenticated user sees safe delivery attempt summary" do
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!(
+      """
+      INSERT INTO sales_delivery_attempts
+        (sales_order_id, ticket_issue_id, channel, provider, recipient, status, template_name,
+         within_whatsapp_window, provider_message_id, attempt_number, provider_error_code,
+         provider_error_message, failure_reason, fallback_channel, sent_at, inserted_at, updated_at)
+      VALUES
+        ($1, $2, 'whatsapp', 'meta', $3, 'manual_review', 'fastcheck_ticket_ready_af',
+         false, 'wamid.safe-summary', 1, '190', $4, 'auth_error', 'manual_review',
+         now(), now(), now())
+      """,
+      [
+        order_id,
+        ticket_issue_id,
+        @raw_phone,
+        "raw provider payload #{@authorization_url} #{@delivery_hash}"
+      ]
+    )
+
+    {:ok, _view, html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{order_id}")
+
+    assert html =~ "Delivery attempts"
+    assert html =~ "manual review"
+    assert html =~ "fastcheck_ticket_ready_af"
+    assert html =~ "outside window"
+    refute_unsafe_html(html)
+    refute html =~ "raw provider payload"
+    refute html =~ "wamid.safe-summary"
+  end
+
   test "authenticated user can revoke a ticket through AdminRevocations boundary" do
     %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
       Fixtures.issued_order_fixture()
