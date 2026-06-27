@@ -105,6 +105,136 @@ defmodule FastCheckWeb.Telemetry do
         description: "Single mobile scan processing duration in milliseconds"
       ),
 
+      # Sales operational metrics
+      counter("fastcheck.sales.checkout.reserved.count",
+        tags: [:status, :source_channel],
+        description: "Sales checkout reservations"
+      ),
+      counter("fastcheck.sales.checkout.expired.count",
+        tags: [:status, :source_channel],
+        description: "Sales checkout expirations"
+      ),
+      counter("fastcheck.sales.checkout.released.count",
+        tags: [:status, :source_channel],
+        description: "Sales checkout hold releases"
+      ),
+      counter("fastcheck.sales.payment.initialized.count",
+        tags: [:status, :source_channel, :provider],
+        description: "Sales payment initializations"
+      ),
+      counter("fastcheck.sales.payment.webhook_received.count",
+        tags: [:status, :provider],
+        description: "Sales payment webhooks received"
+      ),
+      counter("fastcheck.sales.payment.verified.count",
+        tags: [:status, :source_channel, :provider],
+        description: "Sales payment verifications"
+      ),
+      counter("fastcheck.sales.payment.mismatch.count",
+        tags: [:status, :source_channel, :provider, :reason_code],
+        description: "Sales payment mismatches"
+      ),
+      counter("fastcheck.sales.payment.failed.count",
+        tags: [:status, :source_channel, :provider, :reason_code],
+        description: "Sales payment failures"
+      ),
+      counter("fastcheck.sales.ticket.issued.count",
+        tags: [:status, :source_channel],
+        description: "Sales tickets issued"
+      ),
+      counter("fastcheck.sales.ticket.issue_failed.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales ticket issuance failures"
+      ),
+      counter("fastcheck.sales.ticket.revoked.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales tickets revoked"
+      ),
+      counter("fastcheck.sales.ticket.revocation_started.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales ticket revocations started"
+      ),
+      counter("fastcheck.sales.ticket.revocation_idempotent.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales ticket revocation idempotent retries"
+      ),
+      counter("fastcheck.sales.ticket.revocation_failed.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales ticket revocation failures"
+      ),
+      counter("fastcheck.sales.scanner_visibility.sync_queued.count",
+        tags: [:status, :reason_code],
+        description: "Sales scanner visibility sync queued"
+      ),
+      counter("fastcheck.sales.scanner_visibility.invalidation_appended.count",
+        tags: [:status, :reason_code],
+        description: "Sales scanner visibility invalidations appended"
+      ),
+      counter("fastcheck.sales.delivery.queued.count",
+        tags: [:status, :source_channel, :provider],
+        description: "Sales delivery attempts queued"
+      ),
+      counter("fastcheck.sales.delivery.sent.count",
+        tags: [:status, :source_channel, :provider],
+        description: "Sales delivery attempts sent"
+      ),
+      counter("fastcheck.sales.delivery.failed.count",
+        tags: [:status, :source_channel, :provider, :reason_code],
+        description: "Sales delivery attempts failed"
+      ),
+      counter("fastcheck.sales.manual_review.opened.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales manual review opened"
+      ),
+      counter("fastcheck.sales.manual_review.closed.count",
+        tags: [:status, :source_channel, :reason_code],
+        description: "Sales manual review closed"
+      ),
+      counter("fastcheck.sales.inventory.reserved.count",
+        tags: [:status, :source_channel],
+        description: "Sales inventory reservations"
+      ),
+      counter("fastcheck.sales.inventory.consumed.count",
+        tags: [:status, :source_channel],
+        description: "Sales inventory consumes"
+      ),
+      counter("fastcheck.sales.inventory.released.count",
+        tags: [:status, :source_channel],
+        description: "Sales inventory releases"
+      ),
+      counter("fastcheck.sales.inventory.reconciled.count",
+        tags: [:status, :reason_code],
+        description: "Sales inventory reconciliation"
+      ),
+      counter("fastcheck.sales.whatsapp.inbound_received.count",
+        tags: [:status, :source_channel],
+        description: "Sales WhatsApp inbound messages"
+      ),
+      counter("fastcheck.sales.whatsapp.outbound_sent.count",
+        tags: [:status, :source_channel],
+        description: "Sales WhatsApp outbound messages"
+      ),
+      counter("fastcheck.sales.admin.revocation_requested.count",
+        tags: [:status, :reason_code],
+        description: "Sales admin revocation requests"
+      ),
+      counter("fastcheck.sales.admin.revocation_completed.count",
+        tags: [:status, :reason_code],
+        description: "Sales admin revocations completed"
+      ),
+      counter("fastcheck.sales.admin.revocation_failed.count",
+        tags: [:status, :reason_code],
+        description: "Sales admin revocation failures"
+      ),
+      counter("fastcheck.sales.admin.refund_marked.count",
+        tags: [:status, :reason_code],
+        description: "Sales admin refund markers"
+      ),
+      counter("fastcheck.sales.admin.action_denied.count",
+        tags: [:status, :reason_code],
+        description: "Sales admin action denials"
+      ),
+
       # VM Metrics
       last_value("vm.memory.total", unit: {:byte, :kilobyte}),
       last_value("vm.total_run_queue_lengths.total"),

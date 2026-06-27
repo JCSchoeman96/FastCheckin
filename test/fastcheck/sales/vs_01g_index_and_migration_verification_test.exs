@@ -124,6 +124,17 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
       "inserted_at"
     ])
 
+    assert_index("sales_orders_source_status_inserted_at_idx", [
+      "source_channel",
+      "status",
+      "inserted_at"
+    ])
+
+    assert_index("sales_orders_status_inserted_at_idx", [
+      "status",
+      "inserted_at"
+    ])
+
     assert_index("sales_orders_buyer_phone_idx", ["buyer_phone"])
     assert_index("sales_orders_expires_status_idx", ["expires_at", "status"])
 
@@ -168,6 +179,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
 
     assert_index("sales_payment_attempts_sales_order_id_status_idx", ["sales_order_id", "status"])
     assert_index("sales_payment_attempts_provider_status_idx", ["provider", "status"])
+    assert_index("sales_payment_attempts_status_inserted_at_idx", ["status", "inserted_at"])
     assert_index("sales_payment_attempts_last_verified_at_idx", ["last_verified_at"])
 
     assert_index(
@@ -215,13 +227,24 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     assert_index("sales_ticket_issues_sales_order_id_status_idx", ["sales_order_id", "status"])
     assert_index("sales_ticket_issues_sales_order_line_id_idx", ["sales_order_line_id"])
     assert_index("sales_ticket_issues_status_idx", ["status"])
+    assert_index("sales_ticket_issues_status_inserted_at_idx", ["status", "inserted_at"])
     assert_index("sales_ticket_issues_scanner_status_idx", ["scanner_status"])
 
     assert_index("sales_delivery_attempts_sales_order_id_status_idx", ["sales_order_id", "status"])
 
+    assert_index("sales_delivery_attempts_order_inserted_at_idx", [
+      "sales_order_id",
+      "inserted_at"
+    ])
+
     assert_index("sales_delivery_attempts_ticket_issue_id_status_idx", [
       "ticket_issue_id",
       "status"
+    ])
+
+    assert_index("sales_delivery_attempts_ticket_issue_inserted_at_idx", [
+      "ticket_issue_id",
+      "inserted_at"
     ])
 
     assert_index("sales_delivery_attempts_provider_message_id_idx", ["provider_message_id"])
@@ -231,6 +254,8 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
       "status",
       "inserted_at"
     ])
+
+    assert_index("sales_delivery_attempts_status_inserted_at_idx", ["status", "inserted_at"])
 
     assert_index("sales_conversations_phone_e164_idx", ["phone_e164"])
     assert_index("sales_conversations_wa_id_idx", ["wa_id"])
@@ -242,6 +267,12 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     ])
 
     assert_index("sales_conversations_state_expires_at_idx", ["state", "expires_at"])
+
+    assert_index("sales_conversations_state_needs_human_last_message_at_idx", [
+      "state",
+      "needs_human",
+      "last_message_at"
+    ])
 
     assert_index("sales_state_transitions_entity_idx", ["entity_type", "entity_id", "inserted_at"])
 
