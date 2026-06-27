@@ -34,21 +34,22 @@ defmodule FastCheck.Sales.AuditViews do
       page = opts |> Keyword.get(:page, 1) |> clamp(1, 10_000)
       offset = (page - 1) * limit
 
-      entries =
-        entity_type
-        |> timeline_entries(id, transition_entity_type, limit + 1, offset, page)
-        |> Enum.sort(&entry_before?/2)
-        |> Enum.take(limit + 1)
-        |> Enum.map(&safe_entry/1)
+      summary_entries = summary_entries(entity_type, id, page)
+      transition_entries = transition_entries(transition_entity_type, id, limit + 1, offset)
 
-      {visible_entries, next_page} =
-        if length(entries) > limit do
-          {Enum.take(entries, limit), page + 1}
+      {visible_transition_entries, next_page} =
+        if length(transition_entries) > limit do
+          {Enum.take(transition_entries, limit), page + 1}
         else
-          {entries, nil}
+          {transition_entries, nil}
         end
 
-      {:ok, %{entries: visible_entries, page: page, limit: limit, next_page: next_page}}
+      entries =
+        (summary_entries ++ visible_transition_entries)
+        |> Enum.sort(&entry_before?/2)
+        |> Enum.map(&safe_entry/1)
+
+      {:ok, %{entries: entries, page: page, limit: limit, next_page: next_page}}
     end
   end
 
@@ -71,11 +72,6 @@ defmodule FastCheck.Sales.AuditViews do
   end
 
   defp parse_id(_), do: {:error, :invalid_entity_id}
-
-  defp timeline_entries(entity_type, id, transition_entity_type, limit, offset, page) do
-    summary_entries(entity_type, id, page) ++
-      transition_entries(transition_entity_type, id, limit, offset)
-  end
 
   defp summary_entries(_entity_type, _id, page) when page > 1, do: []
 

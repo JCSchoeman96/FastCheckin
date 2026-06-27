@@ -61,6 +61,49 @@ defmodule FastCheck.Sales.AuditViewsTest do
            end)
   end
 
+  test "summary rows do not consume transition pagination budget" do
+    order_id = insert_order!()
+    payment_attempt_id = insert_payment_attempt!(order_id)
+
+    for index <- 1..3 do
+      insert_transition!(
+        "PaymentAttempt",
+        payment_attempt_id,
+        "payment_state_#{index}",
+        "payment_state_#{index + 1}",
+        seconds_ago: index
+      )
+    end
+
+    assert {:ok, page_1} =
+             AuditViews.timeline("payment_attempt", Integer.to_string(payment_attempt_id),
+               limit: 1,
+               page: 1
+             )
+
+    assert {:ok, page_2} =
+             AuditViews.timeline("payment_attempt", Integer.to_string(payment_attempt_id),
+               limit: 1,
+               page: 2
+             )
+
+    assert {:ok, page_3} =
+             AuditViews.timeline("payment_attempt", Integer.to_string(payment_attempt_id),
+               limit: 1,
+               page: 3
+             )
+
+    assert Enum.any?(page_1.entries, &(&1.source == "payment_attempt.summary"))
+
+    transition_states =
+      [page_1, page_2, page_3]
+      |> Enum.flat_map(& &1.entries)
+      |> Enum.filter(&(&1.source == "audit_test"))
+      |> Enum.map(& &1.to_state)
+
+    assert transition_states == ["payment_state_2", "payment_state_3", "payment_state_4"]
+  end
+
   test "payment, ticket, and delivery summaries redact sensitive fields" do
     order_id = insert_order!()
     offer_id = insert_offer!()
