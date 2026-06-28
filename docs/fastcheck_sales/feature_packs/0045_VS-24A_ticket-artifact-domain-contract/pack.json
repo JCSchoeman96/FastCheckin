@@ -1,0 +1,179 @@
+{
+  "pack_id": "0045_VS-24A",
+  "slice": "VS-24A",
+  "name": "Ticket Artifact Domain Contract",
+  "version": "1.2-inspect-redaction-patched",
+  "status": "implementation_ready",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0045_VS-24A_ticket-artifact-domain-contract",
+  "numbering": {
+    "do_not_use": "0044",
+    "reason": "0044 is already used by VS-22_end-to-end-sandbox-tests",
+    "instruction": "Use 0045 unless the repo feature-pack index sync/check script generates a different next number."
+  },
+  "primary_area": "tickets",
+  "goal": "Create a shared, read-only, customer-safe ticket artifact contract and resolver for current secure web tickets and future PDF/Apple Wallet/Google Wallet renderers.",
+  "dependencies": [
+    "VS-08 Ticket Code, QR, and Delivery Token Foundation",
+    "VS-09 Ticket Issuance chain",
+    "VS-11 Secure Ticket Page",
+    "VS-15 Revocation and Scanner Visibility",
+    "VS-22 End-to-End Sandbox Tests",
+    "VS-23 Launch Runbooks"
+  ],
+  "recommended_files_create": [
+    "lib/fastcheck/tickets/artifact.ex",
+    "lib/fastcheck/tickets/artifact_error.ex",
+    "lib/fastcheck/tickets/artifact_resolver.ex",
+    "test/fastcheck/tickets/artifact_resolver_test.exs",
+    "docs/fastcheck_sales/feature_packs/0045_VS-24A_ticket-artifact-domain-contract/VS-24A-FEATURE_PACK.md",
+    "docs/fastcheck_sales/feature_packs/0045_VS-24A_ticket-artifact-domain-contract/pack.json"
+  ],
+  "recommended_files_update": [
+    "lib/fastcheck/sales/ticket_page.ex",
+    "test/fastcheck/sales/ticket_page_test.exs",
+    "test/fastcheck_web/controllers/secure_ticket_controller_test.exs"
+  ],
+  "do_not_create_in_implementation_pr": [
+    "docs/fastcheck_sales/handoffs/VS-24A_IMPLEMENTATION_HANDOFF.md"
+  ],
+  "must_not_change": [
+    "lib/fastcheck_web/controllers/secure_ticket_controller.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_html/show.html.heex",
+    "payment authority",
+    "ticket issuance authority",
+    "scanner authority",
+    "revocation/refund behavior",
+    "WhatsApp delivery behavior",
+    "delivery token rotation"
+  ],
+  "routes": {
+    "new_routes": [],
+    "existing_route_preserved": "GET /t/:token"
+  },
+  "in_scope": [
+    "Artifact struct",
+    "ArtifactError struct",
+    "ArtifactResolver.resolve_from_delivery_token/1",
+    "TicketPage adapter preserving qr_payload legacy shape",
+    "privacy and no-mutation tests",
+    "feature-pack docs/metadata"
+  ],
+  "out_of_scope": [
+    "PDF generation",
+    "Apple Wallet implementation",
+    "Google Wallet implementation",
+    "wallet signing/certificates",
+    "new routes",
+    "artifact persistence",
+    "migrations",
+    "caching",
+    "token rotation changes",
+    "delivery/WhatsApp changes",
+    "payment changes",
+    "issuer changes",
+    "scanner mutation changes",
+    "revocation/refund changes",
+    "implementation handoff in this PR"
+  ],
+  "legacy_contract": {
+    "TicketPage.resolve/1_result_keys": [
+      "state",
+      "event_name",
+      "attendee_name",
+      "ticket_type",
+      "qr_payload",
+      "support_message"
+    ],
+    "adapter_mapping": "Artifact.scanner_payload -> qr_payload",
+    "controller_changes_allowed": false,
+    "template_changes_allowed": false
+  },
+  "scanner_authority": {
+    "authority": "Attendee/mobile scanner eligibility and current TicketPage payment-status logic",
+    "do_not_use_as_authority": "TicketIssue.scanner_status",
+    "payload_builder": "FastCheck.Tickets.QrPayload.build_for_scanner/1",
+    "format": ":plain_ticket_code"
+  },
+  "required_indexes": [
+    "existing unique delivery-token-hash lookup on sales_ticket_issues"
+  ],
+  "cache_strategy": {
+    "vs_24a": "none",
+    "reason": "Avoid stale valid artifacts after revocation, expiry, payment/scanner eligibility changes, or event archive changes.",
+    "redis_structures": [],
+    "ttl_strategy": "honor persisted delivery_token_expires_at only",
+    "invalidation": "not applicable because no cache",
+    "pubsub": "none"
+  },
+  "security": {
+    "forbidden_values": [
+      "delivery token",
+      "delivery token hash",
+      "QR token hash",
+      "ticket URL",
+      "payment URL",
+      "Paystack access code",
+      "raw provider payload",
+      "phone number",
+      "email",
+      "buyer_phone",
+      "buyer_email",
+      "recipient",
+      "provider message body",
+      "provider request body",
+      "authorization_url",
+      "access_code"
+    ],
+    "raw_structs_forbidden_in_artifact": [
+      "%TicketIssue{}",
+      "%Attendee{}",
+      "%Order{}",
+      "%DeliveryAttempt{}",
+      "%Conversation{}"
+    ],
+    "inspect_redaction": {
+      "required": true,
+      "modules": [
+        "FastCheck.Tickets.Artifact",
+        "FastCheck.Tickets.ArtifactError"
+      ],
+      "reason": "Artifact.scanner_payload is currently the plain scanner ticket code; TicketIssue.ticket_code is sensitive.",
+      "artifact_rule": "Keep scanner_payload available as a normal field for valid renderers, but redact it from inspect(artifact).",
+      "artifact_error_rule": "inspect(error) must contain no token, hash, ID, raw payload, phone, email, payment URL, ticket URL, or scanner payload."
+    }
+  },
+  "red_green_tests": [
+    "artifact resolver valid token returns safe Artifact",
+    "artifact resolver invalid/unknown token returns not_found",
+    "expired token returns expired_link",
+    "revoked ticket returns ticket_revoked",
+    "non-issued ticket returns ticket_not_ready",
+    "not-scannable attendee returns ticket_not_scannable",
+    "unacceptable payment returns ticket_not_scannable",
+    "archived event returns ticket_not_ready",
+    "resolver does not mutate rows",
+    "TicketPage preserves legacy keys and qr_payload mapping",
+    "secure controller tests remain green",
+    "VS-22 E2E checkout-to-scanner remains green",
+    "VS-22 revocation scanner visibility remains green",
+    "valid artifact exposes scanner_payload as a normal field",
+    "inspect(artifact) does not contain artifact.scanner_payload",
+    "inspect(error) contains no token/hash/ID/raw payload/phone/email/payment URL/ticket URL/scanner payload"
+  ],
+  "verification_commands": [
+    "mix format",
+    "mix test test/fastcheck/tickets/artifact_resolver_test.exs",
+    "mix test test/fastcheck/sales/ticket_page_test.exs",
+    "mix test test/fastcheck_web/controllers/secure_ticket_controller_test.exs",
+    "mix test test/fastcheck/sales/e2e/checkout_to_scanner_test.exs",
+    "mix test test/fastcheck/sales/e2e/revocation_scanner_visibility_test.exs",
+    "mix precommit"
+  ],
+  "future_consumers": [
+    "PDF renderer",
+    "Apple Wallet renderer",
+    "Google Wallet renderer"
+  ]
+}
