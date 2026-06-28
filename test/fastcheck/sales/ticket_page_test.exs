@@ -24,7 +24,22 @@ defmodule FastCheck.Sales.TicketPageTest do
       assert result.attendee_name == "#{attendee.first_name} #{attendee.last_name}"
       assert result.ticket_type == attendee.ticket_type
       assert result.qr_payload == QrPayload.build_for_scanner(ticket_code)
+
+      assert Map.keys(result) |> Enum.sort() == [
+               :attendee_name,
+               :event_name,
+               :qr_payload,
+               :state,
+               :support_message,
+               :ticket_type
+             ]
+
       refute Map.has_key?(result, :ticket_code)
+      refute Map.has_key?(result, :scanner_payload)
+      refute Map.has_key?(result, :scanner_payload_format)
+      refute Map.has_key?(result, :issued_at)
+      refute Map.has_key?(result, :delivery_expires_at)
+      refute Map.has_key?(result, :http_status_hint)
       refute_sensitive_fields(result)
     end
 
@@ -53,6 +68,7 @@ defmodule FastCheck.Sales.TicketPageTest do
 
       assert result.state == :not_found
       assert result.qr_payload == nil
+      refute inspect(result) =~ token
       refute_sensitive_fields(result)
     end
 
