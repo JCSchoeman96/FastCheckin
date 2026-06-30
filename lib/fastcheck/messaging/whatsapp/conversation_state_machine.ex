@@ -31,7 +31,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       {:ok, duplicate_result(conversation)}
     else
       normalized = InputNormalizer.normalize(command.text_body || "")
-      dispatch(command, conversation, normalized)
+
+      case dispatch(command, conversation, normalized) do
+        {:ok, result} -> mark_handled(command, result)
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -433,7 +437,26 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp duplicate_inbound?(command, conversation) do
     is_binary(command.provider_message_id) and command.provider_message_id != "" and
-      conversation.last_inbound_message_id == command.provider_message_id
+      state_data(conversation)["last_handled_inbound_message_id"] == command.provider_message_id
+  end
+
+  defp mark_handled(_command, %{send_reply?: false} = result), do: {:ok, result}
+
+  defp mark_handled(command, %FlowResult{conversation: conversation} = result) do
+    data =
+      conversation
+      |> state_data()
+      |> Map.put("last_handled_inbound_message_id", command.provider_message_id)
+
+    actor = %{actor_type: :system, actor_id: "whatsapp_conversation_state_machine"}
+
+    conversation
+    |> Changeset.for_update(:update_inbound_checkpoint, %{state_data: data}, actor: actor)
+    |> Ash.update(authorize?: false)
+    |> case do
+      {:ok, conversation} -> {:ok, %{result | conversation: conversation}}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp flow_fields(conversation) do

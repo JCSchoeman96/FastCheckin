@@ -135,6 +135,50 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     refute log =~ "Welkom by FastCheck Tickets"
   end
 
+  test "duplicate worker execution does not send duplicate WhatsApp replies" do
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-duplicate"}]})
+       }}
+    end)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Duplicate Worker Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Duplicate General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    conversation_id = insert_conversation!()
+    {:ok, encrypted} = Crypto.encrypt("hi")
+
+    args = %{
+      "provider_message_id" => "wamid.worker-duplicate-1",
+      "message_type" => "text",
+      "text_body_encrypted" => encrypted,
+      "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
+      "conversation_id" => conversation_id,
+      "correlation_id" => "corr-worker-duplicate",
+      "received_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "raw_payload_hash" => "hash-worker-duplicate"
+    }
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args)
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Welkom by FastCheck Tickets"
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args)
+    refute_received {:whatsapp_request, _request}
+  end
+
   test "retryable outbound failure does not reinterpret the same provider message on retry" do
     test_pid = self()
 
