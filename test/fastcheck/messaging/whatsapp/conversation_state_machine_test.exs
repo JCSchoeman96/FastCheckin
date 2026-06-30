@@ -180,6 +180,36 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert repeated.response_body =~ "Welkom by FastCheck Tickets"
   end
 
+  test "fresh checkpointed inbound message still produces first reply" do
+    provider_message_id = "wamid.checkpointed-fresh"
+    conversation = insert_conversation!(last_inbound_message_id: provider_message_id)
+
+    assert {:ok, result} = handle(conversation, "hi", provider_message_id)
+
+    assert result.send_reply?
+    assert result.response_body =~ "Welkom by FastCheck Tickets"
+    assert result.conversation.state == "selecting_language"
+
+    assert result.conversation.state_data["last_handled_inbound_message_id"] ==
+             provider_message_id
+  end
+
+  test "handled inbound message is suppressed when worker repeats same provider message id", %{
+    conversation: conversation
+  } do
+    provider_message_id = "wamid.handled-duplicate"
+
+    assert {:ok, first} = handle(conversation, "hi", provider_message_id)
+    assert first.send_reply?
+    assert first.conversation.state == "selecting_language"
+
+    assert {:ok, duplicate} = handle(first.conversation, "hi", provider_message_id)
+
+    refute duplicate.send_reply?
+    assert duplicate.response_body == ""
+    assert duplicate.conversation.state == "selecting_language"
+  end
+
   defp progress(%{conversation: conversation}, text, suffix),
     do: progress(conversation, text, suffix)
 
@@ -205,15 +235,20 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     ConversationStateMachine.handle_inbound(command, conversation)
   end
 
-  defp insert_conversation! do
+  defp insert_conversation!(opts \\ []) do
+    last_inbound_message_id = Keyword.get(opts, :last_inbound_message_id)
+
     %{rows: [[id]]} =
-      Repo.query!("""
-      INSERT INTO sales_conversations
-        (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
-      VALUES
-        ('+27821234567', '27821234567', 'af', 'new', '{}', false, now(), now())
-      RETURNING id
-      """)
+      Repo.query!(
+        """
+        INSERT INTO sales_conversations
+          (phone_e164, wa_id, preferred_language, state, state_data, last_inbound_message_id, needs_human, inserted_at, updated_at)
+        VALUES
+          ('+27821234567', '27821234567', 'af', 'new', '{}', $1, false, now(), now())
+        RETURNING id
+        """,
+        [last_inbound_message_id]
+      )
 
     Conversation
     |> Query.for_read(:get_by_id, %{id: id})
