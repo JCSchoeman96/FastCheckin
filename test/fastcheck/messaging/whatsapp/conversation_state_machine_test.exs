@@ -251,6 +251,216 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert recovered.response_body =~ "Koop kaartjies"
   end
 
+  test "# restart clears current flow and returns to main menu", %{conversation: conversation} do
+    result =
+      conversation
+      |> progress("hi", "restart-hash-1")
+      |> progress("1", "restart-hash-2")
+      |> progress("1", "restart-hash-3")
+      |> progress("1", "restart-hash-4")
+      |> progress("1", "restart-hash-5")
+      |> progress("2", "restart-hash-6")
+      |> progress("Jan Burger", "restart-hash-7")
+      |> progress("jan@example.com", "restart-hash-8")
+
+    assert result.conversation.state == "confirming_order"
+
+    assert {:ok, restarted} = handle(result.conversation, "#", "wamid.restart-hash-9")
+
+    assert restarted.conversation.state == "main_menu"
+    assert restarted.response_body =~ "Koop kaartjies"
+    assert_flow_fields_absent(restarted.conversation.state_data)
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+  end
+
+  test "restart alias clears current flow and returns to main menu", %{conversation: conversation} do
+    result =
+      conversation
+      |> progress("hi", "restart-alias-1")
+      |> progress("1", "restart-alias-2")
+      |> progress("1", "restart-alias-3")
+      |> progress("1", "restart-alias-4")
+      |> progress("1", "restart-alias-5")
+      |> progress("2", "restart-alias-6")
+      |> progress("Jan Burger", "restart-alias-7")
+
+    assert result.conversation.state == "collecting_email"
+
+    assert {:ok, restarted} = handle(result.conversation, "restart", "wamid.restart-alias-8")
+
+    assert restarted.conversation.state == "main_menu"
+    assert restarted.response_body =~ "Koop kaartjies"
+    refute restarted.response_body =~ "restart"
+    assert_flow_fields_absent(restarted.conversation.state_data)
+
+    second_conversation = insert_conversation!()
+
+    second_result =
+      second_conversation
+      |> progress("hi", "restart-uppercase-1")
+      |> progress("1", "restart-uppercase-2")
+      |> progress("1", "restart-uppercase-3")
+
+    assert second_result.conversation.state == "selecting_event"
+
+    assert {:ok, restarted_uppercase} =
+             handle(second_result.conversation, " RESTART ", "wamid.restart-uppercase-4")
+
+    assert restarted_uppercase.conversation.state == "main_menu"
+    assert restarted_uppercase.response_body =~ "Koop kaartjies"
+    refute restarted_uppercase.response_body =~ "restart"
+  end
+
+  test "0 from selecting_ticket_type returns to event selection", %{
+    conversation: conversation,
+    event: event
+  } do
+    result =
+      conversation
+      |> progress("hi", "back-event-1")
+      |> progress("1", "back-event-2")
+      |> progress("1", "back-event-3")
+      |> progress("1", "back-event-4")
+
+    assert result.conversation.state == "selecting_ticket_type"
+
+    assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-event-5")
+
+    assert backed.conversation.state == "selecting_event"
+    assert backed.response_body =~ "Kies 'n geleentheid"
+    assert backed.response_body =~ "Voelgoed Live"
+    assert backed.conversation.state_data["event_options"] == %{"1" => event.id}
+    refute Map.has_key?(backed.conversation.state_data, "selected_event_id")
+    refute Map.has_key?(backed.conversation.state_data, "selected_offer_id")
+  end
+
+  test "0 from collecting_quantity returns to ticket type selection", %{
+    conversation: conversation,
+    event: event
+  } do
+    result =
+      conversation
+      |> progress("hi", "back-offer-1")
+      |> progress("1", "back-offer-2")
+      |> progress("1", "back-offer-3")
+      |> progress("1", "back-offer-4")
+      |> progress("1", "back-offer-5")
+
+    assert result.conversation.state == "collecting_quantity"
+
+    assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-offer-6")
+
+    assert backed.conversation.state == "selecting_ticket_type"
+    assert backed.response_body =~ "General - R10"
+    assert backed.conversation.state_data["selected_event_id"] == event.id
+    assert backed.conversation.state_data["offer_options"] != %{}
+    refute Map.has_key?(backed.conversation.state_data, "selected_offer_id")
+    refute Map.has_key?(backed.conversation.state_data, "quantity")
+  end
+
+  test "0 from collecting_buyer_name returns to quantity", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    result =
+      conversation
+      |> progress("hi", "back-quantity-1")
+      |> progress("1", "back-quantity-2")
+      |> progress("1", "back-quantity-3")
+      |> progress("1", "back-quantity-4")
+      |> progress("1", "back-quantity-5")
+      |> progress("2", "back-quantity-6")
+
+    assert result.conversation.state == "collecting_buyer_name"
+
+    assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-quantity-7")
+
+    assert backed.conversation.state == "collecting_quantity"
+    assert backed.response_body =~ "Hoeveel kaartjies"
+    assert backed.conversation.state_data["selected_event_id"] == event.id
+    assert backed.conversation.state_data["selected_offer_id"] == offer.id
+    refute Map.has_key?(backed.conversation.state_data, "quantity")
+    refute Map.has_key?(backed.conversation.state_data, "buyer_name")
+    refute Map.has_key?(backed.conversation.state_data, "buyer_email")
+  end
+
+  test "0 from collecting_email returns to buyer name", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    result =
+      conversation
+      |> progress("hi", "back-name-1")
+      |> progress("1", "back-name-2")
+      |> progress("1", "back-name-3")
+      |> progress("1", "back-name-4")
+      |> progress("1", "back-name-5")
+      |> progress("2", "back-name-6")
+      |> progress("Jan Burger", "back-name-7")
+
+    assert result.conversation.state == "collecting_email"
+
+    assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-name-8")
+
+    assert backed.conversation.state == "collecting_buyer_name"
+    assert backed.response_body =~ "Stuur asseblief jou naam"
+    assert backed.conversation.state_data["selected_event_id"] == event.id
+    assert backed.conversation.state_data["selected_offer_id"] == offer.id
+    assert backed.conversation.state_data["quantity"] == 2
+    refute Map.has_key?(backed.conversation.state_data, "buyer_name")
+    refute Map.has_key?(backed.conversation.state_data, "buyer_email")
+  end
+
+  test "0 from confirming_order returns to email collection", %{conversation: conversation} do
+    result =
+      conversation
+      |> progress("hi", "back-email-1")
+      |> progress("1", "back-email-2")
+      |> progress("1", "back-email-3")
+      |> progress("1", "back-email-4")
+      |> progress("1", "back-email-5")
+      |> progress("2", "back-email-6")
+      |> progress("Jan Burger", "back-email-7")
+      |> progress("jan@example.com", "back-email-8")
+
+    assert result.conversation.state == "confirming_order"
+
+    assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-email-9")
+
+    assert backed.conversation.state == "collecting_email"
+    assert backed.response_body =~ "Stuur jou e-posadres"
+    assert backed.conversation.state_data["buyer_name"] == "Jan Burger"
+    refute Map.has_key?(backed.conversation.state_data, "buyer_email")
+    refute Map.has_key?(backed.conversation.state_data, "sales_order_id")
+    refute Map.has_key?(backed.conversation.state_data, "payment_attempt_id")
+    refute Map.has_key?(backed.conversation.state_data, "order_public_reference")
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+  end
+
+  test "0 from collecting_quantity falls back safely when refreshed offers disappear", %{
+    conversation: conversation,
+    offer: offer
+  } do
+    result =
+      conversation
+      |> progress("hi", "back-missing-offers-1")
+      |> progress("1", "back-missing-offers-2")
+      |> progress("1", "back-missing-offers-3")
+      |> progress("1", "back-missing-offers-4")
+      |> progress("1", "back-missing-offers-5")
+
+    assert result.conversation.state == "collecting_quantity"
+
+    Repo.query!("UPDATE sales_ticket_offers SET sales_enabled = false WHERE id = $1", [offer.id])
+
+    assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-missing-offers-6")
+
+    assert backed.conversation.state in ["selecting_event", "main_menu"]
+    refute Map.has_key?(backed.conversation.state_data, "selected_offer_id")
+  end
+
   test "invalid input repeats current menu without advancing state", %{conversation: conversation} do
     assert {:ok, result} = handle(conversation, "hi", "wamid.invalid-1")
     assert {:ok, repeated} = handle(result.conversation, "ten", "wamid.invalid-2")
@@ -344,5 +554,20 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
   defp exposes_raw_id?(body, id) do
     Regex.match?(~r/(?<![A-Za-z0-9])#{Regex.escape(to_string(id))}(?![A-Za-z0-9])/, body)
+  end
+
+  defp assert_flow_fields_absent(state_data) do
+    for key <- [
+          "selected_event_id",
+          "selected_offer_id",
+          "quantity",
+          "buyer_name",
+          "buyer_email",
+          "sales_order_id",
+          "payment_attempt_id",
+          "order_public_reference"
+        ] do
+      refute Map.has_key?(state_data, key), "expected #{key} to be absent"
+    end
   end
 end

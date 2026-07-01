@@ -15,6 +15,8 @@ defmodule FastCheck.Messaging.WhatsApp.InputNormalizerTest do
       assert {:ok, :help} = InputNormalizer.normalize("HELP")
       assert {:ok, :help} = InputNormalizer.normalize(" help ")
       assert {:ok, :stop} = InputNormalizer.normalize("Stop")
+      assert {:ok, :restart} = InputNormalizer.normalize("restart")
+      assert {:ok, :restart} = InputNormalizer.normalize(" RESTART ")
     end
 
     test "classifies bounded free text without logging or transforming it" do

@@ -23,6 +23,32 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   @menu_limit 9
   @event_candidate_limit 50
   @session_ttl_seconds 86_400
+  @selected_event_keys [
+    "selected_event_id",
+    "selected_event_label"
+  ]
+  @selected_offer_keys [
+    "selected_offer_id",
+    "selected_offer_label",
+    "selected_offer_max_per_order",
+    "selected_offer_price_cents",
+    "selected_offer_currency"
+  ]
+  @buyer_keys [
+    "buyer_name",
+    "buyer_email"
+  ]
+  @order_flow_keys [
+    "sales_order_id",
+    "payment_attempt_id",
+    "order_public_reference"
+  ]
+  @all_flow_keys [
+                   "event_options",
+                   "offer_options",
+                   "quantity"
+                 ] ++
+                   @selected_event_keys ++ @selected_offer_keys ++ @buyer_keys ++ @order_flow_keys
 
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
@@ -149,18 +175,18 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp dispatch(command, conversation, {:ok, :back})
-       when conversation.state in [
-              "selecting_event",
-              "selecting_ticket_type",
-              "collecting_quantity",
-              "collecting_buyer_name",
-              "collecting_email",
-              "confirming_order"
-            ] do
+       when conversation.state == "selecting_event" do
     with {:ok, conversation} <-
-           transition(command, conversation, :return_to_main_menu, %{state_data: %{}}) do
+           transition(command, conversation, :return_to_main_menu, %{
+             state_data: clear_current_flow(state_data(conversation))
+           }) do
       {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
     end
+  end
+
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "selecting_ticket_type" do
+    return_to_refreshed_event_selection(command, conversation)
   end
 
   defp dispatch(command, conversation, {:ok, {:number, index}})
@@ -216,6 +242,30 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     repeat_offer_menu(command, conversation)
   end
 
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "collecting_quantity" do
+    data = state_data(conversation)
+    event_id = Map.get(data, "selected_event_id")
+    offers = active_offers(event_id)
+
+    if offers == [] do
+      return_to_refreshed_event_selection(command, conversation)
+    else
+      data =
+        data
+        |> clear_after_offer_selection()
+        |> Map.put("offer_options", option_ids(offers))
+
+      with {:ok, conversation} <-
+             transition(command, conversation, :return_to_ticket_type_selection, %{
+               state_data: data
+             }) do
+        {:ok,
+         result(conversation, MenuRenderer.offer_menu(language(conversation), offers), command)}
+      end
+    end
+  end
+
   defp dispatch(command, conversation, {:ok, {:number, quantity}})
        when conversation.state == "collecting_quantity" do
     data = state_data(conversation)
@@ -255,6 +305,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
      )}
   end
 
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "collecting_buyer_name" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :return_to_quantity_collection, %{
+             state_data: clear_after_quantity(state_data(conversation))
+           }) do
+      {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
+    end
+  end
+
   defp dispatch(command, conversation, {:ok, {:text, buyer_name}})
        when conversation.state == "collecting_buyer_name" do
     with {:ok, conversation} <-
@@ -276,6 +336,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
        ),
        command
      )}
+  end
+
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "collecting_email" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :return_to_buyer_name_collection, %{
+             state_data: clear_after_buyer_name(state_data(conversation))
+           }) do
+      {:ok, result(conversation, MenuRenderer.buyer_name_prompt(language(conversation)), command)}
+    end
   end
 
   defp dispatch(command, conversation, {:ok, {:number, 1}})
@@ -323,6 +393,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
      )}
   end
 
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "confirming_order" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :return_to_email_collection, %{
+             state_data: clear_after_email(state_data(conversation))
+           }) do
+      {:ok, result(conversation, MenuRenderer.email_prompt(language(conversation)), command)}
+    end
+  end
+
   defp dispatch(command, conversation, {:ok, {:number, 1}})
        when conversation.state == "confirming_order" do
     PaymentFlow.confirm_checkout_from_conversation(command, conversation)
@@ -354,6 +434,31 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, _normalized) do
     {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
+  end
+
+  defp return_to_refreshed_event_selection(command, conversation) do
+    events = sellable_events()
+
+    if events == [] do
+      with {:ok, conversation} <-
+             transition(command, conversation, :return_to_main_menu, %{
+               state_data: clear_current_flow(state_data(conversation))
+             }) do
+        {:ok, result(conversation, MenuRenderer.no_events(language(conversation)), command)}
+      end
+    else
+      data =
+        conversation
+        |> state_data()
+        |> clear_after_event_selection()
+        |> Map.put("event_options", option_ids(events))
+
+      with {:ok, conversation} <-
+             transition(command, conversation, :return_to_event_selection, %{state_data: data}) do
+        {:ok,
+         result(conversation, MenuRenderer.event_menu(language(conversation), events), command)}
+      end
+    end
   end
 
   defp repeat_event_menu(command, conversation) do
@@ -552,6 +657,41 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     from(e in Event, where: e.id == ^event_id, select: e.name)
     |> Repo.one()
   end
+
+  defp clear_current_flow(data), do: drop_flow_keys(data, @all_flow_keys)
+
+  defp clear_after_event_selection(data) do
+    drop_flow_keys(
+      data,
+      @selected_event_keys ++
+        @selected_offer_keys ++
+        @buyer_keys ++
+        @order_flow_keys ++
+        ["offer_options", "quantity"]
+    )
+  end
+
+  defp clear_after_offer_selection(data) do
+    drop_flow_keys(
+      data,
+      @selected_offer_keys ++ @buyer_keys ++ @order_flow_keys ++ ["quantity"]
+    )
+  end
+
+  defp clear_after_quantity(data) do
+    drop_flow_keys(data, @buyer_keys ++ @order_flow_keys ++ ["quantity"])
+  end
+
+  defp clear_after_buyer_name(data) do
+    drop_flow_keys(data, @buyer_keys ++ @order_flow_keys)
+  end
+
+  defp clear_after_email(data) do
+    drop_flow_keys(data, ["buyer_email"] ++ @order_flow_keys)
+  end
+
+  defp drop_flow_keys(data, keys) when is_map(data), do: Map.drop(data, keys)
+  defp drop_flow_keys(_data, _keys), do: %{}
 
   defp customer_actor(event_id) do
     %{actor_type: :customer_session, actor_id: "whatsapp_customer", allowed_event_ids: [event_id]}

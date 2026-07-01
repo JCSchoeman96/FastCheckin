@@ -200,6 +200,51 @@ defmodule FastCheck.Sales.Conversation do
       change(&transition_state(&1, &2, "awaiting_payment", :confirm_order))
     end
 
+    update :return_to_event_selection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "selecting_event", :return_to_event_selection))
+    end
+
+    update :return_to_ticket_type_selection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "selecting_ticket_type", :return_to_ticket_type_selection))
+    end
+
+    update :return_to_quantity_collection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_quantity", :return_to_quantity_collection))
+    end
+
+    update :return_to_buyer_name_collection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_buyer_name", :return_to_buyer_name_collection))
+    end
+
+    update :return_to_email_collection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_email", :return_to_email_collection))
+    end
+
     update :return_to_main_menu do
       require_atomic?(false)
       accept(@vs_18_checkpoint_fields)

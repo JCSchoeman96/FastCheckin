@@ -33,6 +33,9 @@ defmodule FastCheck.Messaging.WhatsApp.InputNormalizer do
       trimmed == "#" ->
         {:ok, :restart}
 
+      String.downcase(trimmed) == "restart" ->
+        {:ok, :restart}
+
       String.downcase(trimmed) == "help" ->
         {:ok, :help}
 
