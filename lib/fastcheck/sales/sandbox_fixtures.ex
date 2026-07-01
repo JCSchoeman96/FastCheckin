@@ -34,6 +34,10 @@ defmodule FastCheck.Sales.SandboxFixtures do
   @dummy_mobile_secret "whatsapp-sandbox-dummy-mobile-secret"
   @terminal_order_statuses ["cancelled", "expired", "refunded"]
   @terminal_checkout_statuses ["expired", "released", "failed"]
+  @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+  @scanner_code_length 6
+  @scanner_code_space 1_073_741_824
+  @sandbox_scanner_code_max_attempts 8
 
   @type summary :: %{
           event_id: pos_integer(),
@@ -119,24 +123,87 @@ defmodule FastCheck.Sales.SandboxFixtures do
     {starts_at, ends_at} = window(now)
 
     event =
-      %Event{}
-      |> Event.changeset(%{
-        name: "#{@event_name_prefix} #{suffix}",
-        shortname: "#{@event_shortname_prefix} #{suffix}",
-        site_url: site_url,
-        tickera_site_url: site_url,
-        tickera_api_key_encrypted: encrypted_api_key,
-        tickera_api_key_last4: String.slice(@dummy_tickera_api_key, -4, 4),
-        mobile_access_secret_encrypted: encrypted_mobile_secret,
-        status: "active",
-        total_tickets: @quantity,
-        tickera_start_date: starts_at,
-        tickera_end_date: ends_at,
-        entrance_name: "Main"
-      })
-      |> Repo.insert!()
+      insert_sandbox_event_with_retry!(
+        %{
+          name: "#{@event_name_prefix} #{suffix}",
+          shortname: "#{@event_shortname_prefix} #{suffix}",
+          site_url: site_url,
+          tickera_site_url: site_url,
+          tickera_api_key_encrypted: encrypted_api_key,
+          tickera_api_key_last4: String.slice(@dummy_tickera_api_key, -4, 4),
+          mobile_access_secret_encrypted: encrypted_mobile_secret,
+          scanner_login_code: sandbox_scanner_login_code(suffix),
+          status: "active",
+          total_tickets: @quantity,
+          tickera_start_date: starts_at,
+          tickera_end_date: ends_at,
+          entrance_name: "Main"
+        },
+        suffix,
+        0
+      )
 
     persist_active_event!(event)
+  end
+
+  defp insert_sandbox_event_with_retry!(attrs, suffix, attempt)
+       when attempt < @sandbox_scanner_code_max_attempts do
+    %Event{}
+    |> Event.changeset(attrs)
+    |> Repo.insert()
+    |> case do
+      {:ok, event} ->
+        event
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        if scanner_login_code_conflict?(changeset) do
+          attrs =
+            Map.put(
+              attrs,
+              :scanner_login_code,
+              sandbox_scanner_login_code("#{suffix}-#{attempt + 1}")
+            )
+
+          insert_sandbox_event_with_retry!(attrs, suffix, attempt + 1)
+        else
+          raise Ecto.InvalidChangesetError, action: :insert, changeset: changeset
+        end
+    end
+  end
+
+  defp insert_sandbox_event_with_retry!(attrs, _suffix, _attempt) do
+    %Event{}
+    |> Event.changeset(attrs)
+    |> Repo.insert!()
+  end
+
+  defp scanner_login_code_conflict?(%Ecto.Changeset{} = changeset) do
+    Enum.any?(changeset.errors, fn
+      {:scanner_login_code, {_message, opts}} ->
+        opts[:constraint] == :unique or opts[:constraint_name] == "idx_events_scanner_login_code"
+
+      _error ->
+        false
+    end)
+  end
+
+  defp sandbox_scanner_login_code(seed) when is_binary(seed) do
+    seed
+    |> :erlang.phash2(@scanner_code_space)
+    |> encode_scanner_code([])
+    |> IO.iodata_to_binary()
+    |> String.pad_leading(@scanner_code_length, "0")
+  end
+
+  defp encode_scanner_code(value, acc) when value < 32 do
+    [<<Enum.at(@scanner_code_alphabet, value)>> | acc]
+  end
+
+  defp encode_scanner_code(value, acc) do
+    remainder = rem(value, 32)
+    quotient = div(value, 32)
+
+    encode_scanner_code(quotient, [<<Enum.at(@scanner_code_alphabet, remainder)>> | acc])
   end
 
   defp update_event!(%Event{} = event, now) do
