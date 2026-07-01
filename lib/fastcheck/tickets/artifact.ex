@@ -18,7 +18,15 @@ defmodule FastCheck.Tickets.Artifact do
     :issued_at,
     :delivery_expires_at
   ]
-  defstruct @enforce_keys
+
+  @optional_keys [
+    event_date: nil,
+    event_time: nil,
+    event_location: nil,
+    entrance_name: nil
+  ]
+
+  defstruct @enforce_keys ++ @optional_keys
 
   @type t :: %__MODULE__{
           state: :valid,
@@ -29,7 +37,11 @@ defmodule FastCheck.Tickets.Artifact do
           scanner_payload_format: :plain_ticket_code,
           support_message: String.t(),
           issued_at: DateTime.t() | nil,
-          delivery_expires_at: DateTime.t() | nil
+          delivery_expires_at: DateTime.t() | nil,
+          event_date: Date.t() | nil,
+          event_time: Time.t() | nil,
+          event_location: String.t() | nil,
+          entrance_name: String.t() | nil
         }
 end
 

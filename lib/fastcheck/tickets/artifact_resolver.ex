@@ -174,7 +174,11 @@ defmodule FastCheck.Tickets.ArtifactResolver do
       scanner_payload_format: :plain_ticket_code,
       support_message: "Present this ticket code at the entrance scanner.",
       issued_at: ticket_issue.issued_at,
-      delivery_expires_at: ticket_issue.delivery_token_expires_at
+      delivery_expires_at: ticket_issue.delivery_token_expires_at,
+      event_date: event.event_date,
+      event_time: event.event_time,
+      event_location: event.location,
+      entrance_name: event.entrance_name
     }
   end
 

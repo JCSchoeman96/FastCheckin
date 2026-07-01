@@ -39,6 +39,10 @@ defmodule FastCheck.Sales.TicketPageTest do
       refute Map.has_key?(result, :scanner_payload_format)
       refute Map.has_key?(result, :issued_at)
       refute Map.has_key?(result, :delivery_expires_at)
+      refute Map.has_key?(result, :event_date)
+      refute Map.has_key?(result, :event_time)
+      refute Map.has_key?(result, :event_location)
+      refute Map.has_key?(result, :entrance_name)
       refute Map.has_key?(result, :http_status_hint)
       refute_sensitive_fields(result)
     end
