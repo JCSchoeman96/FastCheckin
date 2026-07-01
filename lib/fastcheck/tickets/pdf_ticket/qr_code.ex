@@ -28,6 +28,9 @@ defmodule FastCheck.Tickets.PdfTicket.QrCode do
       payload != String.trim(payload) ->
         {:error, :malformed_payload}
 
+      payload_control_characters?(payload) ->
+        {:error, :malformed_payload}
+
       true ->
         build_matrix(payload)
     end
@@ -35,6 +38,10 @@ defmodule FastCheck.Tickets.PdfTicket.QrCode do
 
   def from_payload(nil), do: {:error, :blank_payload}
   def from_payload(_payload), do: {:error, :malformed_payload}
+
+  defp payload_control_characters?(payload) do
+    Regex.match?(~r/[\x00-\x1F\x7F]/, payload)
+  end
 
   defp build_matrix(payload) do
     payload

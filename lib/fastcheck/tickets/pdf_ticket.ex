@@ -55,6 +55,9 @@ defmodule FastCheck.Tickets.PdfTicket do
       payload != String.trim(payload) ->
         {:error, :malformed_scanner_payload}
 
+      scanner_payload_control_characters?(payload) ->
+        {:error, :malformed_scanner_payload}
+
       format != :plain_ticket_code ->
         {:error, :unsupported_scanner_payload_format}
 
@@ -64,6 +67,10 @@ defmodule FastCheck.Tickets.PdfTicket do
   end
 
   defp validate_artifact(_artifact), do: :ok
+
+  defp scanner_payload_control_characters?(payload) do
+    Regex.match?(~r/[\x00-\x1F\x7F]/, payload)
+  end
 
   defp build_qr_code(payload) do
     case QrCode.from_payload(payload) do

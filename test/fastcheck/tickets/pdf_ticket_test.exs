@@ -120,6 +120,15 @@ defmodule FastCheck.Tickets.PdfTicketTest do
       refute inspect(error) =~ @ticket_code
     end
 
+    test "scanner payload control characters fail closed" do
+      for payload <- ["FC-123\n456", "FC-123\t456", "FC-123\r456", "FC-123" <> <<0>>] do
+        assert {:error, %Error{reason: :malformed_scanner_payload} = error} =
+                 PdfTicket.generate(valid_artifact(scanner_payload: payload))
+
+        refute inspect(error) =~ payload
+      end
+    end
+
     test "non-valid artifact state fails closed" do
       assert {:error, %Error{reason: :invalid_artifact}} =
                PdfTicket.generate(valid_artifact(state: :ticket_revoked))
@@ -176,12 +185,16 @@ defmodule FastCheck.Tickets.PdfTicketTest do
       refute inspect(qr) =~ @ticket_code
     end
 
-    test "fails closed for nil, blank, non-binary, and leading/trailing whitespace payloads" do
+    test "fails closed for nil, blank, non-binary, whitespace, and control-character payloads" do
       assert {:error, :blank_payload} = QrCode.from_payload(nil)
       assert {:error, :blank_payload} = QrCode.from_payload(" ")
       assert {:error, :malformed_payload} = QrCode.from_payload(123)
       assert {:error, :malformed_payload} = QrCode.from_payload(" #{@ticket_code}")
       assert {:error, :malformed_payload} = QrCode.from_payload("#{@ticket_code} ")
+      assert {:error, :malformed_payload} = QrCode.from_payload("FC-123\n456")
+      assert {:error, :malformed_payload} = QrCode.from_payload("FC-123\t456")
+      assert {:error, :malformed_payload} = QrCode.from_payload("FC-123\r456")
+      assert {:error, :malformed_payload} = QrCode.from_payload("FC-123" <> <<0>>)
     end
   end
 
