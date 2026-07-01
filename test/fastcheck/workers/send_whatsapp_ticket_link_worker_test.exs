@@ -25,6 +25,19 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     :ok
   end
 
+  test "does not treat QR inside the opaque delivery token as direct ticket payload leakage" do
+    body =
+      "Jou kaartjie is gereed. Maak jou veilige kaartjieskakel hier oop: " <>
+        "http://localhost:4002/t/abcQRdef123"
+
+    token = extract_ticket_link_token!(body)
+    redacted_body = redact_delivery_token!(body, token)
+
+    assert token == "abcQRdef123"
+    assert redacted_body =~ "/t/[redacted]"
+    assert_no_direct_ticket_payload!(redacted_body)
+  end
+
   test "rotates a fresh delivery token and sends only a secure ticket page link" do
     test_pid = self()
 
@@ -57,14 +70,16 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert request.options.json["type"] == "text"
     body = request.options.json["text"]["body"]
     assert body =~ "/t/"
-    refute body =~ "QR"
+
+    token = extract_ticket_link_token!(body)
+    redacted_body = redact_delivery_token!(body, token)
+
+    assert_no_direct_ticket_payload!(redacted_body)
 
     updated = Repo.get!(TicketIssue, issue_id)
     assert updated.delivery_token_hash != old_hash
     refute body =~ updated.delivery_token_hash
     refute log =~ updated.delivery_token_hash
-
-    token = body |> String.split("/t/") |> List.last() |> String.split() |> hd()
     assert TokenHash.verify(token, updated.delivery_token_hash, :delivery)
 
     assert [%{status: "sent", provider_message_id: "wamid.ticket-out"}] =
@@ -354,6 +369,29 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                  order_by: [asc: d.id],
                  select: d.status
              )
+  end
+
+  defp extract_ticket_link_token!(body) when is_binary(body) do
+    case Regex.run(~r{/t/([^[:space:]]+)}, body) do
+      [_, token] -> token
+      _ -> flunk("expected WhatsApp body to contain a /t/<delivery-token> ticket link")
+    end
+  end
+
+  defp redact_delivery_token!(body, token) when is_binary(body) and is_binary(token) do
+    if String.contains?(body, token) do
+      String.replace(body, token, "[redacted]", global: false)
+    else
+      flunk("expected WhatsApp body to contain extracted delivery token")
+    end
+  end
+
+  defp assert_no_direct_ticket_payload!(redacted_body) when is_binary(redacted_body) do
+    refute redacted_body =~ "QR"
+    refute redacted_body =~ "qr_token"
+    refute redacted_body =~ "ticket_code"
+    refute redacted_body =~ "delivery_token_hash"
+    refute redacted_body =~ "ticket_url"
   end
 
   defp issued_ticket_fixture(opts \\ []) do
