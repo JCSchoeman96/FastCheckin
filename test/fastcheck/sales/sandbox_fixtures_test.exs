@@ -19,6 +19,9 @@ defmodule FastCheck.Sales.SandboxFixturesTest do
   @event_shortname_prefix "WA Sandbox"
   @dummy_tickera_api_key "whatsapp-sandbox-dummy-tickera-api-key"
   @dummy_mobile_secret "whatsapp-sandbox-dummy-mobile-secret"
+  @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+  @scanner_code_length 6
+  @scanner_code_space 1_073_741_824
 
   setup do
     on_exit(fn ->
@@ -141,6 +144,59 @@ defmodule FastCheck.Sales.SandboxFixturesTest do
     assert new_event.status == "active"
     assert new_offer.sales_enabled == true
     assert is_nil(new_offer.archived_at)
+  end
+
+  test "reset_whatsapp_checkout_fixture!/0 does not collide with archived sandbox low scanner codes" do
+    archived =
+      insert_event!(%{
+        name: "#{@event_name_prefix} Archived Low Code",
+        shortname: "#{@event_shortname_prefix} Archived Low Code",
+        scanner_login_code: "000002",
+        status: "archived"
+      })
+
+    summary = SandboxFixtures.reset_whatsapp_checkout_fixture!()
+
+    assert summary.event_id != archived.id
+    assert summary.scanner_login_code != "000002"
+    assert summary.scanner_login_code =~ ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+
+    archived = Repo.get!(Event, archived.id)
+    assert archived.status == "archived"
+    assert archived.scanner_login_code == "000002"
+  end
+
+  test "reset_whatsapp_checkout_fixture!/0 does not rely on Event auto-generated scanner codes" do
+    next_monotonic = System.unique_integer([:positive, :monotonic])
+
+    collision_codes =
+      (next_monotonic + 1)..(next_monotonic + 5)
+      |> Enum.map(&test_scanner_login_code/1)
+
+    Enum.each(collision_codes, fn code ->
+      insert_archived_sandbox_event_with_code!(code)
+    end)
+
+    summary = SandboxFixtures.reset_whatsapp_checkout_fixture!()
+
+    assert summary.scanner_login_code not in collision_codes
+    assert summary.scanner_login_code =~ ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+  end
+
+  test "reset_whatsapp_checkout_fixture!/0 creates unique valid sandbox scanner codes across archived versions" do
+    first = SandboxFixtures.reset_whatsapp_checkout_fixture!()
+    second = SandboxFixtures.reset_whatsapp_checkout_fixture!()
+    third = SandboxFixtures.reset_whatsapp_checkout_fixture!()
+
+    codes = [first.scanner_login_code, second.scanner_login_code, third.scanner_login_code]
+
+    assert Enum.uniq(codes) == codes
+
+    assert Enum.all?(codes, fn code ->
+             is_binary(code) and code =~ ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
+           end)
+
+    assert active_sandbox_event_count() == 1
   end
 
   test "reset_whatsapp_checkout_fixture!/0 does not affect non-sandbox events or offers" do
@@ -279,6 +335,31 @@ defmodule FastCheck.Sales.SandboxFixturesTest do
     end)
   end
 
+  defp insert_archived_sandbox_event_with_code!(scanner_login_code) do
+    api_key = "sandbox-archived-api-key"
+    mobile_secret = "sandbox-archived-mobile-secret"
+    {:ok, encrypted_api_key} = Crypto.encrypt(api_key)
+    {:ok, encrypted_mobile_secret} = Crypto.encrypt(mobile_secret)
+
+    suffix = "Archived #{scanner_login_code}"
+
+    %Event{}
+    |> Event.changeset(%{
+      name: "#{@event_name_prefix} #{suffix}",
+      shortname: "#{@event_shortname_prefix} #{suffix}",
+      site_url: "https://example.com",
+      tickera_site_url: "https://example.com",
+      tickera_api_key_encrypted: encrypted_api_key,
+      tickera_api_key_last4: String.slice(api_key, -4, 4),
+      mobile_access_secret_encrypted: encrypted_mobile_secret,
+      scanner_login_code: scanner_login_code,
+      status: "archived",
+      total_tickets: 20,
+      entrance_name: "Main"
+    })
+    |> Repo.insert!()
+  end
+
   defp create_offer!(event_id, overrides) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
@@ -399,5 +480,24 @@ defmodule FastCheck.Sales.SandboxFixturesTest do
 
   defp admin_actor(event_id) do
     %{actor_type: :admin, actor_id: "sandbox-fixture-test", allowed_event_ids: [event_id]}
+  end
+
+  defp test_scanner_login_code(value)
+       when is_integer(value) and value >= 0 and value < @scanner_code_space do
+    value
+    |> encode_test_scanner_code([])
+    |> IO.iodata_to_binary()
+    |> String.pad_leading(@scanner_code_length, "0")
+  end
+
+  defp encode_test_scanner_code(value, acc) when value < 32 do
+    [<<Enum.at(@scanner_code_alphabet, value)>> | acc]
+  end
+
+  defp encode_test_scanner_code(value, acc) do
+    remainder = rem(value, 32)
+    quotient = div(value, 32)
+
+    encode_test_scanner_code(quotient, [<<Enum.at(@scanner_code_alphabet, remainder)>> | acc])
   end
 end
