@@ -10,6 +10,8 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
              1. Afrikaans
              2. English
              """ = MenuRenderer.language_prompt()
+
+      refute MenuRenderer.language_prompt() =~ "#."
     end
   end
 
@@ -44,9 +46,11 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "1. Voelgoed Live"
       assert body =~ "2. Somer Fees"
       assert body =~ "0. Terug"
+      assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
       refute body =~ "101"
       refute body =~ "202"
       refute body =~ "R999"
+      refute body =~ "restart"
     end
 
     test "renders ZAR prices next to offer options without exposing offer ids" do
@@ -59,8 +63,26 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "1. General Admission - R999"
       assert body =~ "2. VIP - R1999.50"
       assert body =~ "0. Terug"
+      assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
       refute body =~ "101"
       refute body =~ "202"
+    end
+
+    test "renders active flow prompts with back and restart navigation" do
+      quantity = MenuRenderer.quantity_prompt("af")
+      buyer_name = MenuRenderer.buyer_name_prompt("af")
+      email = MenuRenderer.email_prompt("af")
+
+      for body <- [quantity, buyer_name, email] do
+        assert body =~ "0. Terug"
+        assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
+        refute body =~ "restart"
+      end
+
+      english_email = MenuRenderer.email_prompt("en")
+
+      assert english_email =~ "0. Back"
+      assert english_email =~ "#. Back to main menu (Cancel and start over)"
     end
 
     test "renders explicit zero ZAR price as R0" do
@@ -142,6 +164,8 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "Is hierdie korrek? Gaan voort na betaling."
       assert body =~ "1. OK"
       assert body =~ "0. Terug"
+      assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
+      refute body =~ "restart"
     end
 
     test "renders English order summary with skipped email" do
@@ -166,6 +190,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "Is this correct? Continue to payment."
       assert body =~ "1. OK"
       assert body =~ "0. Back"
+      assert body =~ "#. Back to main menu (Cancel and start over)"
     end
 
     test "renders invalid prices as unavailable without implying free tickets" do

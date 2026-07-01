@@ -74,20 +74,23 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
       "",
       Copy.text(language, :confirm_continue_payment),
       "1. OK",
-      "0. #{Copy.text(language, :back)}"
+      navigation_lines(language)
     ]
+    |> List.flatten()
     |> Enum.join("\n")
   end
 
   @spec quantity_prompt(String.t() | nil) :: String.t()
   def quantity_prompt(language),
-    do: Copy.text(language, :quantity) <> "\n0. #{Copy.text(language, :back)}"
+    do: ([Copy.text(language, :quantity)] ++ navigation_lines(language)) |> Enum.join("\n")
 
   @spec buyer_name_prompt(String.t() | nil) :: String.t()
-  def buyer_name_prompt(language), do: Copy.text(language, :buyer_name)
+  def buyer_name_prompt(language),
+    do: ([Copy.text(language, :buyer_name)] ++ navigation_lines(language)) |> Enum.join("\n")
 
   @spec email_prompt(String.t() | nil) :: String.t()
-  def email_prompt(language), do: Copy.text(language, :email)
+  def email_prompt(language),
+    do: ([Copy.text(language, :email)] ++ navigation_lines(language)) |> Enum.join("\n")
 
   @spec awaiting_payment(String.t() | nil) :: String.t()
   def awaiting_payment(language), do: Copy.text(language, :awaiting_payment)
@@ -116,7 +119,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
       |> Enum.with_index(1)
       |> Enum.map(fn {row, index} -> "#{index}. #{Map.fetch!(row, :label)}" end)
 
-    ([title] ++ options ++ ["0. #{Copy.text(language, :back)}"])
+    ([title] ++ options ++ navigation_lines(language))
     |> Enum.join("\n")
   end
 
@@ -129,9 +132,15 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
         "#{index}. #{Map.fetch!(offer, :label)} - #{format_price(language, Map.get(offer, :price_cents), Map.get(offer, :currency))}"
       end)
 
-    ([title] ++ options ++ ["0. #{Copy.text(language, :back)}"])
+    ([title] ++ options ++ navigation_lines(language))
     |> Enum.join("\n")
   end
+
+  defp back_line(language), do: "0. #{Copy.text(language, :back)}"
+
+  defp restart_line(language), do: "#. #{Copy.text(language, :restart_main_menu)}"
+
+  defp navigation_lines(language), do: [back_line(language), restart_line(language)]
 
   defp format_price(_language, cents, currency) when is_integer(cents) and cents >= 0 do
     case normalize_currency(currency) do
