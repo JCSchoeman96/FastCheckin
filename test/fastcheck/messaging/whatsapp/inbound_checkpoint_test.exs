@@ -1,6 +1,7 @@
 defmodule FastCheck.Messaging.WhatsApp.InboundCheckpointTest do
   use FastCheck.DataCase, async: false
 
+  alias Ash.Changeset
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Sales.Conversation
@@ -25,6 +26,30 @@ defmodule FastCheck.Messaging.WhatsApp.InboundCheckpointTest do
     assert second.id == first.id
     assert second.last_inbound_message_id == "wamid.two"
     assert count_conversations() == 1
+  end
+
+  test "updates inbound metadata without clearing existing state_data" do
+    assert {:ok, conversation} = InboundCheckpoint.checkpoint(command("wamid.state-one"), 86_400)
+
+    existing_state_data = %{
+      "event_options" => %{"1" => 123},
+      "selected_event_id" => 123
+    }
+
+    conversation =
+      conversation
+      |> Changeset.for_update(
+        :update_inbound_checkpoint,
+        %{state_data: existing_state_data},
+        actor: %{actor_type: :system, actor_id: "test"}
+      )
+      |> Ash.update!(authorize?: false)
+
+    assert {:ok, updated} = InboundCheckpoint.checkpoint(command("wamid.state-two"), 86_400)
+
+    assert updated.id == conversation.id
+    assert updated.last_inbound_message_id == "wamid.state-two"
+    assert updated.state_data == existing_state_data
   end
 
   defp command(message_id) do

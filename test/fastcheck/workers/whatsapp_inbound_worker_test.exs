@@ -5,6 +5,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   import ExUnit.CaptureLog
 
   alias FastCheck.Crypto
+  alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
+  alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Workers.WhatsAppInboundWorker
@@ -232,6 +234,114 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert :ok = perform_job(WhatsAppInboundWorker, args)
     refute_received {:unexpected_retry_request, _request}
     assert conversation_state(conversation_id) == "main_menu"
+  end
+
+  test "checkpoint preserves event options so event selection advances to ticket offers" do
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-flow"}]})
+       }}
+    end)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Checkpoint Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Checkpoint General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    assert :ok = checkpoint_and_perform_inbound("wamid.checkpoint-flow-1", "hi")
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Welkom by FastCheck Tickets"
+
+    assert :ok = checkpoint_and_perform_inbound("wamid.checkpoint-flow-2", "1")
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Koop kaartjies"
+
+    assert :ok = checkpoint_and_perform_inbound("wamid.checkpoint-flow-3", "1")
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Checkpoint Event"
+
+    {state, state_data} = latest_conversation_state_and_data()
+    assert state == "selecting_event"
+    assert state_data["event_options"] == %{"1" => event.id}
+
+    assert {:ok, checkpointed} =
+             InboundCheckpoint.checkpoint(
+               inbound_command("wamid.checkpoint-flow-4", "1"),
+               86_400
+             )
+
+    assert checkpointed.state == "selecting_event"
+    assert checkpointed.state_data["event_options"] == %{"1" => event.id}
+
+    assert :ok = perform_inbound_worker(checkpointed.id, "wamid.checkpoint-flow-4", "1")
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Checkpoint General"
+
+    {state, state_data} = latest_conversation_state_and_data()
+    assert state == "selecting_ticket_type"
+    assert state_data["event_options"] == %{"1" => event.id}
+    assert state_data["selected_event_id"] == event.id
+    assert state_data["offer_options"] == %{"1" => offer.id}
+  end
+
+  defp checkpoint_and_perform_inbound(provider_message_id, text) do
+    with {:ok, conversation} <-
+           InboundCheckpoint.checkpoint(inbound_command(provider_message_id, text), 86_400) do
+      perform_inbound_worker(conversation.id, provider_message_id, text)
+    end
+  end
+
+  defp perform_inbound_worker(conversation_id, provider_message_id, text) do
+    {:ok, encrypted} = Crypto.encrypt(text)
+
+    perform_job(WhatsAppInboundWorker, %{
+      "provider_message_id" => provider_message_id,
+      "message_type" => "text",
+      "text_body_encrypted" => encrypted,
+      "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
+      "conversation_id" => conversation_id,
+      "correlation_id" => "corr-#{provider_message_id}",
+      "received_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+      "raw_payload_hash" => "hash-#{provider_message_id}"
+    })
+  end
+
+  defp inbound_command(provider_message_id, text) do
+    %MessageCommand{
+      provider: "meta",
+      provider_message_id: provider_message_id,
+      phone_e164: "+27821234567",
+      wa_id: "27821234567",
+      message_type: "text",
+      text_body: text,
+      received_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      raw_payload_hash: "hash-#{provider_message_id}",
+      correlation_id: "corr-#{provider_message_id}",
+      metadata: %{}
+    }
+  end
+
+  defp latest_conversation_state_and_data do
+    %{rows: [[state, state_data]]} =
+      Repo.query!("""
+      SELECT state, state_data
+      FROM sales_conversations
+      WHERE wa_id = '27821234567'
+      ORDER BY inserted_at DESC
+      LIMIT 1
+      """)
+
+    {state, state_data}
   end
 
   defp insert_conversation!(opts \\ []) do
