@@ -200,7 +200,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            data
            |> Map.put("selected_offer_id", offer.id)
            |> Map.put("selected_offer_label", offer.name)
-           |> Map.put("selected_offer_max_per_order", offer.max_per_order),
+           |> Map.put("selected_offer_max_per_order", offer.max_per_order)
+           |> Map.put("selected_offer_price_cents", offer.price_cents)
+           |> Map.put("selected_offer_currency", offer.currency),
          {:ok, conversation} <-
            transition(command, conversation, :select_ticket_type, %{state_data: data}) do
       {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
@@ -500,7 +502,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     |> case do
       {:ok, offers} ->
         offers
-        |> Enum.map(&%{id: &1.id, label: &1.name, name: &1.name, max_per_order: &1.max_per_order})
+        |> Enum.map(
+          &%{
+            id: &1.id,
+            label: &1.name,
+            name: &1.name,
+            max_per_order: &1.max_per_order,
+            price_cents: &1.price_cents,
+            currency: &1.currency
+          }
+        )
         |> Enum.take(@menu_limit)
 
       {:error, _} ->

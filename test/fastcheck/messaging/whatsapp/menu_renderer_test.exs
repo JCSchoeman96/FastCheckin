@@ -46,6 +46,58 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "0. Terug"
       refute body =~ "101"
       refute body =~ "202"
+      refute body =~ "R999"
+    end
+
+    test "renders ZAR prices next to offer options without exposing offer ids" do
+      body =
+        MenuRenderer.offer_menu("af", [
+          %{id: 101, label: "General Admission", price_cents: 99_900, currency: "ZAR"},
+          %{id: 202, label: "VIP", price_cents: 199_950, currency: "ZAR"}
+        ])
+
+      assert body =~ "1. General Admission - R999"
+      assert body =~ "2. VIP - R1999.50"
+      assert body =~ "0. Terug"
+      refute body =~ "101"
+      refute body =~ "202"
+    end
+
+    test "renders explicit zero ZAR price as R0" do
+      body =
+        MenuRenderer.offer_menu("af", [
+          %{id: 101, label: "Comp", price_cents: 0, currency: "ZAR"}
+        ])
+
+      assert body =~ "1. Comp - R0"
+    end
+
+    test "renders invalid prices as unavailable without implying free tickets" do
+      af_body =
+        MenuRenderer.offer_menu("af", [
+          %{id: 101, label: "Broken", price_cents: nil, currency: "ZAR"},
+          %{id: 202, label: "Negative", price_cents: -100, currency: "ZAR"}
+        ])
+
+      en_body =
+        MenuRenderer.offer_menu("en", [
+          %{id: 303, label: "Broken", price_cents: "1000", currency: "ZAR"}
+        ])
+
+      assert af_body =~ "1. Broken - Prys nie beskikbaar"
+      assert af_body =~ "2. Negative - Prys nie beskikbaar"
+      assert en_body =~ "1. Broken - Price unavailable"
+      refute af_body =~ "R0"
+      refute en_body =~ "R0"
+    end
+
+    test "renders non-ZAR prices with currency code fallback" do
+      body =
+        MenuRenderer.offer_menu("en", [
+          %{id: 101, label: "International", price_cents: 99_950, currency: "USD"}
+        ])
+
+      assert body =~ "1. International - USD 999.50"
     end
 
     test "renders checkout pending copy without Paystack or ticket promises" do
