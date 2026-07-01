@@ -80,7 +80,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     assert {:ok, result} = handle(result.conversation, "jan@example.com", "wamid.flow-8")
     assert result.conversation.state == "confirming_order"
-    assert result.response_body =~ "Bevestig"
+    assert result.response_body =~ "Bevestig jou bestelling:"
+    assert result.response_body =~ "Naam: Jan Burger"
+    assert result.response_body =~ "E-pos: jan@example.com"
+    assert result.response_body =~ "Geleentheid: Voelgoed Live"
+    assert result.response_body =~ "Kaartjie: General - R10"
+    assert result.response_body =~ "Aantal: 2"
+    assert result.response_body =~ "Totaal betaalbaar: R20"
+    assert result.response_body =~ "Is hierdie korrek"
+    assert result.response_body =~ "1. OK"
+    assert result.response_body =~ "0. Terug"
 
     Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
 
@@ -124,6 +133,39 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         "payment_attempt_id" => state_data["payment_attempt_id"]
       }
     )
+  end
+
+  test "confirmation summary renders skipped email without exposing hidden fields", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    result =
+      conversation
+      |> progress("hi", "skip-email-1")
+      |> progress("1", "skip-email-2")
+      |> progress("1", "skip-email-3")
+      |> progress("1", "skip-email-4")
+      |> progress("1", "skip-email-5")
+      |> progress("2", "skip-email-6")
+      |> progress("Jan Burger", "skip-email-7")
+      |> progress("1", "skip-email-8")
+
+    assert result.conversation.state == "confirming_order"
+    assert result.response_body =~ "Naam: Jan Burger"
+    assert result.response_body =~ "E-pos: Nie verskaf nie"
+    assert result.response_body =~ "Geleentheid: Voelgoed Live"
+    assert result.response_body =~ "Kaartjie: General - R10"
+    assert result.response_body =~ "Aantal: 2"
+    assert result.response_body =~ "Totaal betaalbaar: R20"
+    refute exposes_raw_id?(result.response_body, event.id)
+    refute exposes_raw_id?(result.response_body, offer.id)
+    refute result.response_body =~ "https://"
+    refute result.response_body =~ "payment_url"
+    refute result.response_body =~ "ticket_url"
+    refute result.response_body =~ "access_code"
+    refute result.response_body =~ "provider"
+    refute result.response_body =~ "token"
   end
 
   test "ticket type menu renders prices for multiple active offers without exposing ids", %{

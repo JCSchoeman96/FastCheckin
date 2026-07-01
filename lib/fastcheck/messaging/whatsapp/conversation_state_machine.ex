@@ -386,14 +386,17 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp confirm_menu(conversation) do
-    language = language(conversation)
+    data = state_data(conversation)
 
-    [
-      FastCheck.Messaging.WhatsApp.Copy.text(language, :confirm),
-      "1. OK",
-      "0. #{FastCheck.Messaging.WhatsApp.Copy.text(language, :back)}"
-    ]
-    |> Enum.join("\n")
+    MenuRenderer.confirm_order(language(conversation), %{
+      buyer_name: Map.get(data, "buyer_name"),
+      buyer_email: Map.get(data, "buyer_email"),
+      event_label: Map.get(data, "selected_event_label"),
+      offer_label: Map.get(data, "selected_offer_label"),
+      price_cents: Map.get(data, "selected_offer_price_cents"),
+      currency: Map.get(data, "selected_offer_currency"),
+      quantity: Map.get(data, "quantity")
+    })
   end
 
   defp transition(command, conversation, action, attrs) do

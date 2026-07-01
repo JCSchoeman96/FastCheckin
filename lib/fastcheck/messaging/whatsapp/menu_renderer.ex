@@ -35,6 +35,50 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     render_offer_options(language, Copy.text(language, :choose_ticket_type), offers)
   end
 
+  @spec confirm_order(String.t() | nil, map()) :: String.t()
+  def confirm_order(language, summary) when is_map(summary) do
+    buyer_name =
+      present_or_fallback(Map.get(summary, :buyer_name), Copy.text(language, :unavailable))
+
+    buyer_email =
+      present_or_fallback(
+        Map.get(summary, :buyer_email),
+        Copy.text(language, :email_not_provided)
+      )
+
+    event_label =
+      present_or_fallback(Map.get(summary, :event_label), Copy.text(language, :unavailable))
+
+    offer_label =
+      present_or_fallback(Map.get(summary, :offer_label), Copy.text(language, :unavailable))
+
+    price = format_price(language, Map.get(summary, :price_cents), Map.get(summary, :currency))
+    quantity = Map.get(summary, :quantity)
+
+    total =
+      format_total(
+        language,
+        Map.get(summary, :price_cents),
+        quantity,
+        Map.get(summary, :currency)
+      )
+
+    [
+      Copy.text(language, :confirm),
+      "#{Copy.text(language, :confirm_name)}: #{buyer_name}",
+      "#{Copy.text(language, :confirm_email)}: #{buyer_email}",
+      "#{Copy.text(language, :confirm_event)}: #{event_label}",
+      "#{Copy.text(language, :confirm_ticket)}: #{offer_label} - #{price}",
+      "#{Copy.text(language, :confirm_quantity)}: #{format_quantity(quantity, Copy.text(language, :unavailable))}",
+      "#{Copy.text(language, :confirm_total_payable)}: #{total}",
+      "",
+      Copy.text(language, :confirm_continue_payment),
+      "1. OK",
+      "0. #{Copy.text(language, :back)}"
+    ]
+    |> Enum.join("\n")
+  end
+
   @spec quantity_prompt(String.t() | nil) :: String.t()
   def quantity_prompt(language),
     do: Copy.text(language, :quantity) <> "\n0. #{Copy.text(language, :back)}"
@@ -99,6 +143,13 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   defp format_price(language, _cents, _currency), do: unavailable_price(language)
 
+  defp format_total(language, cents, quantity, currency)
+       when is_integer(cents) and cents >= 0 and is_integer(quantity) and quantity > 0 do
+    format_price(language, cents * quantity, currency)
+  end
+
+  defp format_total(language, _cents, _quantity, _currency), do: unavailable_price(language)
+
   defp format_cents(cents) do
     whole = div(cents, 100)
     remainder = rem(cents, 100)
@@ -118,6 +169,19 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   defp normalize_currency(_currency), do: ""
 
-  defp unavailable_price("en"), do: "Price unavailable"
-  defp unavailable_price(_language), do: "Prys nie beskikbaar"
+  defp present_or_fallback(value, fallback) when is_binary(value) do
+    case String.trim(value) do
+      "" -> fallback
+      value -> value
+    end
+  end
+
+  defp present_or_fallback(_value, fallback), do: fallback
+
+  defp format_quantity(quantity, _fallback) when is_integer(quantity),
+    do: Integer.to_string(quantity)
+
+  defp format_quantity(quantity, fallback), do: present_or_fallback(quantity, fallback)
+
+  defp unavailable_price(language), do: Copy.text(language, :price_unavailable)
 end
