@@ -118,4 +118,120 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "1. Buy tickets"
     end
   end
+
+  describe "confirm_order/2" do
+    test "renders Afrikaans order summary with email present" do
+      body =
+        MenuRenderer.confirm_order("af", %{
+          buyer_name: "Jan Burger",
+          buyer_email: "jan@example.com",
+          event_label: "Voelgoed Live",
+          offer_label: "General",
+          price_cents: 1_000,
+          currency: "ZAR",
+          quantity: 2
+        })
+
+      assert body =~ "Bevestig jou bestelling:"
+      assert body =~ "Naam: Jan Burger"
+      assert body =~ "E-pos: jan@example.com"
+      assert body =~ "Geleentheid: Voelgoed Live"
+      assert body =~ "Kaartjie: General - R10"
+      assert body =~ "Aantal: 2"
+      assert body =~ "Totaal betaalbaar: R20"
+      assert body =~ "Is hierdie korrek? Gaan voort na betaling."
+      assert body =~ "1. OK"
+      assert body =~ "0. Terug"
+    end
+
+    test "renders English order summary with skipped email" do
+      body =
+        MenuRenderer.confirm_order("en", %{
+          buyer_name: "Jan Burger",
+          buyer_email: nil,
+          event_label: "Voelgoed Live",
+          offer_label: "General",
+          price_cents: 1_000,
+          currency: "ZAR",
+          quantity: 2
+        })
+
+      assert body =~ "Confirm your order:"
+      assert body =~ "Name: Jan Burger"
+      assert body =~ "Email: Not provided"
+      assert body =~ "Event: Voelgoed Live"
+      assert body =~ "Ticket: General - R10"
+      assert body =~ "Quantity: 2"
+      assert body =~ "Total payable: R20"
+      assert body =~ "Is this correct? Continue to payment."
+      assert body =~ "1. OK"
+      assert body =~ "0. Back"
+    end
+
+    test "renders invalid prices as unavailable without implying free tickets" do
+      af_body =
+        MenuRenderer.confirm_order("af", %{
+          buyer_name: "Jan Burger",
+          buyer_email: "jan@example.com",
+          event_label: "Voelgoed Live",
+          offer_label: "Broken",
+          price_cents: nil,
+          currency: "ZAR",
+          quantity: 2
+        })
+
+      en_body =
+        MenuRenderer.confirm_order("en", %{
+          buyer_name: "Jan Burger",
+          buyer_email: "jan@example.com",
+          event_label: "Voelgoed Live",
+          offer_label: "Broken",
+          price_cents: "1000",
+          currency: "ZAR",
+          quantity: 2
+        })
+
+      assert af_body =~ "Kaartjie: Broken - Prys nie beskikbaar"
+      assert af_body =~ "Totaal betaalbaar: Prys nie beskikbaar"
+      assert en_body =~ "Ticket: Broken - Price unavailable"
+      assert en_body =~ "Total payable: Price unavailable"
+      refute af_body =~ "R0"
+      refute en_body =~ "R0"
+    end
+
+    test "renders neutral fallback copy for missing non-price fields" do
+      body =
+        MenuRenderer.confirm_order("en", %{
+          buyer_name: "",
+          buyer_email: "",
+          event_label: nil,
+          offer_label: 123,
+          price_cents: 1_000,
+          currency: "ZAR",
+          quantity: 1
+        })
+
+      assert body =~ "Name: Not available"
+      assert body =~ "Email: Not provided"
+      assert body =~ "Event: Not available"
+      assert body =~ "Ticket: Not available - R10"
+    end
+
+    test "computes total with integer cents math and existing money formatting" do
+      body =
+        MenuRenderer.confirm_order("en", %{
+          buyer_name: "Jan Burger",
+          buyer_email: "jan@example.com",
+          event_label: "Voelgoed Live",
+          offer_label: "VIP",
+          price_cents: 199_950,
+          currency: "ZAR",
+          quantity: 2
+        })
+
+      assert body =~ "Ticket: VIP - R1999.50"
+      assert body =~ "Total payable: R3999"
+      refute body =~ "R3999.00"
+    end
+  end
 end

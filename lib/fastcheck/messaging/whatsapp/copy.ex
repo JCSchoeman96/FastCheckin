@@ -17,6 +17,16 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp af(:buyer_name), do: "Stuur asseblief jou naam."
   defp af(:email), do: "Stuur jou e-posadres, of antwoord 1 om oor te slaan."
   defp af(:confirm), do: "Bevestig jou bestelling:"
+  defp af(:confirm_name), do: "Naam"
+  defp af(:confirm_email), do: "E-pos"
+  defp af(:confirm_event), do: "Geleentheid"
+  defp af(:confirm_ticket), do: "Kaartjie"
+  defp af(:confirm_quantity), do: "Aantal"
+  defp af(:confirm_total_payable), do: "Totaal betaalbaar"
+  defp af(:confirm_continue_payment), do: "Is hierdie korrek? Gaan voort na betaling."
+  defp af(:email_not_provided), do: "Nie verskaf nie"
+  defp af(:unavailable), do: "Nie beskikbaar"
+  defp af(:price_unavailable), do: "Prys nie beskikbaar"
 
   defp af(:awaiting_payment),
     do: "Dankie. Jou bestelling is begin. Die betalingstap word voorberei."
@@ -45,6 +55,16 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp en(:buyer_name), do: "Please send your name."
   defp en(:email), do: "Send your email address, or reply 1 to skip."
   defp en(:confirm), do: "Confirm your order:"
+  defp en(:confirm_name), do: "Name"
+  defp en(:confirm_email), do: "Email"
+  defp en(:confirm_event), do: "Event"
+  defp en(:confirm_ticket), do: "Ticket"
+  defp en(:confirm_quantity), do: "Quantity"
+  defp en(:confirm_total_payable), do: "Total payable"
+  defp en(:confirm_continue_payment), do: "Is this correct? Continue to payment."
+  defp en(:email_not_provided), do: "Not provided"
+  defp en(:unavailable), do: "Not available"
+  defp en(:price_unavailable), do: "Price unavailable"
 
   defp en(:awaiting_payment),
     do: "Thank you. Your order has started. The payment step is being prepared."
