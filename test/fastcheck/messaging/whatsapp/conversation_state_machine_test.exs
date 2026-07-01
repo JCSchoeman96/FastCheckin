@@ -27,7 +27,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         scanner_login_code: scanner_code()
       })
 
-    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "General", max_per_order: 4)
+    offer =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        name: "General",
+        max_per_order: 4,
+        price_cents: 1_000
+      )
 
     on_exit(fn ->
       paystack_cleanup.()
@@ -60,8 +66,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-4")
     assert result.conversation.state == "selecting_ticket_type"
-    assert result.response_body =~ "General"
-    refute result.response_body =~ to_string(offer.id)
+    assert result.response_body =~ "General - R10"
+    refute exposes_raw_id?(result.response_body, offer.id)
 
     assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-5")
     assert result.conversation.state == "collecting_quantity"
@@ -86,6 +92,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     state_data = result.conversation.state_data
     assert state_data["selected_event_id"] == event.id
     assert state_data["selected_offer_id"] == offer.id
+    assert state_data["selected_offer_price_cents"] == 1_000
+    assert state_data["selected_offer_currency"] == "ZAR"
     assert state_data["quantity"] == 2
     assert state_data["buyer_name"] == "Jan Burger"
     assert state_data["buyer_email"] == "jan@example.com"
@@ -116,6 +124,36 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         "payment_attempt_id" => state_data["payment_attempt_id"]
       }
     )
+  end
+
+  test "ticket type menu renders prices for multiple active offers without exposing ids", %{
+    conversation: conversation,
+    offer: offer,
+    event: event
+  } do
+    vip =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        name: "VIP",
+        price_cents: 199_950,
+        max_per_order: 4
+      )
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(vip.id) end)
+
+    result =
+      conversation
+      |> progress("hi", "multi-1")
+      |> progress("1", "multi-2")
+      |> progress("1", "multi-3")
+      |> progress("1", "multi-4")
+
+    assert result.conversation.state == "selecting_ticket_type"
+    assert result.response_body =~ ~r/\d+\. General - R10/
+    assert result.response_body =~ ~r/\d+\. VIP - R1999\.50/
+    assert result.response_body =~ "0. Terug"
+    refute exposes_raw_id?(result.response_body, offer.id)
+    refute exposes_raw_id?(result.response_body, vip.id)
   end
 
   test "duplicate confirm uses checkout idempotency and creates one order", %{
@@ -260,5 +298,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     |> rem(1_000_000)
     |> Integer.to_string()
     |> String.pad_leading(6, "0")
+  end
+
+  defp exposes_raw_id?(body, id) do
+    Regex.match?(~r/(?<![A-Za-z0-9])#{Regex.escape(to_string(id))}(?![A-Za-z0-9])/, body)
   end
 end

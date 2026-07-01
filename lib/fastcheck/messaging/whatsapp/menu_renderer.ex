@@ -32,7 +32,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   @spec offer_menu(String.t() | nil, [map()]) :: String.t()
   def offer_menu(language, offers) do
-    render_options(language, Copy.text(language, :choose_ticket_type), offers)
+    render_offer_options(language, Copy.text(language, :choose_ticket_type), offers)
   end
 
   @spec quantity_prompt(String.t() | nil) :: String.t()
@@ -75,4 +75,49 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     ([title] ++ options ++ ["0. #{Copy.text(language, :back)}"])
     |> Enum.join("\n")
   end
+
+  defp render_offer_options(language, title, offers) do
+    options =
+      offers
+      |> Enum.take(9)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {offer, index} ->
+        "#{index}. #{Map.fetch!(offer, :label)} - #{format_price(language, Map.get(offer, :price_cents), Map.get(offer, :currency))}"
+      end)
+
+    ([title] ++ options ++ ["0. #{Copy.text(language, :back)}"])
+    |> Enum.join("\n")
+  end
+
+  defp format_price(_language, cents, currency) when is_integer(cents) and cents >= 0 do
+    case normalize_currency(currency) do
+      "ZAR" -> "R#{format_cents(cents)}"
+      "" -> format_cents(cents)
+      currency -> "#{currency} #{format_cents(cents)}"
+    end
+  end
+
+  defp format_price(language, _cents, _currency), do: unavailable_price(language)
+
+  defp format_cents(cents) do
+    whole = div(cents, 100)
+    remainder = rem(cents, 100)
+
+    if remainder == 0 do
+      Integer.to_string(whole)
+    else
+      "#{whole}.#{String.pad_leading(Integer.to_string(remainder), 2, "0")}"
+    end
+  end
+
+  defp normalize_currency(currency) when is_binary(currency) do
+    currency
+    |> String.trim()
+    |> String.upcase()
+  end
+
+  defp normalize_currency(_currency), do: ""
+
+  defp unavailable_price("en"), do: "Price unavailable"
+  defp unavailable_price(_language), do: "Prys nie beskikbaar"
 end
