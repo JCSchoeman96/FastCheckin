@@ -1,0 +1,127 @@
+{
+  "pack_id": "0046_VS-24B",
+  "slice": "VS-24B",
+  "name": "PDF Ticket Generation",
+  "version": "1.0-planning-ready",
+  "status": "implementation_ready",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "github_issue": 439,
+  "repository_path": "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation",
+  "goal": "Generate server-side customer-facing PDF tickets as a consumer of the VS-24A artifact contract without changing payment, issuer, scanner, revocation, or delivery authority.",
+  "dependencies": [
+    "VS-24A Ticket Artifact Domain Contract",
+    "VS-11 Secure Ticket Page",
+    "VS-15 Revocation and Scanner Visibility",
+    "VS-22 End-to-End Sandbox Tests"
+  ],
+  "recommended_dependencies": [
+    {
+      "package": "chromic_pdf",
+      "constraint": "~> 1.17",
+      "purpose": "HTML-to-PDF production renderer behind behaviour"
+    },
+    {
+      "package": "eqrcode",
+      "constraint": "~> 0.2.1",
+      "purpose": "QR scan representation from artifact.scanner_payload"
+    }
+  ],
+  "recommended_files_create": [
+    "lib/fastcheck/tickets/pdf_ticket.ex",
+    "lib/fastcheck/tickets/pdf_ticket/document.ex",
+    "lib/fastcheck/tickets/pdf_ticket/error.ex",
+    "lib/fastcheck/tickets/pdf_ticket/template.ex",
+    "lib/fastcheck/tickets/pdf_ticket/qr_code.ex",
+    "lib/fastcheck/tickets/pdf_ticket/renderer.ex",
+    "lib/fastcheck/tickets/pdf_ticket/chromic_renderer.ex",
+    "test/support/fastcheck/tickets/pdf_ticket/fake_renderer.ex",
+    "test/fastcheck/tickets/pdf_ticket_test.exs",
+    "test/fastcheck/tickets/pdf_ticket/template_test.exs",
+    "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation/README.md",
+    "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation/VS-24B-FEATURE_PACK.md",
+    "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation/TOON_PROMPTS.md",
+    "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation/CODING_AGENT_PROMPT.md",
+    "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation/pack.json",
+    "docs/fastcheck_sales/feature_packs/0046_VS-24B_pdf-ticket-generation/POST_MERGE_HANDOFF_TEMPLATE.md"
+  ],
+  "recommended_files_update": [
+    "mix.exs",
+    "mix.lock",
+    "config/config.exs",
+    "config/test.exs",
+    "lib/fastcheck/application.ex",
+    "lib/fastcheck/tickets/artifact.ex",
+    "lib/fastcheck/tickets/artifact_resolver.ex",
+    "test/fastcheck/tickets/artifact_resolver_test.exs",
+    "test/fastcheck/sales/ticket_page_test.exs"
+  ],
+  "must_not_change": [
+    "lib/fastcheck_web/controllers/secure_ticket_controller.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_html/show.html.heex",
+    "lib/fastcheck_web/router.ex",
+    "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex",
+    "lib/fastcheck/sales/delivery_attempt.ex",
+    "lib/fastcheck/tickets/issuer.ex",
+    "lib/fastcheck/tickets/revocation.ex",
+    "lib/fastcheck/tickets/scanner_visibility.ex",
+    "lib/fastcheck/attendees/scan.ex"
+  ],
+  "do_not_create_in_implementation_pr": [
+    "docs/fastcheck_sales/handoffs/VS-24B_IMPLEMENTATION_HANDOFF.md"
+  ],
+  "routes": {
+    "new_routes": [],
+    "controller_changes_allowed": false,
+    "template_changes_allowed": false
+  },
+  "artifact_extension": {
+    "new_optional_fields": [
+      "event_date",
+      "event_time",
+      "event_location",
+      "entrance_name"
+    ],
+    "ticket_page_legacy_shape_preserved": true
+  },
+  "cache_strategy": {
+    "vs_24b": "none",
+    "reason": "Generated PDFs can become stale after revocation, expiry, event archive, or attendee eligibility changes."
+  },
+  "security": {
+    "pdf_intentionally_contains": [
+      "scanner_payload as QR/readable code"
+    ],
+    "forbidden_values": [
+      "delivery token",
+      "delivery token hash",
+      "QR token hash",
+      "ticket URL",
+      "payment URL",
+      "Paystack access code",
+      "raw provider payload",
+      "phone",
+      "email",
+      "raw HTML logs",
+      "raw PDF bytes in inspect/logs"
+    ],
+    "inspect_redaction_required_for": [
+      "Artifact",
+      "PdfTicket.Document",
+      "PdfTicket.Error"
+    ]
+  },
+  "verification_commands": [
+    "mix deps.get",
+    "mix format",
+    "mix test test/fastcheck/tickets/artifact_resolver_test.exs",
+    "mix test test/fastcheck/tickets/pdf_ticket/template_test.exs",
+    "mix test test/fastcheck/tickets/pdf_ticket_test.exs",
+    "mix test test/fastcheck/sales/ticket_page_test.exs",
+    "mix test test/fastcheck_web/controllers/secure_ticket_controller_test.exs",
+    "mix test test/fastcheck/sales/e2e/checkout_to_scanner_test.exs",
+    "mix test test/fastcheck/sales/e2e/revocation_scanner_visibility_test.exs",
+    "mix precommit"
+  ],
+  "next_slice": "VS-24C PDF Ticket Delivery"
+}
