@@ -40,8 +40,10 @@ defmodule FastCheck.Messaging.WhatsApp.InboundCheckpoint do
   end
 
   defp update_checkpoint(conversation, command, ttl_seconds) do
-    attrs = attrs(command, ttl_seconds)
-    attrs = Map.delete(attrs, :state)
+    attrs =
+      attrs(command, ttl_seconds)
+      |> Map.delete(:state)
+      |> Map.delete(:state_data)
 
     conversation
     |> Changeset.for_update(:update_inbound_checkpoint, attrs, actor: system_actor())
