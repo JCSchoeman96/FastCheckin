@@ -39,11 +39,19 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
       assert artifact.support_message == "Present this ticket code at the entrance scanner."
       assert artifact.issued_at
       assert artifact.delivery_expires_at
+      assert artifact.event_date == event.event_date
+      assert artifact.event_time == event.event_time
+      assert artifact.event_location == event.location
+      assert artifact.entrance_name == event.entrance_name
 
       assert Map.keys(Map.from_struct(artifact)) |> Enum.sort() == [
                :attendee_name,
                :delivery_expires_at,
+               :entrance_name,
+               :event_date,
+               :event_location,
                :event_name,
+               :event_time,
                :issued_at,
                :scanner_payload,
                :scanner_payload_format,
