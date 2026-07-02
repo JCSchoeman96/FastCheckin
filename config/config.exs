@@ -53,7 +53,9 @@ config :fastcheck, :ticket_resend,
   lock_seconds: 900,
   lookup_limit_per_email_15m: 3,
   lookup_limit_per_source_15m: 5,
-  lookup_limit_per_candidate_day: 3
+  lookup_limit_per_candidate_day: 3,
+  otp_email_from_name: "FastCheck",
+  otp_email_from_email: "no-reply@fastcheck.local"
 
 config :fastcheck, :whatsapp_outbound_dedupe_ttl_seconds, 600
 config :fastcheck, :whatsapp_ticket_delivery_dedupe_ttl_seconds, 86_400

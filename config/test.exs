@@ -73,7 +73,9 @@ config :fastcheck, :ticket_resend,
   lock_seconds: 900,
   lookup_limit_per_email_15m: 3,
   lookup_limit_per_source_15m: 5,
-  lookup_limit_per_candidate_day: 3
+  lookup_limit_per_candidate_day: 3,
+  otp_email_from_name: "FastCheck Test",
+  otp_email_from_email: "no-reply@test.fastcheck.local"
 
 config :fastcheck, :sales_internal_pilot_enabled, true
 config :fastcheck, :paystack_enabled, true
