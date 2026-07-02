@@ -57,8 +57,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
                    "offer_options",
                    "quantity"
                  ] ++
-                   @selected_event_keys ++ @selected_offer_keys ++ @buyer_keys ++ @order_flow_keys
-  @all_flow_keys @all_flow_keys ++ @resend_flow_keys
+                   @selected_event_keys ++
+                   @selected_offer_keys ++ @buyer_keys ++ @order_flow_keys ++ @resend_flow_keys
 
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}

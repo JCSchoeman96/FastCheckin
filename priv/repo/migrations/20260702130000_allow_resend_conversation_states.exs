@@ -38,6 +38,24 @@ defmodule FastCheck.Repo.Migrations.AllowResendConversationStates do
   end
 
   def down do
+    execute("""
+    UPDATE sales_conversations
+    SET state = 'main_menu',
+        state_data = state_data
+          - 'resend_name'
+          - 'resend_email'
+          - 'resend_requested_at'
+          - 'resend_email_otp_result_status'
+          - 'resend_correlation_id'
+          - 'resend_challenge_public_id',
+        updated_at = NOW()
+    WHERE state IN (
+      'collecting_resend_name',
+      'collecting_resend_email',
+      'collecting_resend_otp'
+    )
+    """)
+
     replace_state_constraint(@down_states)
   end
 
