@@ -45,6 +45,68 @@ defmodule FastCheck.Sales.ConversationStateActionsTest do
     refute inspect(transition.metadata) =~ "Sensitive Buyer"
   end
 
+  test "resend collection actions persist expected states" do
+    conversation = insert_conversation!("main_menu")
+    actor = %{actor_type: :system, actor_id: "vs-24d-c-test"}
+
+    assert {:ok, name_state} =
+             conversation
+             |> Changeset.for_update(
+               :choose_resend_ticket,
+               %{
+                 last_inbound_message_id: "wamid.resend-action-1",
+                 last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                 state_data: %{},
+                 correlation_id: "corr-resend-action-1",
+                 idempotency_key: "idem-resend-action-1",
+                 transition_metadata: %{}
+               },
+               actor: actor
+             )
+             |> Ash.update(authorize?: false)
+
+    assert name_state.state == "collecting_resend_name"
+
+    assert {:ok, email_state} =
+             name_state
+             |> Changeset.for_update(
+               :submit_resend_name,
+               %{
+                 last_inbound_message_id: "wamid.resend-action-2",
+                 last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                 state_data: %{"resend_name" => "jamie smith"},
+                 correlation_id: "corr-resend-action-2",
+                 idempotency_key: "idem-resend-action-2",
+                 transition_metadata: %{}
+               },
+               actor: actor
+             )
+             |> Ash.update(authorize?: false)
+
+    assert email_state.state == "collecting_resend_email"
+
+    assert {:ok, otp_state} =
+             email_state
+             |> Changeset.for_update(
+               :submit_resend_email,
+               %{
+                 last_inbound_message_id: "wamid.resend-action-3",
+                 last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                 state_data: %{
+                   "resend_name" => "jamie smith",
+                   "resend_email" => "jamie@example.com"
+                 },
+                 correlation_id: "corr-resend-action-3",
+                 idempotency_key: "idem-resend-action-3",
+                 transition_metadata: %{}
+               },
+               actor: actor
+             )
+             |> Ash.update(authorize?: false)
+
+    assert otp_state.state == "collecting_resend_otp"
+  end
+
   defp insert_conversation!(state) do
     %{rows: [[id]]} =
       Repo.query!(
