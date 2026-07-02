@@ -43,6 +43,7 @@ defmodule FastCheck.Tickets.Resend.EmailOtpTest do
 
     assert_email_sent(fn email ->
       assert {"", "resend@example.com"} in email.to
+      assert {"FastCheck Test", "no-reply@test.fastcheck.local"} == email.from
       assert email.subject == "Your FastCheck verification code"
       assert email.text_body =~ ~r/\b\d{6}\b/
       assert email.html_body =~ ~r/\b\d{6}\b/

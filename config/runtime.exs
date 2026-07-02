@@ -427,6 +427,45 @@ default_tickera_site_url =
 
 config :fastcheck, :default_tickera_site_url, default_tickera_site_url
 
+# Runtime sender overrides for ticket resend OTP emails.
+# These allow production sender domain changes without code changes.
+ticket_resend_config = Application.get_env(:fastcheck, :ticket_resend, [])
+
+default_otp_email_from_name = Keyword.get(ticket_resend_config, :otp_email_from_name, "FastCheck")
+
+default_otp_email_from_email =
+  Keyword.get(ticket_resend_config, :otp_email_from_email, "no-reply@fastcheck.local")
+
+otp_email_from_name =
+  case System.get_env("OTP_EMAIL_FROM_NAME", default_otp_email_from_name) do
+    nil ->
+      default_otp_email_from_name
+
+    value ->
+      case String.trim(value) do
+        "" -> default_otp_email_from_name
+        trimmed -> trimmed
+      end
+  end
+
+otp_email_from_email =
+  case System.get_env("OTP_EMAIL_FROM_EMAIL", default_otp_email_from_email) do
+    nil ->
+      default_otp_email_from_email
+
+    value ->
+      case String.trim(value) do
+        "" -> default_otp_email_from_email
+        trimmed -> trimmed
+      end
+  end
+
+config :fastcheck,
+       :ticket_resend,
+       ticket_resend_config
+       |> Keyword.put(:otp_email_from_name, otp_email_from_name)
+       |> Keyword.put(:otp_email_from_email, otp_email_from_email)
+
 # Cache defaults shared across all environments. The values can be overridden
 # via environment variables without recompiling the release.
 cache_enabled = System.get_env("CACHE_ENABLED", "true") == "true"

@@ -14,8 +14,8 @@ defmodule FastCheck.Tickets.Resend.EmailOtp do
   alias FastCheck.Tickets.Resend.Result
   alias Swoosh.Email
 
-  @from_name "FastCheck"
-  @from_email "no-reply@fastcheck.local"
+  @default_from_name "FastCheck"
+  @default_from_email "no-reply@fastcheck.local"
 
   @type verify_error :: :invalid_or_expired | :locked | :already_verified
 
@@ -79,7 +79,7 @@ defmodule FastCheck.Tickets.Resend.EmailOtp do
 
     email =
       Email.new()
-      |> Email.from({@from_name, @from_email})
+      |> Email.from(otp_email_sender())
       |> Email.to(recipient_email)
       |> Email.subject(EmailOtpRenderer.subject())
       |> Email.text_body(EmailOtpRenderer.text_body(otp, ttl_minutes))
@@ -144,11 +144,21 @@ defmodule FastCheck.Tickets.Resend.EmailOtp do
 
   defp otp_ttl_minutes do
     ttl_seconds =
-      :fastcheck
-      |> Application.fetch_env!(:ticket_resend)
+      ticket_resend_config()
       |> Keyword.fetch!(:otp_ttl_seconds)
 
     max(div(ttl_seconds, 60), 1)
+  end
+
+  defp otp_email_sender do
+    config = ticket_resend_config()
+    from_name = Keyword.get(config, :otp_email_from_name, @default_from_name)
+    from_email = Keyword.get(config, :otp_email_from_email, @default_from_email)
+    {from_name, from_email}
+  end
+
+  defp ticket_resend_config do
+    Application.fetch_env!(:fastcheck, :ticket_resend)
   end
 
   defp system_actor, do: %{actor_type: :system, id: "ticket_resend"}
