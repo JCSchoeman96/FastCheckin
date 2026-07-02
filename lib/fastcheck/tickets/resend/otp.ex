@@ -63,20 +63,53 @@ defmodule FastCheck.Tickets.Resend.Otp do
     end
   end
 
+  @spec issue_lookup_attempt(map(), DateTime.t()) ::
+          {:ok, TicketResendChallenge.t()} | {:error, term()}
+  def issue_lookup_attempt(attrs, now) when is_map(attrs) do
+    expires_at = DateTime.add(now, config(:otp_ttl_seconds), :second)
+
+    create_attrs =
+      attrs
+      |> Map.take([
+        :sales_order_id,
+        :ticket_issue_id,
+        :conversation_id,
+        :request_email_hash,
+        :request_name_hash,
+        :source_hash,
+        :candidate_hash,
+        :metadata
+      ])
+      |> Map.merge(%{
+        public_id: public_id(),
+        expires_at: expires_at
+      })
+
+    case TicketResendChallenge
+         |> Changeset.for_create(:create_pending, create_attrs, actor: system_actor())
+         |> Ash.create() do
+      {:ok, challenge} -> {:ok, challenge}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @spec verify(binary(), binary(), DateTime.t()) ::
           {:ok, TicketResendChallenge.t()}
-          | {:error, :not_found | :expired | :locked | :invalid | :already_used}
+          | {:error, :invalid_or_expired | :locked | :already_verified}
   def verify(public_id, otp, now) when is_binary(public_id) and is_binary(otp) do
     Repo.transaction(fn ->
       case fetch_challenge(public_id) do
         nil ->
-          {:error, :not_found}
+          {:error, :invalid_or_expired}
 
         %{status: status} when status in ["verified", "consumed"] ->
-          {:error, :already_used}
+          {:error, :already_verified}
 
-        %{status: status} when status in ["blocked", "expired", "manual_review"] ->
+        %{status: status} when status in ["blocked", "manual_review"] ->
           {:error, :locked}
+
+        %{status: "expired"} ->
+          {:error, :invalid_or_expired}
 
         challenge ->
           verify_pending(challenge, otp, now)
@@ -89,7 +122,7 @@ defmodule FastCheck.Tickets.Resend.Otp do
     end
   end
 
-  def verify(_public_id, _otp, _now), do: {:error, :not_found}
+  def verify(_public_id, _otp, _now), do: {:error, :invalid_or_expired}
 
   @spec generate_code(pos_integer() | nil) :: binary()
   def generate_code(length \\ nil) do
@@ -136,17 +169,17 @@ defmodule FastCheck.Tickets.Resend.Otp do
     cond do
       DateTime.compare(challenge.expires_at, now) != :gt ->
         mark_expired!(challenge.id, now)
-        {:error, :expired}
+        {:error, :invalid_or_expired}
 
       locked?(challenge, now) ->
         {:error, :locked}
 
-      Hash.otp(challenge.public_id, otp) == challenge.otp_hash ->
+      secure_match?(challenge.otp_hash, Hash.otp(challenge.public_id, otp)) ->
         {:ok, mark_verified!(challenge.id, now)}
 
       true ->
         record_failed_attempt!(challenge, now)
-        {:error, :invalid}
+        {:error, :invalid_or_expired}
     end
   end
 
@@ -241,4 +274,10 @@ defmodule FastCheck.Tickets.Resend.Otp do
   end
 
   defp system_actor, do: %{actor_type: :system, id: "ticket_resend"}
+
+  defp secure_match?(expected, actual) when is_binary(expected) and is_binary(actual) do
+    byte_size(expected) == byte_size(actual) and Plug.Crypto.secure_compare(expected, actual)
+  end
+
+  defp secure_match?(_expected, _actual), do: false
 end

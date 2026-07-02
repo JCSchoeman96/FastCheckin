@@ -78,11 +78,18 @@ defmodule FastCheck.Tickets.Resend.EligibilityTest do
 
     for request <- [
           %Request{name: "Jamie Smith", email: "missing@example.com"},
-          %Request{name: "Wrong Name", email: "resend@example.com"},
-          %Request{name: "", email: "resend@example.com"}
+          %Request{name: "Wrong Name", email: "resend@example.com"}
         ] do
       assert_generic_rejected(request)
     end
+
+    before_count = count_challenges()
+
+    assert {:ok, invalid_input_result, nil} =
+             Eligibility.request_otp_challenge(%Request{name: "", email: "resend@example.com"})
+
+    assert invalid_input_result.public_status == :generic_rejected
+    assert count_challenges() == before_count
 
     issued_ticket_candidate!(buyer_email: "ambiguous@example.com", buyer_name: "Jamie Smith")
     issued_ticket_candidate!(buyer_email: "ambiguous@example.com", buyer_name: "Jamie Smith")
@@ -143,7 +150,7 @@ defmodule FastCheck.Tickets.Resend.EligibilityTest do
     end
   end
 
-  test "rate-limited request returns generic customer message and creates no new challenge" do
+  test "rate-limited request returns generic customer message and records a safe lookup attempt" do
     attrs = challenge_attrs!(normalized_email: "limited@example.com")
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
@@ -162,7 +169,7 @@ defmodule FastCheck.Tickets.Resend.EligibilityTest do
 
     assert result.public_status == :rate_limited
     assert result.customer_message == @message
-    assert count_challenges() == before_count
+    assert count_challenges() == before_count + 1
   end
 
   test "does not create delivery attempts, rotate delivery tokens, send email, send WhatsApp, or generate PDF" do
@@ -191,6 +198,6 @@ defmodule FastCheck.Tickets.Resend.EligibilityTest do
     assert {:ok, result, nil} = Eligibility.request_otp_challenge(request)
     assert result.public_status == :generic_rejected
     assert result.customer_message == @message
-    assert count_challenges() == before_count
+    assert count_challenges() == before_count + 1
   end
 end

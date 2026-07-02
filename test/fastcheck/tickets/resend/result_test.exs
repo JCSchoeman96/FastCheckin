@@ -30,6 +30,7 @@ defmodule FastCheck.Tickets.Resend.ResultTest do
     inspected = inspect(result)
 
     assert result.safe_metadata[:order_id] == 1
+    refute inspected =~ "public-id"
     refute inspected =~ "secret@example.com"
     refute inspected =~ "+27821234567"
     refute inspected =~ "token-hash"

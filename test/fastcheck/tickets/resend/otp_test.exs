@@ -30,7 +30,7 @@ defmodule FastCheck.Tickets.Resend.OtpTest do
     assert verified.status == "verified"
     assert verified.verified_at
 
-    assert {:error, :already_used} =
+    assert {:error, :already_verified} =
              Otp.verify(challenge.public_id, otp, DateTime.add(now, 2, :second))
   end
 
@@ -39,7 +39,7 @@ defmodule FastCheck.Tickets.Resend.OtpTest do
     {:ok, challenge, _otp} = Otp.issue(challenge_attrs!(), now, return_otp?: true)
 
     for attempt <- 1..4 do
-      assert {:error, :invalid} =
+      assert {:error, :invalid_or_expired} =
                Otp.verify(challenge.public_id, "000000", DateTime.add(now, attempt, :second))
     end
 
@@ -47,7 +47,7 @@ defmodule FastCheck.Tickets.Resend.OtpTest do
     assert reloaded.status == "pending"
     assert reloaded.failed_attempt_count == 4
 
-    assert {:error, :invalid} =
+    assert {:error, :invalid_or_expired} =
              Otp.verify(challenge.public_id, "000000", DateTime.add(now, 5, :second))
 
     blocked = Ash.get!(TicketResendChallenge, challenge.id, actor: system_actor())
@@ -60,7 +60,7 @@ defmodule FastCheck.Tickets.Resend.OtpTest do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     {:ok, challenge, otp} = Otp.issue(challenge_attrs!(), now, return_otp?: true)
 
-    assert {:error, :expired} =
+    assert {:error, :invalid_or_expired} =
              Otp.verify(challenge.public_id, otp, DateTime.add(now, 601, :second))
 
     expired = Ash.get!(TicketResendChallenge, challenge.id, actor: system_actor())
@@ -83,6 +83,11 @@ defmodule FastCheck.Tickets.Resend.OtpTest do
     refute inspect(row.metadata) =~ otp
     refute inspect(row) =~ "resend@example.com"
     refute inspect(row) =~ "Jamie Smith"
+  end
+
+  test "missing challenge returns invalid_or_expired" do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    assert {:error, :invalid_or_expired} = Otp.verify("missing-public-id", "000000", now)
   end
 
   defp system_actor, do: %{actor_type: :system, id: "test"}

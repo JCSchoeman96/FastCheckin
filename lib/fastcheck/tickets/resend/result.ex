@@ -46,9 +46,7 @@ defimpl Inspect, for: FastCheck.Tickets.Resend.Result do
   def inspect(result, opts) do
     safe = %{
       public_status: result.public_status,
-      challenge_public_id: result.challenge_public_id,
-      internal_reason: result.internal_reason,
-      safe_metadata: result.safe_metadata
+      internal_reason: result.internal_reason
     }
 
     concat(["#FastCheck.Tickets.Resend.Result<", to_doc(safe, opts), ">"])
