@@ -50,7 +50,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     "resend_requested_at",
     "resend_email_otp_result_status",
     "resend_correlation_id",
-    "resend_challenge_public_id"
+    "resend_challenge_public_id",
+    "resend_otp_verified_at",
+    "resend_otp_verification_status"
   ]
   @all_flow_keys [
                    "event_options",
@@ -92,7 +94,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
               "confirming_order",
               "collecting_resend_name",
               "collecting_resend_email",
-              "collecting_resend_otp"
+              "collecting_resend_otp",
+              "awaiting_verified_resend_delivery"
             ] do
     with {:ok, conversation} <-
            transition(command, conversation, :cancel_conversation, %{
@@ -516,7 +519,29 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, _normalized)
        when conversation.state == "collecting_resend_otp" do
-    {:ok, result(conversation, MenuRenderer.resend_otp_prompt(language(conversation)), command)}
+    case ResendFlow.verify_email_otp(command, conversation) do
+      {:ok, :verified, updates} ->
+        verify_resend_otp(command, conversation, updates)
+
+      {:error, :already_verified} ->
+        handle_already_verified_resend_otp(command, conversation)
+
+      {:error, :locked} ->
+        {:ok,
+         result(
+           conversation,
+           MenuRenderer.resend_locked_otp_prompt(language(conversation)),
+           command
+         )}
+
+      {:error, :invalid_or_expired} ->
+        {:ok,
+         result(
+           conversation,
+           MenuRenderer.resend_invalid_otp_prompt(language(conversation)),
+           command
+         )}
+    end
   end
 
   defp dispatch(command, conversation, {:ok, :back})
@@ -542,6 +567,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
        MenuRenderer.invalid_input(language(conversation), confirm_menu(conversation)),
        command
      )}
+  end
+
+  defp dispatch(command, conversation, _normalized)
+       when conversation.state == "awaiting_verified_resend_delivery" do
+    {:ok,
+     result(conversation, MenuRenderer.resend_verified_prompt(language(conversation)), command)}
   end
 
   defp dispatch(command, conversation, _normalized)
@@ -640,6 +671,39 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       currency: Map.get(data, "selected_offer_currency"),
       quantity: Map.get(data, "quantity")
     })
+  end
+
+  defp verify_resend_otp(command, conversation, updates) when is_map(updates) do
+    data =
+      conversation
+      |> state_data()
+      |> Map.merge(updates)
+
+    with {:ok, conversation} <-
+           transition(command, conversation, :verify_resend_otp, %{state_data: data}) do
+      {:ok,
+       result(conversation, MenuRenderer.resend_verified_prompt(language(conversation)), command)}
+    end
+  end
+
+  defp handle_already_verified_resend_otp(command, conversation) do
+    data = state_data(conversation)
+
+    if Map.get(data, "resend_otp_verification_status") == "verified" do
+      {:ok,
+       result(
+         conversation,
+         MenuRenderer.resend_verified_prompt(language(conversation)),
+         command
+       )}
+    else
+      {:ok,
+       result(
+         conversation,
+         MenuRenderer.resend_invalid_otp_prompt(language(conversation)),
+         command
+       )}
+    end
   end
 
   defp transition(command, conversation, action, attrs) do
@@ -808,7 +872,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
         "resend_requested_at",
         "resend_email_otp_result_status",
         "resend_correlation_id",
-        "resend_challenge_public_id"
+        "resend_challenge_public_id",
+        "resend_otp_verified_at",
+        "resend_otp_verification_status"
       ]
     )
   end

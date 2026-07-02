@@ -143,6 +143,8 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
       resend_name: "jamie smith",
       resend_email: "jamie@example.com",
       resend_challenge_public_id: "challenge-public-test",
+      resend_otp_verified_at: "2026-07-02T12:00:00Z",
+      resend_otp_verification_status: "verified",
       otp: "123456",
       ticket_url: "https://tickets.example/test",
       delivery_token: "secret-token"
@@ -155,6 +157,8 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
     refute Map.has_key?(session, "resend_name")
     refute Map.has_key?(session, "resend_email")
     refute Map.has_key?(session, "resend_challenge_public_id")
+    refute Map.has_key?(session, "resend_otp_verified_at")
+    refute Map.has_key?(session, "resend_otp_verification_status")
     refute Map.has_key?(session, "otp")
     refute Map.has_key?(session, "ticket_url")
     refute Map.has_key?(session, "delivery_token")

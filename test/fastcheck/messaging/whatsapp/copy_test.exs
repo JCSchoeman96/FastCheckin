@@ -24,7 +24,11 @@ defmodule FastCheck.Messaging.WhatsApp.CopyTest do
       Copy.text("af", :resend_email),
       Copy.text("af", :resend_check_email),
       Copy.text("af", :resend_enter_otp),
-      Copy.text("af", :resend_invalid_email)
+      Copy.text("af", :resend_invalid_email),
+      Copy.text("af", :resend_otp_invalid),
+      Copy.text("af", :resend_otp_locked),
+      Copy.text("af", :resend_otp_verified),
+      Copy.text("af", :resend_delivery_pending)
     ]
 
     en_copy = [
@@ -33,12 +37,19 @@ defmodule FastCheck.Messaging.WhatsApp.CopyTest do
       Copy.text("en", :resend_email),
       Copy.text("en", :resend_check_email),
       Copy.text("en", :resend_enter_otp),
-      Copy.text("en", :resend_invalid_email)
+      Copy.text("en", :resend_invalid_email),
+      Copy.text("en", :resend_otp_invalid),
+      Copy.text("en", :resend_otp_locked),
+      Copy.text("en", :resend_otp_verified),
+      Copy.text("en", :resend_delivery_pending)
     ]
 
     assert Enum.join(af_copy, "\n") =~ "e-pos"
     assert Enum.join(en_copy, "\n") =~ "email"
     assert Copy.text("en", :resend_ticket) == "Re-send my ticket"
+    assert Copy.text("en", :resend_otp_invalid) =~ "invalid or expired"
+    assert Copy.text("en", :resend_otp_locked) =~ "Too many attempts"
+    assert Copy.text("en", :resend_otp_verified) =~ "Verification complete"
 
     for body <- af_copy ++ en_copy do
       downcased = String.downcase(body)

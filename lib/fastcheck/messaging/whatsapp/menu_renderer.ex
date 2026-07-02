@@ -112,6 +112,22 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
   def invalid_resend_email_prompt(language),
     do: Copy.text(language, :resend_invalid_email) <> "\n\n" <> resend_email_prompt(language)
 
+  @spec resend_invalid_otp_prompt(String.t() | nil) :: String.t()
+  def resend_invalid_otp_prompt(language),
+    do: Copy.text(language, :resend_otp_invalid) <> "\n\n" <> resend_otp_prompt(language)
+
+  @spec resend_locked_otp_prompt(String.t() | nil) :: String.t()
+  def resend_locked_otp_prompt(language) do
+    ([Copy.text(language, :resend_otp_locked)] ++ navigation_lines(language))
+    |> Enum.join("\n")
+  end
+
+  @spec resend_verified_prompt(String.t() | nil) :: String.t()
+  def resend_verified_prompt(language) do
+    [Copy.text(language, :resend_delivery_pending), restart_line(language)]
+    |> Enum.join("\n")
+  end
+
   @spec awaiting_payment(String.t() | nil) :: String.t()
   def awaiting_payment(language), do: Copy.text(language, :awaiting_payment)
 

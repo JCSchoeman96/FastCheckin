@@ -60,6 +60,67 @@ defmodule FastCheck.Messaging.WhatsApp.ResendFlowTest do
     end
   end
 
+  test "verifies email OTP using raw text body and returns only safe metadata" do
+    command = %{command() | text_body: "  012345  "}
+    challenge_public_id = "challenge-public-test"
+
+    verify_otp_fun = fn public_id, submitted_otp, opts ->
+      assert public_id == challenge_public_id
+      assert submitted_otp == "012345"
+      assert opts[:now] == command.received_at
+      {:ok, :discarded_challenge}
+    end
+
+    assert {:ok, :verified, updates} =
+             ResendFlow.verify_email_otp(
+               command,
+               conversation(%{"resend_challenge_public_id" => challenge_public_id}),
+               verify_otp_fun: verify_otp_fun
+             )
+
+    assert updates == %{
+             "resend_otp_verified_at" => DateTime.to_iso8601(command.received_at),
+             "resend_otp_verification_status" => "verified"
+           }
+
+    refute inspect(updates) =~ "012345"
+    refute inspect(updates) =~ challenge_public_id
+    refute inspect(updates) =~ "discarded_challenge"
+  end
+
+  test "missing challenge or malformed OTP is generic invalid without verifier call" do
+    verify_otp_fun = fn _public_id, _submitted_otp, _opts ->
+      flunk("verifier must not be called without a challenge id and digit OTP")
+    end
+
+    assert {:error, :invalid_or_expired} =
+             ResendFlow.verify_email_otp(
+               %{command() | text_body: "123456"},
+               conversation(%{}),
+               verify_otp_fun: verify_otp_fun
+             )
+
+    assert {:error, :invalid_or_expired} =
+             ResendFlow.verify_email_otp(
+               %{command() | text_body: "12 3456"},
+               conversation(%{"resend_challenge_public_id" => "challenge-public-test"}),
+               verify_otp_fun: verify_otp_fun
+             )
+  end
+
+  test "normalizes verifier outcomes without returning challenge structs" do
+    for reason <- [:invalid_or_expired, :locked, :already_verified] do
+      verify_otp_fun = fn _public_id, _submitted_otp, _opts -> {:error, reason} end
+
+      assert {:error, ^reason} =
+               ResendFlow.verify_email_otp(
+                 %{command() | text_body: "123456"},
+                 conversation(%{"resend_challenge_public_id" => "challenge-public-test"}),
+                 verify_otp_fun: verify_otp_fun
+               )
+    end
+  end
+
   defp command do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 

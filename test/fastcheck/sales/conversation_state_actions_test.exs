@@ -105,6 +105,29 @@ defmodule FastCheck.Sales.ConversationStateActionsTest do
              |> Ash.update(authorize?: false)
 
     assert otp_state.state == "collecting_resend_otp"
+
+    assert {:ok, verified_state} =
+             otp_state
+             |> Changeset.for_update(
+               :verify_resend_otp,
+               %{
+                 last_inbound_message_id: "wamid.resend-action-4",
+                 last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                 state_data: %{
+                   "resend_name" => "jamie smith",
+                   "resend_email" => "jamie@example.com",
+                   "resend_challenge_public_id" => "challenge-public-test",
+                   "resend_otp_verification_status" => "verified"
+                 },
+                 correlation_id: "corr-resend-action-4",
+                 idempotency_key: "idem-resend-action-4",
+                 transition_metadata: %{}
+               },
+               actor: actor
+             )
+             |> Ash.update(authorize?: false)
+
+    assert verified_state.state == "awaiting_verified_resend_delivery"
   end
 
   defp insert_conversation!(state) do

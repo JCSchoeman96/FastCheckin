@@ -93,6 +93,21 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert MenuRenderer.resend_email_prompt("en") =~ "email"
       assert MenuRenderer.resend_otp_prompt("en") =~ "verification code"
       assert MenuRenderer.invalid_resend_email_prompt("en") =~ "valid email"
+      assert MenuRenderer.resend_invalid_otp_prompt("en") =~ "invalid or expired"
+      assert MenuRenderer.resend_invalid_otp_prompt("en") =~ "verification code"
+      assert MenuRenderer.resend_locked_otp_prompt("en") =~ "Too many attempts"
+    end
+
+    test "renders verified resend prompt with restart-only navigation" do
+      body = MenuRenderer.resend_verified_prompt("en")
+
+      assert body =~ "Verification complete"
+      assert body =~ "#. Back to main menu"
+      refute body =~ "0. Back"
+      refute body =~ "http://"
+      refute body =~ "https://"
+      refute String.downcase(body) =~ "pdf"
+      refute String.downcase(body) =~ "payment"
     end
 
     test "renders explicit zero ZAR price as R0" do
