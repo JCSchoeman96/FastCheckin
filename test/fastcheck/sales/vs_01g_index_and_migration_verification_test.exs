@@ -12,7 +12,8 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "sales_payment_events",
     "sales_state_transitions",
     "sales_ticket_issues",
-    "sales_ticket_offers"
+    "sales_ticket_offers",
+    "sales_ticket_resend_challenges"
   ]
 
   @resources [
@@ -26,7 +27,8 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
     FastCheck.Sales.DeliveryAttempt,
-    FastCheck.Sales.Conversation
+    FastCheck.Sales.Conversation,
+    FastCheck.Sales.TicketResendChallenge
   ]
 
   @forbidden_paths [

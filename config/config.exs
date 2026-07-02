@@ -45,6 +45,16 @@ config :fastcheck, :event_post_grace_days, 14
 config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
 config :fastcheck, :sales_checkout_expiry_sweep_batch_size, 200
 config :fastcheck, :sales_delivery_token_ttl_seconds, 90 * 24 * 60 * 60
+
+config :fastcheck, :ticket_resend,
+  otp_ttl_seconds: 600,
+  otp_length: 6,
+  max_failed_attempts: 5,
+  lock_seconds: 900,
+  lookup_limit_per_email_15m: 3,
+  lookup_limit_per_source_15m: 5,
+  lookup_limit_per_candidate_day: 3
+
 config :fastcheck, :whatsapp_outbound_dedupe_ttl_seconds, 600
 config :fastcheck, :whatsapp_ticket_delivery_dedupe_ttl_seconds, 86_400
 config :fastcheck, :sales_internal_pilot_enabled, true

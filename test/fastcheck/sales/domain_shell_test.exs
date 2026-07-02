@@ -12,7 +12,8 @@ defmodule FastCheck.Sales.DomainShellTest do
     FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
     FastCheck.Sales.DeliveryAttempt,
-    FastCheck.Sales.Conversation
+    FastCheck.Sales.Conversation,
+    FastCheck.Sales.TicketResendChallenge
   ]
 
   test "FastCheck.Sales exists and is registered as the Ash domain" do
@@ -58,7 +59,8 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/state_transition_support.ex",
              "lib/fastcheck/sales/ticket_issue.ex",
              "lib/fastcheck/sales/ticket_offer.ex",
-             "lib/fastcheck/sales/ticket_page.ex"
+             "lib/fastcheck/sales/ticket_page.ex",
+             "lib/fastcheck/sales/ticket_resend_challenge.ex"
            ]
   end
 end

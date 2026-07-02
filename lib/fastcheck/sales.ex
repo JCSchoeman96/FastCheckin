@@ -22,5 +22,6 @@ defmodule FastCheck.Sales do
     resource(FastCheck.Sales.TicketIssue)
     resource(FastCheck.Sales.DeliveryAttempt)
     resource(FastCheck.Sales.Conversation)
+    resource(FastCheck.Sales.TicketResendChallenge)
   end
 end
