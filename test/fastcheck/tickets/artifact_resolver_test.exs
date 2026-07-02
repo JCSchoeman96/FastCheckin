@@ -204,6 +204,159 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
     end
   end
 
+  describe "resolve_for_admin_ticket_issue/2" do
+    test "admin actor resolves a valid issued ticket without delivery token verification" do
+      %{
+        token: token,
+        delivery_hash: delivery_hash,
+        qr_hash: qr_hash,
+        ticket_code: ticket_code,
+        ticket_issue_id: ticket_issue_id,
+        event: event,
+        attendee: attendee
+      } = issued_ticket_fixture(expires_at: DateTime.add(DateTime.utc_now(), -3600, :second))
+
+      assert {:ok, %Artifact{} = artifact} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), ticket_issue_id)
+
+      assert artifact.state == :valid
+      assert artifact.event_name == event.name
+      assert artifact.attendee_name == "#{attendee.first_name} #{attendee.last_name}"
+      assert artifact.ticket_type == attendee.ticket_type
+      assert artifact.scanner_payload == QrPayload.build_for_scanner(ticket_code)
+      assert artifact.scanner_payload_format == :plain_ticket_code
+      assert artifact.delivery_expires_at
+
+      inspected = inspect(artifact)
+
+      refute inspected =~ artifact.scanner_payload
+      refute inspected =~ ticket_code
+      refute inspected =~ token
+      refute inspected =~ delivery_hash
+      refute inspected =~ qr_hash
+      refute inspected =~ Integer.to_string(ticket_issue_id)
+      refute inspected =~ Integer.to_string(attendee.id)
+      refute inspected =~ attendee.email
+    end
+
+    test "non-admin actors are rejected before lookup" do
+      %{ticket_issue_id: ticket_issue_id, ticket_code: ticket_code} = issued_ticket_fixture()
+
+      assert {:error, %ArtifactError{state: :not_found} = error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(
+                 %{actor_type: :operator, id: "scanner"},
+                 ticket_issue_id
+               )
+
+      refute_error_inspect_leaks(error, [ticket_issue_id, ticket_code])
+    end
+
+    test "invalid id and missing ticket issue return not_found" do
+      assert {:error, %ArtifactError{state: :not_found}} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), "not-an-id")
+
+      assert {:error, %ArtifactError{state: :not_found}} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), 999_999_999)
+    end
+
+    test "revoked and non-issued ticket issues are rejected without payload" do
+      %{ticket_issue_id: revoked_id, ticket_code: revoked_code} =
+        issued_ticket_fixture(status: "revoked", revoked_at: DateTime.utc_now())
+
+      assert {:error, %ArtifactError{state: :ticket_revoked} = revoked_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), revoked_id)
+
+      refute_error_inspect_leaks(revoked_error, [revoked_id, revoked_code])
+
+      %{ticket_issue_id: pending_id, ticket_code: pending_code} =
+        issued_ticket_fixture(status: "pending")
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready} = pending_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), pending_id)
+
+      refute_error_inspect_leaks(pending_error, [pending_id, pending_code])
+    end
+
+    test "scanner-status revoked ticket issue is rejected without payload" do
+      %{ticket_issue_id: ticket_issue_id, ticket_code: ticket_code} = issued_ticket_fixture()
+
+      Repo.query!("UPDATE sales_ticket_issues SET scanner_status = 'revoked' WHERE id = $1", [
+        ticket_issue_id
+      ])
+
+      assert {:error, %ArtifactError{state: :ticket_revoked} = error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), ticket_issue_id)
+
+      refute_error_inspect_leaks(error, [ticket_issue_id, ticket_code])
+    end
+
+    test "missing attendee and event are rejected without payload" do
+      %{ticket_issue_id: attendee_missing_id, ticket_code: attendee_missing_code} =
+        issued_ticket_fixture()
+
+      Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+        999_999_999,
+        attendee_missing_id
+      ])
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready} = attendee_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), attendee_missing_id)
+
+      refute_error_inspect_leaks(attendee_error, [attendee_missing_id, attendee_missing_code])
+
+      %{ticket_issue_id: event_missing_id, order_id: order_id, ticket_code: event_missing_code} =
+        issued_ticket_fixture()
+
+      Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [
+        999_999_999,
+        order_id
+      ])
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready} = event_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), event_missing_id)
+
+      refute_error_inspect_leaks(event_error, [event_missing_id, event_missing_code])
+    end
+
+    test "archived event and not-scannable attendee are rejected" do
+      %{ticket_issue_id: archived_id, event: event, ticket_code: archived_code} =
+        issued_ticket_fixture()
+
+      event
+      |> Event.changeset(%{status: "archived"})
+      |> Repo.update!()
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready} = archived_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), archived_id)
+
+      refute_error_inspect_leaks(archived_error, [archived_id, archived_code])
+
+      %{ticket_issue_id: not_scannable_id, attendee: attendee, ticket_code: not_scannable_code} =
+        issued_ticket_fixture()
+
+      attendee
+      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
+      |> Repo.update!()
+
+      assert {:error, %ArtifactError{state: :ticket_not_scannable} = not_scannable_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), not_scannable_id)
+
+      refute_error_inspect_leaks(not_scannable_error, [not_scannable_id, not_scannable_code])
+    end
+
+    test "admin resolver does not mutate ticket, attendee, order, payment, or delivery rows" do
+      %{ticket_issue_id: ticket_issue_id, attendee: attendee, order_id: order_id} =
+        issued_ticket_fixture()
+
+      counts_before = row_counts(ticket_issue_id, attendee.id, order_id)
+
+      assert {:ok, %Artifact{}} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), ticket_issue_id)
+
+      assert row_counts(ticket_issue_id, attendee.id, order_id) == counts_before
+    end
+  end
+
   defp issued_ticket_fixture(opts \\ []) do
     event = Fixtures.create_event()
     attendee = Fixtures.create_attendee(event, %{payment_status: "completed"})
@@ -356,4 +509,8 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
   end
 
   defp system_actor, do: %{actor_type: :system, actor_id: "artifact_resolver_test"}
+
+  defp admin_actor do
+    %{actor_type: :admin, id: "dashboard", username: "dashboard", scope: :global_dashboard}
+  end
 end

@@ -52,6 +52,32 @@ defmodule FastCheck.Tickets.ArtifactResolver do
 
   def resolve_from_delivery_token(_raw_token), do: {:error, error(:not_found)}
 
+  @doc """
+  Resolves a ticket issue id into a backend/admin ticket artifact.
+
+  This function is request-local and read-only. It relies on the caller being
+  protected by dashboard BrowserAuth, validates the actor as an admin, and then
+  performs a narrow internal ticket issue lookup. It does not verify delivery
+  tokens and does not check delivery-token expiry.
+  """
+  @spec resolve_for_admin_ticket_issue(map(), term()) :: result()
+  def resolve_for_admin_ticket_issue(actor, ticket_issue_id) do
+    with :ok <- require_admin_actor(actor),
+         {:ok, id} <- parse_positive_integer(ticket_issue_id),
+         {:ok, ticket_issue} <- fetch_ticket_issue_by_id(id),
+         :ok <- ensure_issued_status(ticket_issue),
+         :ok <- ensure_scanner_not_revoked(ticket_issue),
+         {:ok, attendee} <- load_attendee(ticket_issue),
+         {:ok, event} <- load_event(ticket_issue),
+         :ok <- ensure_event_available(event),
+         :ok <- ensure_scannable(attendee) do
+      {:ok, artifact(ticket_issue, attendee, event)}
+    else
+      {:error, state} -> {:error, error(state)}
+      :error -> {:error, error(:not_found)}
+    end
+  end
+
   defp validate_token_format(token) do
     cond do
       token == "" ->
@@ -78,6 +104,16 @@ defmodule FastCheck.Tickets.ArtifactResolver do
     end
   end
 
+  defp fetch_ticket_issue_by_id(id) do
+    case TicketIssue
+         |> Ash.Query.for_read(:get_by_id, %{id: id})
+         |> Ash.read_one(authorize?: false) do
+      {:ok, nil} -> {:error, :not_found}
+      {:ok, ticket_issue} -> {:ok, ticket_issue}
+      {:error, _reason} -> {:error, :not_found}
+    end
+  end
+
   defp verify_delivery_context(token, ticket_issue) do
     case DeliveryToken.verify_context(token, Map.from_struct(ticket_issue)) do
       :ok -> :ok
@@ -87,8 +123,33 @@ defmodule FastCheck.Tickets.ArtifactResolver do
     end
   end
 
+  defp require_admin_actor(actor) do
+    if actor_type(actor) == :admin, do: :ok, else: {:error, :not_found}
+  end
+
+  defp actor_type(actor) when is_map(actor) do
+    Map.get(actor, :actor_type) || Map.get(actor, "actor_type")
+  end
+
+  defp actor_type(_actor), do: nil
+
+  defp parse_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
+
+  defp parse_positive_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {id, ""} when id > 0 -> {:ok, id}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp parse_positive_integer(_value), do: {:error, :not_found}
+
   defp ensure_issued_status(%{status: "issued"}), do: :ok
+  defp ensure_issued_status(%{status: "revoked"}), do: {:error, :ticket_revoked}
   defp ensure_issued_status(_ticket_issue), do: {:error, :ticket_not_ready}
+
+  defp ensure_scanner_not_revoked(%{scanner_status: "revoked"}), do: {:error, :ticket_revoked}
+  defp ensure_scanner_not_revoked(_ticket_issue), do: :ok
 
   defp load_attendee(%{attendee_id: attendee_id}) when is_integer(attendee_id) do
     case Repo.get(Attendee, attendee_id) do
