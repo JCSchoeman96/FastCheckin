@@ -47,6 +47,8 @@ defmodule FastCheckWeb.Sales.TicketPdfController do
     }
   end
 
+  # sobelow_skip ["XSS.SendResp", "XSS.ContentType"]
+  # This response is an authenticated, generated application/pdf binary attachment, not HTML.
   defp send_pdf(conn, %Document{} = document) do
     conn
     |> put_resp_content_type(document.content_type)
@@ -57,6 +59,7 @@ defmodule FastCheckWeb.Sales.TicketPdfController do
 
   defp send_failure(conn, status) do
     conn
+    |> put_resp_content_type("text/plain")
     |> put_private_pdf_headers()
     |> send_resp(status, @failure)
   end

@@ -93,6 +93,24 @@ defmodule FastCheckWeb.Sales.OrderShowLiveTest do
     refute_unsafe_html(pending_html)
   end
 
+  test "scanner-revoked issued ticket rows do not show PDF download links" do
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!("UPDATE sales_ticket_issues SET scanner_status = 'revoked' WHERE id = $1", [
+      ticket_issue_id
+    ])
+
+    {:ok, _view, html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{order_id}")
+
+    refute html =~ "Download PDF"
+    refute html =~ ~s(/dashboard/sales/tickets/#{ticket_issue_id}/pdf)
+    refute_unsafe_html(html)
+  end
+
   test "authenticated user sees safe delivery attempt summary" do
     %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
       Fixtures.issued_order_fixture()

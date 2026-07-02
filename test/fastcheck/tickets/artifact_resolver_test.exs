@@ -290,6 +290,32 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
       refute_error_inspect_leaks(error, [ticket_issue_id, ticket_code])
     end
 
+    test "refunded and cancelled orders are rejected without payload" do
+      %{ticket_issue_id: refunded_id, order_id: refunded_order_id, ticket_code: refunded_code} =
+        issued_ticket_fixture()
+
+      Repo.query!("UPDATE sales_orders SET status = 'refunded' WHERE id = $1", [
+        refunded_order_id
+      ])
+
+      assert {:error, %ArtifactError{state: :ticket_revoked} = refunded_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), refunded_id)
+
+      refute_error_inspect_leaks(refunded_error, [refunded_id, refunded_code])
+
+      %{ticket_issue_id: cancelled_id, order_id: cancelled_order_id, ticket_code: cancelled_code} =
+        issued_ticket_fixture()
+
+      Repo.query!("UPDATE sales_orders SET status = 'cancelled' WHERE id = $1", [
+        cancelled_order_id
+      ])
+
+      assert {:error, %ArtifactError{state: :ticket_revoked} = cancelled_error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), cancelled_id)
+
+      refute_error_inspect_leaks(cancelled_error, [cancelled_id, cancelled_code])
+    end
+
     test "missing attendee and event are rejected without payload" do
       %{ticket_issue_id: attendee_missing_id, ticket_code: attendee_missing_code} =
         issued_ticket_fixture()
@@ -348,12 +374,12 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
       %{ticket_issue_id: ticket_issue_id, attendee: attendee, order_id: order_id} =
         issued_ticket_fixture()
 
-      counts_before = row_counts(ticket_issue_id, attendee.id, order_id)
+      snapshot_before = data_snapshot(ticket_issue_id, attendee.id, order_id)
 
       assert {:ok, %Artifact{}} =
                ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), ticket_issue_id)
 
-      assert row_counts(ticket_issue_id, attendee.id, order_id) == counts_before
+      assert data_snapshot(ticket_issue_id, attendee.id, order_id) == snapshot_before
     end
   end
 
@@ -482,6 +508,45 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
 
   defp count_table(table, id) do
     Repo.one!(from t in table, where: t.id == ^id, select: count(t.id))
+  end
+
+  defp data_snapshot(ticket_issue_id, attendee_id, order_id) do
+    %{
+      ticket_issue:
+        Repo.one!(
+          from t in "sales_ticket_issues",
+            where: t.id == ^ticket_issue_id,
+            select: %{
+              status: t.status,
+              scanner_status: t.scanner_status,
+              delivery_token_hash: t.delivery_token_hash,
+              delivery_token_expires_at: t.delivery_token_expires_at,
+              attendee_id: t.attendee_id,
+              sales_order_id: t.sales_order_id
+            }
+        ),
+      attendee:
+        Repo.one!(
+          from a in "attendees",
+            where: a.id == ^attendee_id,
+            select: %{
+              scan_eligibility: a.scan_eligibility,
+              payment_status: a.payment_status,
+              sales_ticket_issue_id: a.sales_ticket_issue_id,
+              checked_in_at: a.checked_in_at,
+              checked_out_at: a.checked_out_at,
+              is_currently_inside: a.is_currently_inside
+            }
+        ),
+      order:
+        Repo.one!(
+          from o in "sales_orders",
+            where: o.id == ^order_id,
+            select: %{status: o.status, event_id: o.event_id}
+        ),
+      payment_attempts: Repo.one!(from p in "sales_payment_attempts", select: count(p.id)),
+      delivery_attempts: Repo.one!(from d in "sales_delivery_attempts", select: count(d.id))
+    }
   end
 
   defp refute_error_inspect_leaks(error, sensitive_values) do

@@ -67,8 +67,10 @@ defmodule FastCheck.Tickets.ArtifactResolver do
          {:ok, ticket_issue} <- fetch_ticket_issue_by_id(id),
          :ok <- ensure_issued_status(ticket_issue),
          :ok <- ensure_scanner_not_revoked(ticket_issue),
+         {:ok, order} <- load_order(ticket_issue),
+         :ok <- ensure_admin_order_available(order),
          {:ok, attendee} <- load_attendee(ticket_issue),
-         {:ok, event} <- load_event(ticket_issue),
+         {:ok, event} <- load_event_from_order(order),
          :ok <- ensure_event_available(event),
          :ok <- ensure_scannable(attendee) do
       {:ok, artifact(ticket_issue, attendee, event)}
@@ -159,6 +161,33 @@ defmodule FastCheck.Tickets.ArtifactResolver do
   end
 
   defp load_attendee(_ticket_issue), do: {:error, :ticket_not_ready}
+
+  defp load_order(%{sales_order_id: sales_order_id}) when is_integer(sales_order_id) do
+    case Repo.one(
+           from o in "sales_orders",
+             where: o.id == ^sales_order_id,
+             select: %{id: o.id, event_id: o.event_id, status: o.status}
+         ) do
+      %{event_id: event_id} = order when is_integer(event_id) -> {:ok, order}
+      _other -> {:error, :ticket_not_ready}
+    end
+  end
+
+  defp load_order(_ticket_issue), do: {:error, :ticket_not_ready}
+
+  defp ensure_admin_order_available(%{status: status}) when status in ["refunded", "cancelled"],
+    do: {:error, :ticket_revoked}
+
+  defp ensure_admin_order_available(_order), do: :ok
+
+  defp load_event_from_order(%{event_id: event_id}) when is_integer(event_id) do
+    case Repo.get(Event, event_id) do
+      %Event{} = event -> {:ok, event}
+      nil -> {:error, :ticket_not_ready}
+    end
+  end
+
+  defp load_event_from_order(_order), do: {:error, :ticket_not_ready}
 
   defp load_event(%{sales_order_id: sales_order_id}) when is_integer(sales_order_id) do
     event_id =
