@@ -296,6 +296,16 @@ defmodule FastCheck.Sales.Conversation do
       )
     end
 
+    update :verify_resend_otp do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+
+      change(&transition_state(&1, &2, "awaiting_verified_resend_delivery", :verify_resend_otp))
+    end
+
     update :return_to_main_menu do
       require_atomic?(false)
       accept(@vs_18_checkpoint_fields)

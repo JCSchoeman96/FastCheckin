@@ -99,7 +99,7 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
 
   @vs_24d_c_forbidden_tokens [
     "Eligibility",
-    "Otp.verify",
+    "FastCheck.Tickets.Resend.Otp",
     "Otp.issue",
     "PdfTicket",
     "ArtifactResolver",

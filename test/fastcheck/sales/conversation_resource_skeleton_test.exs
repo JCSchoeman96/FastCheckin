@@ -31,6 +31,7 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     :submit_buyer_email,
     :submit_resend_name,
     :submit_resend_email,
+    :verify_resend_otp,
     :skip_optional_email_after_name,
     :confirm_order,
     :return_to_event_selection,

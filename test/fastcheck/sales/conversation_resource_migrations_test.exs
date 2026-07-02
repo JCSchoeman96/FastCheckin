@@ -80,6 +80,9 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
   end
 
   test "database constraints reject unsafe conversation skeleton data" do
+    assert %Postgrex.Result{} =
+             insert_conversation!(state: "awaiting_verified_resend_delivery")
+
     assert_db_error(~r/sales_conversations_phone_e164_format/, fn ->
       insert_conversation!(phone_e164: "27821234567")
     end)

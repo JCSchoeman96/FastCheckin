@@ -31,6 +31,18 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp af(:resend_enter_otp),
     do: "Gaan asseblief jou e-pos na en stuur die verifikasiekode hier."
 
+  defp af(:resend_otp_invalid),
+    do: "Daardie kode is ongeldig of het verval. Gaan asseblief die kode na en probeer weer."
+
+  defp af(:resend_otp_locked),
+    do: "Te veel pogings. Wag asseblief voor jy weer probeer, of kontak ondersteuning."
+
+  defp af(:resend_otp_verified),
+    do: "Verifikasie voltooi. Ons maak jou kaartjie-herstuur gereed."
+
+  defp af(:resend_delivery_pending),
+    do: "Verifikasie voltooi. Ons maak jou kaartjie-herstuur gereed."
+
   defp af(:confirm), do: "Bevestig jou bestelling:"
   defp af(:confirm_name), do: "Naam"
   defp af(:confirm_email), do: "E-pos"
@@ -80,6 +92,18 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
 
   defp en(:resend_enter_otp),
     do: "Please check your email and send the verification code here."
+
+  defp en(:resend_otp_invalid),
+    do: "That code is invalid or expired. Please check the code and try again."
+
+  defp en(:resend_otp_locked),
+    do: "Too many attempts. Please wait before trying again or contact support."
+
+  defp en(:resend_otp_verified),
+    do: "Verification complete. We are preparing your ticket resend."
+
+  defp en(:resend_delivery_pending),
+    do: "Verification complete. We are preparing your ticket resend."
 
   defp en(:confirm), do: "Confirm your order:"
   defp en(:confirm_name), do: "Name"
