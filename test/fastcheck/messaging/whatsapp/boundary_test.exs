@@ -40,6 +40,10 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "lib/fastcheck/messaging/whatsapp/flow_result.ex"
   ]
 
+  @vs_24d_c_resend_modules [
+    "lib/fastcheck/messaging/whatsapp/resend_flow.ex"
+  ]
+
   @vs_18_forbidden_tokens [
     "FastCheck.Payments",
     "TransactionInitialization",
@@ -93,6 +97,25 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "Req."
   ]
 
+  @vs_24d_c_forbidden_tokens [
+    "Eligibility",
+    "Otp.verify",
+    "Otp.issue",
+    "PdfTicket",
+    "ArtifactResolver",
+    "SecureTicketController",
+    "TicketPdfController",
+    "SendWhatsAppTicketLinkWorker",
+    "DeliveryAttempt",
+    "TicketIssue",
+    "Paystack",
+    "FastCheck.Attendees",
+    "FastCheck.Scans",
+    "refund",
+    "revocation",
+    "webhook"
+  ]
+
   test "vs-16 whatsapp provider modules exist in provider boundary namespace" do
     for path <- @whatsapp_modules do
       assert File.exists?(path), "expected #{path}"
@@ -144,6 +167,22 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
       body = File.read!(file)
 
       for token <- @vs_20_policy_forbidden_tokens do
+        refute String.contains?(body, token), "#{file} must not reference #{token}"
+      end
+    end
+  end
+
+  test "vs-24d-c resend flow only calls the EmailOtp adapter inside the WhatsApp layer" do
+    state_machine = File.read!("lib/fastcheck/messaging/whatsapp/conversation_state_machine.ex")
+    refute state_machine =~ "FastCheck.Tickets"
+
+    for file <- @vs_24d_c_resend_modules do
+      assert File.exists?(file), "expected #{file}"
+      body = File.read!(file)
+
+      assert body =~ "FastCheck.Tickets.Resend.EmailOtp"
+
+      for token <- @vs_24d_c_forbidden_tokens do
         refute String.contains?(body, token), "#{file} must not reference #{token}"
       end
     end

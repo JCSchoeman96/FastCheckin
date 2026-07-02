@@ -113,4 +113,55 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
     assert {:ok, ttl} = Redix.command(FastCheck.Redix, ["TTL", key])
     assert ttl > 0
   end
+
+  test "does not store resend PII or challenge identifiers in flow session fields" do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    command = %MessageCommand{
+      provider: "meta",
+      provider_message_id: "wamid.session-resend",
+      phone_e164: "+27821234567",
+      wa_id: "27821234567",
+      message_type: "text",
+      text_body: "123456",
+      received_at: now,
+      raw_payload_hash: "hash-session-resend",
+      correlation_id: "corr-session-resend",
+      metadata: %{}
+    }
+
+    conversation = %{
+      id: 789,
+      state: "collecting_resend_otp",
+      preferred_language: "af",
+      expires_at: DateTime.add(now, 86_400, :second),
+      needs_human: false,
+      handoff_reason: nil
+    }
+
+    flow_fields = %{
+      resend_name: "jamie smith",
+      resend_email: "jamie@example.com",
+      resend_challenge_public_id: "challenge-public-test",
+      otp: "123456",
+      ticket_url: "https://tickets.example/test",
+      delivery_token: "secret-token"
+    }
+
+    assert :ok = SessionStore.put_flow_session(command, conversation, flow_fields, 86_400)
+    assert {:ok, session} = SessionStore.get_session_by_wa_id("27821234567")
+
+    assert session["state"] == "collecting_resend_otp"
+    refute Map.has_key?(session, "resend_name")
+    refute Map.has_key?(session, "resend_email")
+    refute Map.has_key?(session, "resend_challenge_public_id")
+    refute Map.has_key?(session, "otp")
+    refute Map.has_key?(session, "ticket_url")
+    refute Map.has_key?(session, "delivery_token")
+    refute inspect(session) =~ "jamie smith"
+    refute inspect(session) =~ "jamie@example.com"
+    refute inspect(session) =~ "challenge-public-test"
+    refute inspect(session) =~ "123456"
+    refute inspect(session) =~ "secret-token"
+  end
 end

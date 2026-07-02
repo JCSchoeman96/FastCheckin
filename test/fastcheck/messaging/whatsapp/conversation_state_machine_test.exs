@@ -10,11 +10,18 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Sales.Conversation
+  alias FastCheck.Sales.DeliveryAttempt
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
+  alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
   alias FastCheckWeb.SalesWebFixtures
+
+  import FastCheck.TicketResendFixtures
+  import Swoosh.TestAssertions
+
+  setup :set_swoosh_global
 
   setup do
     paystack_cleanup = PaymentSupport.setup_paystack!()
@@ -133,6 +140,142 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         "payment_attempt_id" => state_data["payment_attempt_id"]
       }
     )
+  end
+
+  test "customer can request ticket resend OTP without ticket delivery side effects", %{
+    conversation: conversation
+  } do
+    issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
+
+    result =
+      conversation
+      |> progress("hi", "resend-accepted-1")
+      |> progress("1", "resend-accepted-2")
+
+    assert result.conversation.state == "main_menu"
+
+    assert {:ok, result} = handle(result.conversation, "3", "wamid.resend-accepted-3")
+    assert result.conversation.state == "collecting_resend_name"
+    assert result.response_body =~ "naam"
+
+    assert {:ok, result} =
+             handle(result.conversation, "  Jamie Smith  ", "wamid.resend-accepted-4")
+
+    assert result.conversation.state == "collecting_resend_email"
+    assert result.conversation.state_data["resend_name"] == "jamie smith"
+    assert result.response_body =~ "e-pos"
+
+    assert {:ok, result} =
+             handle(result.conversation, "  RESEND@example.COM  ", "wamid.resend-accepted-5")
+
+    assert result.conversation.state == "collecting_resend_otp"
+    assert result.response_body =~ "verifikasiekode"
+    refute result.response_body =~ "resend@example.com"
+    refute String.downcase(result.response_body) =~ "ticket found"
+    refute String.downcase(result.response_body) =~ "pdf"
+    refute result.response_body =~ "http://"
+    refute result.response_body =~ "https://"
+
+    data = result.conversation.state_data
+    assert data["resend_name"] == "jamie smith"
+    assert data["resend_email"] == "resend@example.com"
+    assert data["resend_email_otp_result_status"] == "accepted"
+    assert data["resend_correlation_id"] == "corr-wamid.resend-accepted-5"
+    assert is_binary(data["resend_requested_at"])
+    assert is_binary(data["resend_challenge_public_id"])
+    refute inspect(result.response_body) =~ data["resend_challenge_public_id"]
+
+    assert_email_sent()
+    refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+    assert delivery_attempt_count() == 0
+
+    assert {:ok, session} = SessionStore.get_session_by_wa_id("27821234567")
+    refute Map.has_key?(session, "resend_name")
+    refute Map.has_key?(session, "resend_email")
+    refute Map.has_key?(session, "resend_challenge_public_id")
+    refute inspect(session) =~ "jamie smith"
+    refute inspect(session) =~ "resend@example.com"
+    refute inspect(session) =~ data["resend_challenge_public_id"]
+  end
+
+  test "generic rejected resend request uses same visible OTP prompt without challenge id", %{
+    conversation: conversation
+  } do
+    accepted =
+      conversation
+      |> progress("hi", "resend-rejected-a1")
+      |> progress("1", "resend-rejected-a2")
+      |> progress("3", "resend-rejected-a3")
+      |> progress("Jamie Smith", "resend-rejected-a4")
+      |> progress("missing@example.com", "resend-rejected-a5")
+
+    assert accepted.conversation.state == "collecting_resend_otp"
+
+    assert accepted.conversation.state_data["resend_email_otp_result_status"] ==
+             "generic_rejected"
+
+    refute Map.has_key?(accepted.conversation.state_data, "resend_challenge_public_id")
+    assert accepted.response_body =~ "verifikasiekode"
+    assert_no_email_sent()
+    refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+    assert delivery_attempt_count() == 0
+  end
+
+  test "invalid resend name and email do not trigger EmailOtp", %{conversation: conversation} do
+    result =
+      conversation
+      |> progress("hi", "resend-invalid-1")
+      |> progress("1", "resend-invalid-2")
+      |> progress("3", "resend-invalid-3")
+
+    assert {:ok, blank_name} = handle(result.conversation, " ", "wamid.resend-invalid-4")
+    assert blank_name.conversation.state == "collecting_resend_name"
+    refute Map.has_key?(blank_name.conversation.state_data, "resend_name")
+
+    assert {:ok, result} =
+             handle(blank_name.conversation, "Jamie Smith", "wamid.resend-invalid-5")
+
+    assert result.conversation.state == "collecting_resend_email"
+
+    assert {:ok, bad_email} =
+             handle(result.conversation, "not-an-email", "wamid.resend-invalid-6")
+
+    assert bad_email.conversation.state == "collecting_resend_email"
+    assert bad_email.response_body =~ "geldige e-posadres"
+    refute Map.has_key?(bad_email.conversation.state_data, "resend_email")
+    refute Map.has_key?(bad_email.conversation.state_data, "resend_email_otp_result_status")
+    assert_no_email_sent()
+  end
+
+  test "resend OTP waiting state is inert and supports back and restart", %{
+    conversation: conversation
+  } do
+    result =
+      conversation
+      |> progress("hi", "resend-otp-1")
+      |> progress("1", "resend-otp-2")
+      |> progress("3", "resend-otp-3")
+      |> progress("Jamie Smith", "resend-otp-4")
+      |> progress("missing@example.com", "resend-otp-5")
+
+    assert result.conversation.state == "collecting_resend_otp"
+
+    assert {:ok, repeated} = handle(result.conversation, "123456", "wamid.resend-otp-6")
+    assert repeated.conversation.state == "collecting_resend_otp"
+    assert repeated.response_body == result.response_body
+    refute Map.has_key?(repeated.conversation.state_data, "verified_at")
+    refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+
+    assert {:ok, backed} = handle(repeated.conversation, "0", "wamid.resend-otp-7")
+    assert backed.conversation.state == "collecting_resend_email"
+    assert backed.response_body =~ "e-pos"
+    refute Map.has_key?(backed.conversation.state_data, "resend_email")
+    refute Map.has_key?(backed.conversation.state_data, "resend_email_otp_result_status")
+
+    assert {:ok, restarted} = handle(backed.conversation, "#", "wamid.resend-otp-8")
+    assert restarted.conversation.state == "main_menu"
+    assert restarted.response_body =~ "Koop kaartjies"
+    assert_resend_fields_absent(restarted.conversation.state_data)
   end
 
   test "confirmation summary renders skipped email without exposing hidden fields", %{
@@ -569,5 +712,25 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         ] do
       refute Map.has_key?(state_data, key), "expected #{key} to be absent"
     end
+  end
+
+  defp assert_resend_fields_absent(state_data) do
+    for key <- [
+          "resend_name",
+          "resend_email",
+          "resend_requested_at",
+          "resend_email_otp_result_status",
+          "resend_correlation_id",
+          "resend_challenge_public_id"
+        ] do
+      refute Map.has_key?(state_data, key), "expected #{key} to be absent"
+    end
+  end
+
+  defp delivery_attempt_count do
+    DeliveryAttempt
+    |> Query.for_read(:read, %{})
+    |> Ash.read!(authorize?: false)
+    |> length()
   end
 end

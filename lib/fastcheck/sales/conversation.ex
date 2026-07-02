@@ -137,6 +137,15 @@ defmodule FastCheck.Sales.Conversation do
       change(&transition_state(&1, &2, "selecting_event", :choose_buy_tickets))
     end
 
+    update :choose_resend_ticket do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_resend_name", :choose_resend_ticket))
+    end
+
     update :select_event do
       require_atomic?(false)
       accept(@vs_18_checkpoint_fields)
@@ -180,6 +189,24 @@ defmodule FastCheck.Sales.Conversation do
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
       change(&transition_state(&1, &2, "confirming_order", :submit_buyer_email))
+    end
+
+    update :submit_resend_name do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_resend_email", :submit_resend_name))
+    end
+
+    update :submit_resend_email do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, "collecting_resend_otp", :submit_resend_email))
     end
 
     update :skip_optional_email_after_name do
@@ -243,6 +270,30 @@ defmodule FastCheck.Sales.Conversation do
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
       change(&transition_state(&1, &2, "collecting_email", :return_to_email_collection))
+    end
+
+    update :return_to_resend_name_collection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+
+      change(
+        &transition_state(&1, &2, "collecting_resend_name", :return_to_resend_name_collection)
+      )
+    end
+
+    update :return_to_resend_email_collection do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+
+      change(
+        &transition_state(&1, &2, "collecting_resend_email", :return_to_resend_email_collection)
+      )
     end
 
     update :return_to_main_menu do

@@ -20,6 +20,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
       Copy.text(language, :main_menu_title),
       "1. #{Copy.text(language, :buy_tickets)}",
       "2. #{Copy.text(language, :help)}",
+      "3. #{Copy.text(language, :resend_ticket)}",
       "0. #{Copy.text(language, :back)}"
     ]
     |> Enum.join("\n")
@@ -91,6 +92,25 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
   @spec email_prompt(String.t() | nil) :: String.t()
   def email_prompt(language),
     do: ([Copy.text(language, :email)] ++ navigation_lines(language)) |> Enum.join("\n")
+
+  @spec resend_name_prompt(String.t() | nil) :: String.t()
+  def resend_name_prompt(language),
+    do: ([Copy.text(language, :resend_name)] ++ navigation_lines(language)) |> Enum.join("\n")
+
+  @spec resend_email_prompt(String.t() | nil) :: String.t()
+  def resend_email_prompt(language),
+    do: ([Copy.text(language, :resend_email)] ++ navigation_lines(language)) |> Enum.join("\n")
+
+  @spec resend_otp_prompt(String.t() | nil) :: String.t()
+  def resend_otp_prompt(language) do
+    ([Copy.text(language, :resend_check_email), Copy.text(language, :resend_enter_otp)] ++
+       navigation_lines(language))
+    |> Enum.join("\n")
+  end
+
+  @spec invalid_resend_email_prompt(String.t() | nil) :: String.t()
+  def invalid_resend_email_prompt(language),
+    do: Copy.text(language, :resend_invalid_email) <> "\n\n" <> resend_email_prompt(language)
 
   @spec awaiting_payment(String.t() | nil) :: String.t()
   def awaiting_payment(language), do: Copy.text(language, :awaiting_payment)

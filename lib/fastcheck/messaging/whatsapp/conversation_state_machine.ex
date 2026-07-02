@@ -15,6 +15,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias FastCheck.Messaging.WhatsApp.MenuRenderer
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.PaymentFlow
+  alias FastCheck.Messaging.WhatsApp.ResendFlow
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
@@ -43,12 +44,21 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     "payment_attempt_id",
     "order_public_reference"
   ]
+  @resend_flow_keys [
+    "resend_name",
+    "resend_email",
+    "resend_requested_at",
+    "resend_email_otp_result_status",
+    "resend_correlation_id",
+    "resend_challenge_public_id"
+  ]
   @all_flow_keys [
                    "event_options",
                    "offer_options",
                    "quantity"
                  ] ++
                    @selected_event_keys ++ @selected_offer_keys ++ @buyer_keys ++ @order_flow_keys
+  @all_flow_keys @all_flow_keys ++ @resend_flow_keys
 
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
@@ -79,7 +89,10 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
               "collecting_quantity",
               "collecting_buyer_name",
               "collecting_email",
-              "confirming_order"
+              "confirming_order",
+              "collecting_resend_name",
+              "collecting_resend_email",
+              "collecting_resend_otp"
             ] do
     with {:ok, conversation} <-
            transition(command, conversation, :cancel_conversation, %{
@@ -156,6 +169,17 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp dispatch(command, conversation, {:ok, {:number, 2}})
        when conversation.state == "main_menu" do
     {:ok, result(conversation, MenuRenderer.help(language(conversation)), command)}
+  end
+
+  defp dispatch(command, conversation, {:ok, {:number, 3}})
+       when conversation.state == "main_menu" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :choose_resend_ticket, %{
+             state_data: clear_current_flow(state_data(conversation))
+           }) do
+      {:ok,
+       result(conversation, MenuRenderer.resend_name_prompt(language(conversation)), command)}
+    end
   end
 
   defp dispatch(command, conversation, {:ok, :back}) when conversation.state == "main_menu" do
@@ -394,6 +418,108 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "collecting_resend_name" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :return_to_main_menu, %{
+             state_data: clear_current_flow(state_data(conversation))
+           }) do
+      {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
+    end
+  end
+
+  defp dispatch(command, conversation, {:ok, {:text, name}})
+       when conversation.state == "collecting_resend_name" do
+    case ResendFlow.normalize_name(name) do
+      {:ok, normalized_name} ->
+        data =
+          conversation
+          |> state_data()
+          |> clear_after_resend_name()
+          |> Map.put("resend_name", normalized_name)
+
+        with {:ok, conversation} <-
+               transition(command, conversation, :submit_resend_name, %{state_data: data}) do
+          {:ok,
+           result(conversation, MenuRenderer.resend_email_prompt(language(conversation)), command)}
+        end
+
+      {:error, :invalid_name} ->
+        repeat_resend_name_prompt(command, conversation)
+    end
+  end
+
+  defp dispatch(command, conversation, _normalized)
+       when conversation.state == "collecting_resend_name" do
+    repeat_resend_name_prompt(command, conversation)
+  end
+
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "collecting_resend_email" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :return_to_resend_name_collection, %{
+             state_data: clear_after_resend_name(state_data(conversation))
+           }) do
+      {:ok,
+       result(conversation, MenuRenderer.resend_name_prompt(language(conversation)), command)}
+    end
+  end
+
+  defp dispatch(command, conversation, {:ok, {:text, email}})
+       when conversation.state == "collecting_resend_email" do
+    case ResendFlow.normalize_email(email) do
+      {:ok, normalized_email} ->
+        data =
+          conversation
+          |> state_data()
+          |> clear_after_resend_email()
+          |> Map.put("resend_email", normalized_email)
+
+        with {:ok, resend_updates} <-
+               ResendFlow.request_email_otp(command, conversation, state_data: data),
+             data <- Map.merge(data, resend_updates),
+             {:ok, conversation} <-
+               transition(command, conversation, :submit_resend_email, %{state_data: data}) do
+          {:ok,
+           result(conversation, MenuRenderer.resend_otp_prompt(language(conversation)), command)}
+        end
+
+      {:error, :invalid_email} ->
+        {:ok,
+         result(
+           conversation,
+           MenuRenderer.invalid_resend_email_prompt(language(conversation)),
+           command
+         )}
+    end
+  end
+
+  defp dispatch(command, conversation, _normalized)
+       when conversation.state == "collecting_resend_email" do
+    {:ok,
+     result(
+       conversation,
+       MenuRenderer.invalid_resend_email_prompt(language(conversation)),
+       command
+     )}
+  end
+
+  defp dispatch(command, conversation, {:ok, :back})
+       when conversation.state == "collecting_resend_otp" do
+    with {:ok, conversation} <-
+           transition(command, conversation, :return_to_resend_email_collection, %{
+             state_data: clear_after_resend_email(state_data(conversation))
+           }) do
+      {:ok,
+       result(conversation, MenuRenderer.resend_email_prompt(language(conversation)), command)}
+    end
+  end
+
+  defp dispatch(command, conversation, _normalized)
+       when conversation.state == "collecting_resend_otp" do
+    {:ok, result(conversation, MenuRenderer.resend_otp_prompt(language(conversation)), command)}
+  end
+
+  defp dispatch(command, conversation, {:ok, :back})
        when conversation.state == "confirming_order" do
     with {:ok, conversation} <-
            transition(command, conversation, :return_to_email_collection, %{
@@ -485,6 +611,18 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
        MenuRenderer.invalid_input(
          language(conversation),
          MenuRenderer.offer_menu(language(conversation), offers)
+       ),
+       command
+     )}
+  end
+
+  defp repeat_resend_name_prompt(command, conversation) do
+    {:ok,
+     result(
+       conversation,
+       MenuRenderer.invalid_input(
+         language(conversation),
+         MenuRenderer.resend_name_prompt(language(conversation))
        ),
        command
      )}
@@ -659,6 +797,21 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp clear_current_flow(data), do: drop_flow_keys(data, @all_flow_keys)
+
+  defp clear_after_resend_name(data), do: drop_flow_keys(data, @resend_flow_keys)
+
+  defp clear_after_resend_email(data) do
+    drop_flow_keys(
+      data,
+      [
+        "resend_email",
+        "resend_requested_at",
+        "resend_email_otp_result_status",
+        "resend_correlation_id",
+        "resend_challenge_public_id"
+      ]
+    )
+  end
 
   defp clear_after_event_selection(data) do
     drop_flow_keys(

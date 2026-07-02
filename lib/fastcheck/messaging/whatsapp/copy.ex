@@ -9,6 +9,7 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
 
   defp af(:main_menu_title), do: "Kies 'n opsie:"
   defp af(:buy_tickets), do: "Koop kaartjies"
+  defp af(:resend_ticket), do: "Stuur my kaartjie weer"
   defp af(:help), do: "Hulp"
   defp af(:back), do: "Terug"
   defp af(:restart_main_menu), do: "Terug na hoof kieslys (Kanselleer en begin oor)"
@@ -17,6 +18,19 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp af(:quantity), do: "Hoeveel kaartjies wil jy koop?"
   defp af(:buyer_name), do: "Stuur asseblief jou naam."
   defp af(:email), do: "Stuur jou e-posadres, of antwoord 1 om oor te slaan."
+  defp af(:resend_name), do: "Stuur asseblief die naam wat vir die kaartjiebestelling gebruik is."
+
+  defp af(:resend_email),
+    do: "Stuur asseblief die e-posadres wat vir die kaartjiebestelling gebruik is."
+
+  defp af(:resend_invalid_email), do: "Stuur asseblief 'n geldige e-posadres."
+
+  defp af(:resend_check_email),
+    do: "As die besonderhede ooreenstem, stuur ons 'n verifikasiekode per e-pos."
+
+  defp af(:resend_enter_otp),
+    do: "Gaan asseblief jou e-pos na en stuur die verifikasiekode hier."
+
   defp af(:confirm), do: "Bevestig jou bestelling:"
   defp af(:confirm_name), do: "Naam"
   defp af(:confirm_email), do: "E-pos"
@@ -48,6 +62,7 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
 
   defp en(:main_menu_title), do: "Choose an option:"
   defp en(:buy_tickets), do: "Buy tickets"
+  defp en(:resend_ticket), do: "Re-send my ticket"
   defp en(:help), do: "Help"
   defp en(:back), do: "Back"
   defp en(:restart_main_menu), do: "Back to main menu (Cancel and start over)"
@@ -56,6 +71,16 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp en(:quantity), do: "How many tickets do you want to buy?"
   defp en(:buyer_name), do: "Please send your name."
   defp en(:email), do: "Send your email address, or reply 1 to skip."
+  defp en(:resend_name), do: "Please send the name used for the ticket order."
+  defp en(:resend_email), do: "Please send the email address used for the ticket order."
+  defp en(:resend_invalid_email), do: "Please send a valid email address."
+
+  defp en(:resend_check_email),
+    do: "If the details match, we will send a verification code by email."
+
+  defp en(:resend_enter_otp),
+    do: "Please check your email and send the verification code here."
+
   defp en(:confirm), do: "Confirm your order:"
   defp en(:confirm_name), do: "Name"
   defp en(:confirm_email), do: "Email"

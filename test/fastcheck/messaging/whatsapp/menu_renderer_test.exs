@@ -21,6 +21,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
 
       assert body =~ "1. Koop kaartjies"
       assert body =~ "2. Hulp"
+      assert body =~ "3. Stuur my kaartjie weer"
       assert body =~ "0. Terug"
       refute body =~ "ticket_issued"
       refute body =~ "payment_url"
@@ -31,6 +32,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
 
       assert body =~ "1. Buy tickets"
       assert body =~ "2. Help"
+      assert body =~ "3. Re-send my ticket"
       assert body =~ "0. Back"
     end
   end
@@ -72,8 +74,11 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       quantity = MenuRenderer.quantity_prompt("af")
       buyer_name = MenuRenderer.buyer_name_prompt("af")
       email = MenuRenderer.email_prompt("af")
+      resend_name = MenuRenderer.resend_name_prompt("af")
+      resend_email = MenuRenderer.resend_email_prompt("af")
+      resend_otp = MenuRenderer.resend_otp_prompt("af")
 
-      for body <- [quantity, buyer_name, email] do
+      for body <- [quantity, buyer_name, email, resend_name, resend_email, resend_otp] do
         assert body =~ "0. Terug"
         assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
         refute body =~ "restart"
@@ -83,6 +88,11 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
 
       assert english_email =~ "0. Back"
       assert english_email =~ "#. Back to main menu (Cancel and start over)"
+
+      assert MenuRenderer.resend_name_prompt("en") =~ "name"
+      assert MenuRenderer.resend_email_prompt("en") =~ "email"
+      assert MenuRenderer.resend_otp_prompt("en") =~ "verification code"
+      assert MenuRenderer.invalid_resend_email_prompt("en") =~ "valid email"
     end
 
     test "renders explicit zero ZAR price as R0" do
