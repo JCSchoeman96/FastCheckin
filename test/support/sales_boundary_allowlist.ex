@@ -137,6 +137,9 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
   ]
 
   @vs_24d_b_allowed_prefixes [
+    "config/config.exs",
+    "config/runtime.exs",
+    "config/test.exs",
     "lib/fastcheck/tickets/resend/email_otp.ex",
     "lib/fastcheck/tickets/resend/email_otp_renderer.ex",
     "test/fastcheck/tickets/resend/email_otp_test.exs",
