@@ -64,6 +64,17 @@ config :fastcheck, :mobile_scan_ingestion,
 
 config :fastcheck, :sales_hold_token_pepper, "test-pepper"
 config :fastcheck, :ticket_token_pepper, "test-ticket-token-pepper"
+
+config :fastcheck, :ticket_resend,
+  hash_pepper: "test-ticket-resend-pepper",
+  otp_ttl_seconds: 600,
+  otp_length: 6,
+  max_failed_attempts: 5,
+  lock_seconds: 900,
+  lookup_limit_per_email_15m: 3,
+  lookup_limit_per_source_15m: 5,
+  lookup_limit_per_candidate_day: 3
+
 config :fastcheck, :sales_internal_pilot_enabled, true
 config :fastcheck, :paystack_enabled, true
 config :fastcheck, :paystack_environment, "test"

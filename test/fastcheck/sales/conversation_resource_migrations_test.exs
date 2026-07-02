@@ -12,7 +12,8 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
     "sales_payment_events",
     "sales_state_transitions",
     "sales_ticket_issues",
-    "sales_ticket_offers"
+    "sales_ticket_offers",
+    "sales_ticket_resend_challenges"
   ]
 
   test "creates the expected Sales table inventory through VS-01E" do
