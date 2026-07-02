@@ -44,6 +44,73 @@ defmodule FastCheckWeb.Sales.OrderShowLiveTest do
     refute_unsafe_html(html)
   end
 
+  test "issued ticket rows include safe PDF download links" do
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    {:ok, _view, html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{order_id}")
+
+    assert html =~ "Download PDF"
+    assert html =~ ~s(href="/dashboard/sales/tickets/#{ticket_issue_id}/pdf")
+    assert html =~ "***"
+    refute_unsafe_html(html)
+  end
+
+  test "revoked and non-issued ticket rows do not show PDF download links" do
+    %{order_id: revoked_order_id, ticket_issue_ids: [revoked_ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!("UPDATE sales_ticket_issues SET status = 'revoked' WHERE id = $1", [
+      revoked_ticket_issue_id
+    ])
+
+    {:ok, _view, revoked_html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{revoked_order_id}")
+
+    refute revoked_html =~ "Download PDF"
+    refute revoked_html =~ ~s(/dashboard/sales/tickets/#{revoked_ticket_issue_id}/pdf)
+    refute_unsafe_html(revoked_html)
+
+    %{order_id: pending_order_id, ticket_issue_ids: [pending_ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!("UPDATE sales_ticket_issues SET status = 'pending' WHERE id = $1", [
+      pending_ticket_issue_id
+    ])
+
+    {:ok, _view, pending_html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{pending_order_id}")
+
+    refute pending_html =~ "Download PDF"
+    refute pending_html =~ ~s(/dashboard/sales/tickets/#{pending_ticket_issue_id}/pdf)
+    refute_unsafe_html(pending_html)
+  end
+
+  test "scanner-revoked issued ticket rows do not show PDF download links" do
+    %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!("UPDATE sales_ticket_issues SET scanner_status = 'revoked' WHERE id = $1", [
+      ticket_issue_id
+    ])
+
+    {:ok, _view, html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{order_id}")
+
+    refute html =~ "Download PDF"
+    refute html =~ ~s(/dashboard/sales/tickets/#{ticket_issue_id}/pdf)
+    refute_unsafe_html(html)
+  end
+
   test "authenticated user sees safe delivery attempt summary" do
     %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _]} =
       Fixtures.issued_order_fixture()

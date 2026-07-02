@@ -146,7 +146,16 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
                 class="flex items-center justify-between gap-2"
               >
                 <span>Issue #{ticket.ticket_issue_id} · {ticket.ticket_code_suffix}</span>
-                <span>{format_status(ticket.status)} / {format_status(ticket.scanner_status)}</span>
+                <span class="flex items-center gap-3">
+                  <span>{format_status(ticket.status)} / {format_status(ticket.scanner_status)}</span>
+                  <.link
+                    :if={downloadable_ticket?(ticket)}
+                    href={~p"/dashboard/sales/tickets/#{ticket.ticket_issue_id}/pdf"}
+                    class="rounded border border-fc-border px-2 py-1 text-xs font-medium text-fc-accent hover:bg-fc-surface-raised"
+                  >
+                    Download PDF
+                  </.link>
+                </span>
               </li>
             </ul>
           </.card_content>
@@ -322,6 +331,10 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
 
   defp format_status(status),
     do: status |> to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  defp downloadable_ticket?(ticket) do
+    ticket.status == "issued" and ticket.scanner_status == "valid"
+  end
 
   defp delivery_status(nil), do: "none"
   defp delivery_status(status), do: status |> to_string() |> String.replace("_", " ")
