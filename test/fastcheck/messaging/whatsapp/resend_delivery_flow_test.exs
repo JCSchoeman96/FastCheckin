@@ -130,6 +130,24 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlowTest do
              )
   end
 
+  test "declared unique constraint without unique error is not treated as queued" do
+    conversation = insert_conversation!()
+    challenge = verified_challenge!(conversation.id)
+    conversation = put_challenge(conversation, challenge.public_id)
+    command = command("flow-declared-constraint")
+
+    changeset =
+      %Oban.Job{}
+      |> Ecto.Changeset.change()
+      |> Ecto.Changeset.unique_constraint(:args, name: :oban_jobs_args_index)
+      |> Ecto.Changeset.add_error(:args, "invalid")
+
+    assert {:error, :not_ready} =
+             ResendDeliveryFlow.enqueue_verified_ticket_link(command, conversation,
+               oban_insert_fun: fn _job -> {:error, changeset} end
+             )
+  end
+
   defp pending_challenge!(conversation_id) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 

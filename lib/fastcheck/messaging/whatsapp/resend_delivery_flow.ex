@@ -105,19 +105,13 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlow do
   end
 
   defp oban_unique_conflict?(%Ecto.Changeset{} = changeset) do
-    unique_constraint_error?(changeset.errors) or unique_constraint?(changeset.constraints)
+    unique_constraint_error?(changeset.errors)
   end
 
   defp unique_constraint_error?(errors) do
     Enum.any?(errors, fn {_field, {_message, opts}} ->
       Keyword.get(opts, :constraint) == :unique or
         Keyword.get(opts, :constraint_type) == :unique
-    end)
-  end
-
-  defp unique_constraint?(constraints) do
-    Enum.any?(constraints, fn constraint ->
-      Map.get(constraint, :type) == :unique
     end)
   end
 
