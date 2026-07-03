@@ -91,9 +91,34 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlow do
     |> oban_insert_fun.()
     |> case do
       {:ok, _job} -> :ok
-      {:error, %Ecto.Changeset{}} -> :ok
+      {:error, %Ecto.Changeset{} = changeset} -> handle_oban_changeset_error(changeset)
       {:error, _reason} -> {:error, :not_ready}
     end
+  end
+
+  defp handle_oban_changeset_error(%Ecto.Changeset{} = changeset) do
+    if oban_unique_conflict?(changeset) do
+      :ok
+    else
+      {:error, :not_ready}
+    end
+  end
+
+  defp oban_unique_conflict?(%Ecto.Changeset{} = changeset) do
+    unique_constraint_error?(changeset.errors) or unique_constraint?(changeset.constraints)
+  end
+
+  defp unique_constraint_error?(errors) do
+    Enum.any?(errors, fn {_field, {_message, opts}} ->
+      Keyword.get(opts, :constraint) == :unique or
+        Keyword.get(opts, :constraint_type) == :unique
+    end)
+  end
+
+  defp unique_constraint?(constraints) do
+    Enum.any?(constraints, fn constraint ->
+      Map.get(constraint, :type) == :unique
+    end)
   end
 
   defp safe_updates(%MessageCommand{} = command) do

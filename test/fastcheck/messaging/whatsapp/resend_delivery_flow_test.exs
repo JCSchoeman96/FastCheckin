@@ -113,6 +113,23 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlowTest do
     assert second_updates["resend_delivery_status"] == "queued"
   end
 
+  test "non-unique Oban changeset error is not treated as queued" do
+    conversation = insert_conversation!()
+    challenge = verified_challenge!(conversation.id)
+    conversation = put_challenge(conversation, challenge.public_id)
+    command = command("flow-invalid-changeset")
+
+    changeset =
+      %Oban.Job{}
+      |> Ecto.Changeset.change()
+      |> Ecto.Changeset.add_error(:args, "invalid")
+
+    assert {:error, :not_ready} =
+             ResendDeliveryFlow.enqueue_verified_ticket_link(command, conversation,
+               oban_insert_fun: fn _job -> {:error, changeset} end
+             )
+  end
+
   defp pending_challenge!(conversation_id) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
