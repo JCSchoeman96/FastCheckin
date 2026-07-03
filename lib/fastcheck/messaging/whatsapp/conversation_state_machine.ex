@@ -15,8 +15,10 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias FastCheck.Messaging.WhatsApp.MenuRenderer
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.PaymentFlow
+  alias FastCheck.Messaging.WhatsApp.ResendDeliveryFlow
   alias FastCheck.Messaging.WhatsApp.ResendFlow
   alias FastCheck.Messaging.WhatsApp.SessionStore
+  alias FastCheck.Messaging.WhatsApp.TicketLinkRenderer
   alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.TicketOffer
@@ -52,7 +54,10 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     "resend_correlation_id",
     "resend_challenge_public_id",
     "resend_otp_verified_at",
-    "resend_otp_verification_status"
+    "resend_otp_verification_status",
+    "resend_delivery_requested_at",
+    "resend_delivery_status",
+    "resend_delivery_correlation_id"
   ]
   @all_flow_keys [
                    "event_options",
@@ -95,7 +100,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
               "collecting_resend_name",
               "collecting_resend_email",
               "collecting_resend_otp",
-              "awaiting_verified_resend_delivery"
+              "awaiting_verified_resend_delivery",
+              "verified_resend_delivery_queued"
             ] do
     with {:ok, conversation} <-
            transition(command, conversation, :cancel_conversation, %{
@@ -571,8 +577,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, _normalized)
        when conversation.state == "awaiting_verified_resend_delivery" do
-    {:ok,
-     result(conversation, MenuRenderer.resend_verified_prompt(language(conversation)), command)}
+    queue_verified_resend_delivery(command, conversation)
+  end
+
+  defp dispatch(command, conversation, _normalized)
+       when conversation.state == "verified_resend_delivery_queued" do
+    {:ok, result(conversation, TicketLinkRenderer.sending_now(language(conversation)), command)}
   end
 
   defp dispatch(command, conversation, _normalized)
@@ -681,8 +691,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
     with {:ok, conversation} <-
            transition(command, conversation, :verify_resend_otp, %{state_data: data}) do
-      {:ok,
-       result(conversation, MenuRenderer.resend_verified_prompt(language(conversation)), command)}
+      queue_verified_resend_delivery(command, conversation)
     end
   end
 
@@ -690,12 +699,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     data = state_data(conversation)
 
     if Map.get(data, "resend_otp_verification_status") == "verified" do
-      {:ok,
-       result(
-         conversation,
-         MenuRenderer.resend_verified_prompt(language(conversation)),
-         command
-       )}
+      queue_verified_resend_delivery(command, conversation)
     else
       {:ok,
        result(
@@ -704,6 +708,35 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
          command
        )}
     end
+  end
+
+  defp queue_verified_resend_delivery(command, conversation) do
+    case ResendDeliveryFlow.enqueue_verified_ticket_link(command, conversation) do
+      {:ok, :queued, updates} ->
+        data = verified_resend_delivery_state_data(conversation, updates)
+
+        with {:ok, conversation} <-
+               transition(command, conversation, :queue_verified_resend_delivery, %{
+                 state_data: data
+               }) do
+          {:ok,
+           result(conversation, TicketLinkRenderer.sending_now(language(conversation)), command)}
+        end
+
+      {:error, :not_ready} ->
+        {:ok, result(conversation, TicketLinkRenderer.not_ready(language(conversation)), command)}
+
+      {:error, :not_deliverable} ->
+        {:ok,
+         result(conversation, TicketLinkRenderer.not_deliverable(language(conversation)), command)}
+    end
+  end
+
+  defp verified_resend_delivery_state_data(conversation, updates) do
+    conversation
+    |> state_data()
+    |> Map.take(["resend_otp_verified_at", "resend_otp_verification_status"])
+    |> Map.merge(updates)
   end
 
   defp transition(command, conversation, action, attrs) do

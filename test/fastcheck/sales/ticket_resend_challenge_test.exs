@@ -4,7 +4,9 @@ defmodule FastCheck.Sales.TicketResendChallengeTest do
   import FastCheck.TicketResendFixtures
 
   alias Ash.Changeset
+  alias Ash.Query
   alias FastCheck.Repo
+  alias FastCheck.Sales.TicketResendChallenge
   alias FastCheck.Tickets.Resend.Otp
 
   test "challenge table has bounded audit columns and required indexes" do
@@ -69,14 +71,31 @@ defmodule FastCheck.Sales.TicketResendChallengeTest do
     assert consumed.status == "consumed"
   end
 
-  test "inspect does not leak hashes, metadata, OTP, raw email, name, or phone" do
+  test "system can load challenge by internal id for worker validation" do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    {:ok, challenge, _otp} = Otp.issue(challenge_attrs!(), now, return_otp?: true)
+
+    assert {:ok, loaded} =
+             TicketResendChallenge
+             |> Query.for_read(:get_by_id, %{id: challenge.id})
+             |> Ash.read_one(authorize?: false)
+
+    assert loaded.id == challenge.id
+    assert loaded.public_id == challenge.public_id
+  end
+
+  test "inspect does not leak public id, ids, hashes, metadata, OTP, raw email, name, or phone" do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     {:ok, challenge, otp} = Otp.issue(challenge_attrs!(), now, return_otp?: true)
 
     inspected = inspect(challenge)
 
+    refute inspected =~ challenge.public_id
+    refute inspected =~ to_string(challenge.sales_order_id)
+    refute inspected =~ to_string(challenge.ticket_issue_id)
     refute inspected =~ challenge.otp_hash
     refute inspected =~ challenge.request_email_hash
+    refute inspected =~ challenge.request_name_hash
     refute inspected =~ challenge.source_hash
     refute inspected =~ challenge.candidate_hash
     refute inspected =~ otp

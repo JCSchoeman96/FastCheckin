@@ -24,6 +24,16 @@ defmodule FastCheck.Sales.TicketResendChallenge do
   actions do
     defaults([:read])
 
+    read :get_by_id do
+      get?(true)
+
+      argument :id, :integer do
+        allow_nil?(false)
+      end
+
+      filter(expr(id == ^arg(:id)))
+    end
+
     read :get_by_public_id do
       get?(true)
 
@@ -250,7 +260,7 @@ defimpl Inspect, for: FastCheck.Sales.TicketResendChallenge do
 
   def inspect(challenge, opts) do
     safe = %{
-      public_id: challenge.public_id,
+      public_id_present?: is_binary(challenge.public_id) and challenge.public_id != "",
       status: challenge.status,
       failed_attempt_count: challenge.failed_attempt_count,
       expires_at: challenge.expires_at,
