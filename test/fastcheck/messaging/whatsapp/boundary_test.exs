@@ -44,6 +44,10 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "lib/fastcheck/messaging/whatsapp/resend_flow.ex"
   ]
 
+  @vs_24d_e_resend_delivery_modules [
+    "lib/fastcheck/messaging/whatsapp/resend_delivery_flow.ex"
+  ]
+
   @vs_18_forbidden_tokens [
     "FastCheck.Payments",
     "TransactionInitialization",
@@ -116,6 +120,27 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "webhook"
   ]
 
+  @vs_24d_e_state_machine_forbidden_tokens [
+    "SendWhatsAppTicketLinkWorker",
+    "TicketIssue",
+    "DeliveryToken",
+    "TicketPage",
+    "ArtifactResolver"
+  ]
+
+  @vs_24d_e_forbidden_tokens [
+    "PdfTicket",
+    "TicketPdfController",
+    "SecureTicketController",
+    "FastCheck.Payments",
+    "FastCheck.Attendees",
+    "FastCheck.Scans",
+    "refund",
+    "revocation",
+    "webhook",
+    "wallet"
+  ]
+
   test "vs-16 whatsapp provider modules exist in provider boundary namespace" do
     for path <- @whatsapp_modules do
       assert File.exists?(path), "expected #{path}"
@@ -186,5 +211,30 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
         refute String.contains?(body, token), "#{file} must not reference #{token}"
       end
     end
+  end
+
+  test "vs-24d-e keeps resend delivery bridge out of state machine and forbidden domains" do
+    state_machine = File.read!("lib/fastcheck/messaging/whatsapp/conversation_state_machine.ex")
+
+    for token <- @vs_24d_e_state_machine_forbidden_tokens do
+      refute String.contains?(state_machine, token),
+             "conversation_state_machine.ex must not reference #{token}"
+    end
+
+    for file <- @vs_24d_e_resend_delivery_modules do
+      assert File.exists?(file), "expected #{file}"
+      body = File.read!(file)
+
+      assert body =~ "FastCheck.Sales.TicketResendChallenge"
+      assert body =~ "FastCheck.Workers.SendWhatsAppTicketLinkWorker"
+      assert body =~ "Oban"
+
+      for token <- @vs_24d_e_forbidden_tokens do
+        refute String.contains?(body, token), "#{file} must not reference #{token}"
+      end
+    end
+
+    worker = File.read!("lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex")
+    assert worker =~ "FastCheck.Sales.TicketResendChallenge"
   end
 end

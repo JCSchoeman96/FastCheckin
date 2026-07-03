@@ -250,7 +250,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert_no_email_sent()
   end
 
-  test "valid resend OTP transitions to verified waiting state without delivery side effects", %{
+  test "valid resend OTP queues verified resend delivery without exposing link", %{
     conversation: conversation
   } do
     issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
@@ -264,32 +264,54 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("resend@example.com", "resend-verify-5")
 
     otp = extract_single_otp_from_email!()
+    public_id = result.conversation.state_data["resend_challenge_public_id"]
 
     assert {:ok, verified} = handle(result.conversation, otp, "wamid.resend-verify-6")
 
-    assert verified.conversation.state == "awaiting_verified_resend_delivery"
+    assert verified.conversation.state == "verified_resend_delivery_queued"
     assert verified.response_body =~ "gereed"
     refute verified.response_body =~ "http://"
     refute verified.response_body =~ "https://"
+    refute verified.response_body =~ "/t/"
     refute verified.response_body =~ otp
 
     data = verified.conversation.state_data
     assert data["resend_otp_verification_status"] == "verified"
     assert is_binary(data["resend_otp_verified_at"])
-    assert is_binary(data["resend_challenge_public_id"])
-    assert reload_challenge_status(data["resend_challenge_public_id"]).status == "verified"
+    refute Map.has_key?(data, "resend_challenge_public_id")
+    assert data["resend_delivery_status"] == "queued"
+    assert data["resend_delivery_correlation_id"] == "corr-wamid.resend-verify-6"
+    assert is_binary(data["resend_delivery_requested_at"])
+    refute Map.has_key?(data, "sales_order_id")
+    refute Map.has_key?(data, "ticket_issue_id")
+    assert reload_challenge_status(public_id).status == "verified"
     refute inspect(data) =~ otp
-    refute inspect(verified.response_body) =~ data["resend_challenge_public_id"]
+    refute inspect(verified.response_body) =~ public_id
 
-    refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+    challenge = reload_challenge(public_id)
+
+    assert_enqueued(
+      worker: SendWhatsAppTicketLinkWorker,
+      args: %{
+        "conversation_id" => verified.conversation.id,
+        "sales_order_id" => challenge.sales_order_id,
+        "ticket_issue_id" => challenge.ticket_issue_id,
+        "ticket_resend_challenge_id" => challenge.id,
+        "delivery_reason" => "verified_ticket_resend"
+      }
+    )
+
     assert delivery_attempt_count() == 0
 
     assert {:ok, session} = SessionStore.get_session_by_wa_id("27821234567")
     refute Map.has_key?(session, "resend_challenge_public_id")
+    refute Map.has_key?(session, "resend_delivery_status")
+    refute Map.has_key?(session, "resend_delivery_correlation_id")
+    refute Map.has_key?(session, "resend_delivery_requested_at")
     refute Map.has_key?(session, "resend_otp_verified_at")
     refute Map.has_key?(session, "resend_otp_verification_status")
     refute inspect(session) =~ otp
-    refute inspect(session) =~ data["resend_challenge_public_id"]
+    refute inspect(session) =~ public_id
   end
 
   test "leading-zero resend OTP verifies from raw command text", %{conversation: conversation} do
@@ -311,8 +333,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     )
 
     assert {:ok, verified} = handle(result.conversation, "012345", "wamid.resend-zero-6")
-    assert verified.conversation.state == "awaiting_verified_resend_delivery"
+    assert verified.conversation.state == "verified_resend_delivery_queued"
     refute inspect(verified.conversation.state_data) =~ "012345"
+    refute Map.has_key?(verified.conversation.state_data, "resend_challenge_public_id")
   end
 
   test "resend OTP failures stay in OTP collection with generic copy", %{
@@ -446,7 +469,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     assert {:ok, repeated} = handle(already_waiting, "hello", "wamid.resend-already-3")
     assert repeated.conversation.state == "awaiting_verified_resend_delivery"
-    assert repeated.response_body =~ "gereed"
+    assert repeated.response_body =~ "kan nie"
     refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
     assert delivery_attempt_count() == 0
   end
@@ -483,15 +506,23 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert_resend_fields_absent(restarted.conversation.state_data)
   end
 
-  test "verified resend waiting state repeats pending copy without payment fallback or delivery side effects",
+  test "verified resend waiting state queues once and queued state stays inert",
        %{
          conversation: conversation
        } do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {:ok, challenge, otp} =
+      Otp.issue(challenge_attrs!(conversation_id: conversation.id), now, return_otp?: true)
+
+    {:ok, verified_challenge} =
+      Otp.verify(challenge.public_id, otp, DateTime.add(now, 1, :second))
+
     verified_conversation = %{
       conversation
       | state: "awaiting_verified_resend_delivery",
         state_data: %{
-          "resend_challenge_public_id" => "challenge-public-test",
+          "resend_challenge_public_id" => verified_challenge.public_id,
           "resend_otp_verification_status" => "verified",
           "resend_otp_verified_at" =>
             DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
@@ -499,19 +530,69 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     }
 
     assert {:ok, ordinary} = handle(verified_conversation, "hello", "wamid.resend-await-1")
-    assert ordinary.conversation.state == "awaiting_verified_resend_delivery"
+    assert ordinary.conversation.state == "verified_resend_delivery_queued"
     assert ordinary.response_body =~ "gereed"
+    assert ordinary.response_body =~ "stuur"
     refute ordinary.response_body =~ "betaling"
     refute ordinary.response_body =~ "payment"
     refute ordinary.response_body =~ "http://"
+    refute ordinary.response_body =~ "/t/"
+    refute Map.has_key?(ordinary.conversation.state_data, "resend_challenge_public_id")
+    refute Map.has_key?(ordinary.conversation.state_data, "sales_order_id")
+    refute Map.has_key?(ordinary.conversation.state_data, "ticket_issue_id")
 
     assert {:ok, zero} = handle(ordinary.conversation, "0", "wamid.resend-await-2")
-    assert zero.conversation.state == "awaiting_verified_resend_delivery"
+    assert zero.conversation.state == "verified_resend_delivery_queued"
     assert zero.response_body == ordinary.response_body
 
     refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
-    refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+
+    assert_enqueued(
+      worker: SendWhatsAppTicketLinkWorker,
+      args: %{
+        "conversation_id" => conversation.id,
+        "sales_order_id" => verified_challenge.sales_order_id,
+        "ticket_issue_id" => verified_challenge.ticket_issue_id,
+        "ticket_resend_challenge_id" => verified_challenge.id,
+        "delivery_reason" => "verified_ticket_resend"
+      }
+    )
+
     assert delivery_attempt_count() == 0
+  end
+
+  test "verified resend queued state supports restart and stop without payment fallback", %{
+    conversation: conversation
+  } do
+    queued_conversation = %{
+      conversation
+      | state: "verified_resend_delivery_queued",
+        state_data: %{
+          "resend_delivery_status" => "queued",
+          "resend_delivery_correlation_id" => "corr-queued",
+          "resend_delivery_requested_at" =>
+            DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+          "resend_otp_verification_status" => "verified",
+          "resend_otp_verified_at" =>
+            DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+        }
+    }
+
+    assert {:ok, repeated} = handle(queued_conversation, "hello", "wamid.resend-queued-1")
+    assert repeated.conversation.state == "verified_resend_delivery_queued"
+    assert repeated.response_body =~ "gereed"
+    refute repeated.response_body =~ "betaling"
+
+    assert {:ok, restarted} = handle(repeated.conversation, "#", "wamid.resend-queued-2")
+    assert restarted.conversation.state == "main_menu"
+    assert restarted.response_body =~ "Koop kaartjies"
+    assert_resend_fields_absent(restarted.conversation.state_data)
+
+    assert {:ok, stopped} = handle(queued_conversation, "stop", "wamid.resend-queued-3")
+    assert stopped.conversation.state == "cancelled"
+    assert stopped.response_body =~ "gekanselleer"
+
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
   end
 
   test "confirmation summary renders skipped email without exposing hidden fields", %{
@@ -952,6 +1033,14 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     )
   end
 
+  defp reload_challenge(public_id) when is_binary(public_id) do
+    Repo.one!(
+      from c in "sales_ticket_resend_challenges",
+        where: c.public_id == ^public_id,
+        select: map(c, [:id, :status, :sales_order_id, :ticket_issue_id])
+    )
+  end
+
   defp assert_flow_fields_absent(state_data) do
     for key <- [
           "selected_event_id",
@@ -974,7 +1063,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
           "resend_requested_at",
           "resend_email_otp_result_status",
           "resend_correlation_id",
-          "resend_challenge_public_id"
+          "resend_challenge_public_id",
+          "resend_otp_verified_at",
+          "resend_otp_verification_status",
+          "resend_delivery_requested_at",
+          "resend_delivery_status",
+          "resend_delivery_correlation_id"
         ] do
       refute Map.has_key?(state_data, key), "expected #{key} to be absent"
     end

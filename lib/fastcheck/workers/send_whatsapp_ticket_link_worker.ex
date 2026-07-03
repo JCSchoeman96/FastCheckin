@@ -5,6 +5,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   import Ecto.Query, only: [from: 2]
 
+  require Logger
+
   use Oban.Worker,
     queue: :whatsapp_outbound,
     max_attempts: 5,
@@ -23,21 +25,31 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.TicketIssue
   alias FastCheck.Sales.TicketPage
+  alias FastCheck.Sales.TicketResendChallenge
   alias FastCheck.Tickets.DeliveryToken
 
   @impl Oban.Worker
   def perform(%Oban.Job{
-        args: %{
-          "conversation_id" => conversation_id,
-          "sales_order_id" => order_id,
-          "ticket_issue_id" => ticket_issue_id
-        }
+        args:
+          %{
+            "conversation_id" => conversation_id,
+            "sales_order_id" => order_id,
+            "ticket_issue_id" => ticket_issue_id
+          } = args
       }) do
     conversation_id = normalize_id(conversation_id)
     order_id = normalize_id(order_id)
     ticket_issue_id = normalize_id(ticket_issue_id)
+    resend_challenge_id = normalize_optional_id(Map.get(args, "ticket_resend_challenge_id"))
 
-    with {:ok, :new} <-
+    with :ok <-
+           validate_resend_challenge(
+             resend_challenge_id,
+             conversation_id,
+             order_id,
+             ticket_issue_id
+           ),
+         {:ok, :new} <-
            Dedupe.claim_send_ticket_link(
              conversation_id,
              ticket_issue_id,
@@ -55,10 +67,11 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
          decision <- DeliveryPolicy.select_ticket_delivery(conversation),
          {:ok, delivery_attempt} <-
            create_delivery_attempt(order, ticket_issue, conversation, decision),
-         :ok <-
+         {:ok, _delivery_attempt} <-
            deliver_and_mark(delivery_attempt, conversation, decision, url, fn ->
              Dedupe.release_send_ticket_link(conversation_id, ticket_issue_id)
-           end) do
+           end),
+         :ok <- consume_resend_challenge(resend_challenge_id) do
       :ok
     else
       {:ok, :duplicate} ->
@@ -79,6 +92,39 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   end
 
   def perform(_job), do: {:discard, :invalid_args}
+
+  defp validate_resend_challenge(nil, _conversation_id, _order_id, _ticket_issue_id), do: :ok
+
+  defp validate_resend_challenge(challenge_id, conversation_id, order_id, ticket_issue_id)
+       when is_integer(challenge_id) do
+    case load_resend_challenge(challenge_id) do
+      {:ok, %TicketResendChallenge{} = challenge} ->
+        if valid_resend_challenge?(challenge, conversation_id, order_id, ticket_issue_id) do
+          :ok
+        else
+          {:discard, :invalid_resend_challenge}
+        end
+
+      {:error, _reason} ->
+        {:discard, :invalid_resend_challenge}
+    end
+  end
+
+  defp validate_resend_challenge(_challenge_id, _conversation_id, _order_id, _ticket_issue_id),
+    do: {:discard, :invalid_resend_challenge}
+
+  defp valid_resend_challenge?(
+         %TicketResendChallenge{} = challenge,
+         conversation_id,
+         order_id,
+         ticket_issue_id
+       ) do
+    challenge.status == "verified" and
+      is_nil(challenge.consumed_at) and
+      challenge.conversation_id == conversation_id and
+      challenge.sales_order_id == order_id and
+      challenge.ticket_issue_id == ticket_issue_id
+  end
 
   defp ensure_order_deliverable(%{status: "ticket_issued"}), do: :ok
   defp ensure_order_deliverable(_order), do: {:error, :ticket_not_deliverable}
@@ -166,9 +212,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   defp mark_provider_result(result, delivery_attempt, release_dedupe) do
     case result do
       {:ok, response} ->
-        with {:ok, _delivery_attempt} <- mark_sent(delivery_attempt, response.provider_message_id) do
-          :ok
-        end
+        mark_sent(delivery_attempt, response.provider_message_id)
 
       {:error, reason} = error ->
         mark_provider_failure(delivery_attempt, reason, release_dedupe, error)
@@ -277,6 +321,29 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     |> Ash.update(authorize?: false)
   end
 
+  defp consume_resend_challenge(nil), do: :ok
+
+  defp consume_resend_challenge(challenge_id) when is_integer(challenge_id) do
+    with {:ok, %TicketResendChallenge{} = challenge} <- load_resend_challenge(challenge_id),
+         {:ok, _challenge} <-
+           challenge
+           |> Changeset.for_update(
+             :mark_consumed,
+             %{consumed_at: DateTime.utc_now() |> DateTime.truncate(:second)},
+             actor: system_actor()
+           )
+           |> Ash.update(authorize?: false) do
+      :ok
+    else
+      _reason ->
+        Logger.warning("whatsapp_resend_challenge_consume_failed",
+          source: "send_whatsapp_ticket_link_worker"
+        )
+
+        {:discard, :resend_challenge_consume_failed}
+    end
+  end
+
   defp template_name(%{template: %{name: name}}), do: name
   defp template_name(_decision), do: nil
 
@@ -341,6 +408,17 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     end
   end
 
+  defp load_resend_challenge(id) do
+    TicketResendChallenge
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one(authorize?: false)
+    |> case do
+      {:ok, nil} -> {:error, :resend_challenge_not_found}
+      {:ok, challenge} -> {:ok, challenge}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp normalize_id(id) when is_integer(id), do: id
 
   defp normalize_id(id) when is_binary(id) do
@@ -349,6 +427,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       _ -> id
     end
   end
+
+  defp normalize_optional_id(nil), do: nil
+  defp normalize_optional_id(""), do: nil
+  defp normalize_optional_id(id), do: normalize_id(id)
 
   defp ticket_delivery_dedupe_ttl_seconds do
     Application.get_env(:fastcheck, :whatsapp_ticket_delivery_dedupe_ttl_seconds, 86_400)

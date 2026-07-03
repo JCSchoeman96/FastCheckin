@@ -128,6 +128,31 @@ defmodule FastCheck.Sales.ConversationStateActionsTest do
              |> Ash.update(authorize?: false)
 
     assert verified_state.state == "awaiting_verified_resend_delivery"
+
+    assert {:ok, queued_state} =
+             verified_state
+             |> Changeset.for_update(
+               :queue_verified_resend_delivery,
+               %{
+                 last_inbound_message_id: "wamid.resend-action-5",
+                 last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                 state_data: %{
+                   "resend_otp_verification_status" => "verified",
+                   "resend_otp_verified_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+                   "resend_delivery_status" => "queued",
+                   "resend_delivery_requested_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+                   "resend_delivery_correlation_id" => "corr-resend-action-5"
+                 },
+                 correlation_id: "corr-resend-action-5",
+                 idempotency_key: "idem-resend-action-5",
+                 transition_metadata: %{}
+               },
+               actor: actor
+             )
+             |> Ash.update(authorize?: false)
+
+    assert queued_state.state == "verified_resend_delivery_queued"
+    refute Map.has_key?(queued_state.state_data, "resend_challenge_public_id")
   end
 
   defp insert_conversation!(state) do

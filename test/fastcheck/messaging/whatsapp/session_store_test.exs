@@ -145,9 +145,15 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
       resend_challenge_public_id: "challenge-public-test",
       resend_otp_verified_at: "2026-07-02T12:00:00Z",
       resend_otp_verification_status: "verified",
+      resend_delivery_requested_at: "2026-07-02T12:01:00Z",
+      resend_delivery_status: "queued",
+      resend_delivery_correlation_id: "corr-delivery",
+      ticket_issue_id: 456,
       otp: "123456",
       ticket_url: "https://tickets.example/test",
-      delivery_token: "secret-token"
+      delivery_token: "secret-token",
+      delivery_token_hash: "delivery-hash",
+      provider_payload: %{"messages" => []}
     }
 
     assert :ok = SessionStore.put_flow_session(command, conversation, flow_fields, 86_400)
@@ -159,13 +165,20 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
     refute Map.has_key?(session, "resend_challenge_public_id")
     refute Map.has_key?(session, "resend_otp_verified_at")
     refute Map.has_key?(session, "resend_otp_verification_status")
+    refute Map.has_key?(session, "resend_delivery_requested_at")
+    refute Map.has_key?(session, "resend_delivery_status")
+    refute Map.has_key?(session, "resend_delivery_correlation_id")
+    refute Map.has_key?(session, "ticket_issue_id")
     refute Map.has_key?(session, "otp")
     refute Map.has_key?(session, "ticket_url")
     refute Map.has_key?(session, "delivery_token")
+    refute Map.has_key?(session, "delivery_token_hash")
+    refute Map.has_key?(session, "provider_payload")
     refute inspect(session) =~ "jamie smith"
     refute inspect(session) =~ "jamie@example.com"
     refute inspect(session) =~ "challenge-public-test"
     refute inspect(session) =~ "123456"
     refute inspect(session) =~ "secret-token"
+    refute inspect(session) =~ "delivery-hash"
   end
 end

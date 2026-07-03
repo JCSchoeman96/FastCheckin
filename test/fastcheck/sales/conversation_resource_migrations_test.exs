@@ -83,6 +83,9 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
     assert %Postgrex.Result{} =
              insert_conversation!(state: "awaiting_verified_resend_delivery")
 
+    assert %Postgrex.Result{} =
+             insert_conversation!(state: "verified_resend_delivery_queued")
+
     assert_db_error(~r/sales_conversations_phone_e164_format/, fn ->
       insert_conversation!(phone_e164: "27821234567")
     end)
