@@ -259,6 +259,10 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
 
     assert_index("sales_delivery_attempts_status_inserted_at_idx", ["status", "inserted_at"])
 
+    assert_index("sales_delivery_attempts_resend_challenge_id_idx", [
+      "ticket_resend_challenge_id"
+    ])
+
     assert_index("sales_conversations_phone_e164_idx", ["phone_e164"])
     assert_index("sales_conversations_wa_id_idx", ["wa_id"])
     assert_index("sales_conversations_session_key_idx", ["session_key"])
@@ -301,6 +305,13 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     assert_foreign_key("sales_ticket_issues", "sales_order_line_id", "sales_order_lines")
     assert_foreign_key("sales_delivery_attempts", "sales_order_id", "sales_orders")
     assert_foreign_key("sales_delivery_attempts", "ticket_issue_id", "sales_ticket_issues")
+
+    assert_foreign_key(
+      "sales_delivery_attempts",
+      "ticket_resend_challenge_id",
+      "sales_ticket_resend_challenges"
+    )
+
     assert_foreign_key("sales_orders", "sales_conversation_id", "sales_conversations")
   end
 

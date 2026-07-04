@@ -42,9 +42,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     ticket_issue_id = normalize_id(ticket_issue_id)
     resend_challenge_id = normalize_optional_id(Map.get(args, "ticket_resend_challenge_id"))
 
-    with :ok <-
-           validate_resend_challenge(
+    with {:ok, audit_context} <-
+           validate_delivery_audit(
              resend_challenge_id,
+             Map.get(args, "delivery_reason"),
              conversation_id,
              order_id,
              ticket_issue_id
@@ -66,7 +67,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
          :ok <- ensure_secure_page_valid(token.token),
          decision <- DeliveryPolicy.select_ticket_delivery(conversation),
          {:ok, delivery_attempt} <-
-           create_delivery_attempt(order, ticket_issue, conversation, decision),
+           create_delivery_attempt(order, ticket_issue, conversation, decision, audit_context),
          {:ok, _delivery_attempt} <-
            deliver_and_mark(delivery_attempt, conversation, decision, url, fn ->
              Dedupe.release_send_ticket_link(conversation_id, ticket_issue_id)
@@ -93,14 +94,41 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   def perform(_job), do: {:discard, :invalid_args}
 
-  defp validate_resend_challenge(nil, _conversation_id, _order_id, _ticket_issue_id), do: :ok
+  defp validate_delivery_audit(
+         nil,
+         "verified_ticket_resend",
+         _conversation_id,
+         _order_id,
+         _ticket_issue_id
+       ),
+       do: {:discard, :invalid_resend_challenge}
 
-  defp validate_resend_challenge(challenge_id, conversation_id, order_id, ticket_issue_id)
+  defp validate_delivery_audit(
+         nil,
+         _delivery_reason,
+         _conversation_id,
+         _order_id,
+         _ticket_issue_id
+       ) do
+    {:ok, %{delivery_reason: nil, ticket_resend_challenge_id: nil}}
+  end
+
+  defp validate_delivery_audit(
+         challenge_id,
+         "verified_ticket_resend",
+         conversation_id,
+         order_id,
+         ticket_issue_id
+       )
        when is_integer(challenge_id) do
     case load_resend_challenge(challenge_id) do
       {:ok, %TicketResendChallenge{} = challenge} ->
         if valid_resend_challenge?(challenge, conversation_id, order_id, ticket_issue_id) do
-          :ok
+          {:ok,
+           %{
+             delivery_reason: "verified_ticket_resend",
+             ticket_resend_challenge_id: challenge.id
+           }}
         else
           {:discard, :invalid_resend_challenge}
         end
@@ -110,8 +138,14 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     end
   end
 
-  defp validate_resend_challenge(_challenge_id, _conversation_id, _order_id, _ticket_issue_id),
-    do: {:discard, :invalid_resend_challenge}
+  defp validate_delivery_audit(
+         _challenge_id,
+         _delivery_reason,
+         _conversation_id,
+         _order_id,
+         _ticket_issue_id
+       ),
+       do: {:discard, :invalid_resend_challenge}
 
   defp valid_resend_challenge?(
          %TicketResendChallenge{} = challenge,
@@ -246,13 +280,15 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     error
   end
 
-  defp create_delivery_attempt(order, ticket_issue, conversation, decision) do
+  defp create_delivery_attempt(order, ticket_issue, conversation, decision, audit_context) do
     attrs = %{
       sales_order_id: order.id,
       ticket_issue_id: ticket_issue.id,
+      ticket_resend_challenge_id: audit_context.ticket_resend_challenge_id,
       channel: "whatsapp",
       provider: "meta",
       recipient: Redactor.redact_phone(conversation.phone_e164),
+      delivery_reason: audit_context.delivery_reason,
       template_name: template_name(decision),
       within_whatsapp_window: decision.within_whatsapp_window,
       attempt_number: next_attempt_number(order.id, ticket_issue.id),

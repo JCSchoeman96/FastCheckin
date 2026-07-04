@@ -188,10 +188,12 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       :id,
       :sales_order_id,
       :ticket_issue_id,
+      :ticket_resend_challenge_id,
       :channel,
       :provider,
       :recipient,
       :status,
+      :delivery_reason,
       :template_name,
       :within_whatsapp_window,
       :provider_message_id,
@@ -210,6 +212,14 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
     assert_attribute_type(resource, :attempt_number, :integer)
     assert_relationship(resource, :order, :belongs_to, FastCheck.Sales.Order)
     assert_relationship(resource, :ticket_issue, :belongs_to, FastCheck.Sales.TicketIssue)
+
+    assert_relationship(
+      resource,
+      :ticket_resend_challenge,
+      :belongs_to,
+      FastCheck.Sales.TicketResendChallenge
+    )
+
     assert_sensitive_attributes(resource)
     assert_delivery_attempt_list_actions(resource)
   end

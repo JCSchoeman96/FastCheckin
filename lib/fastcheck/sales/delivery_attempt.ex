@@ -57,9 +57,11 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       accept([
         :sales_order_id,
         :ticket_issue_id,
+        :ticket_resend_challenge_id,
         :channel,
         :provider,
         :recipient,
+        :delivery_reason,
         :template_name,
         :within_whatsapp_window,
         :attempt_number,
@@ -138,6 +140,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       allow_nil?(false)
     end
 
+    attribute(:delivery_reason, :string)
     attribute(:template_name, :string)
     attribute(:within_whatsapp_window, :boolean)
     attribute(:provider_message_id, :string)
@@ -167,6 +170,12 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     belongs_to :ticket_issue, FastCheck.Sales.TicketIssue do
       source_attribute(:ticket_issue_id)
+      attribute_type(:integer)
+      allow_nil?(true)
+    end
+
+    belongs_to :ticket_resend_challenge, FastCheck.Sales.TicketResendChallenge do
+      source_attribute(:ticket_resend_challenge_id)
       attribute_type(:integer)
       allow_nil?(true)
     end

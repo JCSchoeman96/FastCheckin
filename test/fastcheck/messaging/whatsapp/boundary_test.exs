@@ -141,6 +141,31 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "wallet"
   ]
 
+  @vs_24d_f_audit_files [
+    "lib/fastcheck/sales/delivery_attempt.ex",
+    "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex",
+    "priv/repo/migrations/20260704140000_add_resend_audit_fields_to_delivery_attempts.exs"
+  ]
+
+  @vs_24d_f_forbidden_tokens [
+    "PdfTicket",
+    "TicketPdfController",
+    "SecureTicketController",
+    "ArtifactResolver",
+    "Wallet",
+    "wallet",
+    "FastCheck.Payments",
+    "FastCheck.Scans",
+    "FastCheck.Attendees.Scan",
+    "Paystack",
+    "paystack",
+    "refund",
+    "revocation",
+    "webhook",
+    "email_attachment",
+    "attachment_url"
+  ]
+
   test "vs-16 whatsapp provider modules exist in provider boundary namespace" do
     for path <- @whatsapp_modules do
       assert File.exists?(path), "expected #{path}"
@@ -236,5 +261,16 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
 
     worker = File.read!("lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex")
     assert worker =~ "FastCheck.Sales.TicketResendChallenge"
+  end
+
+  test "vs-24d-f resend audit hardening does not add forbidden delivery authorities" do
+    for file <- @vs_24d_f_audit_files do
+      assert File.exists?(file), "expected #{file}"
+      body = File.read!(file)
+
+      for token <- @vs_24d_f_forbidden_tokens do
+        refute String.contains?(body, token), "#{file} must not reference #{token}"
+      end
+    end
   end
 end
