@@ -18,6 +18,21 @@ defmodule FastCheck.Tickets.Resend.RateLimitTest do
              RateLimit.check_lookup(attrs.request_email_hash, attrs.source_hash, now)
   end
 
+  test "blocks source lookup independently after configured 15 minute limit" do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    attrs = challenge_attrs!()
+
+    for index <- 1..5 do
+      assert {:ok, _challenge, nil} =
+               attrs
+               |> Map.put(:request_email_hash, "email-hash-#{index}")
+               |> Otp.issue(now)
+    end
+
+    assert {:error, :source_rate_limited} =
+             RateLimit.check_lookup("fresh-email-hash", attrs.source_hash, now)
+  end
+
   test "blocks candidate after configured daily limit" do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     attrs = challenge_attrs!()

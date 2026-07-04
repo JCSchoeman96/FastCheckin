@@ -190,7 +190,7 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
     "lib/fastcheck/sales/conversation.ex",
     "lib/fastcheck/sales/ticket_resend_challenge.ex",
     "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex",
-    "priv/repo/migrations/",
+    "priv/repo/migrations/20260703140000_allow_verified_resend_delivery_queued_state.exs",
     "test/fastcheck/messaging/whatsapp/boundary_test.exs",
     "test/fastcheck/messaging/whatsapp/conversation_state_machine_test.exs",
     "test/fastcheck/messaging/whatsapp/resend_delivery_flow_test.exs",
@@ -200,6 +200,28 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
     "test/fastcheck/sales/ticket_resend_challenge_test.exs",
     "test/fastcheck/workers/send_whatsapp_ticket_link_worker_test.exs",
     "test/support/sales_boundary_allowlist.ex"
+  ]
+
+  @vs_24d_f_allowed_files [
+    "lib/fastcheck/sales/delivery_attempt.ex",
+    "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex",
+    "priv/repo/migrations/20260704140000_add_resend_audit_fields_to_delivery_attempts.exs",
+    "test/support/sales_boundary_allowlist.ex",
+    "test/fastcheck/messaging/whatsapp/resend_ticket_e2e_test.exs",
+    "test/fastcheck/messaging/whatsapp/conversation_state_machine_test.exs",
+    "test/fastcheck/messaging/whatsapp/resend_delivery_flow_test.exs",
+    "test/fastcheck/messaging/whatsapp/session_store_test.exs",
+    "test/fastcheck/messaging/whatsapp/boundary_test.exs",
+    "test/fastcheck/workers/send_whatsapp_ticket_link_worker_test.exs",
+    "test/fastcheck/sales/delivery_attempt_test.exs",
+    "test/fastcheck/sales/ticket_resend_challenge_test.exs",
+    "test/fastcheck/sales/ticket_and_delivery_resource_skeletons_test.exs",
+    "test/fastcheck/sales/ticket_and_delivery_resource_migrations_test.exs",
+    "test/fastcheck/sales/vs_01g_index_and_migration_verification_test.exs",
+    "test/fastcheck/tickets/resend/rate_limit_test.exs",
+    "test/fastcheck/tickets/resend/eligibility_test.exs",
+    "test/fastcheck/tickets/resend/otp_test.exs",
+    "test/fastcheck/tickets/resend/email_otp_test.exs"
   ]
 
   @doc false
@@ -232,7 +254,12 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
   defp vs_24_allowed_change?(file) do
     vs_24c_allowed_change?(file) or vs_24d_a_allowed_change?(file) or
       vs_24d_b_allowed_change?(file) or vs_24d_c_allowed_change?(file) or
-      vs_24d_d_allowed_change?(file) or vs_24d_e_allowed_change?(file)
+      vs_24d_d_allowed_change?(file) or vs_24d_e_allowed_change?(file) or
+      vs_24d_f_allowed_change?(file)
+  end
+
+  defp vs_24d_f_allowed_change?(file) do
+    Enum.member?(@vs_24d_f_allowed_files, file)
   end
 
   defp vs_24d_e_allowed_change?(file) do
