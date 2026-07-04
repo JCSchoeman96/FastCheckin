@@ -13,7 +13,15 @@ defmodule FastCheck.Repo.Migrations.AddResendAuditFieldsToDeliveryAttempts do
 
     create(
       constraint(:sales_delivery_attempts, :sales_delivery_attempts_delivery_reason_valid,
-        check: "delivery_reason IS NULL OR delivery_reason = 'verified_ticket_resend'"
+        check: """
+        (delivery_reason IS NULL AND ticket_resend_challenge_id IS NULL)
+        OR
+        (
+          delivery_reason IS NOT NULL
+          AND delivery_reason = 'verified_ticket_resend'
+          AND ticket_resend_challenge_id IS NOT NULL
+        )
+        """
       )
     )
 

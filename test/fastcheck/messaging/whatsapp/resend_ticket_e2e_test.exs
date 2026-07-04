@@ -114,7 +114,8 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
     assert_received {:whatsapp_request, request}
     assert request.options.json["type"] == "text"
     refute Map.has_key?(request.options.json, "document")
-    refute inspect(request.options.json) =~ "pdf"
+    refute Map.has_key?(request.options.json, "attachment")
+    refute Map.has_key?(request.options.json, "filename")
 
     body = request.options.json["text"]["body"]
     assert body =~ "/t/"

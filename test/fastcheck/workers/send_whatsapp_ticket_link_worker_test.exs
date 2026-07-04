@@ -153,6 +153,40 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
+  test "verified resend reason without challenge id discards before side effects" do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("verified resend reason without challenge id must not send")
+    end)
+
+    assert {:discard, :invalid_resend_challenge} =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id,
+               "delivery_reason" => "verified_ticket_resend"
+             })
+
+    assert Repo.get!(TicketIssue, issue_id).delivery_token_hash == old_hash
+
+    assert {:ok, -2} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+             ])
+
+    assert [] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: d.status
+             )
+  end
+
   test "sends ticket link with approved template outside the 24 hour window" do
     test_pid = self()
 

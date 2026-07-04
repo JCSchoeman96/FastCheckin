@@ -180,9 +180,10 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     end)
   end
 
-  test "delivery reason audit constraint accepts nil and verified resend only" do
+  test "delivery reason audit constraint enforces reason and challenge pairing" do
     {order_id, order_line_id} = insert_order_with_line!()
     ticket_issue_id = insert_ticket_issue!(order_id, order_line_id, "pending")
+    challenge_id = insert_resend_challenge!(order_id, ticket_issue_id)
 
     assert :ok =
              insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
@@ -193,8 +194,39 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert :ok =
              insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
                attempt_number: 2,
-               delivery_reason: "verified_ticket_resend"
+               delivery_reason: "verified_ticket_resend",
+               ticket_resend_challenge_id: challenge_id
              )
+
+    assert_db_error(~r/sales_delivery_attempts_delivery_reason_valid/, fn ->
+      insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
+        attempt_number: 3,
+        delivery_reason: "verified_ticket_resend"
+      )
+    end)
+
+    assert_db_error(~r/sales_delivery_attempts_delivery_reason_valid/, fn ->
+      insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
+        attempt_number: 4,
+        delivery_reason: nil,
+        ticket_resend_challenge_id: challenge_id
+      )
+    end)
+
+    assert_db_error(~r/sales_delivery_attempts_delivery_reason_valid/, fn ->
+      insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
+        attempt_number: 5,
+        delivery_reason: "unknown_reason"
+      )
+    end)
+
+    assert_db_error(~r/sales_delivery_attempts_delivery_reason_valid/, fn ->
+      insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
+        attempt_number: 6,
+        delivery_reason: "unknown_reason",
+        ticket_resend_challenge_id: challenge_id
+      )
+    end)
   end
 
   test "partial unique indexes reject duplicate ticket issue identities" do
@@ -314,19 +346,49 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
   defp insert_delivery_attempt!(order_id, ticket_issue_id, channel, status, opts \\ []) do
     attempt_number = Keyword.get(opts, :attempt_number, 1)
     delivery_reason = Keyword.get(opts, :delivery_reason)
+    ticket_resend_challenge_id = Keyword.get(opts, :ticket_resend_challenge_id)
 
     Repo.query!(
       """
       INSERT INTO sales_delivery_attempts
-        (sales_order_id, ticket_issue_id, channel, status, attempt_number, delivery_reason,
-         inserted_at, updated_at)
+        (sales_order_id, ticket_issue_id, ticket_resend_challenge_id, channel, status,
+         attempt_number, delivery_reason, inserted_at, updated_at)
       VALUES
-        ($1, $2, $3, $4, $5, $6, now(), now())
+        ($1, $2, $3, $4, $5, $6, $7, now(), now())
       """,
-      [order_id, ticket_issue_id, channel, status, attempt_number, delivery_reason]
+      [
+        order_id,
+        ticket_issue_id,
+        ticket_resend_challenge_id,
+        channel,
+        status,
+        attempt_number,
+        delivery_reason
+      ]
     )
 
     :ok
+  end
+
+  defp insert_resend_challenge!(order_id, ticket_issue_id) do
+    public_id = "migration-resend-#{System.unique_integer([:positive])}"
+
+    result =
+      Repo.query!(
+        """
+        INSERT INTO sales_ticket_resend_challenges
+          (public_id, sales_order_id, ticket_issue_id, request_email_hash, status,
+           failed_attempt_count, expires_at, metadata, inserted_at, updated_at)
+        VALUES
+          ($1, $2, $3, 'email-hash', 'verified', 0, now() + interval '10 minutes',
+           '{}', now(), now())
+        RETURNING id
+        """,
+        [public_id, order_id, ticket_issue_id]
+      )
+
+    [[id]] = result.rows
+    id
   end
 
   defp assert_columns(table_name, expected_columns) do

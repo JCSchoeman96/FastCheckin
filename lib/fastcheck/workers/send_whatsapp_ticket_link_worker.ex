@@ -96,6 +96,15 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   defp validate_delivery_audit(
          nil,
+         "verified_ticket_resend",
+         _conversation_id,
+         _order_id,
+         _ticket_issue_id
+       ),
+       do: {:discard, :invalid_resend_challenge}
+
+  defp validate_delivery_audit(
+         nil,
          _delivery_reason,
          _conversation_id,
          _order_id,
