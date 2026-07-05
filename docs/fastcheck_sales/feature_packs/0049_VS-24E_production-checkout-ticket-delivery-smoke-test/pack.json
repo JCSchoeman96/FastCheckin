@@ -1,0 +1,139 @@
+{
+  "pack_id": "0049_VS-24E",
+  "slice": "VS-24E",
+  "name": "Production Checkout And Ticket Delivery Smoke Test",
+  "version": "1.0-planning-ready",
+  "status": "implementation_ready",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "github_issue": null,
+  "repository_path": "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test",
+  "goal": "Create a docs-only production-readiness validation and evidence pack proving the existing WhatsApp to Paystack to ticket issuance to secure ticket link to dashboard PDF to scanner to resend loop before wallet work begins.",
+  "dependencies": [
+    "VS-22 End-to-End Sandbox Tests",
+    "VS-23B Final Core Launch Runbook",
+    "VS-23C Final WhatsApp Launch Runbook",
+    "VS-24A Ticket Artifact Domain Contract",
+    "VS-24B PDF Ticket Generation",
+    "VS-24C Backend PDF Ticket Download",
+    "VS-24D Verified WhatsApp Ticket Resend"
+  ],
+  "recommended_files_create": [
+    "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test/VS-24E-FEATURE_PACK.md",
+    "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test/CODING_AGENT_PROMPT.md",
+    "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test/TOON_PROMPTS.md",
+    "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test/ACCEPTANCE_CHECKLIST.md",
+    "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test/EVIDENCE_TEMPLATE.md",
+    "docs/fastcheck_sales/feature_packs/0049_VS-24E_production-checkout-ticket-delivery-smoke-test/pack.json",
+    "docs/fastcheck_sales/runbooks/VS-24E_PRODUCTION_CHECKOUT_TICKET_DELIVERY_SMOKE_TEST.md",
+    "docs/fastcheck_sales/runbooks/VS-24E_FAILURE_MATRIX.md",
+    "docs/fastcheck_sales/runbooks/VS-24E_PRODUCTION_LOW_VALUE_SMOKE.md"
+  ],
+  "recommended_files_update": [
+    "docs/fastcheck_sales/runbooks/README.md"
+  ],
+  "must_not_change": [
+    "lib/",
+    "config/",
+    "priv/repo/migrations/",
+    "assets/",
+    "android/",
+    "test/",
+    "mix.exs",
+    "mix.lock"
+  ],
+  "routes": {
+    "new_routes": [],
+    "controller_changes_allowed": false,
+    "template_changes_allowed": false
+  },
+  "runtime_changes": {
+    "allowed": false,
+    "reason": "VS-24E validates existing behavior only."
+  },
+  "customer_delivery_expectation": {
+    "current_customer_delivery": "secure ticket link",
+    "pdf_delivery": "dashboard-only/manual staff download",
+    "customer_pdf_attachment_delivery": false
+  },
+  "non_goals": [
+    "Apple Wallet",
+    "Google Wallet",
+    "new PDF delivery",
+    "customer PDF attachment delivery",
+    "PDF storage",
+    "payment behavior changes",
+    "webhook behavior changes",
+    "ticket issuance behavior changes",
+    "scanner behavior changes",
+    "refund or revocation behavior changes",
+    "resend behavior changes",
+    "runtime code changes",
+    "new tests"
+  ],
+  "security": {
+    "evidence_policy": "redacted IDs, statuses, timestamps, and operator notes only",
+    "forbidden_values": [
+      "raw payment URL",
+      "Paystack access code",
+      "ticket link",
+      "delivery token",
+      "delivery token hash",
+      "QR hash",
+      "OTP",
+      "phone number",
+      "email address",
+      "WhatsApp wa_id",
+      "raw provider payload",
+      "screenshots containing protected values"
+    ],
+    "leak_response": "stop smoke and treat as stop-ship incident"
+  },
+  "systems_to_validate": [
+    "runtime environment and secrets",
+    "database migrations and PgBouncer compatibility",
+    "Redis inventory holds, WhatsApp sessions, outbound dedupe, and availability",
+    "Oban queues and workers",
+    "WhatsApp inbound and outbound",
+    "checkout/order/session creation",
+    "Paystack payment initialization",
+    "Paystack webhook ingestion",
+    "server-side payment verification",
+    "ticket issuance",
+    "secure ticket delivery",
+    "secure ticket page",
+    "dashboard-only PDF download",
+    "scanner/mobile sync and scan",
+    "resend with email OTP",
+    "admin ops dashboard and audit timeline",
+    "log/security redaction"
+  ],
+  "verification_commands": [
+    "mix format --check-formatted",
+    "mix compile --warnings-as-errors",
+    "mix test test/fastcheck/messaging/whatsapp/e2e/whatsapp_paid_core_test.exs",
+    "mix test test/fastcheck/sales/e2e/checkout_to_scanner_test.exs",
+    "mix test test/fastcheck/sales/e2e/payment_failure_paths_test.exs",
+    "mix test test/fastcheck/sales/e2e/revocation_scanner_visibility_test.exs",
+    "mix test test/fastcheck/sales/payments/payment_verification_test.exs",
+    "mix test test/fastcheck/sales/payments/payment_verification_idempotency_test.exs",
+    "mix test test/fastcheck/sales/payments/paystack_initialization_idempotency_test.exs",
+    "mix test test/fastcheck/sales/payments/webhook_ingestion_test.exs",
+    "mix test test/fastcheck_web/controllers/webhooks/paystack_controller_test.exs",
+    "mix test test/fastcheck/workers/issue_tickets_worker_test.exs",
+    "mix test test/fastcheck/workers/send_whatsapp_payment_link_worker_test.exs",
+    "mix test test/fastcheck/workers/send_whatsapp_ticket_link_worker_test.exs",
+    "mix test test/fastcheck_web/controllers/secure_ticket_controller_test.exs",
+    "mix test test/fastcheck_web/controllers/sales/ticket_pdf_controller_test.exs",
+    "mix test test/fastcheck/messaging/whatsapp/resend_ticket_e2e_test.exs",
+    "mix test test/fastcheck/messaging/whatsapp/resend_delivery_flow_test.exs",
+    "mix test test/fastcheck/tickets/resend/otp_test.exs",
+    "mix test test/fastcheck/tickets/scanner_visibility_test.exs",
+    "mix sobelow --exit --compact",
+    "mix precommit"
+  ],
+  "vs_25a_gate": {
+    "wallet_work_blocked_until": "VS-24E sandbox/test-mode smoke evidence passes or launch owner formally accepts risk",
+    "optional_production_smoke": "low-value production smoke after sandbox pass and owner/operator signoff"
+  }
+}

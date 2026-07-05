@@ -14,11 +14,19 @@ FastCheck Sales feature chain.
 VS-22 E2E tests are the launch-flow source of truth. VS-21B `OpsMetrics` and
 `AuditViews` are the launch operator visibility surface.
 
+VS-24E is the pre-wallet production-readiness evidence pack. It validates the
+existing WhatsApp -> Paystack -> ticket issuance -> secure ticket link ->
+secure ticket page -> dashboard/manual PDF download -> scanner -> verified
+resend loop before VS-25 Apple Wallet or Google Wallet work starts.
+
 ## Runbook Index
 
 - [VS-23B Final Core Launch Runbook](./VS-23B_FINAL_CORE_LAUNCH_RUNBOOK.md)
 - [VS-23C Final WhatsApp Launch Runbook](./VS-23C_FINAL_WHATSAPP_LAUNCH_RUNBOOK.md)
 - [Sandbox Dress Rehearsal](./SANDBOX_DRESS_REHEARSAL.md)
+- [VS-24E Production Checkout And Ticket Delivery Smoke Test](./VS-24E_PRODUCTION_CHECKOUT_TICKET_DELIVERY_SMOKE_TEST.md)
+- [VS-24E Failure Matrix](./VS-24E_FAILURE_MATRIX.md)
+- [VS-24E Optional Low-Value Production Smoke](./VS-24E_PRODUCTION_LOW_VALUE_SMOKE.md)
 - [Incident Response](./INCIDENT_RESPONSE.md)
 - [Rollback and Pause Sales](./ROLLBACK_AND_PAUSE_SALES.md)
 - [Go/No-Go Checklist](./GO_NO_GO_CHECKLIST.md)
@@ -40,4 +48,3 @@ VS-22 E2E tests are the launch-flow source of truth. VS-21B `OpsMetrics` and
 - Backend ticket issuance is the ticket authority.
 - Mobile scan acceptance remains server-authoritative.
 - WhatsApp is the primary customer interface, not payment or ticket authority.
-
