@@ -53,14 +53,16 @@ class SessionGateViewModelTest {
     @Test
     fun expiredSessionTriggersCleanupAndRoutesToLoggedOut() =
         runTest(dispatcher) {
-            val expiredSession = testSession(expiresAtEpochMillis = clock.millis())
+            val expiredSession =
+                testSession(expiresAtEpochMillis = clock.millis(), sessionGeneration = 7L)
             val repository = FakeSessionRepository(currentSessionValue = expiredSession)
 
             val viewModel = SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
 
             assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.LoggedOut)
-            assertThat(repository.authExpiredCallCount).isEqualTo(1)
+            assertThat(repository.expiredSessionIdentities).containsExactly(42L to 7L)
+            assertThat(repository.authExpiredCallCount).isEqualTo(0)
             assertThat(repository.currentSessionValue).isNull()
         }
 
@@ -195,6 +197,66 @@ class SessionGateViewModelTest {
         }
 
     @Test
+    fun staleExpiredReloadCannotClearNewerAuthenticatedSession() =
+        runTest(dispatcher) {
+            val eventA =
+                testSession(
+                    eventId = 18L,
+                    expiresAtEpochMillis = clock.millis(),
+                    sessionGeneration = 10L
+                )
+            val eventB = testSession(eventId = 19L, sessionGeneration = 20L)
+            val repository = FakeSessionRepository(currentSessionValue = eventA)
+            val staleEventARead = repository.delayNextCurrentSessionAfterCapture()
+            val viewModel = SessionGateViewModel(repository, clock, AppSessionRouteResolver())
+            runCurrent()
+            staleEventARead.captured.await()
+            repository.currentSessionValue = eventB
+
+            viewModel.onLoginCommitted()
+            runCurrent()
+
+            assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.Authenticated(eventB))
+            staleEventARead.release.complete(Unit)
+            advanceUntilIdle()
+
+            assertThat(repository.currentSessionValue).isEqualTo(eventB)
+            assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.Authenticated(eventB))
+            assertThat(repository.authExpiredCallCount).isEqualTo(0)
+            assertThat(repository.expiredSessionIdentities).isEmpty()
+        }
+
+    @Test
+    fun identityConditionalExpiryCannotClearLoginCommittedDuringCleanup() =
+        runTest(dispatcher) {
+            val eventA =
+                testSession(
+                    eventId = 18L,
+                    expiresAtEpochMillis = clock.millis(),
+                    sessionGeneration = 10L
+                )
+            val eventB = testSession(eventId = 19L, sessionGeneration = 20L)
+            val repository = FakeSessionRepository(currentSessionValue = eventA)
+            val delayedExpiry = repository.delayNextExpireSession()
+            val viewModel = SessionGateViewModel(repository, clock, AppSessionRouteResolver())
+            runCurrent()
+            delayedExpiry.captured.await()
+            repository.currentSessionValue = eventB
+
+            viewModel.onLoginCommitted()
+            runCurrent()
+
+            assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.Authenticated(eventB))
+            delayedExpiry.release.complete(Unit)
+            advanceUntilIdle()
+
+            assertThat(repository.expiredSessionIdentities).containsExactly(18L to 10L)
+            assertThat(repository.currentSessionValue).isEqualTo(eventB)
+            assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.Authenticated(eventB))
+            assertThat(repository.authExpiredCallCount).isEqualTo(0)
+        }
+
+    @Test
     fun noPublicGateMethodAcceptsCallerProvidedSession() {
         val methodsAcceptingSession =
             SessionGateViewModel::class.java.methods.filter { method ->
@@ -212,8 +274,10 @@ class SessionGateViewModelTest {
     ) : SessionRepository {
         var logoutCallCount: Int = 0
         var authExpiredCallCount: Int = 0
+        val expiredSessionIdentities = mutableListOf<Pair<Long, Long>>()
         var currentSessionCallCount: Int = 0
         private var nextCurrentSessionScript: ScriptedRead? = null
+        private var nextExpireSessionScript: ScriptedRead? = null
 
         override suspend fun login(eventId: Long, credential: String): ScannerSession {
             error("Not used in this test")
@@ -245,8 +309,26 @@ class SessionGateViewModelTest {
             currentSessionValue = null
         }
 
+        override suspend fun expireSession(eventId: Long, sessionGeneration: Long) {
+            expiredSessionIdentities += eventId to sessionGeneration
+            nextExpireSessionScript?.also { script ->
+                nextExpireSessionScript = null
+                script.captured.complete(Unit)
+                script.release.await()
+            }
+            if (
+                currentSessionValue?.eventId == eventId &&
+                currentSessionValue?.sessionGeneration == sessionGeneration
+            ) {
+                currentSessionValue = null
+            }
+        }
+
         fun delayNextCurrentSessionAfterCapture(): ScriptedRead =
             ScriptedRead().also { nextCurrentSessionScript = it }
+
+        fun delayNextExpireSession(): ScriptedRead =
+            ScriptedRead().also { nextExpireSessionScript = it }
     }
 
     private class ScriptedRead(
@@ -256,12 +338,14 @@ class SessionGateViewModelTest {
 
     private fun testSession(
         eventId: Long = 42L,
-        expiresAtEpochMillis: Long = clock.millis() + 60_000L
+        expiresAtEpochMillis: Long = clock.millis() + 60_000L,
+        sessionGeneration: Long? = null
     ) = ScannerSession(
         eventId = eventId,
         eventName = "FastCheck Test Event $eventId",
         expiresInSeconds = 3_600,
         authenticatedAtEpochMillis = clock.millis() - 1_000L,
-        expiresAtEpochMillis = expiresAtEpochMillis
+        expiresAtEpochMillis = expiresAtEpochMillis,
+        sessionGeneration = sessionGeneration
     )
 }

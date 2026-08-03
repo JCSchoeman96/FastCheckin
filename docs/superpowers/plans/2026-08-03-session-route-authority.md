@@ -273,6 +273,10 @@ val recoveryMessage: StateFlow<String?> = _recoveryMessage.asStateFlow()
 
 Every reload returns immediately while `LoggingOut`. It also returns without reading the repository while `logoutRecoveryRequired` is true. Otherwise it synchronously captures `val revision = ++requestRevision`, publishes `RestoringSession`, and only then launches the repository read. After each suspend boundary it publishes only when `revision == requestRevision`. The payload-free `onLoginCommitted()` entry point clears `logoutRecoveryRequired` before beginning its reload because a successful repository login deliberately replaces the unresolved context. No `onResume()` callback calls either API.
 
+Add `SessionRepository.expireSession(eventId, sessionGeneration)` for restoration expiry. `CurrentPhoenixSessionRepository` maps it to `AuthenticatedSessionTransitionCoordinator.expire(AuthenticatedEventIdentity(eventId, sessionGeneration))`. Before requesting cleanup, the gate confirms the reload revision is still current; after cleanup suspends, it rechecks the revision before publishing. The no-argument `onAuthExpired()` remains only for genuinely current-session failure paths such as logout recovery.
+
+Add a regression whose delayed repository read captures expired Event A before waiting. Commit and authenticate Event B through a newer reload, then release the stale Event A read. Assert that Event B and its generation remain authoritative, the route remains Event B, and current-session expiry is never invoked for stale Event A.
+
 Implement logout as:
 
 ```kotlin
@@ -304,7 +308,7 @@ fun logout() {
 }
 ```
 
-Keep expiry cleanup through `onAuthExpired()` and apply the same revision check after it returns. Repository exceptions must publish `LoggedOut` plus a sanitized recovery message, never a cached authenticated route. The reconciliation read after logout failure is diagnostic only: its result must never make the shell visible. A later explicit logout retry can clear suppression only after it succeeds; a payload-free `LoginCommitted` can clear it before reloading the newly committed repository session.
+Keep logout-failure cleanup through `onAuthExpired()`. Restoration expiry must use `expireSession(eventId, sessionGeneration)` and never `expireCurrent()`. Repository exceptions must publish `LoggedOut` plus a sanitized recovery message, never a cached authenticated route. The reconciliation read after logout failure is diagnostic only: its result must never make the shell visible. A later explicit logout retry can clear suppression only after it succeeds; a payload-free `LoginCommitted` can clear it before reloading the newly committed repository session.
 
 - [ ] **Step 4: Run both focused test classes and verify GREEN**
 

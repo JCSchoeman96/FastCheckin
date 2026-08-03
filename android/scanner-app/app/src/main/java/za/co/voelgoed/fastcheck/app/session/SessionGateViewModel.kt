@@ -79,8 +79,12 @@ class SessionGateViewModel @Inject constructor(
                 val resolvedRoute = routeResolver.resolve(session, clock.millis())
                 when (resolvedRoute) {
                     AppSessionRoute.LoggedOut -> {
-                        if (session != null) {
-                            runCatching { sessionRepository.onAuthExpired() }
+                        if (session != null && revision == requestRevision) {
+                            session.sessionGeneration?.let { generation ->
+                                runCatching {
+                                    sessionRepository.expireSession(session.eventId, generation)
+                                }
+                            }
                         }
                         if (revision == requestRevision) {
                             _route.value = AppSessionRoute.LoggedOut

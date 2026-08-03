@@ -127,6 +127,7 @@ class AuthViewModelTest {
         override suspend fun logout() = Unit
 
         override suspend fun onAuthExpired() = Unit
+        override suspend fun expireSession(eventId: Long, sessionGeneration: Long) = Unit
 
     }
 }

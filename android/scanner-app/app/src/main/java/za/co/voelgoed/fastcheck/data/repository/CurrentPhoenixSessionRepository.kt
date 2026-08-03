@@ -3,6 +3,7 @@ package za.co.voelgoed.fastcheck.data.repository
 import java.time.Clock
 import javax.inject.Inject
 import javax.inject.Singleton
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedSessionTransitionCoordinator
 import za.co.voelgoed.fastcheck.data.mapper.toDomain
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
@@ -24,4 +25,7 @@ class CurrentPhoenixSessionRepository @Inject constructor(
     override suspend fun currentSession(): ScannerSession? = transitionCoordinator.restore()
     override suspend fun logout() { transitionCoordinator.logout() }
     override suspend fun onAuthExpired() { transitionCoordinator.expireCurrent() }
+    override suspend fun expireSession(eventId: Long, sessionGeneration: Long) {
+        transitionCoordinator.expire(AuthenticatedEventIdentity(eventId, sessionGeneration))
+    }
 }

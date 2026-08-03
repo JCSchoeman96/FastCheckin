@@ -49,6 +49,15 @@ class TestSessionRepository @Inject constructor() : SessionRepository {
         currentSessionValue = null
     }
 
+    override suspend fun expireSession(eventId: Long, sessionGeneration: Long) {
+        if (
+            currentSessionValue?.eventId == eventId &&
+            currentSessionValue?.sessionGeneration == sessionGeneration
+        ) {
+            currentSessionValue = null
+        }
+    }
+
     fun setCurrentSession(session: ScannerSession?) {
         currentSessionValue = session
     }

@@ -94,9 +94,10 @@ Reload behavior:
 3. Publish `RestoringSession` synchronously, hiding any previous shell and disabling login before launching suspend work.
 4. Call `SessionRepository.currentSession()`.
 5. Resolve expiry with `AppSessionRouteResolver`.
-6. If expired, invoke `SessionRepository.onAuthExpired()` and remain logged out.
-7. Publish `Authenticated(session)` only from the repository result and only if the revision is still current.
-8. On repository failure, fail closed to `LoggedOut` and expose sanitized recovery text.
+6. If expired and the revision is still current, invoke `SessionRepository.expireSession(eventId, sessionGeneration)` with the exact restored identity. Never use current-session cleanup for a delayed restoration result.
+7. Recheck the revision after identity-conditional cleanup, then remain logged out.
+8. Publish `Authenticated(session)` only from the repository result and only if the revision is still current.
+9. On repository failure, fail closed to `LoggedOut` and expose sanitized recovery text.
 
 Initialization uses this reload without overriding unresolved logout recovery. The payload-free `LoginCommitted` path deliberately clears logout-recovery suppression and starts a fresh authoritative reload. No lifecycle-resume callback invokes it.
 
@@ -110,7 +111,7 @@ Logout behavior:
 6. Keep the shell hidden regardless of the reconciliation result and expose: `Logout could not be completed safely. Try again before leaving the device unattended.`
 7. Mark logout recovery unresolved. Automatic restoration remains suppressed until an explicitly retried logout succeeds or a new successful payload-free `LoginCommitted` transition deliberately replaces the old context.
 
-No UI mutex is added. The existing repository transition coordinator remains responsible for cross-store serialization. The ViewModel uses a monotonically increasing request revision solely to prevent an older reload result from publishing after a newer route transition. A reload requested during `LoggingOut` is ignored.
+No UI mutex is added. The existing repository transition coordinator remains responsible for cross-store serialization. The ViewModel uses a monotonically increasing request revision to prevent an older reload result from requesting cleanup or publishing after a newer route transition. Cleanup is additionally generation-conditional, so a revision change after the pre-cleanup check still cannot clear a newer session. A reload requested during `LoggingOut` is ignored.
 
 ## MainActivity integration
 
