@@ -19,6 +19,9 @@ import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushItemOutcome
@@ -105,6 +108,37 @@ class QueueViewModelTest {
         override fun observeQuarantineCount(eventId: Long): Flow<Int> = flowOf(0)
 
         override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> = flowOf(null)
+    }
+
+    private class FixedContextStore(
+        private val identity: AuthenticatedEventIdentity
+    ) : AuthenticatedEventContextStore {
+        private val context =
+            AuthenticatedEventContext(
+                eventId = identity.eventId,
+                bearerToken = "test-token",
+                sessionGeneration = identity.sessionGeneration,
+                authenticatedAtEpochMillis = 1L,
+                expiresAtEpochMillis = Long.MAX_VALUE
+            )
+
+        override suspend fun capture(): AuthenticatedEventContext = context
+
+        override suspend fun currentIdentity(): AuthenticatedEventIdentity = identity
+
+        override suspend fun replace(
+            eventId: Long,
+            bearerToken: String,
+            authenticatedAtEpochMillis: Long,
+            expiresAtEpochMillis: Long
+        ): AuthenticatedEventContext = error("unsupported")
+
+        override suspend fun clearIfGenerationMatches(sessionGeneration: Long): Boolean = false
+
+        override suspend fun isCurrent(sessionGeneration: Long): Boolean =
+            sessionGeneration == identity.sessionGeneration
+
+        override fun observeIdentity(): Flow<AuthenticatedEventIdentity> = flowOf(identity)
     }
 
     @Test
@@ -243,7 +277,7 @@ class QueueViewModelTest {
         val viewModel = createViewModel(coordinator, connectivityMonitor, repo, FakeQueueCapturedScanUseCase())
 
         repo.depthFlow.value = 3
-        coordinator.emit(AutoFlushCoordinatorState(isFlushing = true))
+        coordinator.emit(AutoFlushCoordinatorState(isFlushing = true, identity = ACTIVE_IDENTITY))
         advanceUntilIdle()
 
         assertThat(viewModel.uiState.value.localQueueDepth).isEqualTo(3)
@@ -261,7 +295,8 @@ class QueueViewModelTest {
             AutoFlushCoordinatorState(
                 isRetryScheduled = true,
                 retryAttempt = 2,
-                nextRetryAtEpochMs = 1_777_777_777_777
+                nextRetryAtEpochMs = 1_777_777_777_777,
+                identity = ACTIVE_IDENTITY
             )
         )
         advanceUntilIdle()
@@ -283,12 +318,48 @@ class QueueViewModelTest {
                         executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
                         authExpired = true,
                         summaryMessage = "Auth expired"
-                    )
+                    ),
+                identity = ACTIVE_IDENTITY
             )
         )
         advanceUntilIdle()
 
         assertThat(viewModel.uiState.value.uploadStateLabel).isEqualTo("Auth expired")
+    }
+
+    @Test
+    fun coordinatorStateFromAnotherIdentity_isIgnored() = runTest(dispatcher) {
+        val coordinator = FakeAutoFlushCoordinator()
+        val repo = FakeMobileScanRepository()
+        val viewModel =
+            createViewModel(
+                coordinator = coordinator,
+                connectivityMonitor = FakeConnectivityMonitor(),
+                repo = repo,
+                useCase = FakeQueueCapturedScanUseCase(),
+                identity = AuthenticatedEventIdentity(eventId = 20L, sessionGeneration = 20L)
+            )
+
+        coordinator.emit(
+            AutoFlushCoordinatorState(
+                isFlushing = true,
+                isRetryScheduled = true,
+                retryAttempt = 3,
+                lastFlushReport =
+                    FlushReport(
+                        executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
+                        authExpired = true,
+                        summaryMessage = "Event A auth expired"
+                    ),
+                identity = AuthenticatedEventIdentity(eventId = 10L, sessionGeneration = 10L)
+            )
+        )
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.isFlushing).isFalse()
+        assertThat(viewModel.uiState.value.uploadStateLabel).isEqualTo("Idle")
+        assertThat(viewModel.uiState.value.latestFlushSummary).isEqualTo("No flush has run yet.")
+        assertThat(viewModel.uiState.value.serverResultHint).isEqualTo("No server outcomes yet.")
     }
 
     @Test
@@ -326,13 +397,19 @@ class QueueViewModelTest {
         coordinator: FakeAutoFlushCoordinator,
         connectivityMonitor: FakeConnectivityMonitor,
         repo: FakeMobileScanRepository,
-        useCase: FakeQueueCapturedScanUseCase
+        useCase: FakeQueueCapturedScanUseCase,
+        identity: AuthenticatedEventIdentity = ACTIVE_IDENTITY
     ): QueueViewModel =
         QueueViewModel(
             queueCapturedScanUseCase = useCase,
             autoFlushCoordinator = coordinator,
             connectivityMonitor = connectivityMonitor,
             mobileScanRepository = repo,
+            contextStore = FixedContextStore(identity),
             queueUiStateFactory = QueueUiStateFactory()
         )
+
+    private companion object {
+        val ACTIVE_IDENTITY = AuthenticatedEventIdentity(eventId = 5L, sessionGeneration = 1L)
+    }
 }

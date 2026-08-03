@@ -63,8 +63,11 @@ class QueueViewModel @Inject constructor(
                 mobileScanRepository.observeQuarantineCount(identity.eventId),
                 mobileScanRepository.observeLatestQuarantineSummary(identity.eventId)
             ) { core, quarantineCount, quarantineSummary ->
+                val activeCoordinatorState =
+                    core.coordinatorState.takeIf { it.identity == identity }
+                        ?: AutoFlushCoordinatorState(identity = identity)
                 val syncUiState =
-                    core.coordinatorState.toSyncUiState(
+                    activeCoordinatorState.toSyncUiState(
                         isOnline = core.isOnline,
                         latestFlushReport = core.latestFlushReport,
                         pendingQueueDepth = core.queueDepth

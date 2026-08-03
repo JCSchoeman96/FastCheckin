@@ -357,6 +357,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
         }
 
         override suspend fun syncAttendees(
+            authorization: String,
             since: String?,
             cursor: String?,
             sinceInvalidationId: Long,
@@ -365,7 +366,11 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
             error("syncAttendees is not used by this migration test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
+        override suspend fun uploadScans(
+            authorization: String,
+            body: UploadScansRequest
+        ): Response<UploadScansResponse> {
+            assertThat(authorization).isEqualTo("Bearer migration-test-token")
             val results =
                 body.scans.map { scan ->
                     UploadedScanResult(
