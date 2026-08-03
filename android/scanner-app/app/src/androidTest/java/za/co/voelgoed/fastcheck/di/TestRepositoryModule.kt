@@ -16,11 +16,17 @@ import za.co.voelgoed.fastcheck.app.di.RepositoryModule
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
+import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.core.concurrency.EventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.session.DefaultAuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.data.repository.CurrentAttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSessionRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
+import za.co.voelgoed.fastcheck.data.repository.DefaultEventBucketRepository
+import za.co.voelgoed.fastcheck.data.repository.EventBucketRepository
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
@@ -56,6 +62,24 @@ object TestRepositoryModule {
     @Provides
     @Singleton
     fun provideClock(): Clock = Clock.fixed(Instant.parse("2026-03-12T10:00:00Z"), ZoneOffset.UTC)
+
+    @Provides
+    @Singleton
+    fun provideAuthenticatedEventContextStore(
+        store: DefaultAuthenticatedEventContextStore
+    ): AuthenticatedEventContextStore = store
+
+    @Provides
+    @Singleton
+    fun provideEventBucketRepository(
+        repository: DefaultEventBucketRepository
+    ): EventBucketRepository = repository
+
+    @Provides
+    @Singleton
+    fun provideEventOperationMutexRegistry(
+        registry: DefaultEventOperationMutexRegistry
+    ): EventOperationMutexRegistry = registry
 
     @Provides
     @Singleton

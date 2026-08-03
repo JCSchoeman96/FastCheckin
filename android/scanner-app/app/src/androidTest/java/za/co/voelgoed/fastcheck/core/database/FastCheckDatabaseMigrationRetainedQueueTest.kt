@@ -97,7 +97,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
                 flushResultClassifier = FlushResultClassifier(),
                 clock = Clock.fixed(Instant.parse("2026-03-24T14:30:00Z"), ZoneOffset.UTC),
                 contextStore = object : AuthenticatedEventContextStore {
-                    private val value = AuthenticatedEventContext(5, "migration-test-token", 1, 0, Long.MAX_VALUE)
+                    private val value = AuthenticatedEventContext(EVENT_ID, "migration-test-token", 1, 0, Long.MAX_VALUE)
                     override suspend fun capture() = value
                     override suspend fun currentIdentity() = value.identity
                     override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unused")
