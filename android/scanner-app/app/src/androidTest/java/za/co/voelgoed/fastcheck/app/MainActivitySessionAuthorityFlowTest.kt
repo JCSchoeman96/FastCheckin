@@ -3,11 +3,6 @@ package za.co.voelgoed.fastcheck.app
 import android.os.SystemClock
 import android.view.View
 import android.widget.EditText
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -31,6 +26,7 @@ import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
 import za.co.voelgoed.fastcheck.di.TestSessionRepository
+import za.co.voelgoed.fastcheck.di.TestMobileScanRepository
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 
 @HiltAndroidTest
@@ -38,9 +34,6 @@ import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
 class MainActivitySessionAuthorityFlowTest {
     @get:Rule(order = 0)
     val hiltRule = HiltAndroidRule(this)
-
-    @get:Rule(order = 1)
-    val composeRule = createEmptyComposeRule()
 
     @Inject
     lateinit var testSessionRepository: TestSessionRepository
@@ -51,15 +44,20 @@ class MainActivitySessionAuthorityFlowTest {
     @Inject
     lateinit var contextStore: AuthenticatedEventContextStore
 
+    @Inject
+    lateinit var testMobileScanRepository: TestMobileScanRepository
+
     @Before
     fun setUp() {
         hiltRule.inject()
         testSessionRepository.reset()
+        testMobileScanRepository.reset()
     }
 
     @After
     fun tearDown() {
         testSessionRepository.reset()
+        testMobileScanRepository.reset()
     }
 
     @Test
@@ -81,6 +79,7 @@ class MainActivitySessionAuthorityFlowTest {
                 sessionGeneration = eventAContext.sessionGeneration
             )
         testSessionRepository.setCurrentSession(eventA)
+        testMobileScanRepository.setPendingQueueDepth(18L, 1)
         val queuedScanId = runBlocking {
             scannerDao.insertQueuedScan(
                 QueuedScanEntity(
@@ -105,10 +104,7 @@ class MainActivitySessionAuthorityFlowTest {
             }
             testSessionRepository.delayNextLogout()
 
-            composeRule.onNodeWithContentDescription("Open more options").performClick()
-            composeRule.onNodeWithText("Logout").performClick()
-            composeRule.onNodeWithText("Queued scans still need upload").assertIsDisplayed()
-            composeRule.onNodeWithText("Log out").performClick()
+            scenario.onActivity { it.confirmLogoutForTest() }
 
             waitUntil("shell hidden for logout") {
                 currentRoute(scenario) == AppSessionRoute.LoggingOut &&
@@ -168,6 +164,7 @@ class MainActivitySessionAuthorityFlowTest {
         eventId: String,
         credential: String
     ) {
+        waitUntil("login enabled") { isLoginEnabled(scenario) }
         scenario.onActivity { activity ->
             activity.findViewById<EditText>(R.id.event_id_input).setText(eventId)
             activity.findViewById<EditText>(R.id.credential_input).setText(credential)

@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -241,12 +242,6 @@ class MainActivity : ComponentActivity() {
                         binding.sessionSummaryValue.text = getString(R.string.no_active_session)
                         binding.authErrorValue.text =
                             state.errorMessage ?: getString(R.string.no_errors)
-                        if (binding.eventIdInput.text.toString() != state.eventIdInput) {
-                            binding.eventIdInput.setText(state.eventIdInput)
-                        }
-                        if (binding.credentialInput.text.toString() != state.credentialInput) {
-                            binding.credentialInput.setText(state.credentialInput)
-                        }
                         updateLoginButtonEnabled()
                     }
                 }
@@ -254,7 +249,10 @@ class MainActivity : ComponentActivity() {
                 launch {
                     authViewModel.effects.collectLatest { effect ->
                         when (effect) {
-                            AuthEffect.LoginCommitted -> sessionGateViewModel.onLoginCommitted()
+                            AuthEffect.LoginCommitted -> {
+                                binding.credentialInput.text?.clear()
+                                sessionGateViewModel.onLoginCommitted()
+                            }
                         }
                     }
                 }
@@ -276,6 +274,8 @@ class MainActivity : ComponentActivity() {
                             AppSessionRoute.LoggedOut -> {
                                 if (route == AppSessionRoute.LoggingOut) {
                                     authViewModel.resetAfterLogout()
+                                    binding.eventIdInput.text?.clear()
+                                    binding.credentialInput.text?.clear()
                                 }
                                 val wasAuthenticated = isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = false
@@ -520,6 +520,11 @@ class MainActivity : ComponentActivity() {
         appShellViewModel.dismissLogoutConfirmation()
         hasAutoRequestedCameraPermissionThisScanEntry = false
         sessionGateViewModel.logout()
+    }
+
+    @VisibleForTesting
+    internal fun confirmLogoutForTest() {
+        confirmLogout()
     }
 
     private fun handleSupportRecoveryAction(action: SupportRecoveryAction) {

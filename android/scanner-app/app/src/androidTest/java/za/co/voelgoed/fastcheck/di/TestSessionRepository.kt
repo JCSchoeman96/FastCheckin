@@ -81,7 +81,11 @@ class TestSessionRepository @Inject constructor() : SessionRepository {
             eventName = eventName,
             expiresInSeconds = 3600,
             authenticatedAtEpochMillis = authenticatedAtEpochMillis,
-            expiresAtEpochMillis = authenticatedAtEpochMillis + 3_600_000,
+            expiresAtEpochMillis =
+                maxOf(
+                    authenticatedAtEpochMillis + 3_600_000,
+                    System.currentTimeMillis() + 3_600_000
+                ),
             sessionGeneration = sessionGeneration
         )
 }

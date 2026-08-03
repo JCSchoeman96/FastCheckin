@@ -115,37 +115,13 @@ object TestRepositoryModule {
     @Provides
     @Singleton
     fun provideMobileScanRepository(
-        realRepository: CurrentPhoenixMobileScanRepository
+        realRepository: CurrentPhoenixMobileScanRepository,
+        testRepository: TestMobileScanRepository
     ): MobileScanRepository =
         if (integrationModeEnabled()) {
             realRepository
         } else {
-            object : MobileScanRepository {
-                override suspend fun queueScan(scan: PendingScan): QueueCreationResult =
-                    QueueCreationResult.Enqueued(scan)
-
-                override suspend fun flushQueuedScans(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult =
-                    za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted(
-                        za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(5, 1),
-                        FlushReport(executionStatus = FlushExecutionStatus.COMPLETED, uploadedCount = 0)
-                    )
-
-                override suspend fun pendingQueueDepth(eventId: Long): Int = 0
-
-                override suspend fun latestFlushReport(eventId: Long): FlushReport? = null
-
-                override fun observePendingQueueDepth(eventId: Long): Flow<Int> = flowOf(0)
-
-                override fun observeLatestFlushReport(eventId: Long): Flow<FlushReport?> = flowOf(null)
-
-                override suspend fun quarantineCount(eventId: Long): Int = 0
-
-                override suspend fun latestQuarantineSummary(eventId: Long): QuarantineSummary? = null
-
-                override fun observeQuarantineCount(eventId: Long): Flow<Int> = flowOf(0)
-
-                override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> = flowOf(null)
-            }
+            testRepository
         }
 
     @Provides
