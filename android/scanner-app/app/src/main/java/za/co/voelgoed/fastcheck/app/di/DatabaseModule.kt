@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
+import za.co.voelgoed.fastcheck.core.database.FastCheckDatabaseInvariantCallback
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabaseMigrations
 import za.co.voelgoed.fastcheck.data.local.AttendeeLookupDao
 import za.co.voelgoed.fastcheck.data.local.EventAttendeeMetricsDao
@@ -37,8 +38,10 @@ object DatabaseModule {
                 FastCheckDatabaseMigrations.MIGRATION_7_8,
                 FastCheckDatabaseMigrations.MIGRATION_8_9,
                 FastCheckDatabaseMigrations.MIGRATION_9_10,
-                FastCheckDatabaseMigrations.MIGRATION_10_11
+                FastCheckDatabaseMigrations.MIGRATION_10_11,
+                FastCheckDatabaseMigrations.MIGRATION_11_12
             )
+            .addCallback(FastCheckDatabaseInvariantCallback)
             .build()
 
     @Provides

@@ -79,6 +79,5 @@ class AuthViewModelTest {
 
         override suspend fun onAuthExpired() = Unit
 
-        override suspend fun clearBlockedRestoredSession() = Unit
     }
 }

@@ -119,25 +119,25 @@ class DefaultQueueCapturedScanUseCaseTest {
             return QueueCreationResult.Enqueued(scan)
         }
 
-        override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport {
+        override suspend fun flushQueuedScans(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult {
             error("Not used in this test")
         }
 
-        override suspend fun pendingQueueDepth(): Int = 0
+        override suspend fun pendingQueueDepth(eventId: Long): Int = 0
 
-        override suspend fun latestFlushReport(): FlushReport? = null
+        override suspend fun latestFlushReport(eventId: Long): FlushReport? = null
 
-        override fun observePendingQueueDepth(): Flow<Int> = depthFlow
+        override fun observePendingQueueDepth(eventId: Long): Flow<Int> = depthFlow
 
-        override fun observeLatestFlushReport(): Flow<FlushReport?> = latestFlushFlow
+        override fun observeLatestFlushReport(eventId: Long): Flow<FlushReport?> = latestFlushFlow
 
-        override suspend fun quarantineCount(): Int = 0
+        override suspend fun quarantineCount(eventId: Long): Int = 0
 
-        override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+        override suspend fun latestQuarantineSummary(eventId: Long): QuarantineSummary? = null
 
-        override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+        override fun observeQuarantineCount(eventId: Long): Flow<Int> = flowOf(0)
 
-        override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
+        override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> = flowOf(null)
     }
 
     private data class FakeSessionAuthGateway(

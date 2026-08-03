@@ -10,19 +10,21 @@ import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.ConnectivityProvider
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
-import za.co.voelgoed.fastcheck.core.network.VaultBackedSessionProvider
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.session.DefaultAuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.concurrency.EventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSessionRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
-import za.co.voelgoed.fastcheck.data.repository.DefaultLocalRuntimeDataCleaner
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentAttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentEventAttendeeMetricsRepository
 import za.co.voelgoed.fastcheck.data.repository.DataStoreScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
-import za.co.voelgoed.fastcheck.data.repository.LocalRuntimeDataCleaner
+import za.co.voelgoed.fastcheck.data.repository.EventBucketRepository
+import za.co.voelgoed.fastcheck.data.repository.DefaultEventBucketRepository
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
@@ -38,12 +40,16 @@ import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class RepositoryModule {
+    @Binds @Singleton
+    abstract fun bindSessionRepository(repository: CurrentPhoenixSessionRepository): SessionRepository
+    @Binds @Singleton
+    abstract fun bindAuthenticatedEventContextStore(store: DefaultAuthenticatedEventContextStore): AuthenticatedEventContextStore
+
+    @Binds @Singleton
+    abstract fun bindEventOperationMutexRegistry(registry: DefaultEventOperationMutexRegistry): EventOperationMutexRegistry
     @Binds
     @Singleton
-    abstract fun bindSessionRepository(
-        repository: CurrentPhoenixSessionRepository
-    ): SessionRepository
-
+    abstract fun bindEventBucketRepository(repository: DefaultEventBucketRepository): EventBucketRepository
     @Binds
     @Singleton
     abstract fun bindSyncRepository(
@@ -81,12 +87,6 @@ abstract class RepositoryModule {
     ): SessionAuthGateway
 
     @Binds
-    @Singleton
-    abstract fun bindLocalRuntimeDataCleaner(
-        cleaner: DefaultLocalRuntimeDataCleaner
-    ): LocalRuntimeDataCleaner
-
-    @Binds
     abstract fun bindQueueCapturedScanUseCase(
         useCase: DefaultQueueCapturedScanUseCase
     ): QueueCapturedScanUseCase
@@ -102,12 +102,6 @@ abstract class RepositoryModule {
     ): FlushQueuedScansUseCase
 
     companion object {
-        @Provides
-        @Singleton
-        fun provideSessionProvider(
-            provider: VaultBackedSessionProvider
-        ): SessionProvider = provider
-
         @Provides
         @Singleton
         fun provideClock(): Clock = Clock.systemUTC()
@@ -126,14 +120,16 @@ abstract class RepositoryModule {
             mobileScanRepository: MobileScanRepository,
             connectivityProvider: ConnectivityProvider,
             connectivityMonitor: ConnectivityMonitor,
-            clock: Clock
+            clock: Clock,
+            contextStore: AuthenticatedEventContextStore
         ): AutoFlushCoordinator =
             za.co.voelgoed.fastcheck.core.autoflush.DefaultAutoFlushCoordinator(
                 flushQueuedScansUseCase = flushQueuedScansUseCase,
                 mobileScanRepository = mobileScanRepository,
                 connectivityProvider = connectivityProvider,
                 connectivityMonitor = connectivityMonitor,
-                clock = clock
+                clock = clock,
+                contextStore = contextStore
             )
     }
 }

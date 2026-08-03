@@ -6,10 +6,11 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "local_replay_suppression",
-    indices = [Index(value = ["ticketCode"], unique = true)]
+    indices = [Index(value = ["eventId", "ticketCode"], unique = true)]
 )
 data class LocalReplaySuppressionEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val eventId: Long,
     val ticketCode: String,
-    val seenAtEpochMillis: Long
+    val seenAtEpochMillis: Long,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0
 )

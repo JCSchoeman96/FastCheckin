@@ -9,8 +9,11 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import za.co.voelgoed.fastcheck.core.concurrency.EventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedSessionTransitionCoordinator
 import retrofit2.HttpException
 import za.co.voelgoed.fastcheck.core.ticket.TicketCodeNormalizer
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
@@ -31,31 +34,52 @@ import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 class CurrentPhoenixSyncRepository @Inject constructor(
     private val remoteDataSource: PhoenixMobileRemoteDataSource,
     private val scannerDao: ScannerDao,
-    private val sessionRepository: SessionRepository,
     private val clock: Clock,
     private val bootstrapStateHub: AttendeeSyncBootstrapStateHub,
-    private val overlayCatchUpPolicy: OverlayCatchUpPolicy = OverlayCatchUpPolicy()
+    private val overlayCatchUpPolicy: OverlayCatchUpPolicy = OverlayCatchUpPolicy(),
+    private val contextStore: AuthenticatedEventContextStore,
+    private val operationMutexRegistry: EventOperationMutexRegistry,
+    private val eventBucketRepository: EventBucketRepository,
+    private val transitionCoordinator: AuthenticatedSessionTransitionCoordinator? = null
 ) : SyncRepository {
     companion object {
         private const val SYNC_PAGE_LIMIT = 500
         private const val MAX_SYNC_PAGE_COUNT = 100
     }
 
-    private val syncMutex = Mutex()
-
-    override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? =
-        syncMutex.withLock {
-            syncAttendeesLocked(mode)
+    override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? {
+        val context = contextStore.capture() ?: return null
+        if (context.expiresAtEpochMillis <= clock.millis()) {
+            transitionCoordinator?.expire(context.identity)
+            return null
         }
+        return operationMutexRegistry.withSyncLock(context.eventId) {
+            if (!contextStore.isCurrent(context.sessionGeneration)) null else syncAttendeesLocked(context, mode)
+        }
+    }
 
-    private suspend fun syncAttendeesLocked(mode: AttendeeSyncMode): AttendeeSyncStatus? {
-        val session = sessionRepository.currentSession() ?: return null
-        val eventId = session.eventId
+    private suspend fun syncAttendeesLocked(context: AuthenticatedEventContext, mode: AttendeeSyncMode): AttendeeSyncStatus? {
+        val eventId = context.eventId
 
         val previousSnapshot = scannerDao.loadSyncMetadata(eventId)
 
         if (mode == AttendeeSyncMode.FULL_RECONCILE) {
             scannerDao.clearEventAttendeeCacheForFullReconcile(eventId)
+        }
+
+        val attemptBase = previousSnapshot.takeUnless { mode == AttendeeSyncMode.FULL_RECONCILE }
+        runCatching {
+            scannerDao.upsertSyncMetadata(
+                attemptBase?.copy(lastAttemptedSyncAt = clock.instant().toString())
+                    ?: SyncMetadataEntity(
+                        eventId = eventId,
+                        lastServerTime = null,
+                        lastSuccessfulSyncAt = null,
+                        lastSyncType = null,
+                        attendeeCount = 0,
+                        lastAttemptedSyncAt = clock.instant().toString()
+                    )
+            )
         }
 
         val sinceForFirstPage: String? =
@@ -72,12 +96,13 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 ).any { !it.isNullOrBlank() }
 
         if (!hasCompletedBootstrap) {
-            bootstrapStateHub.notifyInitialBootstrapSyncActive(eventId)
+            bootstrapStateHub.notifyInitialBootstrapSyncActive(eventId, true)
         }
 
         return try {
             runPagedSync(
                 eventId = eventId,
+                authorization = "Bearer ${context.bearerToken}",
                 sinceForFirstPage = sinceForFirstPage,
                 previousBeforeLoop = previousSnapshot,
                 mode = mode
@@ -91,6 +116,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (http: HttpException) {
+            if (http.code() == 401) transitionCoordinator?.expire(context.identity)
             val current = scannerDao.loadSyncMetadata(eventId)
             if (current != null) {
                 scannerDao.upsertSyncMetadata(current.withSyncFailure(clock, "http_${http.code()}"))
@@ -111,12 +137,14 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             }
             throw other
         } finally {
-            bootstrapStateHub.notifyInitialBootstrapSyncActive(null)
+            runCatching { eventBucketRepository.refreshSnapshots(eventId) }
+            bootstrapStateHub.notifyInitialBootstrapSyncActive(eventId, false)
         }
     }
 
     private suspend fun runPagedSync(
         eventId: Long,
+        authorization: String,
         sinceForFirstPage: String?,
         previousBeforeLoop: SyncMetadataEntity?,
         mode: AttendeeSyncMode
@@ -144,6 +172,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
             val response =
                 remoteDataSource.syncAttendees(
+                    authorization = authorization,
                     since = nextSince,
                     cursor = cursor,
                     sinceInvalidationId = sinceInvalidationId,
@@ -257,12 +286,12 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     }
 
     override suspend fun currentSyncStatus(): AttendeeSyncStatus? =
-        sessionRepository.currentSession()
+        contextStore.capture()
             ?.let { scannerDao.loadSyncMetadata(it.eventId) }
             ?.toDomain()
 
-    override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> =
-        scannerDao.observeLatestSyncMetadata().map { it?.toDomain() }
+    override fun observeLastSyncedStatus(identity: AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> =
+        scannerDao.observeSyncMetadataForEvent(identity.eventId).map { it?.toDomain() }
 
     private suspend fun resolveConfirmedAdmissionOverlays(eventId: Long) {
         val overlays =

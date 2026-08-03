@@ -9,6 +9,7 @@ import dagger.assisted.AssistedInject
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushBatchPolicy
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
+import za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult
 
 @HiltWorker
 class FlushQueueWorker @AssistedInject constructor(
@@ -21,10 +22,13 @@ class FlushQueueWorker @AssistedInject constructor(
      * { "scans": [...] } only. The worker owns retries; CameraX/ML Kit does not.
      */
     override suspend fun doWork(): Result =
-        when (flushQueuedScans.run(maxBatchSize = AutoFlushBatchPolicy.DEFAULT_BATCH_SIZE).executionStatus) {
-            FlushExecutionStatus.COMPLETED -> Result.success()
-            FlushExecutionStatus.RETRYABLE_FAILURE -> Result.retry()
-            FlushExecutionStatus.AUTH_EXPIRED -> Result.failure()
-            FlushExecutionStatus.WORKER_FAILURE -> Result.failure()
+        when (val invocation = flushQueuedScans.run(maxBatchSize = AutoFlushBatchPolicy.DEFAULT_BATCH_SIZE)) {
+            FlushInvocationResult.SkippedNoSession -> Result.success()
+            is FlushInvocationResult.Attempted -> when (invocation.report.executionStatus) {
+                FlushExecutionStatus.COMPLETED -> Result.success()
+                FlushExecutionStatus.RETRYABLE_FAILURE -> Result.retry()
+                FlushExecutionStatus.AUTH_EXPIRED -> Result.failure()
+                FlushExecutionStatus.WORKER_FAILURE -> Result.failure()
+            }
         }
 }

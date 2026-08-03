@@ -46,6 +46,26 @@ class SupportDiagnosticsPresenter {
                                 SupportDiagnosticsItemUiState("Resolved base URL", diagnosticsUiState.apiBaseUrl)
                             )
                     )
-                )
+                ) + diagnosticsUiState.parkedBuckets.map { bucket ->
+                    val status = when {
+                        bucket.conflictCount > 0 || bucket.quarantinedCount > 0 -> "Review required"
+                        bucket.state == "AUTH_REQUIRED" -> "Waiting for event login"
+                        else -> "Safely parked"
+                    }
+                    SupportDiagnosticsSectionUiState(
+                        title = bucket.eventShortname?.takeIf { it.isNotBlank() }
+                            ?: bucket.eventName?.takeIf { it.isNotBlank() }
+                            ?: "Event #${bucket.eventId}",
+                        items = listOf(
+                            SupportDiagnosticsItemUiState("Status", status),
+                            SupportDiagnosticsItemUiState("Pending upload", bucket.pendingUploadCount.toString()),
+                            SupportDiagnosticsItemUiState("Awaiting reconciliation", bucket.awaitingReconciliationCount.toString()),
+                            SupportDiagnosticsItemUiState("Conflicts requiring review", bucket.conflictCount.toString()),
+                            SupportDiagnosticsItemUiState("Quarantined evidence", bucket.quarantinedCount.toString()),
+                            SupportDiagnosticsItemUiState("Last attendee sync attempt", bucket.lastSyncAttempt ?: "Never"),
+                            SupportDiagnosticsItemUiState("Last upload attempt", bucket.lastFlushAttemptAtEpochMillis?.toString() ?: "Never")
+                        )
+                    )
+                }
         )
 }

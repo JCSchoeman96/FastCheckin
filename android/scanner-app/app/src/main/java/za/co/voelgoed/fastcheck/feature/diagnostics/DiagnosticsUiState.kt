@@ -1,5 +1,7 @@
 package za.co.voelgoed.fastcheck.feature.diagnostics
 
+import za.co.voelgoed.fastcheck.domain.model.EventBucket
+
 data class DiagnosticsUiState(
     val currentEvent: String = "No active event",
     val authSessionState: String = "Logged out",
@@ -13,5 +15,6 @@ data class DiagnosticsUiState(
     val serverResultSummary: String = "No server outcomes yet.",
     val latestFlushSummary: String = "No flush has run yet.",
     val quarantinedRowsLabel: String = "Upload quarantine rows: 0",
-    val latestQuarantineLabel: String = "Last upload quarantine event: —"
+    val latestQuarantineLabel: String = "Last upload quarantine event: —",
+    val parkedBuckets: List<EventBucket> = emptyList()
 )

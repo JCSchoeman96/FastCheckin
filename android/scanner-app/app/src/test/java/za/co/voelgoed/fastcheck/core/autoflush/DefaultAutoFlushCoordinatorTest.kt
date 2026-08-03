@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,6 +23,9 @@ import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultAutoFlushCoordinatorTest {
@@ -48,7 +52,7 @@ class DefaultAutoFlushCoordinatorTest {
             private set
         private var inFlightCalls: Int = 0
 
-        override suspend fun run(maxBatchSize: Int): FlushReport {
+        override suspend fun run(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult {
             mutex.withLock {
                 inFlightCalls += 1
                 maxConcurrentCalls = maxOf(maxConcurrentCalls, inFlightCalls)
@@ -58,7 +62,10 @@ class DefaultAutoFlushCoordinatorTest {
             try {
                 val report = reportProvider.invoke()
                 mutex.withLock { _reports.add(report) }
-                return report
+                return za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted(
+                    za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(5, 1),
+                    report
+                )
             } finally {
                 mutex.withLock { inFlightCalls -= 1 }
             }
@@ -82,25 +89,25 @@ class DefaultAutoFlushCoordinatorTest {
 
         override suspend fun flushQueuedScans(
             maxBatchSize: Int
-        ): FlushReport {
+        ): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult {
             throw UnsupportedOperationException()
         }
 
-        override suspend fun pendingQueueDepth(): Int = depth
+        override suspend fun pendingQueueDepth(eventId: Long): Int = depth
 
-        override suspend fun latestFlushReport(): FlushReport? = null
+        override suspend fun latestFlushReport(eventId: Long): FlushReport? = null
 
-        override fun observePendingQueueDepth(): Flow<Int> = depthFlow
+        override fun observePendingQueueDepth(eventId: Long): Flow<Int> = depthFlow
 
-        override fun observeLatestFlushReport(): Flow<FlushReport?> = latestFlushFlow
+        override fun observeLatestFlushReport(eventId: Long): Flow<FlushReport?> = latestFlushFlow
 
-        override suspend fun quarantineCount(): Int = 0
+        override suspend fun quarantineCount(eventId: Long): Int = 0
 
-        override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+        override suspend fun latestQuarantineSummary(eventId: Long): QuarantineSummary? = null
 
-        override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+        override fun observeQuarantineCount(eventId: Long): Flow<Int> = flowOf(0)
 
-        override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
+        override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> = flowOf(null)
     }
 
     private class FakeConnectivityMonitor(initialOnline: Boolean) : ConnectivityMonitor {
@@ -1076,4 +1083,46 @@ class DefaultAutoFlushCoordinatorTest {
             assertThat(useCase.maxConcurrentCalls).isEqualTo(1)
             assertThat(useCase.batchSizes).containsExactly(25, 25, 30).inOrder()
         }
+
+    @Test
+    fun postLoginGenerationChangeDiscardsOlderRetryState() = runTest(StandardTestDispatcher()) {
+        val contexts = MutableContextStore(AuthenticatedEventContext(5, "a", 12, 0, Long.MAX_VALUE))
+        val repo = RecordingScanRepository().apply { depth = 1 }
+        val monitor = FakeConnectivityMonitor(true)
+        var calls = 0
+        val useCase = RecordingFlushUseCase {
+            calls += 1
+            if (calls == 1) FlushReport(executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE, uploadedCount = 0)
+            else FlushReport(executionStatus = FlushExecutionStatus.COMPLETED, uploadedCount = 0)
+        }
+        val coordinator = DefaultAutoFlushCoordinator(
+            useCase, repo, ConnectivityProvider { true }, monitor, java.time.Clock.systemUTC(),
+            contextStore = contexts, retryBackoff = RetryBackoff { 60_000 },
+            coordinatorDispatcher = StandardTestDispatcher(testScheduler)
+        ).also { closeables += it }
+
+        coordinator.requestFlush(AutoFlushTrigger.Manual)
+        runCurrent()
+        assertThat(coordinator.state.value.isRetryScheduled).isTrue()
+
+        contexts.value = AuthenticatedEventContext(5, "b", 14, 0, Long.MAX_VALUE)
+        coordinator.requestFlush(AutoFlushTrigger.PostLogin)
+        runCurrent()
+
+        assertThat(coordinator.state.value.identity).isEqualTo(AuthenticatedEventIdentity(5, 14))
+        assertThat(coordinator.state.value.isRetryScheduled).isFalse()
+    }
+
+    private class MutableContextStore(initial: AuthenticatedEventContext) : AuthenticatedEventContextStore {
+        private val state = MutableStateFlow(initial)
+        var value: AuthenticatedEventContext
+            get() = state.value
+            set(value) { state.value = value }
+        override suspend fun capture() = value
+        override suspend fun currentIdentity() = value.identity
+        override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unused")
+        override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+        override suspend fun isCurrent(sessionGeneration: Long) = value.sessionGeneration == sessionGeneration
+        override fun observeIdentity(): Flow<AuthenticatedEventIdentity?> = state.map { it.identity }
+    }
 }

@@ -10,7 +10,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.concurrency.EventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedSessionTransitionCoordinator
 import za.co.voelgoed.fastcheck.data.local.LocalReplaySuppressionEntity
 import za.co.voelgoed.fastcheck.data.local.ReplayCacheEntity
 import za.co.voelgoed.fastcheck.data.local.QueuedScanEntity
@@ -46,26 +49,31 @@ import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 class CurrentPhoenixMobileScanRepository @Inject constructor(
     private val scannerDao: ScannerDao,
     private val remoteDataSource: PhoenixMobileRemoteDataSource,
-    private val sessionProvider: SessionProvider,
     private val flushResultClassifier: FlushResultClassifier,
-    private val clock: Clock
+    private val clock: Clock,
+    private val contextStore: AuthenticatedEventContextStore,
+    private val operationMutexRegistry: EventOperationMutexRegistry,
+    private val eventBucketRepository: EventBucketRepository,
+    private val transitionCoordinator: AuthenticatedSessionTransitionCoordinator? = null
 ) : MobileScanRepository {
     override suspend fun queueScan(scan: PendingScan): QueueCreationResult {
         val now = scan.createdAt
-        val replaySuppression = scannerDao.findReplaySuppression(scan.ticketCode)
+        val replaySuppression = scannerDao.findReplaySuppression(scan.eventId, scan.ticketCode)
 
         if (replaySuppression != null) {
             val ageMillis = now - replaySuppression.seenAtEpochMillis
 
             if (ageMillis < REPLAY_SUPPRESSION_WINDOW_MILLIS) {
+                eventBucketRepository.refreshSnapshots(scan.eventId)
                 return QueueCreationResult.ReplaySuppressed
             }
 
-            scannerDao.deleteReplaySuppression(scan.ticketCode)
+            scannerDao.deleteReplaySuppression(scan.eventId, scan.ticketCode)
         }
 
         scannerDao.upsertReplaySuppression(
             LocalReplaySuppressionEntity(
+                eventId = scan.eventId,
                 ticketCode = scan.ticketCode,
                 seenAtEpochMillis = now
             )
@@ -73,34 +81,39 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
 
         val insertedId = scannerDao.insertQueuedScan(scan.toEntity())
 
-        return if (insertedId == -1L) {
+        val result = if (insertedId == -1L) {
             QueueCreationResult.ReplaySuppressed
         } else {
             QueueCreationResult.Enqueued(scan.copy(localId = insertedId))
         }
+        eventBucketRepository.refreshSnapshots(scan.eventId)
+        return result
     }
 
-    override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport {
-        val queuedEntities = scannerDao.loadQueuedScans(maxBatchSize)
-        val queued = queuedEntities.map { it.toDomain() }
-        val token = sessionProvider.bearerToken()
-
-        if (token.isNullOrBlank()) {
-            return persistLatestFlushReport(
-                FlushReport(
-                    executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
-                    itemOutcomes = queued.map { it.toAuthExpiredOutcome() },
-                    uploadedCount = 0,
-                    retryableRemainingCount = queued.size,
-                    authExpired = true,
-                    backlogRemaining = queued.isNotEmpty(),
-                    summaryMessage = "Flush stopped. Session expired and manual login is required."
-                )
+    override suspend fun flushQueuedScans(maxBatchSize: Int): FlushInvocationResult {
+        val context = contextStore.capture() ?: return FlushInvocationResult.SkippedNoSession
+        if (context.expiresAtEpochMillis <= clock.millis()) {
+            transitionCoordinator?.expire(context.identity)
+            return FlushInvocationResult.SkippedNoSession
+        }
+        return operationMutexRegistry.withFlushLock(context.eventId) {
+            if (!contextStore.isCurrent(context.sessionGeneration)) {
+                return@withFlushLock FlushInvocationResult.SkippedNoSession
+            }
+            FlushInvocationResult.Attempted(
+                identity = context.identity,
+                report = flushCapturedContext(context, maxBatchSize)
             )
         }
+    }
+
+    private suspend fun flushCapturedContext(context: AuthenticatedEventContext, maxBatchSize: Int): FlushReport {
+        scannerDao.markEventBucketFlushAttempt(context.eventId, clock.millis())
+        val queuedEntities = scannerDao.loadQueuedScansForEvent(context.eventId, maxBatchSize)
+        val queued = queuedEntities.map { it.toDomain() }
 
         if (queued.isEmpty()) {
-            return persistLatestFlushReport(
+            return persistLatestFlushReport(context.eventId,
                 FlushReport(
                     executionStatus = FlushExecutionStatus.COMPLETED,
                     uploadedCount = 0,
@@ -113,10 +126,11 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
         }
 
         return try {
-            val response = remoteDataSource.uploadScans(queued.map { it.toPayload() })
+            val response = remoteDataSource.uploadScans("Bearer ${context.bearerToken}", queued.map { it.toPayload() })
             when {
-                response.statusCode == 401 ->
-                    persistLatestFlushReport(
+                response.statusCode == 401 -> {
+                    transitionCoordinator?.expire(context.identity)
+                    persistLatestFlushReport(context.eventId,
                         FlushReport(
                             executionStatus = FlushExecutionStatus.AUTH_EXPIRED,
                             itemOutcomes = queued.map { it.toAuthExpiredOutcome() },
@@ -128,9 +142,10 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                             summaryMessage = "Flush stopped. Session expired and manual login is required."
                         )
                     )
+                }
 
                 response.statusCode == 429 ->
-                    persistLatestFlushReport(
+                    persistLatestFlushReport(context.eventId,
                         FlushReport(
                             executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
                             itemOutcomes =
@@ -157,7 +172,7 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                     )
 
                 response.statusCode >= 500 ->
-                    persistLatestFlushReport(
+                    persistLatestFlushReport(context.eventId,
                         FlushReport(
                             executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
                             itemOutcomes =
@@ -180,6 +195,7 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
 
                 response.statusCode !in 200..299 ->
                     quarantineAttemptedBatch(
+                        eventId = context.eventId,
                         queuedEntities = queuedEntities,
                         reason = QuarantineReason.UNRECOVERABLE_API_CONTRACT_ERROR,
                         message = httpResponseDetail(response.statusCode, response.errorBody),
@@ -226,8 +242,8 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
                         scannerDao.deleteQueuedScans(matchedIds)
                     }
 
-                    val remainingCount = scannerDao.countPendingScans()
-                    persistLatestFlushReport(
+                    val remainingCount = scannerDao.countPendingScansForEvent(context.eventId)
+                    persistLatestFlushReport(context.eventId,
                         FlushReport(
                             executionStatus = FlushExecutionStatus.COMPLETED,
                             itemOutcomes = outcomes,
@@ -253,13 +269,14 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
             }
         } catch (_exception: IllegalArgumentException) {
             quarantineAttemptedBatch(
+                eventId = context.eventId,
                 queuedEntities = queuedEntities,
                 reason = QuarantineReason.INCOMPLETE_SERVER_RESPONSE,
                 message = "Flush failed because the server response was incomplete.",
                 batchAttributed = true
             )
         } catch (_exception: IOException) {
-            persistLatestFlushReport(
+            persistLatestFlushReport(context.eventId,
                 FlushReport(
                     executionStatus = FlushExecutionStatus.RETRYABLE_FAILURE,
                     itemOutcomes =
@@ -277,48 +294,48 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
         }
     }
 
-    override suspend fun pendingQueueDepth(): Int = scannerDao.countPendingScans()
+    override suspend fun pendingQueueDepth(eventId: Long): Int = scannerDao.countPendingScansForEvent(eventId)
 
-    override suspend fun latestFlushReport(): FlushReport? {
-        val snapshot = scannerDao.loadLatestFlushSnapshot() ?: return null
-        return toFlushReport(snapshot, scannerDao.loadRecentFlushOutcomes())
+    override suspend fun latestFlushReport(eventId: Long): FlushReport? {
+        val snapshot = scannerDao.loadLatestFlushSnapshot(eventId) ?: return null
+        return toFlushReport(snapshot, scannerDao.loadRecentFlushOutcomes(eventId))
     }
 
-    override fun observePendingQueueDepth(): Flow<Int> = scannerDao.observePendingScanCount()
+    override fun observePendingQueueDepth(eventId: Long): Flow<Int> = scannerDao.observePendingScanCountForEvent(eventId)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun observeLatestFlushReport(): Flow<FlushReport?> =
+    override fun observeLatestFlushReport(eventId: Long): Flow<FlushReport?> =
         // Avoid combining two independently-updating flows (snapshot + outcomes), which can
         // transiently produce mismatched pairs (new snapshot + old outcomes, or vice versa).
         //
         // `replaceLatestFlushState()` writes snapshot and outcomes in a single Room transaction.
         // By driving from the snapshot emission and reading outcomes at that point, we reduce
         // the chance of UI “flicker” to essentially the Room commit boundary.
-        scannerDao.observeLatestFlushSnapshot().flatMapLatest { snapshot ->
+        scannerDao.observeLatestFlushSnapshot(eventId).flatMapLatest { snapshot ->
             flow {
                 if (snapshot == null) {
                     emit(null)
                 } else {
-                    emit(toFlushReport(snapshot, scannerDao.loadRecentFlushOutcomes()))
+                    emit(toFlushReport(snapshot, scannerDao.loadRecentFlushOutcomes(eventId)))
                 }
             }
         }
 
-    override suspend fun quarantineCount(): Int = scannerDao.countQuarantinedScans()
+    override suspend fun quarantineCount(eventId: Long): Int = scannerDao.countQuarantinedScansForEvent(eventId)
 
-    override suspend fun latestQuarantineSummary(): QuarantineSummary? {
-        val count = scannerDao.countQuarantinedScans()
+    override suspend fun latestQuarantineSummary(eventId: Long): QuarantineSummary? {
+        val count = scannerDao.countQuarantinedScansForEvent(eventId)
         if (count == 0) return null
-        val latest = scannerDao.loadLatestQuarantinedScan() ?: return null
+        val latest = scannerDao.loadLatestQuarantinedScanForEvent(eventId) ?: return null
         return latest.toQuarantineSummary(count)
     }
 
-    override fun observeQuarantineCount(): Flow<Int> = scannerDao.observeQuarantinedScanCount()
+    override fun observeQuarantineCount(eventId: Long): Flow<Int> = scannerDao.observeQuarantinedScanCountForEvent(eventId)
 
-    override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> =
+    override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> =
         combine(
-            scannerDao.observeQuarantinedScanCount(),
-            scannerDao.observeLatestQuarantinedScan()
+            scannerDao.observeQuarantinedScanCountForEvent(eventId),
+            scannerDao.observeLatestQuarantinedScanForEvent(eventId)
         ) { count, latest ->
             if (count == 0) null else latest?.toQuarantineSummary(count)
         }
@@ -332,13 +349,14 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
         )
 
     private suspend fun quarantineAttemptedBatch(
+        eventId: Long,
         queuedEntities: List<QueuedScanEntity>,
         reason: QuarantineReason,
         message: String,
         batchAttributed: Boolean
     ): FlushReport {
         if (queuedEntities.isEmpty()) {
-            return persistLatestFlushReport(
+            return persistLatestFlushReport(eventId,
                 FlushReport(
                     executionStatus = FlushExecutionStatus.COMPLETED,
                     uploadedCount = 0,
@@ -379,8 +397,8 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
             queueIds = queuedEntities.map { it.id }
         )
 
-        val remaining = scannerDao.countPendingScans()
-        return persistLatestFlushReport(
+        val remaining = scannerDao.countPendingScansForEvent(eventId)
+        return persistLatestFlushReport(eventId,
             FlushReport(
                 executionStatus = FlushExecutionStatus.COMPLETED,
                 itemOutcomes = emptyList(),
@@ -398,13 +416,15 @@ class CurrentPhoenixMobileScanRepository @Inject constructor(
     private fun httpResponseDetail(statusCode: Int, body: String?): String =
         if (body.isNullOrBlank()) "HTTP $statusCode" else "HTTP $statusCode: $body"
 
-    private suspend fun persistLatestFlushReport(report: FlushReport): FlushReport {
+    private suspend fun persistLatestFlushReport(eventId: Long, report: FlushReport): FlushReport {
         val completedAt = Instant.ofEpochMilli(clock.millis()).toString()
 
         scannerDao.replaceLatestFlushState(
-            snapshot = report.toSnapshotEntity(completedAt),
-            outcomes = report.toOutcomeEntities(completedAt)
+            eventId = eventId,
+            snapshot = report.toSnapshotEntity(eventId, completedAt),
+            outcomes = report.toOutcomeEntities(eventId, completedAt)
         )
+        eventBucketRepository.refreshSnapshots(eventId)
 
         return report
     }

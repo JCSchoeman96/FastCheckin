@@ -10,39 +10,35 @@ Authentication is event-scoped and uses:
 
 ## Storage Split
 
-- JWT: secure storage only via `SessionVault`
+- JWT, event ID, generation, authentication time, expiry, and the last-issued
+  generation counter: encrypted storage via `AuthenticatedEventContextStore`
 - non-secret metadata: DataStore via `SessionMetadataStore`
 
-This split prevents the UI and sync layers from coupling to token storage
-details.
+The encrypted context is authoritative. DataStore is a repairable display
+cache and never authorizes a request or determines restored-session validity.
 
 ## Session Boundary
 
 - `SessionRepository`: login/logout/current session
 - `SessionAuthGateway`: read current event/operator runtime identity
-- `SessionProvider`: bearer-token provider for the network layer
+- `AuthenticatedSessionTransitionCoordinator`: compensated Room/secure-store/
+  DataStore transitions
+- `AuthenticatedEventContextStore`: atomic event/token/generation snapshots
 
 UI and scanner features must not depend on JWT parsing or storage mechanics.
 
 ## Auth Expiry
 
-- background flush treats HTTP `401` as auth-expired
+- sync and flush compare the captured generation before applying auth expiry
 - queued scans remain in Room
 - local admission overlays remain in Room
 - quarantined scans remain in Room
 - no credential is persisted for silent re-login
 - operator must re-authenticate manually
 
-Auth expiry and explicit logout are different transitions:
-
-- explicit logout clears credential + metadata and applies explicit logout
-  retention cleanup
-- auth expiry clears credential + metadata but preserves same-event recovery
-  surfaces (attendee/sync context) per runtime retention policy
-
-Restored-session blocking for unresolved local gate state is separate from
-explicit logout semantics: it clears credential + metadata and must not run the
-explicit-logout cleaner path unless policy explicitly requires it.
+Logout parks the active bucket before clearing the matching secure generation.
+Auth expiry marks that generation's bucket `AUTH_REQUIRED`. Neither transition
+deletes event-local runtime data.
 
 ## Future Scope
 

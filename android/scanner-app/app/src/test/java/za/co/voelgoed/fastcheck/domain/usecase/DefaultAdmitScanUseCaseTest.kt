@@ -185,7 +185,7 @@ class DefaultAdmitScanUseCaseTest {
 
                 override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
 
-                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+                override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
             }
         val useCase =
             buildUseCase(
@@ -218,7 +218,7 @@ class DefaultAdmitScanUseCaseTest {
 
                 override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
 
-                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+                override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
             }
         val useCase =
             buildUseCase(
@@ -250,7 +250,7 @@ class DefaultAdmitScanUseCaseTest {
 
                 override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
 
-                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+                override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
             }
         val useCase =
             buildUseCase(
@@ -299,7 +299,7 @@ class DefaultAdmitScanUseCaseTest {
 
                 override suspend fun currentSyncStatus(): AttendeeSyncStatus? = staleStatus
 
-                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
+                override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(staleStatus)
             }
         val useCase =
             buildUseCase(
@@ -490,7 +490,7 @@ class DefaultAdmitScanUseCaseTest {
 
         override suspend fun currentSyncStatus(): AttendeeSyncStatus? = status
 
-        override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(status)
+        override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(status)
     }
 
     private class FakeSessionAuthGateway(
@@ -556,6 +556,11 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun upsertEventLocalBucket(bucket: EventLocalBucketEntity) = unused()
         override suspend fun loadEventLocalBucket(eventId: Long): EventLocalBucketEntity? = unused()
         override suspend fun loadEventLocalBucketsByState(state: String): List<EventLocalBucketEntity> = unused()
+        override fun observeAllEventLocalBuckets(): Flow<List<EventLocalBucketEntity>> = unused()
+        override suspend fun parkActiveEventLocalBuckets(updatedAt: Long) = unused()
+        override suspend fun setEventLocalBucketState(eventId: Long, state: String, updatedAt: Long) = unused()
+        override suspend fun refreshEventLocalBucketSnapshots(eventId: Long, updatedAt: Long) = unused()
+        override suspend fun markEventBucketFlushAttempt(eventId: Long, attemptAt: Long) = unused()
         override suspend fun updateEventLocalBucketState(
             eventId: Long,
             state: String,
@@ -596,30 +601,43 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun insertQueuedScan(scan: QueuedScanEntity): Long = unused()
         override suspend fun loadQueuedScans() = unused()
         override suspend fun loadQueuedScans(limit: Int) = unused()
+        override suspend fun loadQueuedScansForEvent(eventId: Long, limit: Int) = unused()
         override suspend fun markQueuedScansReplayed(ids: List<Long>, attemptedAt: String) = unused()
         override suspend fun deleteQueuedScans(ids: List<Long>) = unused()
         override suspend fun countPendingScans() = unused()
         override fun observePendingScanCount(): Flow<Int> = unused()
+        override suspend fun countPendingScansForEvent(eventId: Long) = unused()
+        override fun observePendingScanCountForEvent(eventId: Long): Flow<Int> = unused()
+        override suspend fun countActiveOverlaysForEvent(eventId: Long) = unused()
+        override suspend fun countAwaitingReconciliationForEvent(eventId: Long) = unused()
+        override suspend fun countConflictsForEvent(eventId: Long) = unused()
         override suspend fun findReplayCache(idempotencyKey: String) = unused()
         override suspend fun clearReplayCache() = unused()
         override suspend fun upsertReplayCache(entry: ReplayCacheEntity) = unused()
         override suspend fun upsertReplayCache(entries: List<ReplayCacheEntity>) = unused()
-        override suspend fun findReplaySuppression(ticketCode: String) = unused()
-        override suspend fun deleteReplaySuppression(ticketCode: String) = unused()
+        override suspend fun findReplaySuppression(eventId: Long, ticketCode: String) = unused()
+        override suspend fun deleteReplaySuppression(eventId: Long, ticketCode: String) = unused()
         override suspend fun clearReplaySuppression() = unused()
         override suspend fun upsertReplaySuppression(entry: LocalReplaySuppressionEntity) = unused()
         override suspend fun loadLatestFlushSnapshot(): LatestFlushSnapshotEntity? = unused()
-        override fun observeLatestFlushSnapshot(): Flow<LatestFlushSnapshotEntity?> = unused()
+        override suspend fun loadLatestFlushSnapshot(eventId: Long): LatestFlushSnapshotEntity? = unused()
+        override fun observeMostRecentFlushSnapshotAcrossEvents(): Flow<LatestFlushSnapshotEntity?> = unused()
+        override fun observeLatestFlushSnapshot(eventId: Long): Flow<LatestFlushSnapshotEntity?> = unused()
         override suspend fun upsertLatestFlushSnapshot(snapshot: LatestFlushSnapshotEntity) = unused()
         override suspend fun clearLatestFlushSnapshot() = unused()
         override suspend fun clearRecentFlushOutcomes() = unused()
+        override suspend fun clearRecentFlushOutcomes(eventId: Long) = unused()
+        override suspend fun clearAllRecentFlushOutcomes() = unused()
         override suspend fun insertRecentFlushOutcomes(outcomes: List<RecentFlushOutcomeEntity>) = unused()
         override suspend fun loadRecentFlushOutcomes(limit: Int): List<RecentFlushOutcomeEntity> = unused()
-        override fun observeRecentFlushOutcomes(): Flow<List<RecentFlushOutcomeEntity>> = unused()
+        override suspend fun loadRecentFlushOutcomes(eventId: Long, limit: Int) = unused()
+        override fun observeRecentFlushOutcomes(eventId: Long): Flow<List<RecentFlushOutcomeEntity>> = unused()
         override suspend fun loadSyncMetadata(eventId: Long): SyncMetadataEntity? = unused()
         override suspend fun deleteAllSyncMetadata() = unused()
         override suspend fun deleteSyncMetadataForEvent(eventId: Long) = unused()
-        override fun observeLatestSyncMetadata(): Flow<SyncMetadataEntity?> = unused()
+        override fun observeMostRecentlySyncedEventMetadata(): Flow<SyncMetadataEntity?> = unused()
+        override fun observeSyncMetadataForEvent(eventId: Long): Flow<SyncMetadataEntity?> = unused()
+        override fun observeAllSyncMetadata(): Flow<List<SyncMetadataEntity>> = unused()
         override suspend fun upsertSyncMetadata(metadata: SyncMetadataEntity) = unused()
         override suspend fun upsertAttendeesAndSyncMetadata(
             attendees: List<AttendeeEntity>,
@@ -634,12 +652,16 @@ class DefaultAdmitScanUseCaseTest {
         override suspend fun insertQuarantinedScans(entities: List<QuarantinedScanEntity>): List<Long> = unused()
 
         override suspend fun countQuarantinedScans(): Int = unused()
+        override suspend fun countQuarantinedScansForEvent(eventId: Long): Int = unused()
 
         override fun observeQuarantinedScanCount(): Flow<Int> = unused()
+        override fun observeQuarantinedScanCountForEvent(eventId: Long): Flow<Int> = unused()
 
         override suspend fun loadLatestQuarantinedScan(): QuarantinedScanEntity? = unused()
+        override suspend fun loadLatestQuarantinedScanForEvent(eventId: Long): QuarantinedScanEntity? = unused()
 
         override fun observeLatestQuarantinedScan(): Flow<QuarantinedScanEntity?> = unused()
+        override fun observeLatestQuarantinedScanForEvent(eventId: Long): Flow<QuarantinedScanEntity?> = unused()
 
         override suspend fun insertQuarantinedScansAndDeleteQueued(
             entities: List<QuarantinedScanEntity>,

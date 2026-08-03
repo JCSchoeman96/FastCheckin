@@ -331,6 +331,7 @@ class ScannerDaoTest {
     fun persistsReplaySuppressionAndLatestFlushSnapshot() = runTest {
         dao.upsertReplaySuppression(
             LocalReplaySuppressionEntity(
+                eventId = 5L,
                 ticketCode = "VG-100",
                 seenAtEpochMillis = 3_000L
             )
@@ -339,6 +340,7 @@ class ScannerDaoTest {
         dao.replaceLatestFlushState(
             snapshot =
                 LatestFlushSnapshotEntity(
+                    eventId = 5L,
                     executionStatus = "COMPLETED",
                     uploadedCount = 1,
                     retryableRemainingCount = 0,
@@ -350,6 +352,7 @@ class ScannerDaoTest {
             outcomes =
                 listOf(
                     RecentFlushOutcomeEntity(
+                        eventId = 5L,
                         outcomeOrder = 0,
                         idempotencyKey = "idem-3",
                         ticketCode = "VG-100",
@@ -361,7 +364,7 @@ class ScannerDaoTest {
                 )
         )
 
-        val replaySuppression = dao.findReplaySuppression("VG-100")
+        val replaySuppression = dao.findReplaySuppression(5L, "VG-100")
         val snapshot = dao.loadLatestFlushSnapshot()
         val outcomes = dao.loadRecentFlushOutcomes()
 
@@ -376,6 +379,7 @@ class ScannerDaoTest {
         dao.replaceLatestFlushState(
             snapshot =
                 LatestFlushSnapshotEntity(
+                    eventId = 5L,
                     executionStatus = "COMPLETED",
                     uploadedCount = 1,
                     retryableRemainingCount = 0,
@@ -387,6 +391,7 @@ class ScannerDaoTest {
             outcomes =
                 listOf(
                     RecentFlushOutcomeEntity(
+                        eventId = 5L,
                         outcomeOrder = 0,
                         idempotencyKey = "old-idem",
                         ticketCode = "OLD-1",
@@ -401,6 +406,7 @@ class ScannerDaoTest {
         dao.replaceLatestFlushState(
             snapshot =
                 LatestFlushSnapshotEntity(
+                    eventId = 5L,
                     executionStatus = "COMPLETED",
                     uploadedCount = 2,
                     retryableRemainingCount = 0,
@@ -412,6 +418,7 @@ class ScannerDaoTest {
             outcomes =
                 listOf(
                     RecentFlushOutcomeEntity(
+                        eventId = 5L,
                         outcomeOrder = 0,
                         idempotencyKey = "idem-1",
                         ticketCode = "VG-001",
@@ -421,6 +428,7 @@ class ScannerDaoTest {
                         completedAt = "2026-03-12T09:05:00Z"
                     ),
                     RecentFlushOutcomeEntity(
+                        eventId = 5L,
                         outcomeOrder = 1,
                         idempotencyKey = "idem-2",
                         ticketCode = "VG-002",
@@ -716,7 +724,7 @@ class ScannerDaoTest {
                 )
             )
         )
-        dao.upsertReplaySuppression(LocalReplaySuppressionEntity(id = 0, ticketCode = "VG-Q", seenAtEpochMillis = 10L))
+        dao.upsertReplaySuppression(LocalReplaySuppressionEntity(eventId = 5L, id = 0, ticketCode = "VG-Q", seenAtEpochMillis = 10L))
         dao.upsertReplayCache(
             ReplayCacheEntity(
                 idempotencyKey = "idem-queue",
@@ -729,6 +737,7 @@ class ScannerDaoTest {
         )
         dao.upsertLatestFlushSnapshot(
             LatestFlushSnapshotEntity(
+                eventId = 5L,
                 executionStatus = "COMPLETED",
                 uploadedCount = 1,
                 retryableRemainingCount = 0,
@@ -741,6 +750,7 @@ class ScannerDaoTest {
         dao.insertRecentFlushOutcomes(
             listOf(
                 RecentFlushOutcomeEntity(
+                    eventId = 5L,
                     outcomeOrder = 0,
                     idempotencyKey = "idem-queue",
                     ticketCode = "VG-Q",
@@ -761,7 +771,7 @@ class ScannerDaoTest {
 
         assertThat(dao.findAttendee(5, "VG-001")).isNull()
         assertThat(dao.loadSyncMetadata(5)).isNull()
-        assertThat(dao.findReplaySuppression("VG-Q")).isNull()
+        assertThat(dao.findReplaySuppression(5L, "VG-Q")).isNull()
         assertThat(dao.findReplayCache("idem-queue")).isNull()
         assertThat(dao.loadLatestFlushSnapshot()).isNull()
         assertThat(dao.loadRecentFlushOutcomes()).isEmpty()
@@ -815,7 +825,7 @@ class ScannerDaoTest {
             )
 
         assertThat(insertedId).isEqualTo(-1L)
-        assertThat(dao.findReplaySuppression("VG-200")).isNull()
+        assertThat(dao.findReplaySuppression(5L, "VG-200")).isNull()
         assertThat(dao.findLocalAdmissionOverlayByIdempotencyKey("dup-idem")?.state).isNull()
     }
 

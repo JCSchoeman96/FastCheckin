@@ -312,7 +312,6 @@ class DefaultAttendeeSyncOrchestratorTest {
 
             override suspend fun onAuthExpired() = Unit
 
-            override suspend fun clearBlockedRestoredSession() = Unit
         }
 
     private fun sampleSession(): ScannerSession =
@@ -339,7 +338,7 @@ class DefaultAttendeeSyncOrchestratorTest {
 
         override suspend fun currentSyncStatus(): AttendeeSyncStatus? = currentStatusProvider()
 
-        override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
+        override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(null)
     }
 
     private fun DefaultAttendeeSyncOrchestrator.currentRetryJob(): Any? {

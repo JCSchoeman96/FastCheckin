@@ -6,5 +6,6 @@ data class ScannerSession(
     val eventShortname: String? = null,
     val expiresInSeconds: Int,
     val authenticatedAtEpochMillis: Long,
-    val expiresAtEpochMillis: Long
+    val expiresAtEpochMillis: Long,
+    val sessionGeneration: Long? = null
 )

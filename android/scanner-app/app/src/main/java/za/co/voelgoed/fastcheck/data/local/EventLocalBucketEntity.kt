@@ -1,6 +1,7 @@
 package za.co.voelgoed.fastcheck.data.local
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -13,6 +14,8 @@ import androidx.room.PrimaryKey
 )
 data class EventLocalBucketEntity(
     @PrimaryKey val eventId: Long,
+    val eventName: String? = null,
+    val eventShortname: String? = null,
     val state: String,
     val selectedAtEpochMillis: Long,
     val lastActivatedAtEpochMillis: Long,
@@ -22,6 +25,8 @@ data class EventLocalBucketEntity(
     val lastSuccessfulReconcileAtEpochMillis: Long?,
     val pendingScanCountSnapshot: Int,
     val activeOverlayCountSnapshot: Int,
+    @ColumnInfo(defaultValue = "0") val awaitingReconciliationCountSnapshot: Int = 0,
+    @ColumnInfo(defaultValue = "0") val conflictCountSnapshot: Int = 0,
     val quarantinedScanCountSnapshot: Int,
     val lastErrorCode: String?,
     val lastErrorMessage: String?,
@@ -30,6 +35,8 @@ data class EventLocalBucketEntity(
 
 object EventLocalBucketState {
     const val ACTIVE: String = "ACTIVE"
+    const val PARKED: String = "PARKED"
+    const val AUTH_REQUIRED: String = "AUTH_REQUIRED"
     const val CLOSING_REQUESTED: String = "CLOSING_REQUESTED"
     const val SYNCING: String = "SYNCING"
     const val RESOLVED: String = "RESOLVED"

@@ -191,6 +191,129 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_11_12: Migration =
+        object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_queued_scans_eventId_replayed_createdAt_id " +
+                        "ON queued_scans(eventId, replayed, createdAt, id)"
+                )
+
+                db.execSQL("DROP TABLE local_replay_suppression")
+                db.execSQL(
+                    """
+                    CREATE TABLE local_replay_suppression (
+                        eventId INTEGER NOT NULL,
+                        ticketCode TEXT NOT NULL,
+                        seenAtEpochMillis INTEGER NOT NULL,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX index_local_replay_suppression_eventId_ticketCode " +
+                        "ON local_replay_suppression(eventId, ticketCode)"
+                )
+
+                db.execSQL("DROP TABLE latest_flush_snapshot")
+                db.execSQL(
+                    """
+                    CREATE TABLE latest_flush_snapshot (
+                        eventId INTEGER PRIMARY KEY NOT NULL,
+                        executionStatus TEXT NOT NULL,
+                        uploadedCount INTEGER NOT NULL,
+                        retryableRemainingCount INTEGER NOT NULL,
+                        authExpired INTEGER NOT NULL,
+                        backlogRemaining INTEGER NOT NULL,
+                        summaryMessage TEXT NOT NULL,
+                        completedAt TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+
+                db.execSQL("DROP TABLE recent_flush_outcomes")
+                db.execSQL(
+                    """
+                    CREATE TABLE recent_flush_outcomes (
+                        eventId INTEGER NOT NULL,
+                        outcomeOrder INTEGER NOT NULL,
+                        idempotencyKey TEXT NOT NULL,
+                        ticketCode TEXT NOT NULL,
+                        outcome TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        reasonCode TEXT,
+                        completedAt TEXT NOT NULL,
+                        PRIMARY KEY(eventId, outcomeOrder)
+                    )
+                    """.trimIndent()
+                )
+
+                db.execSQL("ALTER TABLE event_local_buckets ADD COLUMN eventName TEXT")
+                db.execSQL("ALTER TABLE event_local_buckets ADD COLUMN eventShortname TEXT")
+                db.execSQL(
+                    "ALTER TABLE event_local_buckets ADD COLUMN awaitingReconciliationCountSnapshot " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE event_local_buckets ADD COLUMN conflictCountSnapshot " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL("UPDATE event_local_buckets SET state = 'PARKED'")
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO event_local_buckets (
+                        eventId, eventName, eventShortname, state,
+                        selectedAtEpochMillis, lastActivatedAtEpochMillis,
+                        closeRequestedAtEpochMillis, lastFlushAttemptAtEpochMillis,
+                        lastSuccessfulFlushAtEpochMillis, lastSuccessfulReconcileAtEpochMillis,
+                        pendingScanCountSnapshot, activeOverlayCountSnapshot,
+                        awaitingReconciliationCountSnapshot, conflictCountSnapshot,
+                        quarantinedScanCountSnapshot, lastErrorCode, lastErrorMessage,
+                        updatedAtEpochMillis
+                    )
+                    SELECT eventId, NULL, NULL, 'PARKED', 0, 0, NULL, NULL, NULL, NULL,
+                           0, 0, 0, 0, 0, NULL, NULL, 0
+                    FROM (
+                        SELECT eventId FROM queued_scans
+                        UNION SELECT eventId FROM local_admission_overlays
+                        UNION SELECT eventId FROM quarantined_scans
+                        UNION SELECT eventId FROM attendees
+                        UNION SELECT eventId FROM sync_metadata
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    UPDATE event_local_buckets
+                    SET pendingScanCountSnapshot = (
+                            SELECT COUNT(*) FROM queued_scans q
+                            WHERE q.eventId = event_local_buckets.eventId AND q.replayed = 0
+                        ),
+                        activeOverlayCountSnapshot = (
+                            SELECT COUNT(*) FROM local_admission_overlays o
+                            WHERE o.eventId = event_local_buckets.eventId
+                              AND o.state IN ('PENDING_LOCAL', 'CONFIRMED_LOCAL_UNSYNCED',
+                                              'CONFLICT_DUPLICATE', 'CONFLICT_REJECTED')
+                        ),
+                        awaitingReconciliationCountSnapshot = (
+                            SELECT COUNT(*) FROM local_admission_overlays o
+                            WHERE o.eventId = event_local_buckets.eventId
+                              AND o.state = 'CONFIRMED_LOCAL_UNSYNCED'
+                        ),
+                        conflictCountSnapshot = (
+                            SELECT COUNT(*) FROM local_admission_overlays o
+                            WHERE o.eventId = event_local_buckets.eventId
+                              AND o.state IN ('CONFLICT_DUPLICATE', 'CONFLICT_REJECTED')
+                        ),
+                        quarantinedScanCountSnapshot = (
+                            SELECT COUNT(*) FROM quarantined_scans q
+                            WHERE q.eventId = event_local_buckets.eventId
+                        )
+                    """.trimIndent()
+                )
+            }
+        }
+
     val MIGRATION_7_8: Migration =
         object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {

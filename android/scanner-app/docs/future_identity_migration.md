@@ -29,8 +29,8 @@ Replace implementations behind:
 
 - `SessionRepository`
 - `SessionAuthGateway`
-- `SessionProvider`
-- secure token/session stores
+- `AuthenticatedEventContextStore`
+- `AuthenticatedSessionTransitionCoordinator`
 
 Do not push hybrid identity details into scanner features before the backend
 runtime contract actually changes.

@@ -8,7 +8,8 @@ import androidx.room.PrimaryKey
     tableName = "queued_scans",
     indices = [
         Index(value = ["idempotencyKey"], unique = true),
-        Index(value = ["replayed", "createdAt", "id"])
+        Index(value = ["replayed", "createdAt", "id"]),
+        Index(value = ["eventId", "replayed", "createdAt", "id"])
     ]
 )
 data class QueuedScanEntity(

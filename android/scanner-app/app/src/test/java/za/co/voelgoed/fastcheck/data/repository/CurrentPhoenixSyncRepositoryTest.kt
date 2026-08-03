@@ -27,6 +27,9 @@ import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncBootstrapStateHub
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
 import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
 import za.co.voelgoed.fastcheck.data.mapper.toEntity
 import za.co.voelgoed.fastcheck.data.remote.AttendeeDto
@@ -812,6 +815,7 @@ class CurrentPhoenixSyncRepositoryTest {
                                 error("Not used in this test")
 
                             override suspend fun syncAttendees(
+                            authorization: String,
                             since: String?,
                             cursor: String?,
                             sinceInvalidationId: Long,
@@ -821,12 +825,15 @@ class CurrentPhoenixSyncRepositoryTest {
                             }
 
                             override suspend fun uploadScans(
+                                authorization: String,
                                 body: UploadScansRequest
                             ): Response<UploadScansResponse> = error("Not used in this test")
                         }
                     ),
                 scannerDao = database.scannerDao(),
-                sessionRepository = fixedSessionRepository(),
+                contextStore = contextStore(fixedSessionRepository()),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository,
                 clock = Clock.systemUTC(),
                 bootstrapStateHub = AttendeeSyncBootstrapStateHub()
             )
@@ -860,6 +867,7 @@ class CurrentPhoenixSyncRepositoryTest {
                                 error("Not used in this test")
 
                             override suspend fun syncAttendees(
+                            authorization: String,
                             since: String?,
                             cursor: String?,
                             sinceInvalidationId: Long,
@@ -869,12 +877,15 @@ class CurrentPhoenixSyncRepositoryTest {
                             }
 
                             override suspend fun uploadScans(
+                                authorization: String,
                                 body: UploadScansRequest
                             ): Response<UploadScansResponse> = error("Not used in this test")
                         }
                     ),
                 scannerDao = database.scannerDao(),
-                sessionRepository = fixedSessionRepository(),
+                contextStore = contextStore(fixedSessionRepository()),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository,
                 clock = Clock.systemUTC(),
                 bootstrapStateHub = AttendeeSyncBootstrapStateHub()
             )
@@ -931,6 +942,7 @@ class CurrentPhoenixSyncRepositoryTest {
                                 error("Not used in this test")
 
                             override suspend fun syncAttendees(
+                            authorization: String,
                             since: String?,
                             cursor: String?,
                             sinceInvalidationId: Long,
@@ -940,12 +952,15 @@ class CurrentPhoenixSyncRepositoryTest {
                             }
 
                             override suspend fun uploadScans(
+                                authorization: String,
                                 body: UploadScansRequest
                             ): Response<UploadScansResponse> = error("Not used in this test")
                         }
                     ),
                 scannerDao = database.scannerDao(),
-                sessionRepository = fixedSessionRepository(),
+                contextStore = contextStore(fixedSessionRepository()),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository,
                 clock = Clock.systemUTC(),
                 bootstrapStateHub = AttendeeSyncBootstrapStateHub()
             )
@@ -1201,7 +1216,9 @@ class CurrentPhoenixSyncRepositoryTest {
         CurrentPhoenixSyncRepository(
             remoteDataSource = PhoenixMobileRemoteDataSource(api),
             scannerDao = database.scannerDao(),
-            sessionRepository = sessionRepository,
+            contextStore = contextStore(sessionRepository),
+            operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+            eventBucketRepository = NoOpEventBucketRepository,
             clock = Clock.systemUTC(),
             bootstrapStateHub = AttendeeSyncBootstrapStateHub()
         )
@@ -1213,6 +1230,7 @@ class CurrentPhoenixSyncRepositoryTest {
                     error("Not used in this test")
 
                 override suspend fun syncAttendees(
+                            authorization: String,
                             since: String?,
                             cursor: String?,
                             sinceInvalidationId: Long,
@@ -1235,14 +1253,16 @@ class CurrentPhoenixSyncRepositoryTest {
                     throw HttpException(response)
                 }
 
-                override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> =
+                override suspend fun uploadScans(authorization: String, body: UploadScansRequest): Response<UploadScansResponse> =
                     error("Not used in this test")
             }
 
         return CurrentPhoenixSyncRepository(
             remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
             scannerDao = database.scannerDao(),
-            sessionRepository = fixedSessionRepository(),
+            contextStore = contextStore(fixedSessionRepository()),
+            operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+            eventBucketRepository = NoOpEventBucketRepository,
             clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC),
             bootstrapStateHub = AttendeeSyncBootstrapStateHub()
         )
@@ -1258,7 +1278,18 @@ class CurrentPhoenixSyncRepositoryTest {
 
             override suspend fun onAuthExpired() = Unit
 
-            override suspend fun clearBlockedRestoredSession() = Unit
+        }
+
+    private fun contextStore(repository: SessionRepository): AuthenticatedEventContextStore =
+        object : AuthenticatedEventContextStore {
+            override suspend fun capture(): AuthenticatedEventContext? = repository.currentSession()?.let {
+                AuthenticatedEventContext(it.eventId, "sync-test-token", 1, it.authenticatedAtEpochMillis, Long.MAX_VALUE)
+            }
+            override suspend fun currentIdentity() = capture()?.identity
+            override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unused")
+            override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+            override suspend fun isCurrent(sessionGeneration: Long) = sessionGeneration == 1L
+            override fun observeIdentity() = kotlinx.coroutines.flow.flow { emit(currentIdentity()) }
         }
 
     private fun noSessionRepository(): SessionRepository =
@@ -1271,7 +1302,6 @@ class CurrentPhoenixSyncRepositoryTest {
 
             override suspend fun onAuthExpired() = Unit
 
-            override suspend fun clearBlockedRestoredSession() = Unit
         }
 
     private fun sampleSession(): ScannerSession =
@@ -1357,6 +1387,7 @@ class CurrentPhoenixSyncRepositoryTest {
             )
 
         override suspend fun syncAttendees(
+            authorization: String,
             since: String?,
             cursor: String?,
             sinceInvalidationId: Long,
@@ -1373,7 +1404,7 @@ class CurrentPhoenixSyncRepositoryTest {
             }
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
+        override suspend fun uploadScans(authorization: String, body: UploadScansRequest): Response<UploadScansResponse> {
             error("Not used in this test")
         }
     }

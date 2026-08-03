@@ -1,11 +1,13 @@
 package za.co.voelgoed.fastcheck.data.local
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 
-@Entity(tableName = "recent_flush_outcomes")
+@Entity(
+    tableName = "recent_flush_outcomes",
+    primaryKeys = ["eventId", "outcomeOrder"]
+)
 data class RecentFlushOutcomeEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val eventId: Long,
     val outcomeOrder: Int,
     val idempotencyKey: String,
     val ticketCode: String,

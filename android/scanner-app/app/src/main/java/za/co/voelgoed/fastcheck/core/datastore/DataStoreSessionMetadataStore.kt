@@ -24,7 +24,7 @@ class DataStoreSessionMetadataStore(
             expiresInSeconds = expiresInSeconds,
             authenticatedAtEpochMillis = preferences[AUTHENTICATED_AT] ?: return null,
             expiresAtEpochMillis = preferences[EXPIRES_AT] ?: return null,
-            lastSyncCursor = preferences[LAST_SYNC_CURSOR]
+            sessionGeneration = preferences[SESSION_GENERATION]
         )
     }
 
@@ -36,7 +36,9 @@ class DataStoreSessionMetadataStore(
             preferences[EXPIRES_IN] = metadata.expiresInSeconds
             preferences[AUTHENTICATED_AT] = metadata.authenticatedAtEpochMillis
             preferences[EXPIRES_AT] = metadata.expiresAtEpochMillis
-            preferences[LAST_SYNC_CURSOR] = metadata.lastSyncCursor.orEmpty()
+            metadata.sessionGeneration?.let { preferences[SESSION_GENERATION] = it }
+                ?: preferences.remove(SESSION_GENERATION)
+            preferences.remove(LEGACY_LAST_SYNC_CURSOR)
         }
     }
 
@@ -51,7 +53,8 @@ class DataStoreSessionMetadataStore(
         val EXPIRES_IN = intPreferencesKey("session_expires_in")
         val AUTHENTICATED_AT = longPreferencesKey("session_authenticated_at_epoch_millis")
         val EXPIRES_AT = longPreferencesKey("session_expires_at_epoch_millis")
-        val LAST_SYNC_CURSOR = stringPreferencesKey("last_sync_cursor")
+        val SESSION_GENERATION = longPreferencesKey("session_generation")
+        val LEGACY_LAST_SYNC_CURSOR = stringPreferencesKey("last_sync_cursor")
     }
 
     private fun String?.toNullableValue(): String? =

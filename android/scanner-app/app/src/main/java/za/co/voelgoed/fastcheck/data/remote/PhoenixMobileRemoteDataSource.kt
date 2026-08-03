@@ -14,20 +14,22 @@ class PhoenixMobileRemoteDataSource(
     suspend fun login(request: MobileLoginRequest): MobileLoginResponse = api.login(request)
 
     suspend fun syncAttendees(
+        authorization: String,
         since: String?,
         cursor: String? = null,
         sinceInvalidationId: Long = 0L,
         limit: Int
     ): MobileSyncResponse =
         api.syncAttendees(
+            authorization = authorization,
             since = since,
             cursor = cursor,
             sinceInvalidationId = sinceInvalidationId,
             limit = limit
         )
 
-    suspend fun uploadScans(scans: List<QueuedScanPayload>): UploadScansTransportResponse {
-        val response = api.uploadScans(UploadScansRequest(scans = scans))
+    suspend fun uploadScans(authorization: String, scans: List<QueuedScanPayload>): UploadScansTransportResponse {
+        val response = api.uploadScans(authorization, UploadScansRequest(scans = scans))
 
         return UploadScansTransportResponse(
             statusCode = response.code(),

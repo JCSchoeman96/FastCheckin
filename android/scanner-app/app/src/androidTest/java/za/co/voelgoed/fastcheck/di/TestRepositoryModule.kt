@@ -16,18 +16,14 @@ import za.co.voelgoed.fastcheck.app.di.RepositoryModule
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushTrigger
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
-import za.co.voelgoed.fastcheck.core.network.VaultBackedSessionProvider
 import za.co.voelgoed.fastcheck.data.repository.CurrentAttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixMobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSessionRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentPhoenixSyncRepository
 import za.co.voelgoed.fastcheck.data.repository.CurrentSessionAuthGateway
-import za.co.voelgoed.fastcheck.data.repository.DefaultLocalRuntimeDataCleaner
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.EventAttendeeMetricsRepository
-import za.co.voelgoed.fastcheck.data.repository.LocalRuntimeDataCleaner
 import za.co.voelgoed.fastcheck.data.repository.ScannerPreferencesStore
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
@@ -79,36 +75,6 @@ object TestRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideLocalRuntimeDataCleaner(
-        realCleaner: DefaultLocalRuntimeDataCleaner
-    ): LocalRuntimeDataCleaner =
-        if (integrationModeEnabled()) {
-            realCleaner
-        } else {
-            object : LocalRuntimeDataCleaner {
-                override suspend fun handleExplicitLogout(currentEventId: Long?) = Unit
-
-                override suspend fun handleAuthExpired(currentEventId: Long?) = Unit
-
-                override suspend fun handleCleanEventTransition(fromEventId: Long?, toEventId: Long) = Unit
-            }
-        }
-
-    @Provides
-    @Singleton
-    fun provideSessionProvider(
-        realProvider: VaultBackedSessionProvider
-    ): SessionProvider =
-        if (integrationModeEnabled()) {
-            realProvider
-        } else {
-            object : SessionProvider {
-                override suspend fun bearerToken(): String = "test-token"
-            }
-        }
-
-    @Provides
-    @Singleton
     fun provideSyncRepository(
         realRepository: CurrentPhoenixSyncRepository
     ): SyncRepository =
@@ -118,7 +84,7 @@ object TestRepositoryModule {
             object : SyncRepository {
                 override suspend fun syncAttendees(mode: AttendeeSyncMode): AttendeeSyncStatus? = null
                 override suspend fun currentSyncStatus(): AttendeeSyncStatus? = null
-                override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> = flowOf(null)
+                override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> = flowOf(null)
             }
         }
 
@@ -134,24 +100,27 @@ object TestRepositoryModule {
                 override suspend fun queueScan(scan: PendingScan): QueueCreationResult =
                     QueueCreationResult.Enqueued(scan)
 
-                override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport =
-                    FlushReport(executionStatus = FlushExecutionStatus.COMPLETED, uploadedCount = 0)
+                override suspend fun flushQueuedScans(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult =
+                    za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted(
+                        za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(5, 1),
+                        FlushReport(executionStatus = FlushExecutionStatus.COMPLETED, uploadedCount = 0)
+                    )
 
-                override suspend fun pendingQueueDepth(): Int = 0
+                override suspend fun pendingQueueDepth(eventId: Long): Int = 0
 
-                override suspend fun latestFlushReport(): FlushReport? = null
+                override suspend fun latestFlushReport(eventId: Long): FlushReport? = null
 
-                override fun observePendingQueueDepth(): Flow<Int> = flowOf(0)
+                override fun observePendingQueueDepth(eventId: Long): Flow<Int> = flowOf(0)
 
-                override fun observeLatestFlushReport(): Flow<FlushReport?> = flowOf(null)
+                override fun observeLatestFlushReport(eventId: Long): Flow<FlushReport?> = flowOf(null)
 
-                override suspend fun quarantineCount(): Int = 0
+                override suspend fun quarantineCount(eventId: Long): Int = 0
 
-                override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+                override suspend fun latestQuarantineSummary(eventId: Long): QuarantineSummary? = null
 
-                override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+                override fun observeQuarantineCount(eventId: Long): Flow<Int> = flowOf(0)
 
-                override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
+                override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> = flowOf(null)
             }
         }
 
@@ -253,8 +222,11 @@ object TestRepositoryModule {
     @Singleton
     fun provideFlushQueuedScansUseCase(): FlushQueuedScansUseCase =
         object : FlushQueuedScansUseCase {
-            override suspend fun run(maxBatchSize: Int): FlushReport =
-                FlushReport(executionStatus = FlushExecutionStatus.COMPLETED)
+            override suspend fun run(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult =
+                za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted(
+                    za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(5, 1),
+                    FlushReport(executionStatus = FlushExecutionStatus.COMPLETED)
+                )
         }
 
     @Provides

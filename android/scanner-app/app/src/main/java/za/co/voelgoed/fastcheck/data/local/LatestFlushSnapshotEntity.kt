@@ -5,7 +5,7 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "latest_flush_snapshot")
 data class LatestFlushSnapshotEntity(
-    @PrimaryKey val snapshotId: Int = 1,
+    @PrimaryKey val eventId: Long,
     val executionStatus: String,
     val uploadedCount: Int,
     val retryableRemainingCount: Int,

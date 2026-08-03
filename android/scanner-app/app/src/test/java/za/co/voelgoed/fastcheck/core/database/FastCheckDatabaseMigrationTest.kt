@@ -19,7 +19,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.data.repository.NoOpEventBucketRepository
 import za.co.voelgoed.fastcheck.data.local.LatestFlushSnapshotEntity
 import za.co.voelgoed.fastcheck.data.local.RecentFlushOutcomeEntity
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
@@ -70,7 +73,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -92,7 +96,69 @@ class FastCheckDatabaseMigrationTest {
     }
 
     @Test
-    fun migratesVersion2FlushTablesWithoutDroppingExistingData() = runTest {
+    fun migration11To12PreservesCompleteDurableEvidenceAndClearsOnlyUnattributedEphemeralRows() = runTest {
+        createVersion11SchemaWithDurableEvidence(databaseFile)
+        val database = Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
+            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_11_12)
+            .addCallback(FastCheckDatabaseInvariantCallback)
+            .allowMainThreadQueries()
+            .build()
+        val dao = database.scannerDao()
+
+        assertThat(dao.loadQueuedScansForEvent(41L, 10).single()).isEqualTo(
+            za.co.voelgoed.fastcheck.data.local.QueuedScanEntity(
+                id = 101, eventId = 41, ticketCode = "Q-41", idempotencyKey = "queue-41",
+                createdAt = 1234, scannedAt = "2026-08-03T09:00:00Z", direction = "in",
+                entranceName = "North", operatorName = "Operator", replayed = false,
+                lastAttemptAt = "2026-08-03T09:01:00Z"
+            )
+        )
+        assertThat(dao.findAttendee(41L, "T-41")).isEqualTo(
+            za.co.voelgoed.fastcheck.data.local.AttendeeEntity(
+                201, 41, "T-41", "Ada", "Lovelace", "ada@example.test", "VIP",
+                2, 1, "completed", true, "2026-08-03T08:00:00Z", null,
+                "2026-08-03T08:30:00Z"
+            )
+        )
+        assertThat(dao.loadActiveOverlaysForEvent(41L).single()).isEqualTo(
+            za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity(
+                301, 41, 201, "T-41", "overlay-41", "in", "CONFLICT_REJECTED", 1300,
+                "2026-08-03T09:00:01Z", 0, "Operator", "North", "capacity", "Full"
+            )
+        )
+        assertThat(dao.loadLatestQuarantinedScanForEvent(41L)).isEqualTo(
+            za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity(
+                401, 101, 41, "X-41", "quarantine-41", 1400,
+                "2026-08-03T09:00:02Z", "in", "North", "Operator",
+                "2026-08-03T09:02:00Z", "contract_error", "Bad response",
+                "2026-08-03T09:03:00Z", true, "PENDING_LOCAL"
+            )
+        )
+        assertThat(dao.loadSyncMetadata(41L)).isEqualTo(
+            za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity(
+                41, "2026-08-03T08:30:00Z", "2026-08-03T08:30:00Z", "incremental", 1,
+                "2026-08-03T07:00:00Z", "2026-08-03T08:29:00Z", 2, "timeout",
+                "2026-08-03T08:29:30Z", "2026-08-03T07:00:00Z", 3, 4, 5, 6, 7
+            )
+        )
+        assertThat(dao.findReplaySuppression(41L, "T-41")).isNull()
+        assertThat(dao.loadLatestFlushSnapshot()).isNull()
+        assertThat(dao.loadRecentFlushOutcomes()).isEmpty()
+        assertThat(dao.loadEventLocalBucket(41L)?.state).isEqualTo("PARKED")
+        assertThat(dao.loadEventLocalBucket(41L)?.pendingScanCountSnapshot).isEqualTo(1)
+        assertThat(dao.loadEventLocalBucket(41L)?.conflictCountSnapshot).isEqualTo(1)
+        assertThat(dao.loadEventLocalBucket(41L)?.quarantinedScanCountSnapshot).isEqualTo(1)
+        assertIndexColumns(
+            database.openHelper.writableDatabase,
+            "index_event_local_buckets_single_active",
+            listOf("state"),
+            "event_local_buckets"
+        )
+        database.close()
+    }
+
+    @Test
+    fun migratesVersion2PreservingReplayCacheAndClearingUnattributedFlushDisplayRows() = runTest {
         createVersion2Schema(databaseFile)
 
         val database =
@@ -106,7 +172,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -125,13 +192,12 @@ class FastCheckDatabaseMigrationTest {
         assertThat(replayCache).isNotNull()
         assertThat(replayCache?.message).isEqualTo("Already checked in")
         assertThat(replayCache?.reasonCode).isNull()
-        assertThat(outcomes).hasSize(1)
-        assertThat(outcomes.single().ticketCode).isEqualTo("VG-001")
-        assertThat(outcomes.single().reasonCode).isNull()
+        assertThat(outcomes).isEmpty()
 
         database.scannerDao().replaceLatestFlushState(
             snapshot =
                 LatestFlushSnapshotEntity(
+                    eventId = 5L,
                     executionStatus = "COMPLETED",
                     uploadedCount = 2,
                     retryableRemainingCount = 0,
@@ -143,6 +209,7 @@ class FastCheckDatabaseMigrationTest {
             outcomes =
                 listOf(
                     RecentFlushOutcomeEntity(
+                        eventId = 5L,
                         outcomeOrder = 0,
                         idempotencyKey = "idem-new-1",
                         ticketCode = "VG-010",
@@ -152,6 +219,7 @@ class FastCheckDatabaseMigrationTest {
                         completedAt = "2026-03-24T06:05:00Z"
                     ),
                     RecentFlushOutcomeEntity(
+                        eventId = 5L,
                         outcomeOrder = 1,
                         idempotencyKey = "idem-new-2",
                         ticketCode = "VG-011",
@@ -187,7 +255,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -225,38 +294,46 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
         val scannerDao = database.scannerDao()
 
         val attendee = scannerDao.findAttendee(5, "VG-COLLAPSE")
-        val replaySuppression = scannerDao.findReplaySuppression("VG-COLLAPSE")
+        val replaySuppression = scannerDao.findReplaySuppression(5L, "VG-COLLAPSE")
         val queuedBeforeFlush = scannerDao.loadQueuedScans()
-        val recentOutcome = scannerDao.loadRecentFlushOutcomes(limit = 5).single()
+        val recentOutcomes = scannerDao.loadRecentFlushOutcomes(limit = 5)
 
         assertThat(attendee?.id).isEqualTo(11L)
         assertThat(scannerDao.findAttendee(5, " VG-COLLAPSE ")).isNull()
-        assertThat(replaySuppression?.seenAtEpochMillis).isEqualTo(2_000L)
-        assertThat(scannerDao.findReplaySuppression(" VG-COLLAPSE ")).isNull()
+        assertThat(replaySuppression).isNull()
+        assertThat(scannerDao.findReplaySuppression(5L, " VG-COLLAPSE ")).isNull()
         assertThat(queuedBeforeFlush.single().ticketCode).isEqualTo("VG-QUEUE-1")
-        assertThat(recentOutcome.ticketCode).isEqualTo("VG-OUTCOME-1")
+        assertThat(recentOutcomes).isEmpty()
 
         val api = RecordingPhoenixMobileApi()
         val repository =
             CurrentPhoenixMobileScanRepository(
                 scannerDao = scannerDao,
                 remoteDataSource = PhoenixMobileRemoteDataSource(api),
-                sessionProvider =
-                    object : SessionProvider {
-                        override suspend fun bearerToken(): String = "migration-test-token"
-                    },
                 flushResultClassifier = FlushResultClassifier(),
-                clock = Clock.fixed(Instant.parse("2026-03-24T14:30:00Z"), ZoneOffset.UTC)
+                clock = Clock.fixed(Instant.parse("2026-03-24T14:30:00Z"), ZoneOffset.UTC),
+                contextStore = object : AuthenticatedEventContextStore {
+                    private val value = AuthenticatedEventContext(5, "migration-test-token", 1, 0, Long.MAX_VALUE)
+                    override suspend fun capture() = value
+                    override suspend fun currentIdentity() = value.identity
+                    override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unused")
+                    override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+                    override suspend fun isCurrent(sessionGeneration: Long) = sessionGeneration == 1L
+                    override fun observeIdentity() = kotlinx.coroutines.flow.flowOf(value.identity)
+                },
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository
             )
 
-        val flushReport = repository.flushQueuedScans(maxBatchSize = 10)
+        val flushReport = (repository.flushQueuedScans(maxBatchSize = 10) as za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted).report
 
         assertThat(flushReport.uploadedCount).isEqualTo(1)
         assertThat(api.lastUploadBody?.scans?.single()?.ticket_code).isEqualTo("VG-QUEUE-1")
@@ -279,14 +356,15 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
         val scannerDao = database.scannerDao()
 
         assertThat(scannerDao.findAttendee(5, "VG-V3-COLLAPSE")?.id).isEqualTo(31L)
-        assertThat(scannerDao.findReplaySuppression("VG-V3-COLLAPSE")?.seenAtEpochMillis).isEqualTo(3_100L)
+        assertThat(scannerDao.findReplaySuppression(5L, "VG-V3-COLLAPSE")).isNull()
         assertThat(scannerDao.loadQueuedScans().map { it.ticketCode }).contains("VG-V3-QUEUE")
 
         database.close()
@@ -307,7 +385,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -317,9 +396,9 @@ class FastCheckDatabaseMigrationTest {
         assertNullableReasonCodeColumn(sqliteDb.query("PRAGMA table_info(recent_flush_outcomes)"), "reasonCode")
         assertNullableReasonCodeColumn(sqliteDb.query("PRAGMA table_info(scan_replay_cache)"), "reasonCode")
         assertThat(scannerDao.findAttendee(5, "VG-V2-COLLAPSE")?.id).isEqualTo(41L)
-        assertThat(scannerDao.findReplaySuppression("VG-V2-COLLAPSE")?.seenAtEpochMillis).isEqualTo(4_100L)
+        assertThat(scannerDao.findReplaySuppression(5L, "VG-V2-COLLAPSE")).isNull()
         assertThat(scannerDao.loadQueuedScans().single().ticketCode).isEqualTo("VG-V2-QUEUE")
-        assertThat(scannerDao.loadRecentFlushOutcomes(limit = 5).map { it.ticketCode }).contains("VG-V2-OUTCOME")
+        assertThat(scannerDao.loadRecentFlushOutcomes(limit = 5)).isEmpty()
 
         database.close()
     }
@@ -336,7 +415,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -366,7 +446,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -416,7 +497,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -448,7 +530,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -654,6 +737,96 @@ class FastCheckDatabaseMigrationTest {
         database.execSQL("ALTER TABLE attendees ADD COLUMN checkedInAt TEXT")
         database.execSQL("ALTER TABLE attendees ADD COLUMN checkedOutAt TEXT")
         database.version = 6
+        database.close()
+    }
+
+    private fun createVersion11SchemaWithDurableEvidence(databaseFile: File) {
+        createVersion6Schema(databaseFile)
+        val raw = SQLiteDatabase.openDatabase(databaseFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+        val database = Class.forName("androidx.sqlite.db.framework.FrameworkSQLiteDatabase")
+            .getDeclaredConstructor(SQLiteDatabase::class.java)
+            .apply { isAccessible = true }
+            .newInstance(raw) as SupportSQLiteDatabase
+        FastCheckDatabaseMigrations.MIGRATION_6_7.migrate(database)
+        FastCheckDatabaseMigrations.MIGRATION_7_8.migrate(database)
+        FastCheckDatabaseMigrations.MIGRATION_8_9.migrate(database)
+        FastCheckDatabaseMigrations.MIGRATION_9_10.migrate(database)
+        FastCheckDatabaseMigrations.MIGRATION_10_11.migrate(database)
+        listOf(
+            "queued_scans", "attendees", "sync_metadata", "local_admission_overlays",
+            "quarantined_scans", "local_replay_suppression", "latest_flush_snapshot",
+            "recent_flush_outcomes", "event_local_buckets"
+        ).forEach { database.execSQL("DELETE FROM $it") }
+        database.execSQL(
+            """
+            INSERT INTO queued_scans
+                (id, eventId, ticketCode, idempotencyKey, createdAt, scannedAt, direction,
+                 entranceName, operatorName, replayed, lastAttemptAt)
+            VALUES (101, 41, 'Q-41', 'queue-41', 1234, '2026-08-03T09:00:00Z', 'in',
+                    'North', 'Operator', 0, '2026-08-03T09:01:00Z')
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO attendees
+                (id, eventId, ticketCode, firstName, lastName, email, ticketType, allowedCheckins,
+                 checkinsRemaining, paymentStatus, isCurrentlyInside, checkedInAt, checkedOutAt, updatedAt)
+            VALUES (201, 41, 'T-41', 'Ada', 'Lovelace', 'ada@example.test', 'VIP', 2, 1,
+                    'completed', 1, '2026-08-03T08:00:00Z', NULL, '2026-08-03T08:30:00Z')
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO local_admission_overlays
+                (id, eventId, attendeeId, ticketCode, idempotencyKey, direction, state,
+                 createdAtEpochMillis, overlayScannedAt, expectedRemainingAfterOverlay,
+                 operatorName, entranceName, conflictReasonCode, conflictMessage)
+            VALUES (301, 41, 201, 'T-41', 'overlay-41', 'in', 'CONFLICT_REJECTED', 1300,
+                    '2026-08-03T09:00:01Z', 0, 'Operator', 'North', 'capacity', 'Full')
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO quarantined_scans
+                (id, originalQueueId, eventId, ticketCode, idempotencyKey, createdAt, scannedAt,
+                 direction, entranceName, operatorName, lastAttemptAt, quarantineReason,
+                 quarantineMessage, quarantinedAt, batchAttributed, overlayStateAtQuarantine)
+            VALUES (401, 101, 41, 'X-41', 'quarantine-41', 1400, '2026-08-03T09:00:02Z',
+                    'in', 'North', 'Operator', '2026-08-03T09:02:00Z', 'contract_error',
+                    'Bad response', '2026-08-03T09:03:00Z', 1, 'PENDING_LOCAL')
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO sync_metadata
+                (eventId, lastServerTime, lastSuccessfulSyncAt, lastSyncType, attendeeCount,
+                 bootstrapCompletedAt, lastAttemptedSyncAt, consecutiveFailures, lastErrorCode,
+                 lastErrorAt, lastFullReconcileAt, incrementalCyclesSinceFullReconcile,
+                 consecutiveIntegrityFailures, integrityFailuresInForegroundSession,
+                 lastInvalidationsCheckpoint, lastEventSyncVersion)
+            VALUES (41, '2026-08-03T08:30:00Z', '2026-08-03T08:30:00Z', 'incremental', 1,
+                    '2026-08-03T07:00:00Z', '2026-08-03T08:29:00Z', 2, 'timeout',
+                    '2026-08-03T08:29:30Z', '2026-08-03T07:00:00Z', 3, 4, 5, 6, 7)
+            """.trimIndent()
+        )
+        database.execSQL("INSERT INTO local_replay_suppression (id, ticketCode, seenAtEpochMillis) VALUES (501, 'T-41', 1500)")
+        database.execSQL(
+            """
+            INSERT INTO latest_flush_snapshot
+                (snapshotId, executionStatus, uploadedCount, retryableRemainingCount, authExpired,
+                 backlogRemaining, summaryMessage, completedAt)
+            VALUES (1, 'COMPLETED', 1, 0, 0, 0, 'Legacy display', '2026-08-03T09:04:00Z')
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO recent_flush_outcomes
+                (id, outcomeOrder, idempotencyKey, ticketCode, outcome, message, reasonCode, completedAt)
+            VALUES (601, 0, 'legacy-outcome', 'T-41', 'SUCCESS', 'Legacy', NULL,
+                    '2026-08-03T09:04:00Z')
+            """.trimIndent()
+        )
+        database.version = 11
         database.close()
     }
 
@@ -1300,6 +1473,7 @@ class FastCheckDatabaseMigrationTest {
         }
 
         override suspend fun syncAttendees(
+            authorization: String,
             since: String?,
             cursor: String?,
             sinceInvalidationId: Long,
@@ -1308,7 +1482,7 @@ class FastCheckDatabaseMigrationTest {
             error("Not used in this migration test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
+        override suspend fun uploadScans(authorization: String, body: UploadScansRequest): Response<UploadScansResponse> {
             lastUploadBody = body
             return Response.success(
                 UploadScansResponse(

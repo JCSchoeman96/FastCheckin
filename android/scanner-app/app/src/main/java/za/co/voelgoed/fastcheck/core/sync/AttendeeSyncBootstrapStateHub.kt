@@ -10,13 +10,12 @@ import za.co.voelgoed.fastcheck.domain.policy.AttendeeSyncBootstrapGate
  */
 @Singleton
 class AttendeeSyncBootstrapStateHub @Inject constructor() : AttendeeSyncBootstrapGate {
-    @Volatile
-    private var initialBootstrapSyncEventId: Long? = null
+    private val activeEventIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
 
-    fun notifyInitialBootstrapSyncActive(eventId: Long?) {
-        initialBootstrapSyncEventId = eventId
+    fun notifyInitialBootstrapSyncActive(eventId: Long, active: Boolean) {
+        if (active) activeEventIds.add(eventId) else activeEventIds.remove(eventId)
     }
 
     override fun isInitialBootstrapSyncInProgressForEvent(eventId: Long): Boolean =
-        initialBootstrapSyncEventId == eventId
+        eventId in activeEventIds
 }

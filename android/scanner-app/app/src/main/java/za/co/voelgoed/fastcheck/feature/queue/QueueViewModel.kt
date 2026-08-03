@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinator
 import za.co.voelgoed.fastcheck.core.autoflush.AutoFlushCoordinatorState
@@ -23,13 +25,16 @@ import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
 import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
 import za.co.voelgoed.fastcheck.domain.model.ScanDirection
 import za.co.voelgoed.fastcheck.domain.usecase.QueueCapturedScanUseCase
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class QueueViewModel @Inject constructor(
     private val queueCapturedScanUseCase: QueueCapturedScanUseCase,
     private val autoFlushCoordinator: AutoFlushCoordinator,
     private val connectivityMonitor: ConnectivityMonitor,
     private val mobileScanRepository: MobileScanRepository,
+    private val contextStore: AuthenticatedEventContextStore = QueueViewModelTestContextStore,
     private val queueUiStateFactory: QueueUiStateFactory
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(QueueUiState())
@@ -37,11 +42,15 @@ class QueueViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(
+            contextStore.observeIdentity().flatMapLatest { identity ->
+                if (identity == null) return@flatMapLatest flowOf(
+                    QueueObservation(SyncUiState.Idle, 0, null, 0, null)
+                )
+                combine(
                 combine(
                     autoFlushCoordinator.state,
-                    mobileScanRepository.observePendingQueueDepth(),
-                    mobileScanRepository.observeLatestFlushReport(),
+                    mobileScanRepository.observePendingQueueDepth(identity.eventId),
+                    mobileScanRepository.observeLatestFlushReport(identity.eventId),
                     connectivityMonitor.isOnline
                 ) { coordinatorState, queueDepth, latestFlushReport, isOnline ->
                     QueueCoreObservation(
@@ -51,11 +60,14 @@ class QueueViewModel @Inject constructor(
                         isOnline = isOnline
                     )
                 },
-                mobileScanRepository.observeQuarantineCount(),
-                mobileScanRepository.observeLatestQuarantineSummary()
+                mobileScanRepository.observeQuarantineCount(identity.eventId),
+                mobileScanRepository.observeLatestQuarantineSummary(identity.eventId)
             ) { core, quarantineCount, quarantineSummary ->
+                val activeCoordinatorState =
+                    core.coordinatorState.takeIf { it.identity == identity }
+                        ?: AutoFlushCoordinatorState(identity = identity)
                 val syncUiState =
-                    core.coordinatorState.toSyncUiState(
+                    activeCoordinatorState.toSyncUiState(
                         isOnline = core.isOnline,
                         latestFlushReport = core.latestFlushReport,
                         pendingQueueDepth = core.queueDepth
@@ -67,6 +79,7 @@ class QueueViewModel @Inject constructor(
                     quarantineCount = quarantineCount,
                     quarantineSummary = quarantineSummary
                 )
+                }
             }.collectLatest { observation ->
                 _uiState.update { current ->
                     current.copy(
@@ -172,4 +185,14 @@ class QueueViewModel @Inject constructor(
         const val MANUAL_OPERATOR_NAME = "Manual Debug"
         const val MANUAL_ENTRANCE_NAME = "Manual Debug"
     }
+}
+
+private object QueueViewModelTestContextStore : AuthenticatedEventContextStore {
+    private val identity = za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(0, 1)
+    override suspend fun capture() = null
+    override suspend fun currentIdentity() = identity
+    override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unsupported")
+    override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+    override suspend fun isCurrent(sessionGeneration: Long) = sessionGeneration == 1L
+    override fun observeIdentity() = kotlinx.coroutines.flow.flowOf(identity)
 }

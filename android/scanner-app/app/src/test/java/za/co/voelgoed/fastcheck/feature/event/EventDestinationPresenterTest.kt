@@ -10,6 +10,7 @@ import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.EventAttendeeCacheMetrics
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
+import za.co.voelgoed.fastcheck.domain.model.EventBucket
 import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.sync.BootstrapSyncStatus
@@ -437,4 +438,24 @@ class EventDestinationPresenterTest {
             authenticatedAtEpochMillis = 1_773_388_800_000,
             expiresAtEpochMillis = 1_773_392_400_000
         )
+
+    @Test
+    fun parkedBacklogUsesNeutralNonBlockingBanner() {
+        val state = presenter.present(
+            session(), QueueUiState(), SyncScreenUiState(), null, null,
+            buckets = listOf(EventBucket(9, "Other", null, "PARKED", 14, 0, 0, 0, 1))
+        )
+        assertThat(state.parkedDataBanner?.title).isEqualTo("Parked event data retained")
+        assertThat(state.parkedDataBanner?.tone).isEqualTo(StatusTone.Neutral)
+        assertThat(state.parkedDataBanner?.actionLabel).isEqualTo("View parked events")
+    }
+
+    @Test
+    fun parkedConflictOrQuarantineUsesAmberWarningTone() {
+        val state = presenter.present(
+            session(), QueueUiState(), SyncScreenUiState(), null, null,
+            buckets = listOf(EventBucket(9, "Other", null, "AUTH_REQUIRED", 0, 0, 1, 2, 1))
+        )
+        assertThat(state.parkedDataBanner?.tone).isEqualTo(StatusTone.Warning)
+    }
 }

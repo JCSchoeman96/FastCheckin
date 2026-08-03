@@ -20,6 +20,7 @@ import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
 fun EventDestinationScreen(
     uiState: EventDestinationUiState,
     onOperatorAction: (EventOperatorAction) -> Unit,
+    onViewParkedEvents: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val spacing = MaterialTheme.fastCheck.spacing
@@ -54,6 +55,14 @@ fun EventDestinationScreen(
                 title = banner.title,
                 message = banner.message,
                 tone = banner.tone,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        uiState.parkedDataBanner?.let { banner ->
+            FcBanner(
+                title = banner.title, message = banner.message, tone = banner.tone,
+                actionLabel = banner.actionLabel, onAction = onViewParkedEvents,
                 modifier = Modifier.fillMaxWidth()
             )
         }
