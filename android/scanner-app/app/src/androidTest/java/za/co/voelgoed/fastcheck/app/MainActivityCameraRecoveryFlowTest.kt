@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -240,8 +241,10 @@ class MainActivityCameraRecoveryFlowTest {
             val settingsIntent = launchedSettingsIntents.single()
             assertThat(settingsIntent.action)
                 .isEqualTo(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            val targetPackage =
+                InstrumentationRegistry.getInstrumentation().targetContext.packageName
             assertThat(settingsIntent.dataString)
-                .isEqualTo("package:za.co.voelgoed.fastcheck")
+                .isEqualTo("package:$targetPackage")
         } finally {
             scenario.close()
         }

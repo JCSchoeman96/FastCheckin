@@ -256,6 +256,8 @@ extensions.configure<ApplicationExtension>("android") {
 
     buildTypes {
         debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             buildConfigField("boolean", "ENABLE_HTTP_BASIC_LOGGING", "true")
         }
         release {

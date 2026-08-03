@@ -9,7 +9,10 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import za.co.voelgoed.fastcheck.core.concurrency.EventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.data.local.ScannerDao
+import za.co.voelgoed.fastcheck.data.repository.EventBucketRepository
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
@@ -44,6 +47,15 @@ class HiltBindingsTest {
     @Inject
     lateinit var scannerDao: ScannerDao
 
+    @Inject
+    lateinit var authenticatedEventContextStore: AuthenticatedEventContextStore
+
+    @Inject
+    lateinit var eventBucketRepository: EventBucketRepository
+
+    @Inject
+    lateinit var eventOperationMutexRegistry: EventOperationMutexRegistry
+
     @Before
     fun setUp() {
         hiltRule.inject()
@@ -58,5 +70,8 @@ class HiltBindingsTest {
         assertThat(flushQueuedScansUseCase).isNotNull()
         assertThat(scanCapturePipeline).isNotNull()
         assertThat(scannerDao).isNotNull()
+        assertThat(authenticatedEventContextStore).isNotNull()
+        assertThat(eventBucketRepository).isNotNull()
+        assertThat(eventOperationMutexRegistry).isNotNull()
     }
 }
