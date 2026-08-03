@@ -110,7 +110,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
 
     conversation_id = insert_conversation!()
-    {:ok, encrypted} = Crypto.encrypt("hi")
+    raw_body_marker = "<RAW_WHATSAPP_BODY:secret-marker>"
+    {:ok, encrypted} = Crypto.encrypt(raw_body_marker)
 
     args = %{
       "provider_message_id" => "wamid.worker-flow-1",
@@ -131,7 +132,10 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert_received {:whatsapp_request, request}
     assert request.options.json["to"] == "27821234567"
     assert request.options.json["text"]["body"] =~ "Welkom by FastCheck Tickets"
-    refute inspect(args) =~ "hi"
+    assert args["text_body_encrypted"] == encrypted
+    refute args["text_body_encrypted"] == raw_body_marker
+    refute Map.has_key?(args, "text_body")
+    refute log =~ raw_body_marker
     refute log =~ "+27821234567"
     refute log =~ "27821234567"
     refute log =~ "Welkom by FastCheck Tickets"
