@@ -46,6 +46,7 @@ import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.event.EventDestinationRoute
+import za.co.voelgoed.fastcheck.feature.event.EventBucketsViewModel
 import za.co.voelgoed.fastcheck.feature.event.EventMetricsViewModel
 import za.co.voelgoed.fastcheck.feature.event.model.EventOperatorAction
 import za.co.voelgoed.fastcheck.feature.queue.QueueViewModel
@@ -105,6 +106,7 @@ class MainActivity : ComponentActivity() {
     private val scanningViewModel: ScanningViewModel by viewModels()
     private val eventMetricsViewModel: EventMetricsViewModel by viewModels()
     private val diagnosticsViewModel: DiagnosticsViewModel by viewModels()
+    private val eventBucketsViewModel: EventBucketsViewModel by viewModels()
     private val searchViewModel: SearchViewModel by viewModels()
 
     private val scannerSourceSelectionResolver = ScannerSourceSelectionResolver()
@@ -178,7 +180,9 @@ class MainActivity : ComponentActivity() {
                             eventMetricsViewModel = eventMetricsViewModel,
                             queueViewModel = queueViewModel,
                             syncViewModel = syncViewModel,
-                            onOperatorAction = ::handleEventOperatorAction
+                            eventBucketsViewModel = eventBucketsViewModel,
+                            onOperatorAction = ::handleEventOperatorAction,
+                            onViewParkedEvents = appShellViewModel::openDiagnostics
                         )
                     }
                 },
@@ -228,14 +232,6 @@ class MainActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    sessionGateViewModel.blockingMessage.collectLatest { message ->
-                        if (message != null) {
-                            authViewModel.setExternalError(message)
-                        }
-                    }
-                }
-
                 launch {
                     authViewModel.uiState.collectLatest { state ->
                         binding.sessionSummaryValue.text =
@@ -292,7 +288,7 @@ class MainActivity : ComponentActivity() {
                                 binding.loginGateContainer.visibility = android.view.View.GONE
                                 binding.authenticatedShellComposeView.visibility =
                                     android.view.View.VISIBLE
-                                if (becameAuthenticated) {
+                                if (sessionChanged) {
                                     autoFlushCoordinator.requestFlush(AutoFlushTrigger.PostLogin)
                                 }
                                 shouldEvaluateAutoRequestOnScanEntry =
@@ -657,12 +653,14 @@ internal fun appSettingsIntent(packageName: String): Intent =
 
 internal data class AuthenticatedSessionKey(
     val eventId: Long,
+    val sessionGeneration: Long?,
     val authenticatedAtEpochMillis: Long
 ) {
     companion object {
         fun from(session: za.co.voelgoed.fastcheck.domain.model.ScannerSession): AuthenticatedSessionKey =
             AuthenticatedSessionKey(
                 eventId = session.eventId,
+                sessionGeneration = session.sessionGeneration,
                 authenticatedAtEpochMillis = session.authenticatedAtEpochMillis
             )
     }

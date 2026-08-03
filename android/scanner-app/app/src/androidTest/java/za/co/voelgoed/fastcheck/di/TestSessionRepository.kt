@@ -29,10 +29,6 @@ class TestSessionRepository @Inject constructor() : SessionRepository {
         currentSessionValue = null
     }
 
-    override suspend fun clearBlockedRestoredSession() {
-        currentSessionValue = null
-    }
-
     fun setCurrentSession(session: ScannerSession?) {
         currentSessionValue = session
     }

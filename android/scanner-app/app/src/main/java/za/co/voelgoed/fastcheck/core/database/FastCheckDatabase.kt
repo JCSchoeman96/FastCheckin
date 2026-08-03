@@ -29,7 +29,7 @@ import za.co.voelgoed.fastcheck.data.local.SyncMetadataEntity
         QuarantinedScanEntity::class,
         EventLocalBucketEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class FastCheckDatabase : RoomDatabase() {

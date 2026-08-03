@@ -17,7 +17,7 @@ import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfigResolver
 import za.co.voelgoed.fastcheck.core.network.AuthHeaderInterceptor
 import za.co.voelgoed.fastcheck.core.network.HttpLoggingPolicy
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.BuildConfig
 
@@ -31,8 +31,8 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideAuthHeaderInterceptor(sessionProvider: SessionProvider): AuthHeaderInterceptor =
-        AuthHeaderInterceptor(sessionProvider)
+    fun provideAuthHeaderInterceptor(contextStore: AuthenticatedEventContextStore): AuthHeaderInterceptor =
+        AuthHeaderInterceptor(contextStore)
 
     @Provides
     @Singleton

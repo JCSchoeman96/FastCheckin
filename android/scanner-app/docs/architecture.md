@@ -41,9 +41,10 @@ Repo/runtime mode truth must stay explicit:
 - `core.network`: Retrofit/OkHttp and current Phoenix mobile API boundary
 - `core.database`: Room database
 - `core.sync`: attendee sync orchestration (foreground periodic + triggers,
-  single-flight via repository mutex, full reconcile scheduling)
+  per-event serialization, full reconcile scheduling)
+- `core.session`: authoritative encrypted event/token/generation context and
+  compensated session transitions
 - `core.datastore`: non-secret session metadata
-- `core.security`: secure JWT storage
 - `data.remote`: DTOs matching current Phoenix JSON payloads
 - `data.local`: Room entities and DAO
 - `data.mapper`: layer-to-layer mapping only
@@ -77,8 +78,9 @@ Repo/runtime mode truth must stay explicit:
 - Foreground/manual flush orchestration is owned by `core.autoflush`.
 - WorkManager remains the mechanism for retryable background flush when/if
   enqueued.
-- JWT auth is isolated behind `SessionRepository`, `SessionAuthGateway`,
-  `SessionProvider`, `SessionVault`, and session metadata storage.
+- JWT auth is isolated behind `SessionRepository`, `SessionAuthGateway`, the
+  authoritative `AuthenticatedEventContextStore`, and the session transition
+  coordinator. DataStore session metadata is display-only.
 - The backend request path remains:
   `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
 - No per-scan durable Postgres mutation belongs in the request path before
@@ -106,7 +108,7 @@ Hilt is used for:
 
 - Retrofit/OkHttp wiring
 - Room database and DAO injection
-- secure token vault and DataStore-backed stores
+- encrypted authenticated-context and DataStore-backed display stores
 - repository bindings
 - queue/flush use cases
 - scanner decode handler and ML Kit scanner engine

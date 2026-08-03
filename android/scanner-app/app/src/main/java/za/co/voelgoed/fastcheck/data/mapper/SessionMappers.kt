@@ -27,17 +27,8 @@ fun ScannerSession.toMetadata(): SessionMetadata =
         eventShortname = eventShortname,
         expiresInSeconds = expiresInSeconds,
         authenticatedAtEpochMillis = authenticatedAtEpochMillis,
-        expiresAtEpochMillis = expiresAtEpochMillis
-    )
-
-fun SessionMetadata.toDomain(): ScannerSession =
-    ScannerSession(
-        eventId = eventId,
-        eventName = eventName,
-        eventShortname = eventShortname,
-        expiresInSeconds = expiresInSeconds,
-        authenticatedAtEpochMillis = authenticatedAtEpochMillis,
-        expiresAtEpochMillis = expiresAtEpochMillis
+        expiresAtEpochMillis = expiresAtEpochMillis,
+        sessionGeneration = sessionGeneration
     )
 
 private fun String?.toNullableValue(): String? =

@@ -15,6 +15,7 @@ import za.co.voelgoed.fastcheck.feature.queue.QueueUploadRecoveryVisibility
 import za.co.voelgoed.fastcheck.feature.queue.QueueUiState
 import za.co.voelgoed.fastcheck.feature.sync.BootstrapSyncStatus
 import za.co.voelgoed.fastcheck.feature.sync.SyncScreenUiState
+import za.co.voelgoed.fastcheck.domain.model.EventBucket
 
 class EventDestinationPresenter(
     private val clock: Clock = Clock.systemUTC()
@@ -24,7 +25,8 @@ class EventDestinationPresenter(
         queueUiState: QueueUiState,
         syncUiState: SyncScreenUiState,
         currentEventSyncStatus: AttendeeSyncStatus?,
-        attendeeMetrics: EventAttendeeCacheMetrics?
+        attendeeMetrics: EventAttendeeCacheMetrics?,
+        buckets: List<EventBucket> = emptyList()
     ): EventDestinationUiState {
         val currentCacheStatus = currentCacheStatus(session, currentEventSyncStatus)
 
@@ -40,6 +42,7 @@ class EventDestinationPresenter(
                     currentCacheStatus = currentCacheStatus,
                     attendeeMetrics = attendeeMetrics
                 ),
+            parkedDataBanner = parkedDataBanner(session.eventId, buckets),
             operatorActions = operatorActionsFor(queueUiState = queueUiState, syncUiState = syncUiState),
             attendeeSection =
                 attendeeSectionFor(
@@ -55,6 +58,26 @@ class EventDestinationPresenter(
                     queueUiState = queueUiState,
                     currentEventSyncStatus = currentEventSyncStatus
                 )
+        )
+    }
+
+    private fun parkedDataBanner(activeEventId: Long, buckets: List<EventBucket>): EventBannerUiModel? {
+        val parked = buckets.filter { it.eventId != activeEventId && it.state != "ARCHIVED" }
+            .filter { it.pendingUploadCount + it.awaitingReconciliationCount + it.conflictCount + it.quarantinedCount > 0 }
+        if (parked.isEmpty()) return null
+        val pending = parked.sumOf { it.pendingUploadCount }
+        val reconciliation = parked.sumOf { it.awaitingReconciliationCount }
+        val review = parked.sumOf { it.conflictCount + it.quarantinedCount }
+        val details = buildList {
+            if (pending > 0) add("$pending pending upload")
+            if (reconciliation > 0) add("$reconciliation awaiting reconciliation")
+            if (review > 0) add("$review requiring review")
+        }.joinToString()
+        return EventBannerUiModel(
+            title = "Parked event data retained",
+            message = "${parked.size} inactive event bucket(s) remain safely stored: $details. Work resumes when that event is opened again.",
+            tone = if (review > 0) StatusTone.Warning else StatusTone.Neutral,
+            actionLabel = "View parked events"
         )
     }
 

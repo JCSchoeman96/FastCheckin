@@ -23,6 +23,48 @@ interface ScannerDao {
 
     @Query(
         """
+        SELECT * FROM event_local_buckets
+        ORDER BY CASE
+            WHEN state = 'ACTIVE' THEN 1
+            WHEN state = 'AUTH_REQUIRED' AND (conflictCountSnapshot > 0 OR quarantinedScanCountSnapshot > 0) THEN 2
+            WHEN state = 'PARKED' AND (conflictCountSnapshot > 0 OR quarantinedScanCountSnapshot > 0) THEN 3
+            WHEN state IN ('AUTH_REQUIRED', 'PARKED') AND
+                (pendingScanCountSnapshot > 0 OR awaitingReconciliationCountSnapshot > 0) THEN 4
+            WHEN state IN ('AUTH_REQUIRED', 'PARKED') THEN 5
+            WHEN state = 'ARCHIVED' THEN 7
+            ELSE 6
+        END,
+        updatedAtEpochMillis DESC,
+        eventId ASC
+        """
+    )
+    fun observeAllEventLocalBuckets(): Flow<List<EventLocalBucketEntity>>
+
+    @Query("UPDATE event_local_buckets SET state = 'PARKED', updatedAtEpochMillis = :updatedAt WHERE state = 'ACTIVE'")
+    suspend fun parkActiveEventLocalBuckets(updatedAt: Long)
+
+    @Query("UPDATE event_local_buckets SET state = :state, updatedAtEpochMillis = :updatedAt WHERE eventId = :eventId")
+    suspend fun setEventLocalBucketState(eventId: Long, state: String, updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE event_local_buckets SET
+            pendingScanCountSnapshot = (SELECT COUNT(*) FROM queued_scans WHERE eventId = :eventId AND replayed = 0),
+            activeOverlayCountSnapshot = (SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = :eventId AND state IN ('PENDING_LOCAL', 'CONFIRMED_LOCAL_UNSYNCED', 'CONFLICT_DUPLICATE', 'CONFLICT_REJECTED')),
+            awaitingReconciliationCountSnapshot = (SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = :eventId AND state = 'CONFIRMED_LOCAL_UNSYNCED'),
+            conflictCountSnapshot = (SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = :eventId AND state IN ('CONFLICT_DUPLICATE', 'CONFLICT_REJECTED')),
+            quarantinedScanCountSnapshot = (SELECT COUNT(*) FROM quarantined_scans WHERE eventId = :eventId),
+            updatedAtEpochMillis = :updatedAt
+        WHERE eventId = :eventId
+        """
+    )
+    suspend fun refreshEventLocalBucketSnapshots(eventId: Long, updatedAt: Long)
+
+    @Query("UPDATE event_local_buckets SET lastFlushAttemptAtEpochMillis = :attemptAt, updatedAtEpochMillis = :attemptAt WHERE eventId = :eventId")
+    suspend fun markEventBucketFlushAttempt(eventId: Long, attemptAt: Long)
+
+    @Query(
+        """
         UPDATE event_local_buckets
         SET state = :state,
             pendingScanCountSnapshot = :pendingScanCountSnapshot,
@@ -246,6 +288,12 @@ interface ScannerDao {
     @Query("SELECT * FROM queued_scans WHERE replayed = 0 ORDER BY createdAt ASC, id ASC LIMIT :limit")
     suspend fun loadQueuedScans(limit: Int): List<QueuedScanEntity>
 
+    @Query(
+        "SELECT * FROM queued_scans WHERE eventId = :eventId AND replayed = 0 " +
+            "ORDER BY createdAt ASC, id ASC LIMIT :limit"
+    )
+    suspend fun loadQueuedScansForEvent(eventId: Long, limit: Int): List<QueuedScanEntity>
+
     @Query("UPDATE queued_scans SET replayed = 1, lastAttemptAt = :attemptedAt WHERE id IN (:ids)")
     suspend fun markQueuedScansReplayed(ids: List<Long>, attemptedAt: String)
 
@@ -258,8 +306,14 @@ interface ScannerDao {
     @Query("SELECT COUNT(*) FROM quarantined_scans")
     suspend fun countQuarantinedScans(): Int
 
+    @Query("SELECT COUNT(*) FROM quarantined_scans WHERE eventId = :eventId")
+    suspend fun countQuarantinedScansForEvent(eventId: Long): Int
+
     @Query("SELECT COUNT(*) FROM quarantined_scans")
     fun observeQuarantinedScanCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM quarantined_scans WHERE eventId = :eventId")
+    fun observeQuarantinedScanCountForEvent(eventId: Long): Flow<Int>
 
     @Query(
         """
@@ -271,6 +325,12 @@ interface ScannerDao {
     suspend fun loadLatestQuarantinedScan(): QuarantinedScanEntity?
 
     @Query(
+        "SELECT * FROM quarantined_scans WHERE eventId = :eventId " +
+            "ORDER BY quarantinedAt DESC, id DESC LIMIT 1"
+    )
+    suspend fun loadLatestQuarantinedScanForEvent(eventId: Long): QuarantinedScanEntity?
+
+    @Query(
         """
         SELECT * FROM quarantined_scans
         ORDER BY quarantinedAt DESC, id DESC
@@ -278,6 +338,12 @@ interface ScannerDao {
         """
     )
     fun observeLatestQuarantinedScan(): Flow<QuarantinedScanEntity?>
+
+    @Query(
+        "SELECT * FROM quarantined_scans WHERE eventId = :eventId " +
+            "ORDER BY quarantinedAt DESC, id DESC LIMIT 1"
+    )
+    fun observeLatestQuarantinedScanForEvent(eventId: Long): Flow<QuarantinedScanEntity?>
 
     @Transaction
     suspend fun insertQuarantinedScansAndDeleteQueued(
@@ -295,8 +361,32 @@ interface ScannerDao {
     @Query("SELECT COUNT(*) FROM queued_scans WHERE replayed = 0")
     suspend fun countPendingScans(): Int
 
+    @Query("SELECT COUNT(*) FROM queued_scans WHERE eventId = :eventId AND replayed = 0")
+    suspend fun countPendingScansForEvent(eventId: Long): Int
+
     @Query("SELECT COUNT(*) FROM queued_scans WHERE replayed = 0")
     fun observePendingScanCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM queued_scans WHERE eventId = :eventId AND replayed = 0")
+    fun observePendingScanCountForEvent(eventId: Long): Flow<Int>
+
+    @Query(
+        "SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = :eventId " +
+            "AND state IN ('PENDING_LOCAL', 'CONFIRMED_LOCAL_UNSYNCED', 'CONFLICT_DUPLICATE', 'CONFLICT_REJECTED')"
+    )
+    suspend fun countActiveOverlaysForEvent(eventId: Long): Int
+
+    @Query(
+        "SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = :eventId " +
+            "AND state = 'CONFIRMED_LOCAL_UNSYNCED'"
+    )
+    suspend fun countAwaitingReconciliationForEvent(eventId: Long): Int
+
+    @Query(
+        "SELECT COUNT(*) FROM local_admission_overlays WHERE eventId = :eventId " +
+            "AND state IN ('CONFLICT_DUPLICATE', 'CONFLICT_REJECTED')"
+    )
+    suspend fun countConflictsForEvent(eventId: Long): Int
 
     @Query("SELECT * FROM scan_replay_cache WHERE idempotencyKey = :idempotencyKey LIMIT 1")
     suspend fun findReplayCache(idempotencyKey: String): ReplayCacheEntity?
@@ -310,11 +400,11 @@ interface ScannerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertReplayCache(entries: List<ReplayCacheEntity>)
 
-    @Query("SELECT * FROM local_replay_suppression WHERE ticketCode = :ticketCode LIMIT 1")
-    suspend fun findReplaySuppression(ticketCode: String): LocalReplaySuppressionEntity?
+    @Query("SELECT * FROM local_replay_suppression WHERE eventId = :eventId AND ticketCode = :ticketCode LIMIT 1")
+    suspend fun findReplaySuppression(eventId: Long, ticketCode: String): LocalReplaySuppressionEntity?
 
-    @Query("DELETE FROM local_replay_suppression WHERE ticketCode = :ticketCode")
-    suspend fun deleteReplaySuppression(ticketCode: String)
+    @Query("DELETE FROM local_replay_suppression WHERE eventId = :eventId AND ticketCode = :ticketCode")
+    suspend fun deleteReplaySuppression(eventId: Long, ticketCode: String)
 
     @Query("DELETE FROM local_replay_suppression")
     suspend fun clearReplaySuppression()
@@ -322,11 +412,17 @@ interface ScannerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertReplaySuppression(entry: LocalReplaySuppressionEntity)
 
-    @Query("SELECT * FROM latest_flush_snapshot WHERE snapshotId = 1 LIMIT 1")
+    @Query("SELECT * FROM latest_flush_snapshot WHERE eventId = :eventId LIMIT 1")
+    suspend fun loadLatestFlushSnapshot(eventId: Long): LatestFlushSnapshotEntity?
+
+    @Query("SELECT * FROM latest_flush_snapshot ORDER BY completedAt DESC LIMIT 1")
     suspend fun loadLatestFlushSnapshot(): LatestFlushSnapshotEntity?
 
-    @Query("SELECT * FROM latest_flush_snapshot WHERE snapshotId = 1 LIMIT 1")
-    fun observeLatestFlushSnapshot(): Flow<LatestFlushSnapshotEntity?>
+    @Query("SELECT * FROM latest_flush_snapshot WHERE eventId = :eventId LIMIT 1")
+    fun observeLatestFlushSnapshot(eventId: Long): Flow<LatestFlushSnapshotEntity?>
+
+    @Query("SELECT * FROM latest_flush_snapshot ORDER BY completedAt DESC LIMIT 1")
+    fun observeMostRecentFlushSnapshotAcrossEvents(): Flow<LatestFlushSnapshotEntity?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLatestFlushSnapshot(snapshot: LatestFlushSnapshotEntity)
@@ -334,17 +430,25 @@ interface ScannerDao {
     @Query("DELETE FROM latest_flush_snapshot")
     suspend fun clearLatestFlushSnapshot()
 
+    @Query("DELETE FROM recent_flush_outcomes WHERE eventId = :eventId")
+    suspend fun clearRecentFlushOutcomes(eventId: Long)
+
     @Query("DELETE FROM recent_flush_outcomes")
-    suspend fun clearRecentFlushOutcomes()
+    suspend fun clearAllRecentFlushOutcomes()
+
+    suspend fun clearRecentFlushOutcomes() = clearAllRecentFlushOutcomes()
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRecentFlushOutcomes(outcomes: List<RecentFlushOutcomeEntity>)
 
-    @Query("SELECT * FROM recent_flush_outcomes ORDER BY outcomeOrder ASC LIMIT :limit")
+    @Query("SELECT * FROM recent_flush_outcomes WHERE eventId = :eventId ORDER BY outcomeOrder ASC LIMIT :limit")
+    suspend fun loadRecentFlushOutcomes(eventId: Long, limit: Int = 5): List<RecentFlushOutcomeEntity>
+
+    @Query("SELECT * FROM recent_flush_outcomes ORDER BY eventId DESC, outcomeOrder ASC LIMIT :limit")
     suspend fun loadRecentFlushOutcomes(limit: Int = 5): List<RecentFlushOutcomeEntity>
 
-    @Query("SELECT * FROM recent_flush_outcomes ORDER BY outcomeOrder ASC LIMIT 5")
-    fun observeRecentFlushOutcomes(): Flow<List<RecentFlushOutcomeEntity>>
+    @Query("SELECT * FROM recent_flush_outcomes WHERE eventId = :eventId ORDER BY outcomeOrder ASC LIMIT 5")
+    fun observeRecentFlushOutcomes(eventId: Long): Flow<List<RecentFlushOutcomeEntity>>
 
     @Query("SELECT * FROM sync_metadata WHERE eventId = :eventId LIMIT 1")
     suspend fun loadSyncMetadata(eventId: Long): SyncMetadataEntity?
@@ -368,7 +472,13 @@ interface ScannerDao {
     // payload time. We treat it as a proxy for “latest successful local sync”.
     // If server_time can be out-of-order or otherwise unstable, introduce a local completion
     // timestamp (e.g. syncedAtEpochMs) and order by that instead.
-    fun observeLatestSyncMetadata(): Flow<SyncMetadataEntity?>
+    fun observeMostRecentlySyncedEventMetadata(): Flow<SyncMetadataEntity?>
+
+    @Query("SELECT * FROM sync_metadata WHERE eventId = :eventId LIMIT 1")
+    fun observeSyncMetadataForEvent(eventId: Long): Flow<SyncMetadataEntity?>
+
+    @Query("SELECT * FROM sync_metadata")
+    fun observeAllSyncMetadata(): Flow<List<SyncMetadataEntity>>
 
     @Upsert
     suspend fun upsertSyncMetadata(metadata: SyncMetadataEntity)
@@ -386,11 +496,12 @@ interface ScannerDao {
 
     @Transaction
     suspend fun replaceLatestFlushState(
+        eventId: Long,
         snapshot: LatestFlushSnapshotEntity,
         outcomes: List<RecentFlushOutcomeEntity>
     ) {
         upsertLatestFlushSnapshot(snapshot)
-        clearRecentFlushOutcomes()
+        clearRecentFlushOutcomes(eventId)
 
         if (outcomes.isNotEmpty()) {
             insertRecentFlushOutcomes(outcomes)
@@ -398,30 +509,42 @@ interface ScannerDao {
     }
 
     @Transaction
+    suspend fun replaceLatestFlushState(
+        snapshot: LatestFlushSnapshotEntity,
+        outcomes: List<RecentFlushOutcomeEntity>
+    ) = replaceLatestFlushState(snapshot.eventId, snapshot, outcomes)
+
+    @Transaction
     suspend fun enqueueAcceptedAdmission(
         scan: QueuedScanEntity,
         overlay: LocalAdmissionOverlayEntity
     ): Long {
-        val replaySuppression = findReplaySuppression(scan.ticketCode)
+        val replaySuppression = findReplaySuppression(scan.eventId, scan.ticketCode)
         if (replaySuppression != null) {
             val ageMillis = scan.createdAt - replaySuppression.seenAtEpochMillis
             if (ageMillis < AdmissionRuntimePolicy.LOCAL_REPLAY_SUPPRESSION_WINDOW.toMillis()) {
+                refreshEventLocalBucketSnapshots(scan.eventId, scan.createdAt)
                 return -1L
             }
 
-            deleteReplaySuppression(scan.ticketCode)
+            deleteReplaySuppression(scan.eventId, scan.ticketCode)
         }
 
         val insertedId = insertQueuedScan(scan)
-        if (insertedId == -1L) return -1L
+        if (insertedId == -1L) {
+            refreshEventLocalBucketSnapshots(scan.eventId, scan.createdAt)
+            return -1L
+        }
 
         upsertLocalAdmissionOverlay(overlay)
         upsertReplaySuppression(
             LocalReplaySuppressionEntity(
+                eventId = scan.eventId,
                 ticketCode = scan.ticketCode,
                 seenAtEpochMillis = scan.createdAt
             )
         )
+        refreshEventLocalBucketSnapshots(scan.eventId, scan.createdAt)
         return insertedId
     }
 }

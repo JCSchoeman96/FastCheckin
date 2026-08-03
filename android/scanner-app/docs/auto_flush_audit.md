@@ -52,7 +52,7 @@
 | **Latest flush state / summary** | Same `latestFlushReport()`; `executionStatus` and `summaryMessage` mapped in `DiagnosticsUiStateFactory`. |
 | **Attendee count** | `SyncRepository.currentSyncStatus()` → `CurrentPhoenixSyncRepository`: `sessionRepository.currentSession()?.let { scannerDao.loadSyncMetadata(it.eventId) }?.toDomain()`; `AttendeeSyncStatus.attendeeCount` from `SyncMetadataEntity`. |
 | **Sync status (last sync time, sync type)** | Same `currentSyncStatus()`; `lastSuccessfulSyncAt`, `syncType` from sync metadata. |
-| **Auth/session** | `SessionRepository.currentSession()`, `SessionProvider.bearerToken()`; token expiry derived from session in factory. |
+| **Auth/session** | `AuthenticatedEventContextStore.capture()` supplies one event/token/generation snapshot; expiry is coordinated without consulting display metadata. |
 
 **Post-B1 refresh and observation:**
 

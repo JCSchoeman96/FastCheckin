@@ -16,24 +16,29 @@ import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.SyncUiState
 import za.co.voelgoed.fastcheck.core.designsystem.semantic.toSyncUiState
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
+import za.co.voelgoed.fastcheck.data.repository.EventBucketRepository
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.QuarantineSummary
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class DiagnosticsViewModel @Inject constructor(
     private val apiEnvironmentConfig: ApiEnvironmentConfig,
     private val sessionRepository: SessionRepository,
-    private val sessionProvider: SessionProvider,
+    private val contextStore: AuthenticatedEventContextStore,
     private val syncRepository: SyncRepository,
     private val mobileScanRepository: MobileScanRepository,
     private val autoFlushCoordinator: AutoFlushCoordinator,
     private val connectivityMonitor: ConnectivityMonitor,
-    private val diagnosticsUiStateFactory: DiagnosticsUiStateFactory
+    private val diagnosticsUiStateFactory: DiagnosticsUiStateFactory,
+    private val eventBucketRepository: EventBucketRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(DiagnosticsUiState())
     val uiState: StateFlow<DiagnosticsUiState> = _uiState.asStateFlow()
@@ -42,12 +47,21 @@ class DiagnosticsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(
+            eventBucketRepository.observeAllBuckets().collect { buckets ->
+                _uiState.update { it.copy(parkedBuckets = buckets.filter { bucket -> bucket.state != "ACTIVE" && bucket.state != "ARCHIVED" }) }
+            }
+        }
+        viewModelScope.launch {
+            contextStore.observeIdentity().flatMapLatest { identity ->
+                if (identity == null) return@flatMapLatest flowOf(
+                    DiagnosticsInputs(SessionInputs(), null, 0, null, SyncUiState.Idle, 0, null)
+                )
+                combine(
                 combine(
                     sessionInput,
-                    syncRepository.observeLastSyncedStatus(),
-                    mobileScanRepository.observePendingQueueDepth(),
-                    mobileScanRepository.observeLatestFlushReport(),
+                    syncRepository.observeLastSyncedStatus(identity),
+                    mobileScanRepository.observePendingQueueDepth(identity.eventId),
+                    mobileScanRepository.observeLatestFlushReport(identity.eventId),
                     autoFlushCoordinator.state
                 ) { inputs, lastSyncedStatus, queueDepth, latestFlushReport, coordinatorState ->
                     DiagnosticsProjection(
@@ -58,8 +72,8 @@ class DiagnosticsViewModel @Inject constructor(
                         coordinatorState = coordinatorState
                     )
                 },
-                mobileScanRepository.observeQuarantineCount(),
-                mobileScanRepository.observeLatestQuarantineSummary(),
+                mobileScanRepository.observeQuarantineCount(identity.eventId),
+                mobileScanRepository.observeLatestQuarantineSummary(identity.eventId),
                 connectivityMonitor.isOnline
             ) { projection, quarantineCount, quarantineSummary, isOnline ->
                 val syncUiState =
@@ -77,6 +91,7 @@ class DiagnosticsViewModel @Inject constructor(
                     quarantineCount = quarantineCount,
                     quarantineSummary = quarantineSummary
                 )
+                }
             }.collect { diagnosticsInputs ->
                 _uiState.update {
                     diagnosticsUiStateFactory.create(
@@ -89,7 +104,7 @@ class DiagnosticsViewModel @Inject constructor(
                         syncUiState = diagnosticsInputs.syncUiState,
                         quarantineCount = diagnosticsInputs.quarantineCount,
                         latestQuarantineSummary = diagnosticsInputs.quarantineSummary
-                    )
+                    ).copy(parkedBuckets = it.parkedBuckets)
                 }
             }
         }
@@ -101,7 +116,7 @@ class DiagnosticsViewModel @Inject constructor(
             // Durable operational truth (queue depth, persisted flush outcomes) must remain
             // repository/Room-observed to avoid reintroducing UI drift.
         val session = sessionRepository.currentSession()
-        val tokenPresent = !sessionProvider.bearerToken().isNullOrBlank()
+        val tokenPresent = contextStore.capture() != null
         sessionInput.value =
             SessionInputs(
                 session = session,

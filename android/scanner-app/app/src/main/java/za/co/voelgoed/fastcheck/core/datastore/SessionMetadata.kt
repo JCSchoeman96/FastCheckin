@@ -7,5 +7,5 @@ data class SessionMetadata(
     val expiresInSeconds: Int,
     val authenticatedAtEpochMillis: Long,
     val expiresAtEpochMillis: Long,
-    val lastSyncCursor: String? = null
+    val sessionGeneration: Long? = null
 )

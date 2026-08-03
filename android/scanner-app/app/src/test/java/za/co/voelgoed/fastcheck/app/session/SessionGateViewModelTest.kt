@@ -16,7 +16,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
-import za.co.voelgoed.fastcheck.data.repository.UnresolvedAdmissionStateGate
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 
@@ -24,12 +23,10 @@ import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 @RunWith(RobolectricTestRunner::class)
 class SessionGateViewModelTest {
     private val clock = Clock.fixed(Instant.parse("2026-04-02T09:00:00Z"), ZoneOffset.UTC)
-    private lateinit var unresolvedAdmissionStateGate: UnresolvedAdmissionStateGate
 
     @Before
     fun setUp() {
         Dispatchers.setMain(kotlinx.coroutines.test.StandardTestDispatcher())
-        unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate.fromLoader { emptyList() }
     }
 
     @After
@@ -43,7 +40,7 @@ class SessionGateViewModelTest {
             val repository = FakeSessionRepository(currentSession = null)
 
             val viewModel =
-                SessionGateViewModel(repository, unresolvedAdmissionStateGate, clock, AppSessionRouteResolver())
+                SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
 
             assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.LoggedOut)
@@ -57,7 +54,7 @@ class SessionGateViewModelTest {
             val repository = FakeSessionRepository(currentSession = expiredSession)
 
             val viewModel =
-                SessionGateViewModel(repository, unresolvedAdmissionStateGate, clock, AppSessionRouteResolver())
+                SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
 
             assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.LoggedOut)
@@ -73,7 +70,7 @@ class SessionGateViewModelTest {
             val repository = FakeSessionRepository(currentSession = session)
 
             val viewModel =
-                SessionGateViewModel(repository, unresolvedAdmissionStateGate, clock, AppSessionRouteResolver())
+                SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
 
             assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.Authenticated(session))
@@ -86,7 +83,7 @@ class SessionGateViewModelTest {
             val session = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
 
             val viewModel =
-                SessionGateViewModel(repository, unresolvedAdmissionStateGate, clock, AppSessionRouteResolver())
+                SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
             viewModel.onLoginSucceeded(session)
 
@@ -101,7 +98,7 @@ class SessionGateViewModelTest {
                     currentSession = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
                 )
             val viewModel =
-                SessionGateViewModel(repository, unresolvedAdmissionStateGate, clock, AppSessionRouteResolver())
+                SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
 
             viewModel.logout()
@@ -112,19 +109,17 @@ class SessionGateViewModelTest {
         }
 
     @Test
-    fun unresolvedOtherEventStateBlocksAuthenticatedRoute() =
+    fun unresolvedOtherEventStateDoesNotBlockAuthenticatedRoute() =
         runTest {
-            unresolvedAdmissionStateGate = UnresolvedAdmissionStateGate.fromLoader { listOf(99L) }
             val session = testSession(expiresAtEpochMillis = clock.millis() + 60_000L)
             val repository = FakeSessionRepository(currentSession = session)
 
             val viewModel =
-                SessionGateViewModel(repository, unresolvedAdmissionStateGate, clock, AppSessionRouteResolver())
+                SessionGateViewModel(repository, clock, AppSessionRouteResolver())
             advanceUntilIdle()
 
-            assertThat(viewModel.route.value).isEqualTo(AppSessionRoute.LoggedOut)
-            assertThat(viewModel.blockingMessage.value).contains("event 99")
-            assertThat(repository.blockedRestoreClearCallCount).isEqualTo(1)
+            assertThat(viewModel.route.value).isInstanceOf(AppSessionRoute.Authenticated::class.java)
+            assertThat(repository.blockedRestoreClearCallCount).isEqualTo(0)
         }
 
     private class FakeSessionRepository(
@@ -150,10 +145,6 @@ class SessionGateViewModelTest {
             currentSession = null
         }
 
-        override suspend fun clearBlockedRestoredSession() {
-            blockedRestoreClearCallCount += 1
-            currentSession = null
-        }
     }
 
     private fun testSession(expiresAtEpochMillis: Long) =

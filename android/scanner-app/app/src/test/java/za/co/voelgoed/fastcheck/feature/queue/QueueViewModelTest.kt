@@ -86,25 +86,25 @@ class QueueViewModelTest {
             throw UnsupportedOperationException()
         }
 
-        override suspend fun flushQueuedScans(maxBatchSize: Int): FlushReport {
+        override suspend fun flushQueuedScans(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult {
             throw UnsupportedOperationException()
         }
 
-        override suspend fun pendingQueueDepth(): Int = depthFlow.value
+        override suspend fun pendingQueueDepth(eventId: Long): Int = depthFlow.value
 
-        override suspend fun latestFlushReport(): FlushReport? = reportFlow.value
+        override suspend fun latestFlushReport(eventId: Long): FlushReport? = reportFlow.value
 
-        override fun observePendingQueueDepth(): Flow<Int> = depthFlow
+        override fun observePendingQueueDepth(eventId: Long): Flow<Int> = depthFlow
 
-        override fun observeLatestFlushReport(): Flow<FlushReport?> = reportFlow
+        override fun observeLatestFlushReport(eventId: Long): Flow<FlushReport?> = reportFlow
 
-        override suspend fun quarantineCount(): Int = 0
+        override suspend fun quarantineCount(eventId: Long): Int = 0
 
-        override suspend fun latestQuarantineSummary(): QuarantineSummary? = null
+        override suspend fun latestQuarantineSummary(eventId: Long): QuarantineSummary? = null
 
-        override fun observeQuarantineCount(): Flow<Int> = flowOf(0)
+        override fun observeQuarantineCount(eventId: Long): Flow<Int> = flowOf(0)
 
-        override fun observeLatestQuarantineSummary(): Flow<QuarantineSummary?> = flowOf(null)
+        override fun observeLatestQuarantineSummary(eventId: Long): Flow<QuarantineSummary?> = flowOf(null)
     }
 
     @Test

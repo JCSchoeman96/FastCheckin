@@ -78,8 +78,8 @@ class QueuedScanMappersTest {
                 summaryMessage = "Flush completed."
             )
 
-        val snapshot = report.toSnapshotEntity("2026-03-12T10:16:00Z")
-        val outcomes = report.toOutcomeEntities("2026-03-12T10:16:00Z")
+        val snapshot = report.toSnapshotEntity(5L, "2026-03-12T10:16:00Z")
+        val outcomes = report.toOutcomeEntities(5L, "2026-03-12T10:16:00Z")
         val restored = toFlushReport(snapshot, outcomes)
 
         assertThat(restored.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)

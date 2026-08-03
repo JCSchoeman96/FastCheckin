@@ -57,7 +57,7 @@ class SyncViewModelTest {
         override suspend fun currentSyncStatus(): AttendeeSyncStatus? =
             lastSyncResult ?: currentStatusProvider()
 
-        override fun observeLastSyncedStatus(): Flow<AttendeeSyncStatus?> =
+        override fun observeLastSyncedStatus(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> =
             error("Not used in this test")
     }
 

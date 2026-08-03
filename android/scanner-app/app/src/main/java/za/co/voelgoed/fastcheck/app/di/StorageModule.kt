@@ -13,8 +13,6 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import za.co.voelgoed.fastcheck.core.datastore.DataStoreSessionMetadataStore
 import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
-import za.co.voelgoed.fastcheck.core.security.EncryptedPrefsSessionVault
-import za.co.voelgoed.fastcheck.core.security.SessionVault
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -32,8 +30,4 @@ object StorageModule {
         dataStore: DataStore<Preferences>
     ): SessionMetadataStore = DataStoreSessionMetadataStore(dataStore)
 
-    @Provides
-    @Singleton
-    fun provideSessionVault(@ApplicationContext context: Context): SessionVault =
-        EncryptedPrefsSessionVault(context)
 }

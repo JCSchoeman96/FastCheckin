@@ -19,7 +19,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import za.co.voelgoed.fastcheck.core.database.FastCheckDatabase
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginResponse
 import za.co.voelgoed.fastcheck.data.remote.MobileSyncResponse
@@ -62,11 +64,11 @@ class CurrentPhoenixMobileScanRepositoryTest {
             CurrentPhoenixMobileScanRepository(
                 scannerDao = database.scannerDao(),
                 remoteDataSource = PhoenixMobileRemoteDataSource(api, clock),
-                sessionProvider = object : SessionProvider {
-                    override suspend fun bearerToken(): String = "jwt-token"
-                },
                 flushResultClassifier = FlushResultClassifier(),
-                clock = clock
+                clock = clock,
+                contextStore = contextStore("jwt-token"),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository
             )
     }
 
@@ -89,7 +91,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
     fun treatsReplaySuppressionRowsAsExpiredOutsideWindowAndReplacesThemInline() = runTest {
         val first = repository.queueScan(sampleScan(idempotencyKey = "idem-1", createdAt = 1_000L))
         val second = repository.queueScan(sampleScan(idempotencyKey = "idem-2", createdAt = 4_000L))
-        val suppressionRow = database.scannerDao().findReplaySuppression("VG-001")
+        val suppressionRow = database.scannerDao().findReplaySuppression(5L, "VG-001")
 
         assertThat(first).isInstanceOf(QueueCreationResult.Enqueued::class.java)
         assertThat(second).isInstanceOf(QueueCreationResult.Enqueued::class.java)
@@ -150,8 +152,8 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         assertThat(firstResult).isInstanceOf(QueueCreationResult.Enqueued::class.java)
         assertThat(secondResult).isEqualTo(QueueCreationResult.ReplaySuppressed)
-        assertThat(database.scannerDao().findReplaySuppression("VG-001")).isNotNull()
-        assertThat(database.scannerDao().findReplaySuppression(" VG-001 ")).isNull()
+        assertThat(database.scannerDao().findReplaySuppression(5L, "VG-001")).isNotNull()
+        assertThat(database.scannerDao().findReplaySuppression(5L, " VG-001 ")).isNull()
         assertThat(api.lastUploadBody?.scans?.map { it.ticket_code }).containsExactly("VG-001")
     }
 
@@ -181,9 +183,9 @@ class CurrentPhoenixMobileScanRepositoryTest {
             )
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
         val remainingQueued = database.scannerDao().loadQueuedScans()
-        val persistedReport = repository.latestFlushReport()
+        val persistedReport = repository.latestFlushReport(5)
 
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
         assertThat(report.itemOutcomes.map { it.outcome })
@@ -196,6 +198,39 @@ class CurrentPhoenixMobileScanRepositoryTest {
         assertThat(report.retryableRemainingCount).isEqualTo(2)
         assertThat(remainingQueued.map { it.idempotencyKey }).containsExactly("idem-1", "idem-3").inOrder()
         assertThat(persistedReport?.summaryMessage).isEqualTo("Flush completed with retry backlog.")
+    }
+
+    @Test
+    fun eventBFlushUploadsOnlyEventBAndLeavesEventAQueueUnchanged() = runTest {
+        val dao = database.scannerDao()
+        dao.insertQueuedScan(sampleScan("a-1", "A-1", 1_000L).toEntityForTest())
+        dao.insertQueuedScan(sampleScan("b-1", "B-1", 2_000L).copy(eventId = 6L).toEntityForTest())
+        val eventBRepository =
+            CurrentPhoenixMobileScanRepository(
+                scannerDao = dao,
+                remoteDataSource = PhoenixMobileRemoteDataSource(api, clock),
+                flushResultClassifier = FlushResultClassifier(),
+                clock = clock,
+                contextStore = contextStore("event-b-token", eventId = 6L),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository
+            )
+        api.uploadResponse = successResponse(
+            UploadScansResponse(
+                data = UploadScansPayload(
+                    results = listOf(UploadedScanResult("b-1", "success", "Check-in successful")),
+                    processed = 1
+                ),
+                error = null,
+                message = null
+            )
+        )
+
+        eventBRepository.flushQueuedScans(50)
+
+        assertThat(api.lastUploadBody?.scans?.map { it.idempotency_key }).containsExactly("b-1")
+        assertThat(dao.loadQueuedScansForEvent(5L, 50).map { it.idempotencyKey }).containsExactly("a-1")
+        assertThat(dao.loadQueuedScansForEvent(6L, 50)).isEmpty()
     }
 
     @Test
@@ -230,7 +265,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
             )
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
 
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
         assertThat(api.lastUploadBody?.scans?.size).isEqualTo(50)
@@ -238,24 +273,23 @@ class CurrentPhoenixMobileScanRepositoryTest {
     }
 
     @Test
-    fun marksFlushAuthExpiredAndPreservesQueueWhenTokenMissing() = runTest {
+    fun noSessionSkipsFlushAndPreservesQueue() = runTest {
         val noTokenRepository =
             CurrentPhoenixMobileScanRepository(
                 scannerDao = database.scannerDao(),
                 remoteDataSource = PhoenixMobileRemoteDataSource(api, clock),
-                sessionProvider = object : SessionProvider {
-                    override suspend fun bearerToken(): String? = null
-                },
                 flushResultClassifier = FlushResultClassifier(),
-                clock = clock
+                clock = clock,
+                contextStore = contextStore(null),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository
             )
 
         noTokenRepository.queueScan(sampleScan(idempotencyKey = "idem-auth", createdAt = 10_000L))
 
-        val report = noTokenRepository.flushQueuedScans(maxBatchSize = 50)
+        val result = noTokenRepository.flushQueuedScans(maxBatchSize = 50)
 
-        assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.AUTH_EXPIRED)
-        assertThat(report.itemOutcomes.single().outcome).isEqualTo(FlushItemOutcome.AUTH_EXPIRED)
+        assertThat(result).isEqualTo(FlushInvocationResult.SkippedNoSession)
         assertThat(database.scannerDao().countPendingScans()).isEqualTo(1)
     }
 
@@ -394,7 +428,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
         seedQueueAndPendingOverlay(idempotencyKey = "idem-q-400")
         api.uploadResponse = errorResponse(400, """{"error":"bad_request"}""")
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
         val dao = database.scannerDao()
 
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
@@ -416,7 +450,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 UploadScansResponse(data = null, error = "missing", message = "no data")
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
         val dao = database.scannerDao()
 
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
@@ -440,7 +474,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
-        assertThat(repository.quarantineCount()).isEqualTo(0)
+        assertThat(repository.quarantineCount(5)).isEqualTo(0)
     }
 
     /**
@@ -452,12 +486,12 @@ class CurrentPhoenixMobileScanRepositoryTest {
         repository.queueScan(sampleScan(idempotencyKey = "idem-500", createdAt = 10_000L))
         api.uploadResponse = errorResponse(503, """{"error":"unavailable"}""")
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
         val dao = database.scannerDao()
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
-        assertThat(repository.quarantineCount()).isEqualTo(0)
+        assertThat(repository.quarantineCount(5)).isEqualTo(0)
         assertThat(report.backpressureObserved).isTrue()
         assertThat(report.httpStatusCode).isEqualTo(503)
     }
@@ -472,7 +506,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 headers = Headers.headersOf("Retry-After", "5", "x-ratelimit-remaining", "0")
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
         val dao = database.scannerDao()
 
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.RETRYABLE_FAILURE)
@@ -495,7 +529,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 headers = Headers.headersOf("Retry-After", DateTimeFormatter.RFC_1123_DATE_TIME.format(retryInstant.atZone(ZoneOffset.UTC)))
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
 
         assertThat(report.retryAfterMillis).isEqualTo(45_000L)
     }
@@ -510,7 +544,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 headers = Headers.headersOf("Retry-After", "Wed, 12 Mar 2026 09:59:59 GMT")
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
 
         assertThat(report.retryAfterMillis).isNull()
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.RETRYABLE_FAILURE)
@@ -548,7 +582,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                     )
             )
 
-        val report = repository.flushQueuedScans(maxBatchSize = 50)
+        val report = repository.flushQueuedScans(maxBatchSize = 50).attemptedReport()
 
         assertThat(report.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
         assertThat(report.rateLimitLimit).isEqualTo(50)
@@ -570,7 +604,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
 
         assertThat(dao.countPendingScans()).isEqualTo(1)
         assertThat(dao.countQuarantinedScans()).isEqualTo(0)
-        assertThat(repository.quarantineCount()).isEqualTo(0)
+        assertThat(repository.quarantineCount(5)).isEqualTo(0)
     }
 
     @Test
@@ -580,11 +614,11 @@ class CurrentPhoenixMobileScanRepositoryTest {
             CurrentPhoenixMobileScanRepository(
                 scannerDao = database.scannerDao(),
                 remoteDataSource = PhoenixMobileRemoteDataSource(api),
-                sessionProvider = object : SessionProvider {
-                    override suspend fun bearerToken(): String? = null
-                },
                 flushResultClassifier = FlushResultClassifier(),
-                clock = clock
+                clock = clock,
+                contextStore = contextStore(null),
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository
             )
 
         noTokenRepository.flushQueuedScans(maxBatchSize = 50)
@@ -638,6 +672,17 @@ class CurrentPhoenixMobileScanRepositoryTest {
             operatorName = "Scanner 1"
         )
 
+    private fun PendingScan.toEntityForTest() = QueuedScanEntity(
+        eventId = eventId,
+        ticketCode = ticketCode,
+        idempotencyKey = idempotencyKey,
+        createdAt = createdAt,
+        scannedAt = scannedAt,
+        direction = direction.name.lowercase(),
+        entranceName = entranceName,
+        operatorName = operatorName
+    )
+
     private class FakePhoenixMobileApi : PhoenixMobileApi {
         var lastUploadBody: UploadScansRequest? = null
         var uploadIoException: IOException? = null
@@ -655,6 +700,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
         }
 
         override suspend fun syncAttendees(
+            authorization: String,
             since: String?,
             cursor: String?,
             sinceInvalidationId: Long,
@@ -663,7 +709,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
             error("Not used in this test")
         }
 
-        override suspend fun uploadScans(body: UploadScansRequest): Response<UploadScansResponse> {
+        override suspend fun uploadScans(authorization: String, body: UploadScansRequest): Response<UploadScansResponse> {
             lastUploadBody = body
             uploadIoException?.let { throw it }
             return uploadResponse
@@ -674,6 +720,17 @@ class CurrentPhoenixMobileScanRepositoryTest {
         body: UploadScansResponse,
         headers: Headers = Headers.headersOf()
     ): Response<UploadScansResponse> = Response.success(body, headers)
+
+    private fun contextStore(token: String?, eventId: Long = 5L): AuthenticatedEventContextStore =
+        object : AuthenticatedEventContextStore {
+            private val context = token?.let { AuthenticatedEventContext(eventId, it, 1, 0, Long.MAX_VALUE) }
+            override suspend fun capture() = context
+            override suspend fun currentIdentity() = context?.identity
+            override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unused")
+            override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+            override suspend fun isCurrent(sessionGeneration: Long) = context?.sessionGeneration == sessionGeneration
+            override fun observeIdentity() = kotlinx.coroutines.flow.flowOf(context?.identity)
+        }
 
     private fun errorResponse(
         code: Int,
@@ -690,4 +747,7 @@ class CurrentPhoenixMobileScanRepositoryTest {
                 .request(Request.Builder().url("https://example.test/api/v1/mobile/scans").build())
                 .build()
         )
+
+    private fun FlushInvocationResult.attemptedReport() =
+        (this as FlushInvocationResult.Attempted).report
 }

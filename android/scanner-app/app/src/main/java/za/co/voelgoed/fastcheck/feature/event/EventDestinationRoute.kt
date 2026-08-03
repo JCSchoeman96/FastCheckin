@@ -17,13 +17,16 @@ fun EventDestinationRoute(
     eventMetricsViewModel: EventMetricsViewModel,
     queueViewModel: QueueViewModel,
     syncViewModel: SyncViewModel,
+    eventBucketsViewModel: EventBucketsViewModel,
     onOperatorAction: (EventOperatorAction) -> Unit,
+    onViewParkedEvents: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val attendeeMetrics by eventMetricsViewModel.attendeeMetrics.collectAsStateWithLifecycle()
     val queueUiState by queueViewModel.uiState.collectAsStateWithLifecycle()
     val syncUiState by syncViewModel.uiState.collectAsStateWithLifecycle()
     val currentEventSyncStatus by syncViewModel.currentEventSyncStatus.collectAsStateWithLifecycle()
+    val buckets by eventBucketsViewModel.buckets.collectAsStateWithLifecycle()
 
     LaunchedEffect(session.eventId, session.authenticatedAtEpochMillis) {
         eventMetricsViewModel.observeSession(
@@ -34,19 +37,21 @@ fun EventDestinationRoute(
 
     val presenter = remember { EventDestinationPresenter() }
     val uiState =
-        remember(session, queueUiState, syncUiState, currentEventSyncStatus, attendeeMetrics) {
+        remember(session, queueUiState, syncUiState, currentEventSyncStatus, attendeeMetrics, buckets) {
             presenter.present(
                 session = session,
                 queueUiState = queueUiState,
                 syncUiState = syncUiState,
                 currentEventSyncStatus = currentEventSyncStatus,
-                attendeeMetrics = attendeeMetrics
+                attendeeMetrics = attendeeMetrics,
+                buckets = buckets
             )
         }
 
     EventDestinationScreen(
         uiState = uiState,
         onOperatorAction = onOperatorAction,
+        onViewParkedEvents = onViewParkedEvents,
         modifier = modifier
     )
 }

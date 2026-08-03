@@ -18,8 +18,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.random.Random
 import za.co.voelgoed.fastcheck.core.connectivity.ConnectivityMonitor
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
+import za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult
 import za.co.voelgoed.fastcheck.domain.model.FlushExecutionStatus
 import za.co.voelgoed.fastcheck.domain.usecase.FlushQueuedScansUseCase
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 
 class DefaultAutoFlushCoordinator @Inject constructor(
     private val flushQueuedScansUseCase: FlushQueuedScansUseCase,
@@ -27,6 +29,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private val connectivityProvider: ConnectivityProvider,
     private val connectivityMonitor: ConnectivityMonitor,
     private val clock: Clock,
+    private val contextStore: AuthenticatedEventContextStore = DefaultCoordinatorTestContextStore,
     private val maxBatchSize: Int = AutoFlushBatchPolicy.DEFAULT_BATCH_SIZE,
     private val afterEnqueueDebounceMs: Long = 250,
     private val retryBackoff: RetryBackoff =
@@ -48,6 +51,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
     private val mutex = Mutex()
     @Volatile
     private var flushRequestedWhileBusy: Boolean = false
+    private var identityRequestedWhileBusy: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity? = null
 
     private var flushJob: Job? = null
     private var scheduledStartJob: Job? = null
@@ -64,7 +68,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                 lastOnline = online
                 if (!restored) return@collectLatest
 
-                val hasBacklog = mobileScanRepository.pendingQueueDepth() > 0
+                val eventId = contextStore.currentIdentity()?.eventId ?: return@collectLatest
+                val hasBacklog = mobileScanRepository.pendingQueueDepth(eventId) > 0
                 if (!hasBacklog) return@collectLatest
 
                 requestFlush(AutoFlushTrigger.ConnectivityRestored)
@@ -96,9 +101,14 @@ class DefaultAutoFlushCoordinator @Inject constructor(
 
     override fun requestFlush(trigger: AutoFlushTrigger) {
         coordinatorScope.launch {
+            val identity = contextStore.currentIdentity() ?: return@launch
             val startedOrScheduled: Boolean =
                 mutex.withLock {
                     if (flushJob?.isActive == true) {
+                        if (_state.value.identity != identity) {
+                            identityRequestedWhileBusy = identity
+                            return@withLock false
+                        }
                         // If we're already flushing, never start a concurrent run.
                         // However, immediate triggers should still cancel any pending
                         // debounce/retry so we don't fire redundant work later.
@@ -126,7 +136,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
 
                             flushJob =
                                 coordinatorScope.launch {
-                                    startFlushLoop()
+                                    startFlushLoop(identity)
                                 }
                             true
                         }
@@ -144,7 +154,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
 
                             flushJob =
                                 coordinatorScope.launch {
-                                    startFlushLoop()
+                                    startFlushLoop(identity)
                                 }
                             true
                         }
@@ -166,7 +176,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                                         if (flushJob?.isActive == true) return@withLock
                                         flushJob =
                                             coordinatorScope.launch {
-                                                startFlushLoop()
+                                                startFlushLoop(identity)
                                             }
                                     }
                                 }.also { job ->
@@ -190,16 +200,22 @@ class DefaultAutoFlushCoordinator @Inject constructor(
         }
     }
 
-    private suspend fun startFlushLoop() {
+    private suspend fun startFlushLoop(identity: za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity) {
         try {
             while (true) {
+                if (contextStore.currentIdentity() != identity) return
                 _state.value =
                     _state.value.copy(
                         isFlushing = true,
                         isRetryScheduled = false,
-                        nextRetryAtEpochMs = null
+                        nextRetryAtEpochMs = null,
+                        identity = identity
                     )
-                val report = flushQueuedScansUseCase.run(maxBatchSize = currentBatchSize)
+                val invocation = flushQueuedScansUseCase.run(maxBatchSize = currentBatchSize)
+                if (invocation == FlushInvocationResult.SkippedNoSession) return
+                invocation as FlushInvocationResult.Attempted
+                val report = invocation.report
+                if (contextStore.currentIdentity() != identity) return
                 adaptBatchSize(report)
 
                 _state.value =
@@ -254,6 +270,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                                     mutex.withLock {
                                         if (flushJob?.isActive == true) return@withLock
                                         if (!connectivityProvider.isOnline()) return@withLock
+                                        if (contextStore.currentIdentity() != identity) return@withLock
 
                                         // Consume attempt only when we actually start the retry execution.
                                         retryAttempt = attempt
@@ -265,7 +282,7 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                                             )
                                         flushJob =
                                             coordinatorScope.launch {
-                                                startFlushLoop()
+                                                startFlushLoop(identity)
                                             }
                                     }
                                 }.also { job ->
@@ -304,7 +321,8 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                             return@withLock false
                         }
 
-                        mobileScanRepository.pendingQueueDepth() > 0
+                        contextStore.currentIdentity() == identity &&
+                            mobileScanRepository.pendingQueueDepth(identity.eventId) > 0
                     }
 
                 if (!shouldRunAgain) {
@@ -312,12 +330,22 @@ class DefaultAutoFlushCoordinator @Inject constructor(
                 }
             }
         } finally {
-            mutex.withLock {
+            val nextIdentity = mutex.withLock {
                 flushJob = null
                 flushRequestedWhileBusy = false
                 scheduledStartJob?.cancel()
                 scheduledStartJob = null
-                _state.value = _state.value.copy(isFlushing = false)
+                if (_state.value.identity == identity) {
+                    _state.value = _state.value.copy(isFlushing = false)
+                }
+                identityRequestedWhileBusy.also { identityRequestedWhileBusy = null }
+            }
+            if (nextIdentity != null && contextStore.currentIdentity() == nextIdentity) {
+                mutex.withLock {
+                    if (flushJob?.isActive != true) {
+                        flushJob = coordinatorScope.launch { startFlushLoop(nextIdentity) }
+                    }
+                }
             }
         }
     }
@@ -363,4 +391,14 @@ class DefaultAutoFlushCoordinator @Inject constructor(
             }
         }
     }
+}
+
+private object DefaultCoordinatorTestContextStore : AuthenticatedEventContextStore {
+    private val identity = za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(0, 1)
+    override suspend fun capture() = za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext(0, "test-only", 1, 0, Long.MAX_VALUE)
+    override suspend fun currentIdentity() = identity
+    override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unsupported")
+    override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+    override suspend fun isCurrent(sessionGeneration: Long) = sessionGeneration == 1L
+    override fun observeIdentity() = kotlinx.coroutines.flow.flowOf(identity)
 }

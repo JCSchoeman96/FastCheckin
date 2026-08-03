@@ -9,6 +9,7 @@ data class EventDestinationUiState(
     val statusChip: EventStatusChipUiModel,
     val statusMessage: String,
     val attentionBanner: EventBannerUiModel? = null,
+    val parkedDataBanner: EventBannerUiModel? = null,
     val operatorActions: List<EventOperatorActionUiModel> = emptyList(),
     val attendeeSection: EventSectionUiModel,
     val queueSection: EventSectionUiModel,
@@ -23,7 +24,8 @@ data class EventStatusChipUiModel(
 data class EventBannerUiModel(
     val title: String,
     val message: String,
-    val tone: StatusTone
+    val tone: StatusTone,
+    val actionLabel: String? = null
 )
 
 data class EventSectionUiModel(

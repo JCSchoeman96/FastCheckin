@@ -2,6 +2,7 @@ package za.co.voelgoed.fastcheck.core.autoflush
 
 import kotlinx.coroutines.flow.StateFlow
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity
 
 /**
  * Single-process coordinator for all scan-queue flush orchestration.
@@ -21,7 +22,8 @@ data class AutoFlushCoordinatorState(
     val lastFlushReport: FlushReport? = null,
     val isRetryScheduled: Boolean = false,
     val retryAttempt: Int = 0,
-    val nextRetryAtEpochMs: Long? = null
+    val nextRetryAtEpochMs: Long? = null,
+    val identity: AuthenticatedEventIdentity? = null
 )
 
 sealed interface AutoFlushTrigger {
@@ -32,4 +34,3 @@ sealed interface AutoFlushTrigger {
     data object PostLogin : AutoFlushTrigger
     data object PostSync : AutoFlushTrigger
 }
-

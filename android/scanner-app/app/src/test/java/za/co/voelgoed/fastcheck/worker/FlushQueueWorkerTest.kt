@@ -83,7 +83,19 @@ class FlushQueueWorkerTest {
         assertThat(result).isInstanceOf(ListenableWorker.Result.Success::class.java)
     }
 
-    private fun buildWorker(useCase: RecordingFlushQueuedScansUseCase): FlushQueueWorker {
+    @Test
+    fun returnsSuccessWhenNoAuthenticatedEventExists() = runTest {
+        val worker = buildWorker(
+            object : FlushQueuedScansUseCase {
+                override suspend fun run(maxBatchSize: Int) =
+                    za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.SkippedNoSession
+            }
+        )
+
+        assertThat(worker.doWork()).isInstanceOf(ListenableWorker.Result.Success::class.java)
+    }
+
+    private fun buildWorker(useCase: FlushQueuedScansUseCase): FlushQueueWorker {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val factory =
             object : WorkerFactory() {
@@ -113,9 +125,12 @@ class FlushQueueWorkerTest {
     ) : FlushQueuedScansUseCase {
         var lastBatchSize: Int? = null
 
-        override suspend fun run(maxBatchSize: Int): FlushReport {
+        override suspend fun run(maxBatchSize: Int): za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult {
             lastBatchSize = maxBatchSize
-            return report
+            return za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted(
+                za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity(5, 1),
+                report
+            )
         }
     }
 }

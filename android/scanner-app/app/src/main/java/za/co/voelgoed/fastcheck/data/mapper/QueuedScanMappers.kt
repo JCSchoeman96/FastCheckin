@@ -48,8 +48,9 @@ fun PendingScan.toPayload(): QueuedScanPayload =
         operator_name = operatorName
     )
 
-fun FlushReport.toSnapshotEntity(completedAt: String): LatestFlushSnapshotEntity =
+fun FlushReport.toSnapshotEntity(eventId: Long, completedAt: String): LatestFlushSnapshotEntity =
     LatestFlushSnapshotEntity(
+        eventId = eventId,
         executionStatus = executionStatus.name,
         uploadedCount = uploadedCount,
         retryableRemainingCount = retryableRemainingCount,
@@ -59,9 +60,10 @@ fun FlushReport.toSnapshotEntity(completedAt: String): LatestFlushSnapshotEntity
         completedAt = completedAt
     )
 
-fun FlushReport.toOutcomeEntities(completedAt: String): List<RecentFlushOutcomeEntity> =
+fun FlushReport.toOutcomeEntities(eventId: Long, completedAt: String): List<RecentFlushOutcomeEntity> =
     itemOutcomes.mapIndexed { index, outcome ->
         RecentFlushOutcomeEntity(
+            eventId = eventId,
             outcomeOrder = index,
             idempotencyKey = outcome.idempotencyKey,
             ticketCode = outcome.ticketCode,

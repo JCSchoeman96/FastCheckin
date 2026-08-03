@@ -17,7 +17,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import retrofit2.Response
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
-import za.co.voelgoed.fastcheck.core.network.SessionProvider
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
+import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
+import za.co.voelgoed.fastcheck.data.repository.NoOpEventBucketRepository
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginRequest
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginResponse
 import za.co.voelgoed.fastcheck.data.remote.MobileSyncResponse
@@ -64,7 +67,8 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
                     FastCheckDatabaseMigrations.MIGRATION_7_8,
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
-                    FastCheckDatabaseMigrations.MIGRATION_10_11
+                    FastCheckDatabaseMigrations.MIGRATION_10_11,
+                    FastCheckDatabaseMigrations.MIGRATION_11_12
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -79,9 +83,7 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
         assertThat(scannerDao.countQuarantinedScans()).isEqualTo(0)
 
         val migratedLegacyOutcomes = scannerDao.loadRecentFlushOutcomes(limit = 10)
-        assertThat(migratedLegacyOutcomes).hasSize(1)
-        assertThat(migratedLegacyOutcomes.single().ticketCode).isEqualTo(LEGACY_OUTCOME_TICKET_CODE)
-        assertThat(migratedLegacyOutcomes.single().reasonCode).isNull()
+        assertThat(migratedLegacyOutcomes).isEmpty()
 
         val migratedLegacyReplayCache = scannerDao.findReplayCache(LEGACY_REPLAY_CACHE_IDEMPOTENCY_KEY)
         assertThat(migratedLegacyReplayCache).isNotNull()
@@ -92,15 +94,22 @@ class FastCheckDatabaseMigrationRetainedQueueTest {
             CurrentPhoenixMobileScanRepository(
                 scannerDao = scannerDao,
                 remoteDataSource = PhoenixMobileRemoteDataSource(FakePhoenixMobileApi()),
-                sessionProvider =
-                    object : SessionProvider {
-                        override suspend fun bearerToken(): String = "migration-test-token"
-                    },
                 flushResultClassifier = FlushResultClassifier(),
-                clock = Clock.fixed(Instant.parse("2026-03-24T14:30:00Z"), ZoneOffset.UTC)
+                clock = Clock.fixed(Instant.parse("2026-03-24T14:30:00Z"), ZoneOffset.UTC),
+                contextStore = object : AuthenticatedEventContextStore {
+                    private val value = AuthenticatedEventContext(5, "migration-test-token", 1, 0, Long.MAX_VALUE)
+                    override suspend fun capture() = value
+                    override suspend fun currentIdentity() = value.identity
+                    override suspend fun replace(eventId: Long, bearerToken: String, authenticatedAtEpochMillis: Long, expiresAtEpochMillis: Long) = error("unused")
+                    override suspend fun clearIfGenerationMatches(sessionGeneration: Long) = false
+                    override suspend fun isCurrent(sessionGeneration: Long) = sessionGeneration == 1L
+                    override fun observeIdentity() = kotlinx.coroutines.flow.flowOf(value.identity)
+                },
+                operationMutexRegistry = DefaultEventOperationMutexRegistry(),
+                eventBucketRepository = NoOpEventBucketRepository
             )
 
-        val flushReport = repository.flushQueuedScans(maxBatchSize = 10)
+        val flushReport = (repository.flushQueuedScans(maxBatchSize = 10) as za.co.voelgoed.fastcheck.data.repository.FlushInvocationResult.Attempted).report
 
         assertThat(flushReport.executionStatus).isEqualTo(FlushExecutionStatus.COMPLETED)
         assertThat(flushReport.uploadedCount).isEqualTo(1)
