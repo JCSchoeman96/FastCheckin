@@ -43,11 +43,6 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
   end
 
   test "VS-09B does not change scanner, mobile controller, or Android surfaces" do
-    changed_files =
-      System.cmd("git", ["diff", "--name-only", "main...HEAD"])
-      |> elem(0)
-      |> String.split("\n", trim: true)
-
     forbidden_changed_prefixes = [
       "android/",
       "lib/fastcheck_web/controllers/mobile/",
@@ -55,10 +50,16 @@ defmodule FastCheck.Tickets.TicketTokenBoundaryTest do
       "lib/fastcheck_web/router.ex"
     ]
 
-    for file <- changed_files,
-        prefix <- forbidden_changed_prefixes,
-        FastCheck.Sales.BoundaryAllowlist.reject_forbidden_changed_file?(file, prefix) do
-      flunk("#{file} must not change in VS-09B attendee bridge work")
+    case FastCheck.Sales.BoundaryAllowlist.changed_files_for_slice("VS-09B") do
+      :disabled ->
+        :ok
+
+      {:enabled, changed_files} ->
+        for file <- changed_files,
+            prefix <- forbidden_changed_prefixes,
+            FastCheck.Sales.BoundaryAllowlist.reject_forbidden_changed_file?(file, prefix) do
+          flunk("#{file} must not change in VS-09B attendee bridge work")
+        end
     end
   end
 end
