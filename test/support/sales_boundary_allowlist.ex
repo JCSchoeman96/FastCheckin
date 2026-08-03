@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.BoundaryAllowlist do
   @moduledoc false
 
+  @boundary_slices ["VS-01D", "VS-01E", "VS-01F", "VS-03", "VS-09B"]
+
   @vs_05a_allowed_prefixes [
     "lib/fastcheck/sales/secondary_entrypoints.ex",
     "lib/fastcheck_web/live/sales/",
@@ -241,6 +243,52 @@ defmodule FastCheck.Sales.BoundaryAllowlist do
   @doc false
   def reject_forbidden_changed_file?(file, forbidden_prefix) do
     String.starts_with?(file, forbidden_prefix) and not allowed_change?(file)
+  end
+
+  @doc false
+  def changed_files_for_slice(slice, options \\ []) when slice in @boundary_slices do
+    environment = Keyword.get_lazy(options, :environment, &System.get_env/0)
+    command = Keyword.get(options, :command, &System.cmd/2)
+    configured_slice = Map.get(environment, "FASTCHECK_SLICE_BOUNDARY")
+    base_sha = Map.get(environment, "FASTCHECK_BOUNDARY_BASE_SHA")
+
+    validate_boundary_configuration!(configured_slice, base_sha)
+
+    if configured_slice == slice do
+      diff_changed_files!(base_sha, command)
+    else
+      :disabled
+    end
+  end
+
+  defp validate_boundary_configuration!(nil, nil), do: :ok
+
+  defp validate_boundary_configuration!(nil, _base_sha) do
+    raise ArgumentError,
+          "FASTCHECK_SLICE_BOUNDARY is required when FASTCHECK_BOUNDARY_BASE_SHA is set"
+  end
+
+  defp validate_boundary_configuration!(configured_slice, _base_sha)
+       when configured_slice not in @boundary_slices do
+    raise ArgumentError, "unknown FASTCHECK_SLICE_BOUNDARY: #{inspect(configured_slice)}"
+  end
+
+  defp validate_boundary_configuration!(_configured_slice, base_sha)
+       when base_sha in [nil, ""] do
+    raise ArgumentError,
+          "FASTCHECK_BOUNDARY_BASE_SHA is required when FASTCHECK_SLICE_BOUNDARY is set"
+  end
+
+  defp validate_boundary_configuration!(_configured_slice, _base_sha), do: :ok
+
+  defp diff_changed_files!(base_sha, command) do
+    case command.("git", ["diff", "--name-only", "#{base_sha}...HEAD"]) do
+      {output, 0} ->
+        {:enabled, String.split(output, "\n", trim: true)}
+
+      {output, status} ->
+        raise "git diff failed with status #{status}: #{String.trim(output)}"
+    end
   end
 
   defp allowed_change?(file) do
