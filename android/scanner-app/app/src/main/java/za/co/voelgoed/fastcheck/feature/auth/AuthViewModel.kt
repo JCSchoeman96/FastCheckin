@@ -4,10 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import za.co.voelgoed.fastcheck.data.repository.SessionRepository
 
@@ -17,6 +20,8 @@ class AuthViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
+    private val effectChannel = Channel<AuthEffect>(capacity = Channel.BUFFERED)
+    val effects: Flow<AuthEffect> = effectChannel.receiveAsFlow()
 
     fun updateEventId(value: String) {
         _uiState.update { it.copy(eventIdInput = value, errorMessage = null) }
@@ -48,26 +53,28 @@ class AuthViewModel @Inject constructor(
             _uiState.update { it.copy(isSubmitting = true, errorMessage = null) }
 
             runCatching { sessionRepository.login(eventId, credential) }
-                .onSuccess { session ->
+                .onSuccess {
                     _uiState.update {
                         it.copy(
                             isSubmitting = false,
-                            sessionSummary = "${session.eventShortname ?: session.eventName} (#${session.eventId})",
-                            errorMessage = null,
-                            authenticatedSession = session
+                            credentialInput = "",
+                            errorMessage = null
                         )
                     }
+                    effectChannel.send(AuthEffect.LoginCommitted)
                 }
                 .onFailure { throwable ->
                     _uiState.update {
                         it.copy(
                             isSubmitting = false,
-                            errorMessage = throwable.message ?: "Login failed.",
-                            sessionSummary = null,
-                            authenticatedSession = null
+                            errorMessage = throwable.message ?: "Login failed."
                         )
                     }
                 }
         }
+    }
+
+    fun resetAfterLogout() {
+        _uiState.value = AuthUiState()
     }
 }

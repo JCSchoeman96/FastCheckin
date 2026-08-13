@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -43,6 +44,7 @@ import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncOrchestrator
 import za.co.voelgoed.fastcheck.core.common.AppDispatchers
 import za.co.voelgoed.fastcheck.core.network.ApiEnvironmentConfig
 import za.co.voelgoed.fastcheck.databinding.ActivityMainBinding
+import za.co.voelgoed.fastcheck.feature.auth.AuthEffect
 import za.co.voelgoed.fastcheck.feature.auth.AuthViewModel
 import za.co.voelgoed.fastcheck.feature.diagnostics.DiagnosticsViewModel
 import za.co.voelgoed.fastcheck.feature.event.EventDestinationRoute
@@ -142,7 +144,7 @@ class MainActivity : ComponentActivity() {
         binding.authenticatedShellComposeView.setContent {
             val shellUiState by appShellViewModel.uiState.collectAsState()
             val sessionRoute by sessionGateViewModel.route.collectAsState()
-            val authenticatedSession = (sessionRoute as? AppSessionRoute.Authenticated)?.session
+            val routeSession = (sessionRoute as? AppSessionRoute.Authenticated)?.session
 
             AuthenticatedShellScreen(
                 uiState = shellUiState,
@@ -152,9 +154,9 @@ class MainActivity : ComponentActivity() {
                 onLogoutConfirmationDismissed = appShellViewModel::dismissLogoutConfirmation,
                 onLogoutConfirmed = ::confirmLogout,
                 scanContent = {
-                    if (authenticatedSession != null) {
+                    if (routeSession != null) {
                         ScanDestinationRoute(
-                            session = authenticatedSession,
+                            session = routeSession,
                             scanningViewModel = scanningViewModel,
                             queueViewModel = queueViewModel,
                             syncViewModel = syncViewModel,
@@ -165,18 +167,18 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 searchContent = {
-                    if (authenticatedSession != null) {
+                    if (routeSession != null) {
                         SearchDestinationRoute(
-                            session = authenticatedSession,
+                            session = routeSession,
                             searchViewModel = searchViewModel,
                             syncViewModel = syncViewModel
                         )
                     }
                 },
                 eventContent = {
-                    if (authenticatedSession != null) {
+                    if (routeSession != null) {
                         EventDestinationRoute(
-                            session = authenticatedSession,
+                            session = routeSession,
                             eventMetricsViewModel = eventMetricsViewModel,
                             queueViewModel = queueViewModel,
                             syncViewModel = syncViewModel,
@@ -188,7 +190,7 @@ class MainActivity : ComponentActivity() {
                 },
                 supportOverviewContent = {
                     SupportOverviewRoute(
-                        session = authenticatedSession,
+                        session = routeSession,
                         eventMetricsViewModel = eventMetricsViewModel,
                         scanningViewModel = scanningViewModel,
                         queueViewModel = queueViewModel,
@@ -225,6 +227,9 @@ class MainActivity : ComponentActivity() {
             )
 
         binding.loginButton.setOnClickListener {
+            if (sessionGateViewModel.route.value != AppSessionRoute.LoggedOut) {
+                return@setOnClickListener
+            }
             authViewModel.updateEventId(binding.eventIdInput.text.toString())
             authViewModel.updateCredential(binding.credentialInput.text.toString())
             authViewModel.login()
@@ -234,18 +239,28 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     authViewModel.uiState.collectLatest { state ->
-                        binding.sessionSummaryValue.text =
-                            state.sessionSummary ?: getString(R.string.no_active_session)
+                        binding.sessionSummaryValue.text = getString(R.string.no_active_session)
                         binding.authErrorValue.text =
                             state.errorMessage ?: getString(R.string.no_errors)
-                        binding.loginButton.isEnabled = !state.isSubmitting
+                        updateLoginButtonEnabled()
+                    }
+                }
 
-                        val authenticatedSession = state.authenticatedSession
-                        if (authenticatedSession != null &&
-                            state.errorMessage == null &&
-                            !state.isSubmitting
-                        ) {
-                            sessionGateViewModel.onLoginSucceeded(authenticatedSession)
+                launch {
+                    authViewModel.effects.collectLatest { effect ->
+                        when (effect) {
+                            AuthEffect.LoginCommitted -> {
+                                binding.credentialInput.text?.clear()
+                                sessionGateViewModel.onLoginCommitted()
+                            }
+                        }
+                    }
+                }
+
+                launch {
+                    sessionGateViewModel.recoveryMessage.collectLatest { message ->
+                        if (message != null) {
+                            authViewModel.setExternalError(message)
                         }
                     }
                 }
@@ -255,7 +270,13 @@ class MainActivity : ComponentActivity() {
                         var shouldEvaluateAutoRequestOnScanEntry = false
                         when (route) {
                             AppSessionRoute.RestoringSession,
+                            AppSessionRoute.LoggingOut,
                             AppSessionRoute.LoggedOut -> {
+                                if (route == AppSessionRoute.LoggingOut) {
+                                    authViewModel.resetAfterLogout()
+                                    binding.eventIdInput.text?.clear()
+                                    binding.credentialInput.text?.clear()
+                                }
                                 val wasAuthenticated = isAuthenticatedRouteActive
                                 isAuthenticatedRouteActive = false
                                 lastBootstrappedSessionKey = null
@@ -298,6 +319,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        updateLoginButtonEnabled()
                         val decision = syncScannerBindingState()
                         if (shouldEvaluateAutoRequestOnScanEntry) {
                             maybeAutoRequestCameraPermissionOnScanEntry(decision)
@@ -368,7 +390,6 @@ class MainActivity : ComponentActivity() {
         }
 
         syncScannerBindingState()
-        sessionGateViewModel.refreshSessionRoute()
     }
 
     override fun onStart() {
@@ -475,6 +496,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleShellOverflowAction(action: AppShellOverflowAction) {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         when (action) {
             AppShellOverflowAction.Support ->
                 appShellViewModel.onOverflowActionSelected(action)
@@ -485,6 +507,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLogoutRequest() {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         val queueDepth = queueViewModel.uiState.value.localQueueDepth
         val needsConfirmation = appShellViewModel.requestLogout(queueDepth)
         if (!needsConfirmation) {
@@ -493,12 +516,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun confirmLogout() {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         appShellViewModel.dismissLogoutConfirmation()
         hasAutoRequestedCameraPermissionThisScanEntry = false
         sessionGateViewModel.logout()
     }
 
+    @VisibleForTesting
+    internal fun confirmLogoutForTest() {
+        confirmLogout()
+    }
+
     private fun handleSupportRecoveryAction(action: SupportRecoveryAction) {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         when (action) {
             SupportRecoveryAction.RequestCameraAccess -> {
                 launchCameraPermissionRequest()
@@ -513,6 +543,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleEventOperatorAction(action: EventOperatorAction) {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         when (action) {
             EventOperatorAction.ManualSync -> syncViewModel.syncAttendees()
             EventOperatorAction.RetryUpload -> queueViewModel.flushQueuedScans()
@@ -521,6 +552,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleScanOperatorAction(action: ScanOperatorAction) {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         when (action) {
             ScanOperatorAction.RequestCameraAccess -> launchCameraPermissionRequest()
             ScanOperatorAction.OpenAppSettings -> openAppSettings()
@@ -535,6 +567,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleSupportOperationalAction(action: SupportOperationalAction) {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         when (action) {
             SupportOperationalAction.ManualSync -> syncViewModel.syncAttendees()
             SupportOperationalAction.RetryUpload -> queueViewModel.flushQueuedScans()
@@ -548,9 +581,16 @@ class MainActivity : ComponentActivity() {
      * Queued scans remain in local storage; operator signs in again to resume uploads.
      */
     private fun handleReloginForAuthExpired() {
+        if (sessionGateViewModel.route.value !is AppSessionRoute.Authenticated) return
         appShellViewModel.dismissLogoutConfirmation()
         hasAutoRequestedCameraPermissionThisScanEntry = false
         sessionGateViewModel.logout()
+    }
+
+    private fun updateLoginButtonEnabled() {
+        binding.loginButton.isEnabled =
+            sessionGateViewModel.route.value == AppSessionRoute.LoggedOut &&
+                !authViewModel.uiState.value.isSubmitting
     }
 
     private fun launchCameraPermissionRequest() {

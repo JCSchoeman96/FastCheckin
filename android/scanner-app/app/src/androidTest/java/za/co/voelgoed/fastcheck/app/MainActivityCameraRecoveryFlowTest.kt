@@ -100,10 +100,11 @@ class MainActivityCameraRecoveryFlowTest {
             authenticate(scenario, session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_000_000))
             waitUntil("initial camera auto-request") { permissionRequests.get() == 1 }
 
+            val replacementSession =
+                session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_100_000)
+            testSessionRepository.setCurrentSession(replacementSession)
             scenario.onActivity { activity ->
-                viewModel<SessionGateViewModel>(activity).onLoginSucceeded(
-                    session(eventId = 5, authenticatedAtEpochMillis = 1_700_000_100_000)
-                )
+                viewModel<SessionGateViewModel>(activity).reloadAuthoritativeSession()
             }
             waitUntil("camera auto-request after session change") {
                 permissionRequests.get() == 2
@@ -601,8 +602,9 @@ class MainActivityCameraRecoveryFlowTest {
         scenario: ActivityScenario<MainActivity>,
         session: ScannerSession
     ) {
+        testSessionRepository.setCurrentSession(session)
         scenario.onActivity { activity ->
-            viewModel<SessionGateViewModel>(activity).onLoginSucceeded(session)
+            viewModel<SessionGateViewModel>(activity).reloadAuthoritativeSession()
         }
         waitUntil("authenticated session route") {
             currentSessionRoute(scenario) is AppSessionRoute.Authenticated
