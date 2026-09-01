@@ -7,15 +7,15 @@ defmodule FastCheck.Sales.StateTransitionSupport do
 
   @spec record!(
           %{
-            entity_type: String.t(),
-            entity_id: String.t(),
-            from_state: String.t() | nil,
-            to_state: String.t(),
-            reason: String.t() | nil,
-            metadata: map(),
-            correlation_id: String.t() | nil,
-            idempotency_key: String.t() | nil,
-            source: String.t() | nil
+            required(:entity_type) => String.t(),
+            required(:entity_id) => String.t(),
+            required(:to_state) => String.t(),
+            optional(:from_state) => String.t() | nil,
+            optional(:reason) => String.t() | nil,
+            optional(:metadata) => map(),
+            optional(:correlation_id) => String.t() | nil,
+            optional(:idempotency_key) => String.t() | nil,
+            optional(:source) => String.t() | nil
           },
           map()
         ) :: {:ok, struct()} | {:error, term()}

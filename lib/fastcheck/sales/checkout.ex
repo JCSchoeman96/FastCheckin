@@ -298,9 +298,6 @@ defmodule FastCheck.Sales.Checkout do
 
       {:error, _} = error ->
         error
-
-      {:error, atom, _meta} when is_atom(atom) ->
-        {:error, atom}
     end
   end
 

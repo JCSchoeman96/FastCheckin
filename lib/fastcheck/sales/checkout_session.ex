@@ -14,6 +14,8 @@ defmodule FastCheck.Sales.CheckoutSession do
   alias Ash.Changeset
   alias FastCheck.Sales.StateTransitionSupport
 
+  @type t :: %__MODULE__{}
+
   postgres do
     table("sales_checkout_sessions")
     repo(FastCheck.Repo)

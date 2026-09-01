@@ -210,8 +210,6 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
     end
   end
 
-  defp hash_id(nil), do: nil
-
   defp hash_id(value) when is_binary(value) do
     value
     |> then(&:crypto.hash(:sha256, &1))

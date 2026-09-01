@@ -35,6 +35,30 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
       :planned_actions,
       :applied_actions
     ]
+
+    @type t :: %__MODULE__{
+            offer_id: integer(),
+            event_id: integer(),
+            started_at: DateTime.t(),
+            finished_at: DateTime.t() | nil,
+            health_before: atom(),
+            health_after: atom() | nil,
+            redis_available_before: integer() | nil,
+            redis_available_after: integer() | nil,
+            expected_available: integer(),
+            active_hold_count: non_neg_integer(),
+            sold_count: non_neg_integer(),
+            orphan_hold_count: non_neg_integer(),
+            consumed_count: non_neg_integer(),
+            released_count: non_neg_integer(),
+            expired_count: non_neg_integer(),
+            manual_review_required?: boolean(),
+            dry_run?: boolean(),
+            repair_applied?: boolean(),
+            anomalies: list(),
+            planned_actions: list(),
+            applied_actions: list()
+          }
   end
 
   @spec reconcile_offer(integer(), keyword()) ::
@@ -166,7 +190,7 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
          metadata,
          opts
        ) do
-    case Recovery.apply_safe_repairs(offer_id, durable, analysis, opts) do
+    case apply_safe_repairs(offer_id, durable, analysis, opts) do
       {:ok, recovery_report} ->
         redis_after = fetch_redis_state(offer_id)
 
@@ -188,15 +212,23 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
 
         {:manual_review_required, finished}
 
-      {:error, reason} ->
+      {:error, reason, meta} ->
         :telemetry.execute(
           [:fastcheck, :sales, :inventory, :reconciliation_failed],
           %{count: 1},
           Map.merge(metadata, %{reason: reason})
         )
 
-        {:error, reason}
+        {:error, {reason, meta}}
     end
+  end
+
+  @spec apply_safe_repairs(integer(), map(), map(), keyword()) ::
+          {:ok, Recovery.RecoveryReport.t()}
+          | {:manual_review_required, Recovery.RecoveryReport.t()}
+          | {:error, atom(), map()}
+  def apply_safe_repairs(offer_id, durable, analysis, opts) do
+    Recovery.apply_safe_repairs(offer_id, durable, analysis, opts)
   end
 
   defp analyze(durable, redis_before) do
@@ -290,10 +322,8 @@ defmodule FastCheck.Sales.Inventory.Reconciler do
   defp health_label({:error, :reconciliation_required, _}), do: :reconciliation_required
   defp health_label({:error, :ledger_unavailable, _}), do: :degraded
   defp health_label({:ok, %{ledger_state: state}}), do: state
-  defp health_label(%{ledger_state: state}), do: state
 
   defp redis_available({:ok, %{available_quantity: qty}}), do: qty
-  defp redis_available(%{available_quantity: qty}), do: qty
   defp redis_available(_), do: nil
 
   defp maybe_action(actions, false, _item), do: actions

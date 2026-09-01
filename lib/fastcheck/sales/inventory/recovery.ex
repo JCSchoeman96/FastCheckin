@@ -22,12 +22,25 @@ defmodule FastCheck.Sales.Inventory.Recovery do
       :manual_review_required?,
       :anomalies
     ]
+
+    @type t :: %__MODULE__{
+            offer_id: integer(),
+            event_id: integer(),
+            dry_run?: boolean(),
+            repair_applied?: boolean(),
+            expired_count: non_neg_integer(),
+            skipped_count: non_neg_integer(),
+            applied_actions: list(),
+            manual_review_required?: boolean(),
+            anomalies: list()
+          }
   end
 
   @spec rebuild_offer_inventory(integer(), keyword()) ::
           {:ok, RecoveryReport.t()}
           | {:manual_review_required, RecoveryReport.t()}
-          | {:error, atom() | {atom(), map()}}
+          | {:error, atom()}
+          | {:error, atom(), map()}
   def rebuild_offer_inventory(offer_id, opts \\ []) when is_integer(offer_id) do
     dry_run? = Keyword.get(opts, :dry_run, true)
     allow_repair? = Keyword.get(opts, :allow_repair, false)
@@ -101,12 +114,13 @@ defmodule FastCheck.Sales.Inventory.Recovery do
       end
     else
       {:error, :offer_not_found} = error -> error
-      {:error, :ledger_unavailable, meta} -> {:error, {:ledger_unavailable, meta}}
     end
   end
 
   @spec repair_stale_holds(integer(), integer(), keyword()) ::
-          {:ok, RecoveryReport.t()} | {:error, atom() | {atom(), map()}}
+          {:ok, RecoveryReport.t()}
+          | {:error, atom()}
+          | {:error, {atom(), map()}}
   def repair_stale_holds(offer_id, now, opts \\ [])
       when is_integer(offer_id) and is_integer(now) do
     dry_run? = Keyword.get(opts, :dry_run, true)
@@ -154,7 +168,7 @@ defmodule FastCheck.Sales.Inventory.Recovery do
   @spec apply_safe_repairs(integer(), map(), map(), keyword()) ::
           {:ok, RecoveryReport.t()}
           | {:manual_review_required, RecoveryReport.t()}
-          | {:error, atom() | {atom(), map()}}
+          | {:error, atom(), map()}
   def apply_safe_repairs(offer_id, durable, analysis, opts) do
     allow_repair? = Keyword.get(opts, :allow_repair, false)
 

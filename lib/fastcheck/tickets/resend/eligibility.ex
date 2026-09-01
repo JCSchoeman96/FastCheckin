@@ -51,9 +51,6 @@ defmodule FastCheck.Tickets.Resend.Eligibility do
 
       {:error, :invalid_input} ->
         {:ok, Result.new(:generic_rejected, :invalid_input), nil}
-
-      {:error, _reason} ->
-        {:ok, Result.new(:generic_rejected, :invalid_ticket), nil}
     end
   end
 
@@ -133,9 +130,6 @@ defmodule FastCheck.Tickets.Resend.Eligibility do
 
               {:error, :candidate_rate_limited} ->
                 {:error, {:rate_limited, :candidate_rate_limited, candidate}}
-
-              {:error, reason} ->
-                {:error, {:generic_rejected, reason}}
             end
 
           {:error, reason} ->
@@ -201,10 +195,6 @@ defmodule FastCheck.Tickets.Resend.Eligibility do
   defp handle_request_failure({:generic_rejected, reason}, request_ctx) do
     :ok = maybe_record_lookup_attempt(request_ctx, reason)
     {:ok, Result.new(:generic_rejected, normalize_internal_reason(reason)), nil}
-  end
-
-  defp handle_request_failure(_reason, _request_ctx) do
-    {:ok, Result.new(:generic_rejected, :invalid_ticket), nil}
   end
 
   defp maybe_record_lookup_attempt(request_ctx, reason) do

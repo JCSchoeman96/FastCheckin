@@ -117,7 +117,7 @@ defmodule FastCheck.Sales.CheckoutExpiry do
             case release_hold(hold_context) do
               :ok ->
                 expire_durable!(session, order, hold_context.context)
-                emit_expired(:expired, session, order, correlation_id)
+                emit_expired(session, order, correlation_id)
                 :expired
 
               {:manual_review, reason} ->
@@ -257,28 +257,35 @@ defmodule FastCheck.Sales.CheckoutExpiry do
   end
 
   defp resolve_hold_context(session, order, context) do
-    with {:ok, lines} <- load_order_lines(order.id),
-         false <- lines == [],
-         false <- blank?(order.public_reference),
-         false <- blank?(session.redis_hold_key),
-         false <- is_nil(session.hold_quantity) or session.hold_quantity <= 0 do
-      line_qty = Enum.map(lines, & &1.quantity) |> Enum.sum()
+    case load_order_lines(order.id) do
+      {:ok, lines} ->
+        cond do
+          lines == [] or blank?(order.public_reference) or blank?(session.redis_hold_key) ->
+            {:error, :manual_review, @hold_anomaly_reason}
 
-      if line_qty != session.hold_quantity do
+          is_nil(session.hold_quantity) or session.hold_quantity <= 0 ->
+            {:error, :manual_review, @hold_anomaly_reason}
+
+          true ->
+            line_qty = Enum.map(lines, & &1.quantity) |> Enum.sum()
+
+            if line_qty != session.hold_quantity do
+              {:error, :manual_review, @hold_anomaly_reason}
+            else
+              offer_id = List.first(lines).ticket_offer_id
+
+              {:ok,
+               %{
+                 offer_id: offer_id,
+                 public_reference: order.public_reference,
+                 release_key: release_idempotency_key(session.id),
+                 context: context
+               }}
+            end
+        end
+
+      {:error, _} ->
         {:error, :manual_review, @hold_anomaly_reason}
-      else
-        offer_id = List.first(lines).ticket_offer_id
-
-        {:ok,
-         %{
-           offer_id: offer_id,
-           public_reference: order.public_reference,
-           release_key: release_idempotency_key(session.id),
-           context: context
-         }}
-      end
-    else
-      _ -> {:error, :manual_review, @hold_anomaly_reason}
     end
   end
 
@@ -455,29 +462,27 @@ defmodule FastCheck.Sales.CheckoutExpiry do
     )
   end
 
-  defp emit_expired(kind, session, order, correlation_id) do
+  defp emit_expired(session, order, correlation_id) do
     :telemetry.execute(
       [:fastcheck, :sales, :checkout_expiry, :expired],
       %{count: 1},
       %{
         checkout_session_id: session.id,
         order_id: order.id,
-        kind: kind,
+        kind: :expired,
         correlation_id: correlation_id
       }
     )
 
-    if kind == :expired do
-      :telemetry.execute(
-        [:fastcheck, :sales, :checkout_expiry, :released],
-        %{count: 1},
-        %{
-          checkout_session_id: session.id,
-          order_id: order.id,
-          correlation_id: correlation_id
-        }
-      )
-    end
+    :telemetry.execute(
+      [:fastcheck, :sales, :checkout_expiry, :released],
+      %{count: 1},
+      %{
+        checkout_session_id: session.id,
+        order_id: order.id,
+        correlation_id: correlation_id
+      }
+    )
   end
 
   defp normalize_transaction_result({:ok, result}), do: {:ok, result}

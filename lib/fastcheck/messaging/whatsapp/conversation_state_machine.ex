@@ -806,8 +806,6 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       state_data(conversation)["last_handled_inbound_message_id"] == command.provider_message_id
   end
 
-  defp mark_handled(_command, %{send_reply?: false} = result), do: {:ok, result}
-
   defp mark_handled(command, %FlowResult{conversation: conversation} = result) do
     data =
       conversation
@@ -963,8 +961,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     drop_flow_keys(data, ["buyer_email"] ++ @order_flow_keys)
   end
 
-  defp drop_flow_keys(data, keys) when is_map(data), do: Map.drop(data, keys)
-  defp drop_flow_keys(_data, _keys), do: %{}
+  defp drop_flow_keys(data, keys), do: Map.drop(data, keys)
 
   defp customer_actor(event_id) do
     %{actor_type: :customer_session, actor_id: "whatsapp_customer", allowed_event_ids: [event_id]}
@@ -990,8 +987,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp language(_conversation), do: "af"
 
-  defp valid_email?(email) when is_binary(email), do: Regex.match?(~r/^[^\s@]+@[^\s@]+$/, email)
-  defp valid_email?(_email), do: false
+  defp valid_email?(email), do: Regex.match?(~r/^[^\s@]+@[^\s@]+$/, email)
 
   defp session_ttl_seconds do
     Application.get_env(:fastcheck, :whatsapp_session_ttl_seconds, @session_ttl_seconds)

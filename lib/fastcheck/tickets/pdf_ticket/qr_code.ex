@@ -74,8 +74,6 @@ defmodule FastCheck.Tickets.PdfTicket.QrCode do
     end
   end
 
-  defp normalize_matrix(_matrix), do: {:error, :generation_failed}
-
   defp normalize_row(row) when is_tuple(row) do
     row
     |> Tuple.to_list()

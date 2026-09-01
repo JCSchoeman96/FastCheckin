@@ -175,14 +175,6 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     ) + 1
   end
 
-  defp next_attempt_number(order_id, ticket_issue_id) do
-    Repo.one!(
-      from d in "sales_delivery_attempts",
-        where: d.sales_order_id == ^order_id and d.ticket_issue_id == ^ticket_issue_id,
-        select: count(d.id)
-    ) + 1
-  end
-
   defp load_conversation(id) do
     Conversation
     |> Query.for_read(:get_by_id, %{id: id})

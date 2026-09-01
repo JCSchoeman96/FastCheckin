@@ -28,6 +28,24 @@ defmodule FastCheck.Sales.Inventory.Health do
       :status,
       :anomalies
     ]
+
+    @type t :: %__MODULE__{
+            offer_id: integer(),
+            event_id: integer(),
+            redis_present?: boolean(),
+            ledger_state: atom(),
+            redis_available: integer() | nil,
+            redis_reserved: integer() | nil,
+            redis_consumed: integer() | nil,
+            configured_quantity: non_neg_integer(),
+            sold_count: non_neg_integer(),
+            active_hold_count: non_neg_integer(),
+            safe_available: integer(),
+            drift_detected?: boolean(),
+            manual_review_required?: boolean(),
+            status: atom(),
+            anomalies: list()
+          }
   end
 
   @type health_report :: HealthReport.t()

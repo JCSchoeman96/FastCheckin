@@ -109,8 +109,6 @@ defmodule FastCheckWeb.Sales.AuditTimelineLive do
 
   defp format_error(:invalid_entity_type), do: "Unsupported audit entity type"
   defp format_error(:invalid_entity_id), do: "Invalid audit entity id"
-  defp format_error(_), do: "Audit timeline unavailable"
-
   defp format_timestamp(nil), do: "Unknown time"
   defp format_timestamp(timestamp), do: Calendar.strftime(timestamp, "%Y-%m-%d %H:%M:%S UTC")
 
