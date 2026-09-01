@@ -122,7 +122,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
     else
       {1, _} =
         Repo.update_all(from(d in "sales_delivery_attempts", where: d.id == ^attempt.id),
-          set: attrs
+          set: Map.to_list(attrs)
         )
 
       case transition do
