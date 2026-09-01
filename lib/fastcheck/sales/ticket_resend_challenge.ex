@@ -21,6 +21,17 @@ defmodule FastCheck.Sales.TicketResendChallenge do
     identity_index_names(unique_public_id: "sales_ticket_resend_challenges_public_id_uidx")
   end
 
+  resource do
+    show_inspect_fields([
+      :status,
+      :failed_attempt_count,
+      :expires_at,
+      :verified_at,
+      :consumed_at,
+      :locked_until
+    ])
+  end
+
   actions do
     defaults([:read])
 
