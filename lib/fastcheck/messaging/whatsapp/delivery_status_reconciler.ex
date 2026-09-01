@@ -262,15 +262,27 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
   defp current_provider_status(%{status: "failed"}), do: "failed"
   defp current_provider_status(_attempt), do: nil
 
-  defp later_or_equal?(timestamp, nil) when is_struct(timestamp, DateTime), do: true
+  defp later_or_equal?(_timestamp, nil), do: true
 
   defp later_or_equal?(timestamp, current) do
-    DateTime.compare(timestamp, current) in [:gt, :eq]
+    compare_timestamps(timestamp, current) in [:gt, :eq]
   end
 
   defp later_than?(_timestamp, nil), do: true
 
-  defp later_than?(timestamp, current), do: DateTime.compare(timestamp, current) == :gt
+  defp later_than?(timestamp, current), do: compare_timestamps(timestamp, current) == :gt
+
+  defp compare_timestamps(%DateTime{} = left, %DateTime{} = right),
+    do: DateTime.compare(left, right)
+
+  defp compare_timestamps(%NaiveDateTime{} = left, %NaiveDateTime{} = right),
+    do: NaiveDateTime.compare(left, right)
+
+  defp compare_timestamps(%DateTime{} = left, %NaiveDateTime{} = right),
+    do: DateTime.compare(left, DateTime.from_naive!(right, "Etc/UTC"))
+
+  defp compare_timestamps(%NaiveDateTime{} = left, %DateTime{} = right),
+    do: DateTime.compare(DateTime.from_naive!(left, "Etc/UTC"), right)
 
   defp utc_now, do: DateTime.utc_now() |> DateTime.truncate(:second)
 end

@@ -38,7 +38,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     assert %{status: "sent", provider_status: "sent", sent_at: sent_at} =
              snapshot_attempt!(attempt_id)
 
-    assert sent_at == timestamp(1)
+    assert sent_at == stored_timestamp(1)
 
     assert {:updated, "delivered"} =
              DeliveryStatusReconciler.reconcile(
@@ -51,8 +51,8 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              sent_at: sent_at
            } = snapshot_attempt!(attempt_id)
 
-    assert delivered_at == timestamp(2)
-    assert sent_at == timestamp(1)
+    assert delivered_at == stored_timestamp(2)
+    assert sent_at == stored_timestamp(1)
 
     assert {:updated, "read"} =
              DeliveryStatusReconciler.reconcile(provider_status("wamid.lifecycle", "read", 3))
@@ -63,7 +63,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              failed_at: nil
            } = snapshot_attempt!(attempt_id)
 
-    assert read_at == timestamp(3)
+    assert read_at == stored_timestamp(3)
   end
 
   test "failed provider evidence produces a safe failure state" do
@@ -83,7 +83,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              failed_at: failed_at
            } = snapshot_attempt!(attempt_id)
 
-    assert failed_at == timestamp(4)
+    assert failed_at == stored_timestamp(4)
   end
 
   test "duplicate callback is idempotent and does not add another evidence row" do
@@ -120,7 +120,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              DeliveryStatusReconciler.reconcile(provider_status(wamid, "sent", 7))
 
     assert %{status: "delivered", delivered_at: delivered_at} = snapshot_attempt!(attempt_id)
-    assert delivered_at == timestamp(8)
+    assert delivered_at == stored_timestamp(8)
   end
 
   test "older failed evidence cannot regress a newer read state" do
@@ -135,7 +135,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              DeliveryStatusReconciler.reconcile(provider_status(wamid, "failed", 9, "131000"))
 
     assert %{status: "read", read_at: read_at} = snapshot_attempt!(attempt_id)
-    assert read_at == timestamp(10)
+    assert read_at == stored_timestamp(10)
   end
 
   test "later contradictory success moves a failed attempt to manual review without retry" do
@@ -156,7 +156,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              delivered_at: delivered_at
            } = snapshot_attempt!(attempt_id)
 
-    assert delivered_at == timestamp(12)
+    assert delivered_at == stored_timestamp(12)
     assert evidence_count(attempt_id) == 2
   end
 
@@ -205,6 +205,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
   end
 
   defp timestamp(offset), do: DateTime.from_unix!(@base_timestamp + offset)
+  defp stored_timestamp(offset), do: timestamp(offset) |> DateTime.to_naive()
 
   defp insert_order!(suffix, opts \\ []) do
     status = Keyword.get(opts, :status, "awaiting_payment")
