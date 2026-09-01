@@ -99,7 +99,7 @@
 | Task | Add resend validation steps to the smoke runbook. |
 | Objective | Confirm verified resend remains correct in the real platform flow. |
 | Output | Resend section in `VS-24E_PRODUCTION_CHECKOUT_TICKET_DELIVERY_SMOKE_TEST.md`. |
-| Note | Validate WhatsApp option, name/email collection, email OTP, verified resend queued, secure ticket link sent, challenge consumed, DeliveryAttempt has `delivery_reason = verified_ticket_resend` and internal challenge ID only. Wrong identity and wrong OTP must fail generically. No OTP/public challenge ID/email/phone/token/hash in logs or responses. |
+| Note | Validate WhatsApp option, name/email collection, email OTP, verified resend queued, secure ticket link request reaches `provider_accepted` only after a Meta WAMID response, signed/scoped status evidence is recorded separately when supplied, challenge is consumed, and DeliveryAttempt has `delivery_reason = verified_ticket_resend` plus internal challenge ID only. Wrong identity and wrong OTP must fail generically. No OTP/public challenge ID/email/phone/token/hash in logs or responses. |
 
 ### 11. Scanner Validation
 

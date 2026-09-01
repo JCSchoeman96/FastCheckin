@@ -81,9 +81,14 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     |> Enum.join("\n")
   end
 
-  @spec quantity_prompt(String.t() | nil) :: String.t()
-  def quantity_prompt(language),
-    do: ([Copy.text(language, :quantity)] ++ navigation_lines(language)) |> Enum.join("\n")
+  @spec quantity_prompt(String.t() | nil, pos_integer()) :: String.t()
+  def quantity_prompt(language, max_per_order \\ 9)
+
+  def quantity_prompt(language, max_per_order)
+      when is_integer(max_per_order) and max_per_order > 0 do
+    prompt = Copy.text(language, :quantity) <> " (1–#{max_per_order})."
+    ([prompt] ++ navigation_lines(language)) |> Enum.join("\n")
+  end
 
   @spec buyer_name_prompt(String.t() | nil) :: String.t()
   def buyer_name_prompt(language),
@@ -136,6 +141,9 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   @spec no_events(String.t() | nil) :: String.t()
   def no_events(language), do: Copy.text(language, :no_events)
+
+  @spec sales_unavailable(String.t() | nil) :: String.t()
+  def sales_unavailable(language), do: Copy.text(language, :sales_unavailable)
 
   @spec help(String.t() | nil) :: String.t()
   def help(language), do: Copy.text(language, :support)

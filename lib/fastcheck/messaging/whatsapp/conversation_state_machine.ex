@@ -264,7 +264,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            |> Map.put("selected_offer_currency", offer.currency),
          {:ok, conversation} <-
            transition(command, conversation, :select_ticket_type, %{state_data: data}) do
-      {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
+      {:ok,
+       result(
+         conversation,
+         MenuRenderer.quantity_prompt(language(conversation), offer.max_per_order),
+         command
+       )}
     else
       _ -> repeat_offer_menu(command, conversation)
     end
@@ -302,7 +307,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp dispatch(command, conversation, {:ok, {:number, quantity}})
        when conversation.state == "collecting_quantity" do
     data = state_data(conversation)
-    max = Map.get(data, "selected_offer_max_per_order", 1)
+    max = selected_offer_max_per_order(data)
 
     if quantity <= max do
       with {:ok, conversation} <-
@@ -318,7 +323,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
          conversation,
          MenuRenderer.invalid_input(
            language(conversation),
-           MenuRenderer.quantity_prompt(language(conversation))
+           quantity_prompt(conversation)
          ),
          command
        )}
@@ -332,7 +337,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
        conversation,
        MenuRenderer.invalid_input(
          language(conversation),
-         MenuRenderer.quantity_prompt(language(conversation))
+         quantity_prompt(conversation)
        ),
        command
      )}
@@ -344,7 +349,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            transition(command, conversation, :return_to_quantity_collection, %{
              state_data: clear_after_quantity(state_data(conversation))
            }) do
-      {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
+      {:ok, result(conversation, quantity_prompt(conversation), command)}
     end
   end
 
@@ -562,7 +567,23 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, {:ok, {:number, 1}})
        when conversation.state == "confirming_order" do
-    PaymentFlow.confirm_checkout_from_conversation(command, conversation)
+    case PaymentFlow.confirm_checkout_from_conversation(command, conversation) do
+      {:error, :whatsapp_sales_disabled} ->
+        with {:ok, conversation} <-
+               transition(command, conversation, :return_to_main_menu, %{
+                 state_data: clear_current_flow(state_data(conversation))
+               }) do
+          {:ok,
+           result(
+             conversation,
+             MenuRenderer.sales_unavailable(language(conversation)),
+             command
+           )}
+        end
+
+      result ->
+        result
+    end
   end
 
   defp dispatch(command, conversation, _normalized)
@@ -820,7 +841,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp sellable_events do
     events =
       from(e in Event,
-        where: e.status != "archived",
+        where: e.status != "archived" and e.whatsapp_sales_enabled == true,
         order_by: [desc: e.id],
         limit: ^@event_candidate_limit,
         select: %{id: e.id, label: e.name}
@@ -948,6 +969,20 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp customer_actor(event_id) do
     %{actor_type: :customer_session, actor_id: "whatsapp_customer", allowed_event_ids: [event_id]}
   end
+
+  defp quantity_prompt(conversation) do
+    max_per_order = selected_offer_max_per_order(state_data(conversation))
+    MenuRenderer.quantity_prompt(language(conversation), max_per_order)
+  end
+
+  defp selected_offer_max_per_order(data) when is_map(data) do
+    case Map.get(data, "selected_offer_max_per_order") do
+      max_per_order when is_integer(max_per_order) and max_per_order > 0 -> max_per_order
+      _ -> 9
+    end
+  end
+
+  defp selected_offer_max_per_order(_data), do: 9
 
   defp state_data(%Conversation{state_data: data}) when is_map(data), do: data
   defp state_data(_conversation), do: %{}

@@ -43,7 +43,6 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   ]
 
   @delivery_attempt_forbidden_action_names [
-    :mark_delivered,
     :send_whatsapp,
     :send_email,
     :send_template,
@@ -93,7 +92,10 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
         assert Enum.map(create_actions, & &1.name) == [:create_queued]
 
         assert Enum.map(update_actions, & &1.name) == [
+                 :mark_provider_accepted,
                  :mark_sent,
+                 :mark_delivered,
+                 :mark_read,
                  :mark_failed,
                  :mark_fallback_required,
                  :mark_manual_review
@@ -123,7 +125,10 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       else
         for expected <- [
               :create_queued,
+              :mark_provider_accepted,
               :mark_sent,
+              :mark_delivered,
+              :mark_read,
               :mark_failed,
               :mark_fallback_required,
               :mark_manual_review
@@ -197,6 +202,9 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       :template_name,
       :within_whatsapp_window,
       :provider_message_id,
+      :provider_accepted_at,
+      :provider_status,
+      :provider_status_at,
       :attempt_number,
       :provider_error_code,
       :provider_error_message,
@@ -205,6 +213,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       :correlation_id,
       :sent_at,
       :delivered_at,
+      :read_at,
+      :failed_at,
       :inserted_at,
       :updated_at
     ])

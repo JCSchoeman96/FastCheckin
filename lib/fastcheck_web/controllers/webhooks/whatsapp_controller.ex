@@ -13,9 +13,12 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
   alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.Config
   alias FastCheck.Messaging.WhatsApp.Dedupe
+  alias FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
   alias FastCheck.Messaging.WhatsApp.InboundNormalizer
+  alias FastCheck.Messaging.WhatsApp.ProviderStatus
   alias FastCheck.Messaging.WhatsApp.SessionStore
+  alias FastCheck.Messaging.WhatsApp.WebhookScope
   alias FastCheck.Messaging.WhatsApp.WebhookVerifier
   alias FastCheck.Workers.WhatsAppInboundWorker
 
@@ -40,7 +43,14 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
     with {:ok, config} <- Config.validate_for_webhook(),
          :ok <- WebhookVerifier.verify_signature(raw_body, signature, config.app_secret),
          {:ok, payload} <- decode_json(raw_body),
+         {:ok, payload} <- WebhookScope.filter(payload, config),
          raw_payload_hash <- payload_hash(raw_body),
+         {:ok, statuses} <-
+           ProviderStatus.normalize(payload,
+             raw_payload_hash: raw_payload_hash,
+             correlation_id: correlation_id || Logger.metadata()[:request_id]
+           ),
+         :ok <- process_statuses(statuses),
          {:ok, commands} <-
            InboundNormalizer.normalize(payload,
              raw_payload_hash: raw_payload_hash,
@@ -64,6 +74,14 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
       {:error, :malformed_json} ->
         send_resp(conn, 400, "")
 
+      {:ignore, :out_of_scope} ->
+        Logger.info("whatsapp_webhook_out_of_scope", provider: :meta)
+        send_resp(conn, 200, "")
+
+      {:ignore, :malformed_scope} ->
+        Logger.warning("whatsapp_webhook_scope_rejected", provider: :meta)
+        send_resp(conn, 200, "")
+
       {:error, :redis_unavailable} ->
         send_resp(conn, 503, "")
 
@@ -71,6 +89,56 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
         send_resp(conn, 503, "")
     end
   end
+
+  defp process_statuses(statuses) do
+    Enum.reduce_while(statuses, :ok, fn status, :ok ->
+      case DeliveryStatusReconciler.reconcile(status) do
+        {:error, reason} ->
+          Logger.error("whatsapp_delivery_status_reconciliation_failed",
+            reason: safe_status_reason(reason)
+          )
+
+          {:halt, {:error, reason}}
+
+        {:ignored, reason} ->
+          Logger.info("whatsapp_delivery_status_ignored",
+            provider: :meta,
+            provider_message_id_hash:
+              ProviderStatus.safe_summary(status).provider_message_id_hash,
+            status: status.status,
+            reason: reason
+          )
+
+          {:cont, :ok}
+
+        {:duplicate, _status} ->
+          Logger.info("whatsapp_delivery_status_duplicate",
+            provider: :meta,
+            provider_message_id_hash:
+              ProviderStatus.safe_summary(status).provider_message_id_hash,
+            status: status.status
+          )
+
+          {:cont, :ok}
+
+        {:conflict, :manual_review} ->
+          Logger.warning("whatsapp_delivery_status_conflict_manual_review",
+            provider: :meta,
+            provider_message_id_hash:
+              ProviderStatus.safe_summary(status).provider_message_id_hash,
+            status: status.status
+          )
+
+          {:cont, :ok}
+
+        {:updated, _status} ->
+          {:cont, :ok}
+      end
+    end)
+  end
+
+  defp safe_status_reason(reason) when is_atom(reason), do: reason
+  defp safe_status_reason(_reason), do: :reconciliation_failed
 
   defp process_commands([], _config), do: :ok
 

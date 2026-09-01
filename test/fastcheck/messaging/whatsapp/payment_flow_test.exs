@@ -27,7 +27,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "VS-19 Event",
-        scanner_login_code: scanner_code()
+        scanner_login_code: scanner_code(),
+        whatsapp_sales_enabled: true
       })
 
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "VS-19 General")

@@ -32,7 +32,8 @@ defmodule FastCheck.SalesE2EFixtures do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "VS-22 Event #{System.unique_integer([:positive])}",
-        scanner_login_code: unique_scanner_code()
+        scanner_login_code: unique_scanner_code(),
+        whatsapp_sales_enabled: channel == "whatsapp"
       })
 
     offer =

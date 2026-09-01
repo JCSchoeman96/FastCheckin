@@ -151,6 +151,7 @@ logger_metadata = [
   :payment_event_id,
   :ticket_issue_id,
   :delivery_attempt_id,
+  :provider_message_id_hash,
   :conversation_id,
   :provider,
   :provider_reference_redacted,

@@ -36,6 +36,7 @@ defmodule FastCheck.Events do
     "name" => :name,
     "shortname" => :shortname,
     "status" => :status,
+    "whatsapp_sales_enabled" => :whatsapp_sales_enabled,
     "entrance_name" => :entrance_name,
     "location" => :location,
     "event_date" => :event_date,
@@ -843,7 +844,8 @@ defmodule FastCheck.Events do
       tickera_start_date: tickera_start_date,
       tickera_end_date: tickera_end_date,
       last_sync_at: fetch_attr(attrs, "last_sync_at"),
-      last_soft_sync_at: fetch_attr(attrs, "last_soft_sync_at")
+      last_soft_sync_at: fetch_attr(attrs, "last_soft_sync_at"),
+      whatsapp_sales_enabled: fetch_attr(attrs, "whatsapp_sales_enabled") || false
     }
   end
 

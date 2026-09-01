@@ -83,9 +83,9 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
-      # Step 5: Compile code
-      - name: Compile code
-        run: mix compile
+      # Step 5: Compile code with the release warning contract
+      - name: Compile code with warnings as errors
+        run: mix compile --warnings-as-errors
 
       # Step 6: Check code formatting
       - name: Check code formatting
@@ -95,21 +95,25 @@ jobs:
       - name: Run Credo (static analysis)
         run: mix credo --strict
 
-      # Step 8: Run Sobelow (security scan)
+      # Step 8: Dialyzer is part of the declared release contract
+      - name: Run Dialyzer
+        run: mix dialyzer_check
+
+      # Step 9: Run Sobelow (security scan)
       - name: Run Sobelow (security scan)
         run: mix sobelow --exit --compact
 
-      # Step 9: Setup test database
+      # Step 10: Setup test database
       - name: Create and migrate test database
         run: |
           mix ecto.create
           mix ecto.migrate
 
-      # Step 10: Run test suite
+      # Step 11: Run test suite
       - name: Run tests
         run: mix test
 
-      # Step 11: Upload test artifacts on failure
+      # Step 12: Upload test artifacts on failure
       - name: Upload test artifacts
         if: failure()
         uses: actions/upload-artifact@v4

@@ -148,6 +148,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
            provider_status: "accepted",
            retryable?: false,
            rate_limited?: false,
+           ambiguous?: false,
            safe_metadata:
              metadata(
                operation,
@@ -221,6 +222,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
       provider_error_message: "meta request transport failure",
       retryable?: true,
       rate_limited?: false,
+      ambiguous?: true,
       safe_metadata:
         metadata(operation, message_type, status, nil, true, correlation_id, duration_ms)
         |> Map.put(:reason, safe_transport_reason(reason))
@@ -263,9 +265,21 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
   defp provider_message_id(%{messages: [%{id: id} | _]}), do: id
   defp provider_message_id(_), do: nil
 
-  defp provider_error_code(%{"error" => %{"code" => code}}), do: to_string(code)
-  defp provider_error_code(%{error: %{code: code}}), do: to_string(code)
+  defp provider_error_code(%{"error" => %{"code" => code}}), do: safe_error_code(code)
+  defp provider_error_code(%{error: %{code: code}}), do: safe_error_code(code)
   defp provider_error_code(_), do: nil
+
+  defp safe_error_code(code) when is_integer(code) do
+    code |> Integer.to_string() |> safe_error_code()
+  end
+
+  defp safe_error_code(code) when is_binary(code) do
+    code = String.trim(code)
+
+    if byte_size(code) <= 64 and Regex.match?(~r/\A[A-Za-z0-9_.-]+\z/, code), do: code
+  end
+
+  defp safe_error_code(_code), do: nil
 
   defp provider_error_message(%{"error" => %{"message" => message}}) when is_binary(message) do
     sanitize_provider_message(message)

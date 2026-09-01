@@ -15,7 +15,7 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp af(:restart_main_menu), do: "Terug na hoof kieslys (Kanselleer en begin oor)"
   defp af(:choose_event), do: "Kies 'n geleentheid:"
   defp af(:choose_ticket_type), do: "Kies 'n kaartjie tipe:"
-  defp af(:quantity), do: "Hoeveel kaartjies wil jy koop?"
+  defp af(:quantity), do: "Stuur net die aantal kaartjies"
   defp af(:buyer_name), do: "Stuur asseblief jou naam."
   defp af(:email), do: "Stuur jou e-posadres, of antwoord 1 om oor te slaan."
   defp af(:resend_name), do: "Stuur asseblief die naam wat vir die kaartjiebestelling gebruik is."
@@ -66,6 +66,9 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp af(:no_events),
     do: "Daar is nie nou kaartjies beskikbaar nie. Probeer asseblief later weer."
 
+  defp af(:sales_unavailable),
+    do: "WhatsApp-verkope is tans nie beskikbaar nie. Probeer asseblief later weer."
+
   defp af(:support),
     do: "Antwoord met 1 om kaartjies te koop, of kontak ondersteuning as jy hulp nodig het."
 
@@ -80,7 +83,7 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp en(:restart_main_menu), do: "Back to main menu (Cancel and start over)"
   defp en(:choose_event), do: "Choose an event:"
   defp en(:choose_ticket_type), do: "Choose a ticket type:"
-  defp en(:quantity), do: "How many tickets do you want to buy?"
+  defp en(:quantity), do: "Send only the number of tickets"
   defp en(:buyer_name), do: "Please send your name."
   defp en(:email), do: "Send your email address, or reply 1 to skip."
   defp en(:resend_name), do: "Please send the name used for the ticket order."
@@ -126,6 +129,10 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
 
   defp en(:invalid), do: "Please reply with one of the numbers shown."
   defp en(:no_events), do: "No tickets are available right now. Please try again later."
+
+  defp en(:sales_unavailable),
+    do: "WhatsApp sales are not available right now. Please try again later."
+
   defp en(:support), do: "Reply with 1 to buy tickets, or contact support if you need help."
   defp en(:cancelled), do: "The conversation has been cancelled. Reply # to start again."
   defp en(_key), do: "Please reply with a valid option."

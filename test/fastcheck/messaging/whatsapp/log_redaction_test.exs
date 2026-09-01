@@ -10,6 +10,7 @@ defmodule FastCheck.Messaging.WhatsApp.LogRedactionTest do
     :whatsapp_graph_api_base_url,
     :whatsapp_graph_api_version,
     :whatsapp_phone_number_id,
+    :whatsapp_business_account_id,
     :whatsapp_access_token,
     :whatsapp_app_secret,
     :whatsapp_request_timeout_ms,
@@ -33,6 +34,7 @@ defmodule FastCheck.Messaging.WhatsApp.LogRedactionTest do
     Application.put_env(:fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.test")
     Application.put_env(:fastcheck, :whatsapp_graph_api_version, "v99.0")
     Application.put_env(:fastcheck, :whatsapp_phone_number_id, "phone-number-123")
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
     Application.put_env(:fastcheck, :whatsapp_access_token, "EAAG_SECRET_ACCESS_TOKEN")
     Application.put_env(:fastcheck, :whatsapp_app_secret, "META_APP_SECRET")
     Application.put_env(:fastcheck, :whatsapp_request_timeout_ms, 5_000)

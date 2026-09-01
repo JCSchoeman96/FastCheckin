@@ -222,7 +222,7 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
     assert request.options.json["type"] == "template"
     assert request.options.json["template"]["name"] == "fastcheck_ticket_ready_en"
 
-    assert [%{status: "sent", within_whatsapp_window: false}] =
+    assert [%{status: "provider_accepted", within_whatsapp_window: false}] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue.id,

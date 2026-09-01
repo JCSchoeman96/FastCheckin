@@ -14,6 +14,8 @@ defmodule FastCheck.Sales.Checkout do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
@@ -52,7 +54,8 @@ defmodule FastCheck.Sales.Checkout do
           if existing_order do
             build_idempotent_replay(existing_order)
           else
-            with {:ok, offer} <- validate_offer(input, opts, context),
+            with :ok <- validate_new_checkout_event_gate(input, opts),
+                 {:ok, offer} <- validate_offer(input, opts, context),
                  :ok <- validate_quantity_against_offer(input, offer) do
               create_checkout(offer, input, actor, context)
             end
@@ -186,6 +189,31 @@ defmodule FastCheck.Sales.Checkout do
       {:error, _} = error -> error
     end
   end
+
+  defp validate_new_checkout_event_gate(
+         %{event_id: event_id, source_channel: source_channel},
+         opts
+       ) do
+    case effective_sales_channel(source_channel, opts) do
+      "whatsapp" ->
+        validate_whatsapp_event_gate(event_id)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp validate_whatsapp_event_gate(event_id) when is_integer(event_id) and event_id > 0 do
+    case Repo.get(Event, event_id) do
+      %Event{status: status, whatsapp_sales_enabled: true} when status != "archived" ->
+        :ok
+
+      _ ->
+        {:error, :whatsapp_sales_disabled}
+    end
+  end
+
+  defp validate_whatsapp_event_gate(_event_id), do: {:error, :whatsapp_sales_disabled}
 
   defp load_offer(offer_id) do
     system_actor = %{actor_type: :system, actor_id: "checkout", allowed_event_ids: []}

@@ -6,7 +6,9 @@ defmodule FastCheck.Messaging.WhatsApp.BoundaryTest do
     "lib/fastcheck/messaging/whatsapp/client.ex",
     "lib/fastcheck/messaging/whatsapp/message_builder.ex",
     "lib/fastcheck/messaging/whatsapp/template_catalog.ex",
-    "lib/fastcheck/messaging/whatsapp/response.ex"
+    "lib/fastcheck/messaging/whatsapp/response.ex",
+    "lib/fastcheck/messaging/whatsapp/provider_status.ex",
+    "lib/fastcheck/messaging/whatsapp/webhook_scope.ex"
   ]
 
   @forbidden_tokens [

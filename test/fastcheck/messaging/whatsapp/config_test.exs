@@ -64,6 +64,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
     Application.put_env(:fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.com")
     Application.put_env(:fastcheck, :whatsapp_graph_api_version, "v99.0")
     Application.put_env(:fastcheck, :whatsapp_phone_number_id, "123456")
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
     Application.put_env(:fastcheck, :whatsapp_access_token, "meta_test_token")
     Application.put_env(:fastcheck, :whatsapp_request_timeout_ms, 0)
     Application.put_env(:fastcheck, :whatsapp_receive_timeout_ms, 10_000)
@@ -73,8 +74,23 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
     assert error.provider_error_code == "whatsapp_request_timeout_ms"
   end
 
+  test "validate_for_boot requires the configured WABA and phone scope" do
+    Application.put_env(:fastcheck, :whatsapp_enabled, true)
+    Application.put_env(:fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.com")
+    Application.put_env(:fastcheck, :whatsapp_graph_api_version, "v99.0")
+    Application.put_env(:fastcheck, :whatsapp_phone_number_id, "123456")
+    Application.put_env(:fastcheck, :whatsapp_access_token, "meta_test_token")
+    Application.put_env(:fastcheck, :whatsapp_sandbox_mode, false)
+    Application.delete_env(:fastcheck, :whatsapp_business_account_id)
+
+    assert {:error, error} = Config.validate_for_boot()
+    assert error.provider_error_code == "whatsapp_business_account_id"
+  end
+
   test "validate_for_webhook requires app secret verify token TTLs and queue" do
     Application.put_env(:fastcheck, :whatsapp_enabled, true)
+    Application.put_env(:fastcheck, :whatsapp_phone_number_id, "123456")
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
     Application.put_env(:fastcheck, :whatsapp_app_secret, "META_APP_SECRET")
     Application.put_env(:fastcheck, :whatsapp_verify_token, "VERIFY_TOKEN")
     Application.put_env(:fastcheck, :whatsapp_session_ttl_seconds, 86_400)
@@ -97,6 +113,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
     Application.put_env(:fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.com")
     Application.put_env(:fastcheck, :whatsapp_graph_api_version, "v99.0")
     Application.put_env(:fastcheck, :whatsapp_phone_number_id, "123456")
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
     Application.put_env(:fastcheck, :whatsapp_access_token, "EAAG_SECRET_ACCESS_TOKEN")
     Application.put_env(:fastcheck, :whatsapp_app_secret, "META_APP_SECRET")
     Application.put_env(:fastcheck, :whatsapp_verify_token, "VERIFY_TOKEN")
@@ -113,6 +130,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
     refute summary =~ "EAAG_SECRET_ACCESS_TOKEN"
     refute summary =~ "META_APP_SECRET"
     refute summary =~ "VERIFY_TOKEN"
+    assert summary =~ "business_account_id: \"business-123\""
+    assert summary =~ "phone_number_id: \"123456\""
+    assert summary =~ "environment_intent: :sandbox"
     assert inspected =~ "[FILTERED]"
     assert summary =~ "[FILTERED]"
   end

@@ -61,14 +61,22 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
       Repo.all(
         from d in "sales_delivery_attempts",
           where: d.sales_order_id == ^order.id,
-          select: map(d, [:ticket_issue_id, :recipient, :status, :provider_message_id])
+          select:
+            map(d, [
+              :ticket_issue_id,
+              :recipient,
+              :status,
+              :provider_status,
+              :provider_message_id
+            ])
       )
 
     assert [
              %{
                ticket_issue_id: nil,
                recipient: recipient,
-               status: "sent",
+               status: "provider_accepted",
+               provider_status: "accepted",
                provider_message_id: "wamid.payment-out"
              }
            ] = attempts
@@ -122,6 +130,57 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     refute attempt_log =~ attempt.authorization_url
   end
 
+  test "ambiguous transport marks payment delivery for manual review without retrying", %{
+    offer: offer
+  } do
+    test_pid = self()
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    log =
+      capture_log(fn ->
+        Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+          send(test_pid, {:whatsapp_request, request})
+          {:error, %Req.TransportError{reason: :timeout}}
+        end)
+
+        args = %{
+          "conversation_id" => conversation_id,
+          "sales_order_id" => order.id,
+          "payment_attempt_id" => attempt.id
+        }
+
+        assert {:discard, :ambiguous_transport} =
+                 perform_job(SendWhatsAppPaymentLinkWorker, args)
+
+        assert :ok = perform_job(SendWhatsAppPaymentLinkWorker, args)
+      end)
+
+    assert_received {:whatsapp_request, _request}
+    refute_received {:whatsapp_request, _duplicate}
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_message: "whatsapp send requires manual review",
+               fallback_channel: "manual_review"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select: map(d, [:status, :provider_error_message, :fallback_channel])
+             )
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+
+    assert ttl > 0
+    refute log =~ attempt.authorization_url
+  end
+
   test "releases outbound dedupe after retryable failure so retry sends", %{offer: offer} do
     test_pid = self()
     counter = :counters.new(1, [])
@@ -161,7 +220,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert_received {:whatsapp_request, _retry_request}
     refute_received {:whatsapp_request, _extra_request}
 
-    assert ["failed", "sent"] =
+    assert ["failed", "provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,

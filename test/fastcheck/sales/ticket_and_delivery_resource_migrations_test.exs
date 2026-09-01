@@ -6,6 +6,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
   @sales_tables [
     "sales_checkout_sessions",
     "sales_delivery_attempts",
+    "sales_delivery_status_events",
     "sales_order_lines",
     "sales_orders",
     "sales_payment_attempts",
@@ -75,8 +76,13 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
       "failure_reason",
       "fallback_channel",
       "correlation_id",
+      "provider_accepted_at",
+      "provider_status",
+      "provider_status_at",
       "sent_at",
       "delivered_at",
+      "read_at",
+      "failed_at",
       "inserted_at",
       "updated_at"
     ])
@@ -86,6 +92,22 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_column_type("sales_ticket_issues", "line_item_sequence", "integer")
     assert_column_type("sales_ticket_issues", "last_scanner_sync_version", "integer")
     assert_column_type("sales_delivery_attempts", "attempt_number", "integer")
+  end
+
+  test "delivery status evidence exposes only bounded correlation fields" do
+    assert_columns("sales_delivery_status_events", [
+      "id",
+      "delivery_attempt_id",
+      "provider",
+      "channel",
+      "provider_message_id",
+      "provider_status",
+      "provider_status_at",
+      "provider_error_code",
+      "correlation_id",
+      "inserted_at",
+      "updated_at"
+    ])
   end
 
   test "required indexes and partial unique indexes exist" do
@@ -103,6 +125,10 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_index("sales_delivery_attempts_order_channel_status_inserted_at_idx")
     assert_index("sales_delivery_attempts_correlation_id_idx")
     assert_index("sales_delivery_attempts_resend_challenge_id_idx")
+    assert_index("sales_delivery_attempts_meta_wamid_uidx")
+    assert_index("sales_delivery_status_events_provider_evidence_uidx")
+    assert_index("sales_delivery_status_events_delivery_attempt_id_provider_status_at_index")
+    assert_index("sales_delivery_status_events_provider_message_id_index")
 
     assert_index_where("sales_ticket_issues_ticket_code_uidx", "ticket_code IS NOT NULL")
     assert_index_where("sales_ticket_issues_attendee_id_uidx", "attendee_id IS NOT NULL")
@@ -118,6 +144,12 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_foreign_key("sales_ticket_issues", "sales_order_line_id", "sales_order_lines")
     assert_foreign_key("sales_delivery_attempts", "sales_order_id", "sales_orders")
     assert_foreign_key("sales_delivery_attempts", "ticket_issue_id", "sales_ticket_issues")
+
+    assert_foreign_key(
+      "sales_delivery_status_events",
+      "delivery_attempt_id",
+      "sales_delivery_attempts"
+    )
 
     assert_foreign_key(
       "sales_delivery_attempts",

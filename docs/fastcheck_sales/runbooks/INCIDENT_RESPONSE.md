@@ -96,7 +96,8 @@ directs otherwise.
   worker path.
 - Unsafe actions to avoid: Do not paste ticket link into public notes.
 - Recovery procedure: Fix provider/template issue and run approved delivery path.
-- Verification after recovery: Delivery attempt sent and secure page opens.
+- Verification after recovery: Delivery attempt records `provider_accepted`,
+  then a signed/scoped Meta status when available; secure page opens.
 - Escalation trigger: Multiple ticket-issued orders lack delivery.
 
 ## WhatsApp inbound webhook failing
@@ -125,7 +126,9 @@ directs otherwise.
   needed.
 - Unsafe actions to avoid: Do not bypass approved workers.
 - Recovery procedure: Restore Meta send path and retry approved jobs.
-- Verification after recovery: Delivery attempts reach sent.
+- Verification after recovery: New delivery attempts reach
+  `provider_accepted`; signed/scoped Meta callbacks advance them to `sent`,
+  `delivered`, or `read` when Meta supplies that evidence.
 - Escalation trigger: Paid orders cannot receive ticket links.
 
 ## WhatsApp template unavailable or rejected
@@ -243,7 +246,9 @@ directs otherwise.
   ticket delivery cannot recover.
 - Unsafe actions to avoid: Do not bypass delivery workers.
 - Recovery procedure: Restore provider/template path and retry approved jobs.
-- Verification after recovery: New delivery attempts reach sent.
+- Verification after recovery: New delivery attempts reach
+  `provider_accepted`; signed/scoped Meta callbacks provide the subsequent
+  delivery evidence.
 - Escalation trigger: Paid customers cannot receive secure ticket links.
 
 ## Oban queue backlog
@@ -306,4 +311,3 @@ directs otherwise.
   logs according to policy, and fix redaction outside this docs slice.
 - Verification after recovery: New logs are redacted and audit views are safe.
 - Escalation trigger: Any customer token or provider secret is exposed.
-

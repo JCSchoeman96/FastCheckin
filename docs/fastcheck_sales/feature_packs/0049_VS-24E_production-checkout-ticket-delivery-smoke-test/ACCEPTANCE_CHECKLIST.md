@@ -30,14 +30,27 @@
 - [ ] Environment preflight covers CI, deployed SHA, database, Redis, Oban,
   Paystack, WhatsApp, dashboard auth, and scanner readiness.
 - [ ] Sandbox/test-mode happy path starts from WhatsApp checkout.
+- [ ] Event WhatsApp sales gate is explicitly enabled for the test event.
+- [ ] Disabling the event gate rejects stale WhatsApp checkout confirmation
+  without creating a new order/hold and does not invalidate existing truth.
+- [ ] Quantity accepts positive multi-digit values within the selected offer
+  maximum and renders the dynamic English/Afrikaans range.
 - [ ] Correct Paystack payment link is validated without recording the raw URL.
 - [ ] Paystack webhook receipt is validated.
 - [ ] Server-side Paystack verification is validated.
 - [ ] Ticket issuance exactly once is validated.
 - [ ] WhatsApp secure ticket link delivery exactly once is validated.
+- [ ] Meta provider acceptance is distinguished from `sent`, `delivered`,
+  `read`, and `failed` callback evidence.
+- [ ] Provider status callbacks are signed, WABA/phone scoped, correlated by
+  WAMID, idempotent, and safe for out-of-order delivery.
+- [ ] Ambiguous ticket-link transport does not automatically retry or rotate a
+  second secure token.
 - [ ] Secure ticket page opening is validated.
 - [ ] Dashboard/manual PDF download is validated.
 - [ ] Scanner sync and valid scan are validated.
+- [ ] Mixed Tickera and `fastcheck_sales` attendee coexistence is proven, or a
+  blocker is recorded.
 - [ ] Resend through WhatsApp + email OTP is validated.
 - [ ] Duplicate webhook idempotency is validated.
 - [ ] Duplicate worker idempotency is validated.

@@ -56,7 +56,8 @@ traffic.
 - [ ] Redis health is confirmed.
 - [ ] Oban queues are running.
 - [ ] Paystack live mode is deliberate.
-- [ ] Meta/WhatsApp live mode is deliberate.
+- [ ] Meta/WhatsApp live mode is deliberate; `META_WHATSAPP_SANDBOX_MODE` is
+  explicit and configured WABA/phone scope is confirmed.
 - [ ] Dashboard auth works for assigned operator.
 - [ ] Scanner/mobile auth works for hidden/internal event.
 
@@ -73,6 +74,8 @@ traffic.
 - [ ] Event and offer selection complete.
 - [ ] Buyer details and confirmation complete.
 - [ ] Payment link is sent once.
+- [ ] Payment-link DeliveryAttempt records provider acceptance separately from
+  actual Meta `sent`/`delivered`/`read` evidence.
 - [ ] Paystack page shows expected live mode, amount, currency, and redacted
   reference.
 - [ ] Payment is completed.
@@ -87,6 +90,10 @@ Do not record the raw payment URL or access code.
 - [ ] Exactly one ticket issue is created for the paid unit.
 - [ ] Exactly one attendee is created for the paid unit.
 - [ ] WhatsApp secure ticket link is sent once.
+- [ ] Signed Meta status callbacks reconcile the tracked WAMID idempotently and
+  do not mutate payment, ticket, inventory, or scanner authority.
+- [ ] An ambiguous ticket-link timeout/connection loss is manual-review/no-auto-
+  retry and does not rotate another secure token.
 - [ ] Secure ticket page opens.
 
 Do not record the ticket link, delivery token, token hash, QR hash, or ticket
@@ -106,6 +113,15 @@ code.
 - [ ] Approved scanner sync sees the attendee.
 - [ ] Valid scan succeeds according to current scanner rules.
 - [ ] Scan result is visible in safe operator surfaces.
+
+### 6A. Event gate, quantity, and source checks
+
+- [ ] Event-level `whatsapp_sales_enabled` is enabled deliberately.
+- [ ] Disabling the event gate rejects stale WhatsApp checkout without a new
+  order/hold and leaves existing paid/in-flight recovery intact.
+- [ ] Multi-digit quantity and dynamic AF/EN maximum prompt are verified.
+- [ ] Mixed Tickera and `fastcheck_sales` source proof is complete or explicitly
+  marked not applicable with reason.
 
 Do not test invalid destructive scan paths in production unless explicitly
 approved.

@@ -16,6 +16,33 @@ defmodule FastCheckWeb.BrowserAuthTest do
   end
 
   describe "dashboard routes" do
+    @protected_paths [
+      "/dashboard",
+      "/scan/1",
+      "/dashboard/occupancy/1",
+      "/dashboard/sales",
+      "/dashboard/sales/ops",
+      "/dashboard/sales/audit/order/1",
+      "/dashboard/sales/reviews",
+      "/dashboard/sales/orders/1",
+      "/dashboard/sales/tickets/1/pdf",
+      "/dashboard/sales/checkout/1",
+      "/dashboard/sales/internal-pilot/checkout/1",
+      "/export/attendees/1",
+      "/export/check-ins/1"
+    ]
+
+    test "all dashboard and operations routes require authentication", _context do
+      for path <- @protected_paths do
+        conn = get(build_conn(), path)
+
+        assert redirected_to(conn) == "/login?redirect_to=#{URI.encode(path)}"
+      end
+
+      conn = delete(build_conn(), "/logout")
+      assert redirected_to(conn) == "/login?redirect_to=%2Flogout"
+    end
+
     test "redirect unauthenticated users to login", %{conn: conn} do
       conn = get(conn, ~p"/")
 

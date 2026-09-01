@@ -34,7 +34,7 @@ defmodule FastCheck.Messaging.WhatsApp.Config do
           verify_token: String.t() | nil,
           request_timeout_ms: pos_integer(),
           receive_timeout_ms: pos_integer(),
-          sandbox_mode: boolean(),
+          sandbox_mode: term(),
           session_ttl_seconds: pos_integer(),
           dedupe_ttl_seconds: pos_integer(),
           inbound_queue_enabled: boolean()
@@ -93,8 +93,11 @@ defmodule FastCheck.Messaging.WhatsApp.Config do
     config = get()
 
     with :ok <- validate_enabled(config),
+         :ok <- require_present(config.business_account_id, "whatsapp_business_account_id"),
+         :ok <- require_present(config.phone_number_id, "whatsapp_phone_number_id"),
          :ok <- require_present(config.app_secret, "whatsapp_app_secret"),
          :ok <- require_present(config.verify_token, "whatsapp_verify_token"),
+         :ok <- validate_sandbox_mode(config),
          :ok <- require_timeout(config.session_ttl_seconds, "whatsapp_session_ttl_seconds"),
          :ok <- require_timeout(config.dedupe_ttl_seconds, "whatsapp_dedupe_ttl_seconds"),
          :ok <- validate_inbound_queue_enabled(config) do
@@ -104,8 +107,14 @@ defmodule FastCheck.Messaging.WhatsApp.Config do
 
   @spec redacted_summary() :: map()
   def redacted_summary do
-    get()
+    config = get()
+
+    config
     |> Map.from_struct()
+    |> Map.put(
+      :environment_intent,
+      if(config.sandbox_mode == true, do: :sandbox, else: :production)
+    )
     |> Map.update!(:access_token, &redact_secret/1)
     |> Map.update!(:app_secret, &redact_secret/1)
     |> Map.update!(:verify_token, &redact_secret/1)
@@ -128,11 +137,18 @@ defmodule FastCheck.Messaging.WhatsApp.Config do
     with :ok <- require_present(config.graph_api_base_url, "whatsapp_graph_api_base_url"),
          :ok <- require_present(config.graph_api_version, "whatsapp_graph_api_version"),
          :ok <- require_present(config.phone_number_id, "whatsapp_phone_number_id"),
+         :ok <- require_present(config.business_account_id, "whatsapp_business_account_id"),
          :ok <- require_present(config.access_token, "whatsapp_access_token"),
+         :ok <- validate_sandbox_mode(config),
          :ok <- require_timeout(config.request_timeout_ms, "whatsapp_request_timeout_ms") do
       require_timeout(config.receive_timeout_ms, "whatsapp_receive_timeout_ms")
     end
   end
+
+  defp validate_sandbox_mode(%__MODULE__{sandbox_mode: value}) when is_boolean(value), do: :ok
+
+  defp validate_sandbox_mode(_config),
+    do: {:error, missing_config("whatsapp_sandbox_mode", "invalid WhatsApp sandbox mode")}
 
   defp require_present(value, _key) when is_binary(value) and value != "", do: :ok
   defp require_present(_value, key), do: {:error, missing_config(key, "missing WhatsApp config")}

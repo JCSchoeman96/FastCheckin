@@ -71,7 +71,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
     end
 
     test "renders active flow prompts with back and restart navigation" do
-      quantity = MenuRenderer.quantity_prompt("af")
+      quantity = MenuRenderer.quantity_prompt("af", 12)
       buyer_name = MenuRenderer.buyer_name_prompt("af")
       email = MenuRenderer.email_prompt("af")
       resend_name = MenuRenderer.resend_name_prompt("af")
@@ -83,6 +83,11 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
         assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
         refute body =~ "restart"
       end
+
+      assert quantity =~ "Stuur net die aantal kaartjies (1–12)."
+
+      assert MenuRenderer.quantity_prompt("en", 10) =~
+               "Send only the number of tickets (1–10)."
 
       english_email = MenuRenderer.email_prompt("en")
 

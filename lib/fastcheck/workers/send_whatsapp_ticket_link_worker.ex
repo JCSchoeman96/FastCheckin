@@ -246,11 +246,28 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   defp mark_provider_result(result, delivery_attempt, release_dedupe) do
     case result do
       {:ok, response} ->
-        mark_sent(delivery_attempt, response.provider_message_id)
+        case mark_provider_accepted(delivery_attempt, response.provider_message_id) do
+          {:ok, updated_delivery_attempt} ->
+            {:ok, updated_delivery_attempt}
+
+          {:error, _reason} ->
+            _ = mark_manual_review(delivery_attempt, :provider_acceptance_persistence_failed)
+            {:discard, :provider_acceptance_persistence_failed}
+        end
 
       {:error, reason} = error ->
         mark_provider_failure(delivery_attempt, reason, release_dedupe, error)
     end
+  end
+
+  defp mark_provider_failure(
+         delivery_attempt,
+         %{ambiguous?: true} = reason,
+         _release_dedupe,
+         _error
+       ) do
+    _ = mark_manual_review(delivery_attempt, reason)
+    {:discard, :ambiguous_transport}
   end
 
   defp mark_provider_failure(
@@ -300,13 +317,17 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     |> Ash.create(authorize?: false)
   end
 
-  defp mark_sent(delivery_attempt, provider_message_id) do
+  defp mark_provider_accepted(delivery_attempt, provider_message_id) do
+    accepted_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
     delivery_attempt
     |> Changeset.for_update(
-      :mark_sent,
+      :mark_provider_accepted,
       %{
         provider_message_id: provider_message_id,
-        sent_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        provider_accepted_at: accepted_at,
+        provider_status: "accepted",
+        provider_status_at: accepted_at
       },
       actor: system_actor()
     )
@@ -320,7 +341,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       %{
         provider_error_code: provider_error_code(reason),
         provider_error_message: "whatsapp send failed",
-        failure_reason: failure_reason(reason)
+        failure_reason: failure_reason(reason),
+        failed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+        provider_status: "failed",
+        provider_status_at: DateTime.utc_now() |> DateTime.truncate(:second)
       },
       actor: system_actor()
     )
@@ -394,12 +418,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     ]
   end
 
-  defp provider_error_code({:error, reason}), do: provider_error_code(reason)
   defp provider_error_code(%{provider_error_code: code}) when is_binary(code), do: code
   defp provider_error_code(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp provider_error_code(_reason), do: "whatsapp_send_failed"
 
-  defp failure_reason({:error, reason}), do: failure_reason(reason)
   defp failure_reason(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp failure_reason(_reason), do: "whatsapp_send_failed"
 

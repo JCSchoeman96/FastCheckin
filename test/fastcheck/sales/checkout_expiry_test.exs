@@ -321,7 +321,7 @@ defmodule FastCheck.Sales.CheckoutExpiryTest do
   end
 
   test "expire does not bump event_sync_version" do
-    event = WebFixtures.insert_event!()
+    event = WebFixtures.insert_event!(%{whatsapp_sales_enabled: true})
     offer = Fixtures.insert_offer!(event_id: event.id, configured_quantity_available: 10)
     on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
 

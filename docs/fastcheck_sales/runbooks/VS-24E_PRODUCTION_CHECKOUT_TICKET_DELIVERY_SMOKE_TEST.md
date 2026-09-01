@@ -104,8 +104,10 @@ Record evidence in the VS-24E evidence template using redacted IDs only.
 - Failure response: Stop if mode is ambiguous.
 
 - Action: Confirm Meta/WhatsApp mode deliberately.
-- Expected result: Inbound and outbound are enabled for the intended environment.
-- Where to verify: Safe config display, Meta dashboard, and app health.
+- Expected result: Inbound and outbound are enabled for the intended environment;
+  sandbox/production intent is explicit, and the configured WABA and phone
+  number are the intended scope.
+- Where to verify: Safe redacted config display, Meta dashboard, and app health.
 - Failure response: Stop if customer messages might go to wrong environment.
 
 - Action: Confirm dashboard authentication works.
@@ -125,12 +127,34 @@ Record evidence in the VS-24E evidence template using redacted IDs only.
 ### 2.1 Setup Test Event And Offer
 
 - Action: Select a sandbox/internal event and active WhatsApp ticket offer.
-- Expected result: Event and offer are active; inventory availability matches
-  approved test quantity.
+- Expected result: Event is not archived, `whatsapp_sales_enabled` is explicitly
+  enabled, the offer is active/sellable for WhatsApp, and inventory availability
+  matches approved test quantity.
 - Where to verify: Ops dashboard, offer admin view, approved Redis check.
 - Evidence: event label, offer label, redacted availability status.
 - Failure response: Stop; do not test against production launch event by
   accident.
+
+- Action: Disable WhatsApp sales on the test event and confirm a stale
+  conversation cannot confirm a new checkout.
+- Expected result: New WhatsApp discovery and checkout fail closed; no new order
+  or inventory hold is created. Existing paid/in-flight order truth remains
+  available for recovery.
+- Where to verify: Event admin toggle, conversation state, order/hold counts,
+  and audit timeline.
+- Evidence: event ID, conversation ID, safe rejection status, and unchanged
+  counts only.
+- Failure response: Stop if stale confirmation creates an order/hold or if
+  existing paid recovery is invalidated.
+
+- Action: Select a quantity at or above ten when the offer maximum permits it.
+- Expected result: The English or Afrikaans prompt renders the selected offer's
+  dynamic maximum; positive multi-digit values through the maximum are accepted,
+  while values above it and menu index `10` are rejected. `0` remains Back.
+- Where to verify: WhatsApp conversation state and checkout result.
+- Evidence: quantity class/result and offer maximum only.
+- Failure response: Stop if a second quantity authority or an above-maximum
+  checkout is observed.
 
 ### 2.2 Start WhatsApp Checkout
 
@@ -149,9 +173,12 @@ Record evidence in the VS-24E evidence template using redacted IDs only.
 ### 2.3 Payment Link
 
 - Action: Allow payment-link worker to send the Paystack payment message.
-- Expected result: Customer receives one payment message.
+- Expected result: Customer receives one payment message and the DeliveryAttempt
+  is `provider_accepted` only after Meta returns a WAMID; this does not claim
+  `sent`, `delivered`, or `read`.
 - Where to verify: Delivery status, Oban job, audit timeline.
-- Evidence: payment attempt ID, payment-link job ID, sent status.
+- Evidence: payment attempt ID, payment-link job ID, `provider_accepted` status,
+  and any later provider status evidence.
 - Failure response: Stop if duplicate sends occur or no message is sent.
 
 - Action: Verify payment link points to the correct Paystack mode and reference.
@@ -205,12 +232,54 @@ Do not record the raw payment URL or access code.
 ### 2.7 Secure Ticket Link Delivery
 
 - Action: Let ticket-link worker send the customer ticket message.
-- Expected result: Customer receives one secure ticket link message.
+- Expected result: Customer receives one secure ticket link message and the
+  DeliveryAttempt records `provider_accepted` until a signed, scoped Meta status
+  callback supplies `sent`, `delivered`, `read`, or `failed` evidence.
 - Where to verify: Delivery attempt, Oban job, audit timeline.
-- Evidence: delivery attempt ID, ticket-link job ID, sent status.
+- Evidence: delivery attempt ID, ticket-link job ID, provider status, provider
+  status timestamp, and redacted callback correlation only.
 - Failure response: Stop on duplicate link send or no delivery.
 
 Do not record the ticket link or delivery token.
+
+- Action: Exercise a controlled definitive Meta rejection and a controlled
+  ambiguous transport failure in sandbox/test-mode where the provider test
+  adapter permits it.
+- Expected result: Definitive rejection follows the bounded retry/failure policy.
+  Timeout or connection loss after dispatch moves the ticket delivery to
+  `manual_review`, does not automatically retry, and does not rotate another
+  secure token.
+- Where to verify: DeliveryAttempt, dedupe state, worker result, and audit
+  timeline.
+- Evidence: delivery attempt ID, safe failure classification, attempt count,
+  and token-rotation result without recording any URL or token.
+- Failure response: Stop if an ambiguous outcome automatically sends a second
+  token-bearing message.
+
+### 2.7A Meta Provider Status Evidence
+
+- Action: Observe a signed Meta callback for a tracked payment-link or ticket-link
+  WAMID, then replay it and send an older callback.
+- Expected result: The callback is accepted only for the configured WABA and
+  phone number; it correlates to exactly one DeliveryAttempt, stores durable
+  evidence, is idempotent on replay, and cannot regress a newer state.
+- Where to verify: DeliveryAttempt, status-evidence records, ops dashboard, and
+  audit timeline.
+- Evidence: WAMID hash, provider status, provider timestamp, and internal IDs
+  only. Out-of-scope or unknown WAMIDs are acknowledged and ignored without
+  domain state.
+- Failure response: Stop on multiple-row correlation, state regression, unsafe
+  retry, or any payment/ticket/inventory/scanner mutation.
+
+- Action: Observe a provider `failed` callback and a later contradictory success
+  callback for the same WAMID.
+- Expected result: Failure is visible to operators; contradictory evidence is
+  preserved and routes the attempt to deterministic `manual_review`. The webhook
+  does not send, pay, issue, revoke, or alter scanner state.
+- Where to verify: DeliveryAttempt and status-evidence records plus ops views.
+- Evidence: internal IDs, statuses, timestamps, and safe reason codes only.
+- Failure response: Stop if the callback silently rewrites history or triggers a
+  resend.
 
 ### 2.8 Secure Ticket Page
 
@@ -260,6 +329,19 @@ Rules:
 - Evidence: scan result ID/correlation and accepted status.
 - Failure response: Stop; backend scanner authority must remain correct.
 
+- Action: For the mixed-source regression event, sync once after a Tickera-origin
+  attendee and a `fastcheck_sales` attendee are both present.
+- Expected result: Both eligible attendees are visible; the Sales ticket scans
+  successfully, and later Sales revocation invalidates only the Sales attendee.
+  Tickera reconciliation does not overwrite or invalidate the Sales row, and the
+  Tickera attendee remains eligible.
+- Where to verify: Mobile sync, scanner acceptance, attendee source fields, and
+  invalidation/audit records.
+- Evidence: internal attendee/ticket IDs, source labels, eligibility statuses,
+  and scan results only.
+- Failure response: Stop mixed-source approval and create a blocker if source or
+  scanner identity collides.
+
 ### 2.11 Fail-Closed Scanner Checks
 
 Run destructive revocation/refund checks only in sandbox/test-mode or if explicit
@@ -303,9 +385,10 @@ production approval exists.
 - Failure response: Stop if OTP is logged or public challenge ID leaks.
 
 - Action: Let ticket-link worker send verified resend.
-- Expected result: Secure ticket link is sent; challenge is consumed; delivery
-  attempt has `delivery_reason = verified_ticket_resend` and internal challenge
-  ID only.
+- Expected result: Meta request is recorded as `provider_accepted` when it
+  returns a WAMID; challenge is consumed; later signed/scoped Meta status is
+  recorded separately when supplied. The delivery attempt has
+  `delivery_reason = verified_ticket_resend` and internal challenge ID only.
 - Where to verify: Delivery attempt, challenge state, audit timeline.
 - Evidence: delivery attempt ID, internal challenge ID, consumed status.
 - Failure response: Stop if delivery does not pair with challenge audit.
