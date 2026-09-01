@@ -982,8 +982,6 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     end
   end
 
-  defp selected_offer_max_per_order(_data), do: 9
-
   defp state_data(%Conversation{state_data: data}) when is_map(data), do: data
   defp state_data(_conversation), do: %{}
 

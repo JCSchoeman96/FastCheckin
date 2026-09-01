@@ -48,10 +48,11 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     assert %{
              status: "delivered",
              delivered_at: delivered_at,
-             sent_at: nil
+             sent_at: sent_at
            } = snapshot_attempt!(attempt_id)
 
     assert delivered_at == timestamp(2)
+    assert sent_at == timestamp(1)
 
     assert {:updated, "read"} =
              DeliveryStatusReconciler.reconcile(provider_status("wamid.lifecycle", "read", 3))

@@ -138,7 +138,6 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
   end
 
   defp safe_status_reason(reason) when is_atom(reason), do: reason
-  defp safe_status_reason(_reason), do: :reconciliation_failed
 
   defp process_commands([], _config), do: :ok
 
