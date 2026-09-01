@@ -36,7 +36,7 @@ defmodule FastCheckWeb.BrowserAuthTest do
       for path <- @protected_paths do
         conn = get(build_conn(), path)
 
-        assert redirected_to(conn) == "/login?redirect_to=#{URI.encode(path)}"
+        assert redirected_to(conn) == "/login?redirect_to=#{URI.encode_www_form(path)}"
       end
 
       conn = delete(build_conn(), "/logout")

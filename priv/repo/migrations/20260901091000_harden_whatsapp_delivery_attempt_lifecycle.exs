@@ -23,6 +23,9 @@ defmodule FastCheck.Repo.Migrations.HardenWhatsappDeliveryAttemptLifecycle do
     "manual_review"
   ]
 
+  @status_at_index_name :sales_delivery_status_events_attempt_status_at_idx
+  @provider_message_index_name :sales_delivery_status_events_provider_message_id_idx
+
   def up do
     alter table(:sales_delivery_attempts) do
       add(:provider_accepted_at, :utc_datetime)
@@ -107,15 +110,30 @@ defmodule FastCheck.Repo.Migrations.HardenWhatsappDeliveryAttemptLifecycle do
       )
     )
 
-    create(index(:sales_delivery_status_events, [:delivery_attempt_id, :provider_status_at]))
-    create(index(:sales_delivery_status_events, [:provider_message_id]))
+    create(
+      index(:sales_delivery_status_events, [:delivery_attempt_id, :provider_status_at],
+        name: @status_at_index_name
+      )
+    )
+
+    create(
+      index(:sales_delivery_status_events, [:provider_message_id],
+        name: @provider_message_index_name
+      )
+    )
   end
 
   def down do
-    drop_if_exists(index(:sales_delivery_status_events, [:provider_message_id]))
+    drop_if_exists(
+      index(:sales_delivery_status_events, [:provider_message_id],
+        name: @provider_message_index_name
+      )
+    )
 
     drop_if_exists(
-      index(:sales_delivery_status_events, [:delivery_attempt_id, :provider_status_at])
+      index(:sales_delivery_status_events, [:delivery_attempt_id, :provider_status_at],
+        name: @status_at_index_name
+      )
     )
 
     drop_if_exists(

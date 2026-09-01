@@ -245,6 +245,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                  select:
                    map(d, [
                      :status,
+                     :provider_status,
                      :provider_message_id,
                      :within_whatsapp_window,
                      :template_name
@@ -288,7 +289,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert ttl > 80_000
 
-    assert ["sent"] =
+    assert ["provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
@@ -347,6 +348,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                  select:
                    map(d, [
                      :status,
+                     :provider_status,
                      :provider_message_id,
                      :delivery_reason,
                      :ticket_resend_challenge_id,

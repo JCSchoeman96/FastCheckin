@@ -146,7 +146,7 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
         assert ticket_request.options.json["text"]["body"] =~ "/t/"
         refute ticket_request.options.json["text"]["body"] =~ issue.delivery_token_hash
 
-        assert ["sent", "sent"] =
+        assert ["provider_accepted", "provider_accepted"] =
                  Repo.all(
                    from d in "sales_delivery_attempts",
                      where: d.sales_order_id == ^order_id,

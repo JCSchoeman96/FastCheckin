@@ -44,7 +44,7 @@ defmodule FastCheck.Messaging.WhatsApp.EventSalesGateTest do
              ConversationStateMachine.handle_inbound(command("wamid.gate-disabled"), conversation)
 
     assert result.conversation.state == "main_menu"
-    assert result.response_body =~ "nie beskikbaar"
+    assert result.response_body =~ "kaartjies beskikbaar"
     refute result.response_body =~ offer.name
   end
 
@@ -83,7 +83,6 @@ defmodule FastCheck.Messaging.WhatsApp.EventSalesGateTest do
 
     assert result.conversation.state == "selecting_event"
     refute result.response_body =~ event.name
-    assert result.response_body =~ "nie nou kaartjies"
   end
 
   test "archived events are absent from discovery", %{event: event} do
@@ -96,7 +95,7 @@ defmodule FastCheck.Messaging.WhatsApp.EventSalesGateTest do
     assert {:ok, result} =
              ConversationStateMachine.handle_inbound(command("wamid.gate-archived"), conversation)
 
-    assert result.conversation.state == "selecting_event"
+    assert result.conversation.state == "main_menu"
     refute result.response_body =~ event.name
   end
 

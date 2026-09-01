@@ -40,6 +40,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
         where:
           d.provider == "meta" and d.channel == "whatsapp" and
             d.provider_message_id == ^event.provider_message_id,
+        select: d,
         lock: "FOR UPDATE"
       )
       |> Repo.all()

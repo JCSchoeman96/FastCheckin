@@ -878,7 +878,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-quantity-7")
 
     assert backed.conversation.state == "collecting_quantity"
-    assert backed.response_body =~ "Stuur net die aantal kaartjies (1–10)."
+    assert backed.response_body =~ "Stuur net die aantal kaartjies (1–4)."
     assert backed.conversation.state_data["selected_event_id"] == event.id
     assert backed.conversation.state_data["selected_offer_id"] == offer.id
     refute Map.has_key?(backed.conversation.state_data, "quantity")

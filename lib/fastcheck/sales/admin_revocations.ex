@@ -145,9 +145,31 @@ defmodule FastCheck.Sales.AdminRevocations do
       {:error, {:mobile_sync_version_aggregation_failed, _} = error} ->
         {:error, error}
 
+      {:error, :rollback} ->
+        {:ok,
+         %{
+           revoked: [],
+           failures: failures_for_still_issued_tickets(order_id, :rollback)
+         }}
+
       {:error, reason} ->
         {:ok, %{revoked: [], failures: [%{error: reason}]}}
     end
+  end
+
+  defp failures_for_still_issued_tickets(order_id, error_reason) do
+    order_id
+    |> issued_ticket_issue_ids()
+    |> Enum.map(&%{ticket_issue_id: &1, error: error_reason})
+  end
+
+  defp issued_ticket_issue_ids(order_id) do
+    Repo.all(
+      from t in "sales_ticket_issues",
+        where: t.sales_order_id == ^order_id and t.status == "issued",
+        order_by: [asc: t.id],
+        select: t.id
+    )
   end
 
   defp require_reason(attrs) do

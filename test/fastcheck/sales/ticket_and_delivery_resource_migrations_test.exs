@@ -127,8 +127,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_index("sales_delivery_attempts_resend_challenge_id_idx")
     assert_index("sales_delivery_attempts_meta_wamid_uidx")
     assert_index("sales_delivery_status_events_provider_evidence_uidx")
-    assert_index("sales_delivery_status_events_delivery_attempt_id_provider_status_at_index")
-    assert_index("sales_delivery_status_events_provider_message_id_index")
+    assert_index("sales_delivery_status_events_attempt_status_at_idx")
+    assert_index("sales_delivery_status_events_provider_message_id_idx")
 
     assert_index_where("sales_ticket_issues_ticket_code_uidx", "ticket_code IS NOT NULL")
     assert_index_where("sales_ticket_issues_attendee_id_uidx", "attendee_id IS NOT NULL")
