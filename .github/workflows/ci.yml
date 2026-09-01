@@ -74,9 +74,9 @@ jobs:
         with:
           path: |
             deps
-          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-mix-deps-v2-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
+            ${{ runner.os }}-mix-deps-v2-${{ matrix.elixir }}-${{ matrix.otp }}-
 
       # Step 4: Install dependencies
       - name: Install dependencies
