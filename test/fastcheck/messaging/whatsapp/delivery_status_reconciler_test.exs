@@ -256,6 +256,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
             :provider_status,
             :provider_error_code,
             :failure_reason,
+            :fallback_channel,
             :sent_at,
             :delivered_at,
             :read_at,
