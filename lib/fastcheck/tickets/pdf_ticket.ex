@@ -30,7 +30,6 @@ defmodule FastCheck.Tickets.PdfTicket do
          {:ok, document} <- build_document(pdf_binary) do
       {:ok, document}
     else
-      {:error, %Error{} = error} -> {:error, error}
       {:error, reason} when is_atom(reason) -> {:error, Error.new(reason)}
     end
   rescue

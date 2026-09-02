@@ -122,19 +122,34 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
     |> Jason.encode!()
   end
 
-  def status_body do
+  def status_body(opts \\ []) do
+    provider_message_id = Keyword.get(opts, :provider_message_id, "wamid.status")
+    provider_status = Keyword.get(opts, :status, "delivered")
+    provider_timestamp = Keyword.get(opts, :timestamp, "1782477600")
+    entry_id = Keyword.get(opts, :entry_id, "business-123")
+    phone_number_id = Keyword.get(opts, :phone_number_id, "phone-number-123")
+
+    status =
+      %{
+        "id" => provider_message_id,
+        "status" => provider_status,
+        "timestamp" => provider_timestamp
+      }
+      |> maybe_put_recipient_id(Keyword.get(opts, :recipient_id))
+
     Jason.encode!(%{
       "object" => "whatsapp_business_account",
       "entry" => [
         %{
-          "id" => "business-123",
+          "id" => entry_id,
           "changes" => [
             %{
               "field" => "messages",
               "value" => %{
-                "statuses" => [
-                  %{"id" => "wamid.status", "status" => "delivered", "timestamp" => "1782477600"}
-                ]
+                "metadata" => %{
+                  "phone_number_id" => phone_number_id
+                },
+                "statuses" => [status]
               }
             }
           ]
@@ -142,6 +157,11 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
       ]
     })
   end
+
+  defp maybe_put_recipient_id(status, nil), do: status
+
+  defp maybe_put_recipient_id(status, recipient_id),
+    do: Map.put(status, "recipient_id", recipient_id)
 
   def sign_body(body, secret \\ app_secret()) when is_binary(body) do
     digest =

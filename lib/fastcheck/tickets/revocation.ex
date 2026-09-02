@@ -106,6 +106,7 @@ defmodule FastCheck.Tickets.Revocation do
   @spec revoke_order_tickets(integer(), keyword()) ::
           {:ok, %{revoked: [revoke_result()], failures: [map()]}}
           | {:error, :not_found | :forbidden | :reason_required | :audit_context_required}
+          | {:error, :rollback}
           | {:error, {:mobile_sync_version_aggregation_failed, term()}}
   def revoke_order_tickets(order_id, opts \\ []) when is_integer(order_id) do
     context = build_context(opts)

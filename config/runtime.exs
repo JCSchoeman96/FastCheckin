@@ -291,11 +291,19 @@ whatsapp_receive_timeout_ms =
   end
 
 whatsapp_sandbox_mode =
-  case System.get_env("META_WHATSAPP_SANDBOX_MODE", "true")
-       |> String.trim()
-       |> String.downcase() do
-    value when value in ["1", "true", "yes", "on"] -> true
-    _ -> false
+  case FastCheck.RuntimeConfiguration.whatsapp_sandbox_mode(
+         config_env(),
+         whatsapp_enabled,
+         System.get_env("META_WHATSAPP_SANDBOX_MODE")
+       ) do
+    {:ok, value} ->
+      value
+
+    {:error, :missing} ->
+      raise "META_WHATSAPP_SANDBOX_MODE must be explicitly set when META_WHATSAPP_ENABLED=true in production."
+
+    {:error, :invalid} ->
+      raise "META_WHATSAPP_SANDBOX_MODE must be one of true, 1, yes, on, false, 0, no, or off in production."
   end
 
 whatsapp_session_ttl_raw =
@@ -337,6 +345,10 @@ if config_env() == :prod and whatsapp_enabled do
     raise """
     META_WHATSAPP_PHONE_NUMBER_ID is required when META_WHATSAPP_ENABLED=true.
     """
+  end
+
+  if !is_binary(whatsapp_business_account_id) or whatsapp_business_account_id == "" do
+    raise "META_WHATSAPP_BUSINESS_ACCOUNT_ID is required when META_WHATSAPP_ENABLED=true."
   end
 
   if !is_binary(whatsapp_access_token) or whatsapp_access_token == "" do
@@ -403,14 +415,31 @@ config :fastcheck, FastCheck.Mobile.Token,
   issuer: System.get_env("MOBILE_JWT_ISSUER") || "fastcheck",
   algorithm: System.get_env("MOBILE_JWT_ALGORITHM") || "HS256"
 
-# LiveDashboard is only mounted in dev routes, so dashboard auth is optional.
-# If you enable it in prod, set DASHBOARD_USERNAME and DASHBOARD_PASSWORD.
-dashboard_username = System.get_env("DASHBOARD_USERNAME") || "admin"
-dashboard_password = System.get_env("DASHBOARD_PASSWORD") || "fastcheck"
+dashboard_credentials =
+  case FastCheck.RuntimeConfiguration.dashboard_credentials(
+         config_env(),
+         System.get_env("DASHBOARD_USERNAME"),
+         System.get_env("DASHBOARD_PASSWORD")
+       ) do
+    {:ok, credentials} ->
+      credentials
+
+    {:error, :missing_username} ->
+      raise "DASHBOARD_USERNAME is required and must not be blank in production."
+
+    {:error, :missing_password} ->
+      raise "DASHBOARD_PASSWORD is required and must not be blank in production."
+
+    {:error, :development_fallback_password} ->
+      raise "DASHBOARD_PASSWORD must not use the development fallback in production."
+
+    {:error, :password_too_short} ->
+      raise "DASHBOARD_PASSWORD must be at least 16 bytes after trimming in production."
+  end
 
 config :fastcheck, :dashboard_auth, %{
-  username: dashboard_username,
-  password: dashboard_password
+  username: dashboard_credentials.username,
+  password: dashboard_credentials.password
 }
 
 default_tickera_site_url =

@@ -14,6 +14,8 @@ defmodule FastCheck.Sales.Checkout do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Events.Event
+  alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
@@ -43,22 +45,32 @@ defmodule FastCheck.Sales.Checkout do
     context = build_context(actor, input, opts)
 
     with :ok <- validate_quantity(input),
-         {:ok, existing_order} <- lookup_idempotent_order(input) do
-      if existing_order && not idempotent_inputs_match?(existing_order, input, opts) do
-        {:error, :duplicate_idempotency_conflict}
-      else
-        with :ok <- authorize_actor(actor, input),
-             :ok <- validate_effective_sales_channel(input, opts) do
-          if existing_order do
-            build_idempotent_replay(existing_order)
-          else
-            with {:ok, offer} <- validate_offer(input, opts, context),
-                 :ok <- validate_quantity_against_offer(input, offer) do
-              create_checkout(offer, input, actor, context)
-            end
-          end
-        end
-      end
+         {:ok, existing_order} <- lookup_idempotent_order(input),
+         :ok <- ensure_idempotent_inputs_match(existing_order, input, opts),
+         :ok <- authorize_actor(actor, input),
+         :ok <- validate_effective_sales_channel(input, opts) do
+      complete_checkout(existing_order, input, actor, context, opts)
+    end
+  end
+
+  defp ensure_idempotent_inputs_match(nil, _input, _opts), do: :ok
+
+  defp ensure_idempotent_inputs_match(existing_order, input, opts) do
+    if idempotent_inputs_match?(existing_order, input, opts),
+      do: :ok,
+      else: {:error, :duplicate_idempotency_conflict}
+  end
+
+  defp complete_checkout(existing_order, _input, _actor, _context, _opts)
+       when not is_nil(existing_order) do
+    build_idempotent_replay(existing_order)
+  end
+
+  defp complete_checkout(nil, input, actor, context, opts) do
+    with :ok <- validate_new_checkout_event_gate(input, opts),
+         {:ok, offer} <- validate_offer(input, opts, context),
+         :ok <- validate_quantity_against_offer(input, offer) do
+      create_checkout(offer, input, actor, context)
     end
   end
 
@@ -187,6 +199,31 @@ defmodule FastCheck.Sales.Checkout do
     end
   end
 
+  defp validate_new_checkout_event_gate(
+         %{event_id: event_id, source_channel: source_channel},
+         opts
+       ) do
+    case effective_sales_channel(source_channel, opts) do
+      "whatsapp" ->
+        validate_whatsapp_event_gate(event_id)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp validate_whatsapp_event_gate(event_id) when is_integer(event_id) and event_id > 0 do
+    case Repo.get(Event, event_id) do
+      %Event{status: status, whatsapp_sales_enabled: true} when status != "archived" ->
+        :ok
+
+      _ ->
+        {:error, :whatsapp_sales_disabled}
+    end
+  end
+
+  defp validate_whatsapp_event_gate(_event_id), do: {:error, :whatsapp_sales_disabled}
+
   defp load_offer(offer_id) do
     system_actor = %{actor_type: :system, actor_id: "checkout", allowed_event_ids: []}
 
@@ -270,9 +307,6 @@ defmodule FastCheck.Sales.Checkout do
 
       {:error, _} = error ->
         error
-
-      {:error, atom, _meta} when is_atom(atom) ->
-        {:error, atom}
     end
   end
 

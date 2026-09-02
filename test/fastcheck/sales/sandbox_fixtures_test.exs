@@ -53,6 +53,7 @@ defmodule FastCheck.Sales.SandboxFixturesTest do
     assert String.starts_with?(event.name, @event_name_prefix)
     assert String.starts_with?(event.shortname, @event_shortname_prefix)
     assert event.status == "active"
+    assert event.whatsapp_sales_enabled == true
     assert event.total_tickets == 20
     assert event.site_url == "https://scan.voelgoed.co.za"
     assert event.tickera_site_url == "https://scan.voelgoed.co.za"

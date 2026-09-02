@@ -144,9 +144,6 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
           {:error, error} ->
             finalize_verifier_error(attempt, event, error, context)
         end
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -171,9 +168,6 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
 
       {:error, %PaystackError{} = error} ->
         {:error, error}
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -185,12 +179,9 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
       order = reload_order!(order.id)
       session = reload_session!(session.id)
 
-      case PaymentOutcomes.classify_provider_result(verify_result, attempt, order, session) do
+      case classify_payment_result(verify_result, attempt, order, session) do
         {:error, :retryable} ->
           Repo.rollback(:retryable)
-
-        {:error, reason} ->
-          Repo.rollback(reason)
 
         {:ok, outcome, attrs} ->
           case PaymentOutcomeHandler.apply(
@@ -210,10 +201,23 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
     |> normalize_transaction_result()
   end
 
+  @spec classify_payment_result(
+          map(),
+          PaymentAttempt.t(),
+          Order.t(),
+          struct()
+        ) :: term()
+  defp classify_payment_result(verify_result, attempt, order, session) do
+    PaymentOutcomes.classify_provider_result(verify_result, attempt, order, session)
+  end
+
   defp normalize_handler_result(:verified), do: :verified
   defp normalize_handler_result(:late_payment_recovered), do: :verified
   defp normalize_handler_result(:late_payment_manual_review), do: :manual_review
-  defp normalize_handler_result(other), do: other
+  defp normalize_handler_result(:idempotent), do: :idempotent
+  defp normalize_handler_result(:mismatch), do: :mismatch
+  defp normalize_handler_result(:manual_review), do: :manual_review
+  defp normalize_handler_result(:failed), do: :failed
 
   defp finalize_verifier_error(attempt, event, error, context) do
     attrs = verifier_error_attrs(error)
@@ -243,26 +247,6 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
     %{
       failure_code: "verifier_#{type}",
       failure_message: message,
-      last_verified_at: now
-    }
-  end
-
-  defp verifier_error_attrs(reason) when is_atom(reason) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-    %{
-      failure_code: "verifier_#{reason}",
-      failure_message: Atom.to_string(reason),
-      last_verified_at: now
-    }
-  end
-
-  defp verifier_error_attrs(reason) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-    %{
-      failure_code: "verifier_error",
-      failure_message: inspect(reason),
       last_verified_at: now
     }
   end

@@ -37,6 +37,7 @@ Use internal IDs and redacted suffixes only.
 | Ticket issue ID | `[id]` | `[pass/fail]` | `[redacted note]` |
 | Attendee ID | `[id]` | `[pass/fail]` | `[redacted note]` |
 | Ticket link delivery attempt ID | `[id]` | `[pass/fail]` | `[redacted note]` |
+| Provider status evidence ID(s) | `[id(s)]` | `[pass/fail]` | Status/timestamp and WAMID hash only; no raw WAMID or payload |
 | Ticket link Oban job ID | `[id]` | `[pass/fail]` | `[redacted note]` |
 | Scanner sync result ID/correlation | `[id]` | `[pass/fail]` | `[redacted note]` |
 | Scan upload result ID/correlation | `[id]` | `[pass/fail]` | `[redacted note]` |
@@ -80,6 +81,8 @@ Do not record:
 | Scanner/revocation visibility tests | `[pass/fail/not-run]` | `[CI/local note]` |
 | `mix sobelow --exit --compact` | `[pass/fail/not-run]` | `[CI/local note]` |
 | `mix precommit` | `[pass/fail/not-run]` | `[CI/local note]` |
+| `mix ci` | `[pass/fail/not-run]` | `[CI/local note]` |
+| `git diff --check` | `[pass/fail/not-run]` | `[CI/local note]` |
 
 ## Smoke Evidence Checklist
 
@@ -91,6 +94,8 @@ Do not record:
 - [ ] Event and ticket offer selected.
 - [ ] Quantity and buyer details collected.
 - [ ] Payment link sent once.
+- [ ] Payment-link DeliveryAttempt shows provider acceptance separately from
+  actual Meta status.
 - [ ] Paystack payment completed in intended mode.
 - [ ] Paystack webhook reached app.
 - [ ] Server-side verification succeeded.
@@ -98,9 +103,16 @@ Do not record:
 - [ ] Ticket issued exactly once.
 - [ ] Attendee created exactly once per paid unit.
 - [ ] Secure ticket link sent once.
+- [ ] Ticket-link DeliveryAttempt status is reconciled only from signed,
+  configured-scope Meta callbacks.
+- [ ] Unknown/out-of-scope provider callbacks are safely acknowledged/ignored.
+- [ ] Ambiguous ticket-link transport is manual-review/no-auto-retry and does
+  not rotate a second token.
 - [ ] Secure ticket page opened.
 - [ ] Dashboard/manual PDF download worked.
 - [ ] Scanner sync saw attendee.
+- [ ] Mixed Tickera and `fastcheck_sales` attendee proof is recorded with source
+  and eligibility labels only.
 - [ ] Valid scan succeeded.
 - [ ] Duplicate webhook did not duplicate effects.
 - [ ] Duplicate worker run did not duplicate ticket or attendee.

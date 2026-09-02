@@ -1,6 +1,8 @@
 defmodule FastCheck.SalesCheckoutFixtures do
   @moduledoc false
 
+  alias FastCheck.Crypto
+  alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.TicketOffer
@@ -48,6 +50,7 @@ defmodule FastCheck.SalesCheckoutFixtures do
 
   def insert_offer!(opts \\ []) do
     event_id = Keyword.get(opts, :event_id, @event_id)
+    ensure_event!(event_id)
     sales_channel = Keyword.get(opts, :sales_channel, "whatsapp")
     sales_enabled = Keyword.get(opts, :sales_enabled, true)
     starts_at = Keyword.get(opts, :starts_at)
@@ -95,6 +98,30 @@ defmodule FastCheck.SalesCheckoutFixtures do
     end
 
     offer
+  end
+
+  defp ensure_event!(event_id) do
+    if is_nil(Repo.get(Event, event_id)) do
+      {:ok, encrypted_api_key} = Crypto.encrypt("checkout-fixture-api-key")
+      {:ok, encrypted_mobile_secret} = Crypto.encrypt("checkout-fixture-mobile-secret")
+
+      %Event{id: event_id}
+      |> Event.changeset(%{
+        name: "Checkout Fixture Event",
+        site_url: "https://example.test",
+        tickera_site_url: "https://example.test",
+        tickera_api_key_encrypted: encrypted_api_key,
+        tickera_api_key_last4: "-key",
+        mobile_access_secret_encrypted: encrypted_mobile_secret,
+        scanner_login_code:
+          "FC#{event_id |> rem(10_000) |> Integer.to_string() |> String.pad_leading(4, "0")}",
+        status: "active",
+        whatsapp_sales_enabled: true
+      })
+      |> Repo.insert!()
+    end
+
+    :ok
   end
 
   def flush_inventory_keys(offer_id) do

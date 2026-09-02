@@ -48,6 +48,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
       {:ok, :duplicate} ->
         :ok
 
+      {:discard, _reason} = discard ->
+        discard
+
       {:error, %{retryable?: true}} = error ->
         error
 
@@ -69,9 +72,18 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
   defp send_and_mark(delivery_attempt, phone_e164, body, release_dedupe) do
     case Client.send_text(phone_e164, body, correlation_id: delivery_attempt.correlation_id) do
       {:ok, response} ->
-        with {:ok, _delivery_attempt} <- mark_sent(delivery_attempt, response.provider_message_id) do
-          :ok
+        case mark_provider_accepted(delivery_attempt, response.provider_message_id) do
+          {:ok, _delivery_attempt} ->
+            :ok
+
+          {:error, _reason} ->
+            _ = mark_manual_review(delivery_attempt, :provider_acceptance_persistence_failed)
+            {:discard, :provider_acceptance_persistence_failed}
         end
+
+      {:error, %{ambiguous?: true} = reason} ->
+        _ = mark_manual_review(delivery_attempt, reason)
+        {:discard, :ambiguous_transport}
 
       {:error, reason} = error ->
         _ = mark_failed(delivery_attempt, reason)
@@ -96,13 +108,17 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     |> Ash.create(authorize?: false)
   end
 
-  defp mark_sent(delivery_attempt, provider_message_id) do
+  defp mark_provider_accepted(delivery_attempt, provider_message_id) do
+    accepted_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
     delivery_attempt
     |> Changeset.for_update(
-      :mark_sent,
+      :mark_provider_accepted,
       %{
         provider_message_id: provider_message_id,
-        sent_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        provider_accepted_at: accepted_at,
+        provider_status: "accepted",
+        provider_status_at: accepted_at
       },
       actor: system_actor()
     )
@@ -116,19 +132,35 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
       %{
         provider_error_code: provider_error_code(reason),
         provider_error_message: "whatsapp send failed",
-        failure_reason: failure_reason(reason)
+        failure_reason: failure_reason(reason),
+        failed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+        provider_status: "failed",
+        provider_status_at: DateTime.utc_now() |> DateTime.truncate(:second)
       },
       actor: system_actor()
     )
     |> Ash.update(authorize?: false)
   end
 
-  defp provider_error_code({:error, reason}), do: provider_error_code(reason)
+  defp mark_manual_review(delivery_attempt, reason) do
+    delivery_attempt
+    |> Changeset.for_update(
+      :mark_manual_review,
+      %{
+        provider_error_code: provider_error_code(reason),
+        provider_error_message: "whatsapp send requires manual review",
+        failure_reason: failure_reason(reason),
+        fallback_channel: "manual_review"
+      },
+      actor: system_actor()
+    )
+    |> Ash.update(authorize?: false)
+  end
+
   defp provider_error_code(%{provider_error_code: code}) when is_binary(code), do: code
   defp provider_error_code(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp provider_error_code(_reason), do: "whatsapp_send_failed"
 
-  defp failure_reason({:error, reason}), do: failure_reason(reason)
   defp failure_reason(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp failure_reason(_reason), do: "whatsapp_send_failed"
 
@@ -139,14 +171,6 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     Repo.one!(
       from d in "sales_delivery_attempts",
         where: d.sales_order_id == ^order_id and is_nil(d.ticket_issue_id),
-        select: count(d.id)
-    ) + 1
-  end
-
-  defp next_attempt_number(order_id, ticket_issue_id) do
-    Repo.one!(
-      from d in "sales_delivery_attempts",
-        where: d.sales_order_id == ^order_id and d.ticket_issue_id == ^ticket_issue_id,
         select: count(d.id)
     ) + 1
   end

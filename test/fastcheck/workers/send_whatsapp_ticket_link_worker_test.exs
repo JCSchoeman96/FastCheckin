@@ -87,7 +87,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
+               provider_status: "accepted",
                provider_message_id: "wamid.ticket-out",
                delivery_reason: nil,
                ticket_resend_challenge_id: nil
@@ -99,6 +100,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                  select:
                    map(d, [
                      :status,
+                     :provider_status,
                      :provider_message_id,
                      :delivery_reason,
                      :ticket_resend_challenge_id,
@@ -112,6 +114,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
                Map.take(row, [
                  :status,
+                 :provider_status,
                  :provider_message_id,
                  :delivery_reason,
                  :ticket_resend_challenge_id
@@ -229,7 +232,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
+               provider_status: "accepted",
                provider_message_id: "wamid.ticket-template",
                within_whatsapp_window: false,
                template_name: "fastcheck_ticket_ready_en"
@@ -241,6 +245,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                  select:
                    map(d, [
                      :status,
+                     :provider_status,
                      :provider_message_id,
                      :within_whatsapp_window,
                      :template_name
@@ -284,7 +289,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert ttl > 80_000
 
-    assert ["sent"] =
+    assert ["provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
@@ -329,7 +334,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
+               provider_status: "accepted",
                provider_message_id: "wamid.resend-ticket",
                delivery_reason: "verified_ticket_resend",
                ticket_resend_challenge_id: challenge_id,
@@ -342,6 +348,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                  select:
                    map(d, [
                      :status,
+                     :provider_status,
                      :provider_message_id,
                      :delivery_reason,
                      :ticket_resend_challenge_id,
@@ -601,7 +608,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
-  test "marks DeliveryAttempt failed without storing ticket token when WhatsApp send fails" do
+  test "marks ambiguous provider responses for manual review without storing ticket token" do
     %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
       issued_ticket_fixture()
 
@@ -613,7 +620,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
        }}
     end)
 
-    assert {:error, %{retryable?: true}} =
+    assert {:discard, :ambiguous_transport} =
              perform_job(SendWhatsAppTicketLinkWorker, %{
                "conversation_id" => conversation_id,
                "sales_order_id" => order_id,
@@ -624,15 +631,17 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "failed",
+               status: "manual_review",
                provider_error_message: "whatsapp send failed",
-               failure_reason: "server_error"
+               failure_reason: "server_error",
+               fallback_channel: "manual_review"
              }
            ] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
-                 select: map(d, [:status, :provider_error_message, :failure_reason])
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
              )
 
     attempt_log =
@@ -643,6 +652,68 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       )
 
     refute attempt_log =~ updated.delivery_token_hash
+  end
+
+  test "ambiguous transport marks ticket delivery for manual review without rotating again" do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      {:error, %Req.TransportError{reason: :timeout}}
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id
+    }
+
+    log =
+      capture_log(fn ->
+        assert {:discard, :ambiguous_transport} =
+                 perform_job(SendWhatsAppTicketLinkWorker, args)
+
+        assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+      end)
+
+    assert_received {:whatsapp_request, request}
+    refute_received {:whatsapp_request, _duplicate}
+
+    first_token = extract_ticket_link_token!(request.options.json["text"]["body"])
+    updated = Repo.get!(TicketIssue, issue_id)
+
+    assert updated.delivery_token_hash != old_hash
+    assert TokenHash.verify(first_token, updated.delivery_token_hash, :delivery)
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "timeout",
+               fallback_channel: "manual_review"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
+             )
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+             ])
+
+    assert ttl > 0
+    refute log =~ first_token
+    refute log =~ "/t/"
   end
 
   test "marks DeliveryAttempt manual_review for Meta auth errors without retrying forever" do
@@ -700,7 +771,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     refute log =~ "/t/"
   end
 
-  test "releases outbound dedupe after retryable failure so retry sends ticket link" do
+  test "releases outbound dedupe after definitive rate-limit rejection so retry sends ticket link" do
     test_pid = self()
     counter = :counters.new(1, [])
 
@@ -715,7 +786,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 
@@ -741,7 +812,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert_received {:whatsapp_request, _retry_request}
     refute_received {:whatsapp_request, _extra_request}
 
-    assert ["failed", "sent"] =
+    assert ["failed", "provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
@@ -750,7 +821,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
-  test "resend provider retryable failure does not consume and releases dedupe" do
+  test "resend definitive rate-limit rejection does not consume and releases dedupe" do
     test_pid = self()
     counter = :counters.new(1, [])
 
@@ -767,7 +838,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 

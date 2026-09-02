@@ -916,6 +916,17 @@ defmodule FastCheckWeb.DashboardLive do
                     label="Location (optional)"
                     placeholder="Main venue"
                   />
+
+                  <div class="md:col-span-2 rounded-xl border border-fc-border p-3">
+                    <.input
+                      field={@form[:whatsapp_sales_enabled]}
+                      type="checkbox"
+                      label="Enable WhatsApp sales for this event"
+                    />
+                    <p class="mt-1 text-xs text-fc-text-muted">
+                      New WhatsApp conversations and checkout starts are blocked while this is off.
+                    </p>
+                  </div>
                 </div>
               </details>
 
@@ -1638,6 +1649,17 @@ defmodule FastCheckWeb.DashboardLive do
               }
             />
 
+            <div class="rounded-xl border border-fc-border p-3">
+              <.input
+                field={@edit_form[:whatsapp_sales_enabled]}
+                type="checkbox"
+                label="Enable WhatsApp sales for this event"
+              />
+              <p class="mt-1 text-xs text-fc-text-muted">
+                Turning this off blocks new WhatsApp entry and stale checkout starts only.
+              </p>
+            </div>
+
             <div class="pt-3 grid gap-2 sm:grid-cols-2">
               <.button
                 id="save-event-button"
@@ -2129,7 +2151,8 @@ defmodule FastCheckWeb.DashboardLive do
       "tickera_site_url" => default_site_url,
       "shortname" => "",
       "location" => "",
-      "entrance_name" => ""
+      "entrance_name" => "",
+      "whatsapp_sales_enabled" => false
     }
   end
 
@@ -2441,12 +2464,14 @@ defmodule FastCheckWeb.DashboardLive do
       |> Enum.map(fn [prev, curr] -> curr.elapsed - prev.elapsed end)
       |> Enum.filter(&(&1 > 0))
 
-    if length(times) > 0 do
-      times
-      |> Enum.sum()
-      |> Kernel./(length(times))
-    else
-      nil
+    case times do
+      [] ->
+        nil
+
+      times ->
+        times
+        |> Enum.sum()
+        |> Kernel./(length(times))
     end
   end
 

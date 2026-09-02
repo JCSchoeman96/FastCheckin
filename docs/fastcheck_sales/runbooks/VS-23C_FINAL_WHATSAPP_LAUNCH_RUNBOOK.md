@@ -13,6 +13,8 @@ Public web checkout remains deferred.
 
 - Meta app is configured for the production app.
 - WhatsApp number is approved and attached to the app.
+- `META_WHATSAPP_SANDBOX_MODE` is explicitly set to the intended environment.
+- `META_WHATSAPP_BUSINESS_ACCOUNT_ID` is configured and not logged.
 - `META_WHATSAPP_PHONE_NUMBER_ID` is configured and not logged.
 - `META_WHATSAPP_ACCESS_TOKEN` is configured and not logged.
 - `META_WHATSAPP_APP_SECRET` is configured and not logged.
@@ -22,6 +24,8 @@ Public web checkout remains deferred.
 - Webhook subscription fields are configured for inbound messages.
 - A test inbound message is received and persisted as a conversation event.
 - A test outbound message is sent through the provider client.
+- Signed status callbacks are accepted only for the configured WABA and phone
+  number; out-of-scope callbacks are acknowledged without domain writes.
 - Provider failures route to retry, fallback-required, or manual review as
   documented.
 
@@ -56,6 +60,9 @@ Public web checkout remains deferred.
 - `SendWhatsAppPaymentLinkWorker` is enqueued after checkout confirmation.
 - Payment link send creates delivery visibility where current behavior records
   it.
+- HTTP provider acceptance is recorded as `provider_accepted`, not as customer
+  delivery; `sent`, `delivered`, `read`, and `failed` require Meta status
+  evidence.
 - Outbound dedupe prevents duplicate sends for duplicate worker execution.
 - Retryable provider errors are retried safely.
 - Hard provider failures route to manual review or fallback handling.
@@ -68,8 +75,10 @@ Public web checkout remains deferred.
 - Ticket is issued before ticket delivery.
 - `SendWhatsAppTicketLinkWorker` is the only ticket-link outbound path.
 - Delivery token rotation is performed by current ticket delivery behavior before
-  send where applicable.
-- `sales_delivery_attempts` records send status.
+  send where applicable. If transport becomes ambiguous after dispatch, the
+  worker enters `manual_review` and does not automatically rotate/retry another
+  token-bearing link.
+- `sales_delivery_attempts` records provider acceptance and later status evidence.
 - Plain ticket links are not stored in durable audit fields.
 - Token hashes are not sent or logged.
 - Duplicate worker execution does not send duplicate ticket links.
@@ -85,7 +94,9 @@ Public web checkout remains deferred.
 - Missing or unapproved template moves delivery to fallback-required/manual
   review.
 - Provider auth or validation failure moves delivery to manual review.
-- Retryable provider timeout releases dedupe for retry.
+- Definitive retryable provider rejection may release dedupe according to the
+  bounded retry policy. An ambiguous ticket-link timeout or connection loss does
+  not release dedupe and does not auto-retry; operator review is required.
 
 ## WhatsApp Incident Procedures
 
@@ -103,8 +114,10 @@ WhatsApp-specific immediate responses:
   issuance running, review retry backlog.
 - Template missing/unapproved: keep ticket issuance running, mark deliveries for
   manual review, do not invent a non-approved template.
-- Outbound provider timeout: allow retryable jobs to retry; pause only if backlog
-  grows faster than recovery.
+- Outbound payment-link provider rejection may retry under its bounded policy.
+  For ticket links, a timeout or connection loss after dispatch is ambiguous:
+  keep the dedupe claim, do not rotate another token, and route the attempt to
+  manual review. Pause if the unresolved backlog grows faster than recovery.
 - Duplicate inbound messages: verify dedupe and conversation checkpoint state.
 - Duplicate outbound jobs: verify outbound dedupe and delivery attempts.
 - Customer paid but no ticket link delivered: verify payment, issue state, and
@@ -131,9 +144,18 @@ WhatsApp-specific immediate responses:
 - [ ] Paystack payment verifies server-side.
 - [ ] Ticket is issued by backend issuer path.
 - [ ] Ticket link is sent by `SendWhatsAppTicketLinkWorker`.
+- [ ] Provider acceptance is not reported as `sent` or `delivered` without a
+  matching signed Meta callback.
+- [ ] Delivery callbacks correlate by WAMID, are idempotent/out-of-order safe,
+  and cannot change payment, ticket, inventory, or scanner state.
+- [ ] Event-level `whatsapp_sales_enabled` is enabled deliberately; disabling it
+  blocks new discovery and stale checkout confirmation without cancelling
+  existing truth.
+- [ ] Multi-digit quantity and dynamic AF/EN maximum prompts are verified.
+- [ ] Mixed Tickera and `fastcheck_sales` source proof is complete or explicitly
+  blocked.
 - [ ] Secure ticket page opens through `GET /t/:token`.
 - [ ] Mobile sync sees issued attendee.
 - [ ] Scanner accepts valid issued ticket.
 - [ ] Revoked/refunded ticket is denied by scanner.
 - [ ] Ops Dashboard and Audit Timeline show safe redacted state.
-

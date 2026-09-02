@@ -29,7 +29,6 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomes do
   @type classify_result ::
           {:ok, outcome(), map()}
           | {:error, :retryable}
-          | {:error, term()}
 
   @doc """
   Classifies a Paystack verify result against durable local payment state.

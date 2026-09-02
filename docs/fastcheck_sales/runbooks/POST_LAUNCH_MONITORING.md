@@ -45,7 +45,9 @@ At least hourly during the first day:
 - Review Audit Timeline for a sample of successful orders.
 - Review Audit Timeline for each incident or manual review order.
 - Confirm Paystack dashboard totals align with local verified payment counts.
-- Confirm Meta dashboard send failures align with local delivery attempts.
+- Confirm Meta dashboard send failures and status evidence align with local
+  delivery attempts. A local `provider_accepted` state alone is not delivery
+  confirmation.
 - Confirm refund/revocation actions have reasons and scanner denial evidence.
 
 ## Operator Actions
@@ -64,4 +66,3 @@ At least hourly during the first day:
 - Developer/admin reviews incidents, logs, and any retry backlog.
 - Refund/revocation operator reviews all destructive actions.
 - Decision is recorded: continue, continue with mitigations, or pause sales.
-

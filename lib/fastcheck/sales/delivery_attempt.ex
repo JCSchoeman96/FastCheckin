@@ -1,9 +1,10 @@
 defmodule FastCheck.Sales.DeliveryAttempt do
   @moduledoc """
-  Durable Sales delivery attempt audit skeleton.
+  Durable Sales delivery-attempt audit record.
 
-  VS-01D stores delivery history shape only. WhatsApp, email, resend workers,
-  and provider integration are deferred.
+  Provider HTTP acceptance and subsequent provider delivery evidence are kept
+  as distinct lifecycle states. Ordinary conversational replies do not create
+  DeliveryAttempt rows.
   """
 
   use Ash.Resource,
@@ -72,15 +73,42 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       change(set_attribute(:status, "queued"))
     end
 
+    update :mark_provider_accepted do
+      require_atomic?(false)
+      accept([:provider_message_id, :provider_accepted_at, :provider_status, :provider_status_at])
+      change(set_attribute(:status, "provider_accepted"))
+    end
+
     update :mark_sent do
       require_atomic?(false)
-      accept([:provider_message_id, :sent_at])
+      accept([:sent_at, :provider_status, :provider_status_at])
       change(set_attribute(:status, "sent"))
+    end
+
+    update :mark_delivered do
+      require_atomic?(false)
+      accept([:delivered_at, :provider_status, :provider_status_at])
+      change(set_attribute(:status, "delivered"))
+    end
+
+    update :mark_read do
+      require_atomic?(false)
+      accept([:read_at, :provider_status, :provider_status_at])
+      change(set_attribute(:status, "read"))
     end
 
     update :mark_failed do
       require_atomic?(false)
-      accept([:provider_error_code, :provider_error_message, :failure_reason])
+
+      accept([
+        :provider_error_code,
+        :provider_error_message,
+        :failure_reason,
+        :failed_at,
+        :provider_status,
+        :provider_status_at
+      ])
+
       change(set_attribute(:status, "failed"))
     end
 
@@ -144,6 +172,9 @@ defmodule FastCheck.Sales.DeliveryAttempt do
     attribute(:template_name, :string)
     attribute(:within_whatsapp_window, :boolean)
     attribute(:provider_message_id, :string)
+    attribute(:provider_accepted_at, :utc_datetime)
+    attribute(:provider_status, :string)
+    attribute(:provider_status_at, :utc_datetime)
 
     attribute :attempt_number, :integer do
       allow_nil?(false)
@@ -156,6 +187,8 @@ defmodule FastCheck.Sales.DeliveryAttempt do
     attribute(:correlation_id, :string)
     attribute(:sent_at, :utc_datetime)
     attribute(:delivered_at, :utc_datetime)
+    attribute(:read_at, :utc_datetime)
+    attribute(:failed_at, :utc_datetime)
 
     create_timestamp(:inserted_at)
     update_timestamp(:updated_at)

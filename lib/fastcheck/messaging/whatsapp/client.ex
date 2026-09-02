@@ -148,6 +148,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
            provider_status: "accepted",
            retryable?: false,
            rate_limited?: false,
+           ambiguous?: false,
            safe_metadata:
              metadata(
                operation,
@@ -168,6 +169,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
            raw_status: status,
            provider_error_message: "meta response did not include message id",
            retryable?: false,
+           ambiguous?: true,
            safe_metadata:
              metadata(
                operation,
@@ -183,13 +185,13 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
   end
 
   defp error_from_status(status, body, operation, message_type, correlation_id, duration_ms) do
-    {response_status, retryable?, rate_limited?} =
+    {response_status, retryable?, rate_limited?, ambiguous?} =
       cond do
-        status == 400 -> {:validation_error, false, false}
-        status in [401, 403] -> {:auth_error, false, false}
-        status == 429 -> {:rate_limited, true, true}
-        status >= 500 -> {:server_error, true, false}
-        true -> {:unknown_error, false, false}
+        status == 400 -> {:validation_error, false, false, false}
+        status in [401, 403] -> {:auth_error, false, false, false}
+        status == 429 -> {:rate_limited, true, true, false}
+        status >= 500 -> {:server_error, true, false, true}
+        true -> {:unknown_error, false, false, false}
       end
 
     %Response{
@@ -200,6 +202,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
       provider_error_message: provider_error_message(body),
       retryable?: retryable?,
       rate_limited?: rate_limited?,
+      ambiguous?: ambiguous?,
       safe_metadata:
         metadata(
           operation,
@@ -221,6 +224,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
       provider_error_message: "meta request transport failure",
       retryable?: true,
       rate_limited?: false,
+      ambiguous?: true,
       safe_metadata:
         metadata(operation, message_type, status, nil, true, correlation_id, duration_ms)
         |> Map.put(:reason, safe_transport_reason(reason))
@@ -229,6 +233,8 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
   end
 
   defp decode_error_response(status, operation, message_type, correlation_id, duration_ms) do
+    ambiguous? = status in 200..299 or status >= 500
+
     %Response{
       provider: :meta,
       status: :unknown_error,
@@ -237,6 +243,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
       provider_error_message: "meta response could not be decoded",
       retryable?: status >= 500,
       rate_limited?: false,
+      ambiguous?: ambiguous?,
       safe_metadata:
         metadata(
           operation,
@@ -263,9 +270,21 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
   defp provider_message_id(%{messages: [%{id: id} | _]}), do: id
   defp provider_message_id(_), do: nil
 
-  defp provider_error_code(%{"error" => %{"code" => code}}), do: to_string(code)
-  defp provider_error_code(%{error: %{code: code}}), do: to_string(code)
+  defp provider_error_code(%{"error" => %{"code" => code}}), do: safe_error_code(code)
+  defp provider_error_code(%{error: %{code: code}}), do: safe_error_code(code)
   defp provider_error_code(_), do: nil
+
+  defp safe_error_code(code) when is_integer(code) do
+    code |> Integer.to_string() |> safe_error_code()
+  end
+
+  defp safe_error_code(code) when is_binary(code) do
+    code = String.trim(code)
+
+    if byte_size(code) <= 64 and Regex.match?(~r/\A[A-Za-z0-9_.-]+\z/, code), do: code
+  end
+
+  defp safe_error_code(_code), do: nil
 
   defp provider_error_message(%{"error" => %{"message" => message}}) when is_binary(message) do
     sanitize_provider_message(message)

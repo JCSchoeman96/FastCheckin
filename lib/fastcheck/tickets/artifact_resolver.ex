@@ -46,7 +46,6 @@ defmodule FastCheck.Tickets.ArtifactResolver do
       {:ok, artifact(ticket_issue, attendee, event)}
     else
       {:error, state} -> {:error, error(state)}
-      :error -> {:error, error(:not_found)}
     end
   end
 
@@ -76,7 +75,6 @@ defmodule FastCheck.Tickets.ArtifactResolver do
       {:ok, artifact(ticket_issue, attendee, event)}
     else
       {:error, state} -> {:error, error(state)}
-      :error -> {:error, error(:not_found)}
     end
   end
 
@@ -186,8 +184,6 @@ defmodule FastCheck.Tickets.ArtifactResolver do
       nil -> {:error, :ticket_not_ready}
     end
   end
-
-  defp load_event_from_order(_order), do: {:error, :ticket_not_ready}
 
   defp load_event(%{sales_order_id: sales_order_id}) when is_integer(sales_order_id) do
     event_id =

@@ -172,6 +172,9 @@ DeliveryAttempt
   template_name
   within_whatsapp_window
   provider_message_id
+  provider_accepted_at
+  provider_status
+  provider_status_at
   attempt_number
   provider_error_code
   provider_error_message
@@ -180,6 +183,8 @@ DeliveryAttempt
   correlation_id
   sent_at
   delivered_at
+  read_at
+  failed_at
 ```
 
 ### Policies
@@ -278,8 +283,11 @@ After provider response:
 provider_message_id for successful Meta sends
 provider_error_code for failed provider result
 provider_error_message sanitized/truncated
-sent_at on accepted send
-delivered_at only when webhook/status confirms delivery, if implemented later
+provider_accepted_at on accepted send
+sent_at only when a signed, scoped Meta status callback confirms `sent`
+delivered_at only when a signed, scoped Meta status callback confirms delivery
+read_at only when a signed, scoped Meta status callback confirms read
+failed_at when the provider boundary or a signed, scoped callback confirms failure
 ```
 
 Rules:

@@ -2,10 +2,12 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
   use FastCheckWeb.ConnCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  import Ecto.Query
   import ExUnit.CaptureLog
 
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Repo
   alias FastCheck.Workers.WhatsAppInboundWorker
 
   @webhook_path "/api/v1/webhooks/whatsapp"
@@ -170,6 +172,75 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     refute_enqueued(worker: WhatsAppInboundWorker)
   end
 
+  test "signed out-of-scope WABA or phone status is acknowledged without domain writes", %{
+    conn: _conn
+  } do
+    for opts <- [
+          [entry_id: "other-business"],
+          [phone_number_id: "other-phone"]
+        ] do
+      body = WebhookTestSupport.status_body(opts)
+      signature = WebhookTestSupport.sign_body(body)
+
+      response =
+        build_conn()
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("x-hub-signature-256", signature)
+        |> post(@webhook_path, body)
+        |> response(200)
+
+      assert response == ""
+    end
+
+    assert Repo.aggregate("sales_conversations", :count, :id) == 0
+    assert Repo.aggregate("sales_delivery_attempts", :count, :id) == 0
+    assert Repo.aggregate("sales_delivery_status_events", :count, :id) == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
+  test "signed tracked status updates delivery evidence without conversation work", %{conn: conn} do
+    order_id = insert_status_order!()
+    attempt_id = insert_status_attempt!(order_id, "wamid.controller-tracked")
+    body = WebhookTestSupport.status_body(provider_message_id: "wamid.controller-tracked")
+    signature = WebhookTestSupport.sign_body(body)
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", signature)
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+
+    assert Repo.one!(
+             from d in "sales_delivery_attempts", where: d.id == ^attempt_id, select: d.status
+           ) == "delivered"
+
+    assert Repo.aggregate("sales_conversations", :count, :id) == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
+  test "status recipient identifiers are neither logged nor persisted", %{conn: conn} do
+    recipient_id = "27829998888"
+    body = WebhookTestSupport.status_body(recipient_id: recipient_id)
+    signature = WebhookTestSupport.sign_body(body)
+
+    log =
+      capture_log(fn ->
+        conn =
+          conn
+          |> put_req_header("content-type", "application/json")
+          |> put_req_header("x-hub-signature-256", signature)
+          |> post(@webhook_path, body)
+
+        assert response(conn, 200) == ""
+      end)
+
+    refute log =~ recipient_id
+    assert Repo.aggregate("sales_delivery_status_events", :count, :id) == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
   test "unsupported media payload is accepted as no-op without state", %{conn: conn} do
     wa_id = "27821234567"
 
@@ -263,5 +334,37 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
 
   defp dedupe_key(provider_message_id) do
     "fastcheck:whatsapp:dedupe:message:#{provider_message_id}"
+  end
+
+  defp insert_status_order! do
+    %{rows: [[id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_orders
+          (public_reference, event_id, source_channel, status, total_amount_cents, currency,
+           inserted_at, updated_at)
+        VALUES ($1, 90002, 'whatsapp', 'awaiting_payment', 100, 'ZAR', now(), now())
+        RETURNING id
+        """,
+        ["FC-WEBHOOK-#{System.unique_integer([:positive])}"]
+      )
+
+    id
+  end
+
+  defp insert_status_attempt!(order_id, provider_message_id) do
+    %{rows: [[id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_delivery_attempts
+          (sales_order_id, ticket_issue_id, channel, provider, status, provider_message_id,
+           attempt_number, inserted_at, updated_at)
+        VALUES ($1, NULL, 'whatsapp', 'meta', 'provider_accepted', $2, 1, now(), now())
+        RETURNING id
+        """,
+        [order_id, provider_message_id]
+      )
+
+    id
   end
 end

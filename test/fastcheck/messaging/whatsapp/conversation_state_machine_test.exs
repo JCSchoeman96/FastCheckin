@@ -34,7 +34,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "Voelgoed Live",
-        scanner_login_code: scanner_code()
+        scanner_login_code: scanner_code(),
+        whatsapp_sales_enabled: true
       })
 
     offer =
@@ -818,6 +819,46 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute Map.has_key?(backed.conversation.state_data, "quantity")
   end
 
+  test "quantity accepts the exact offer maximum and rejects a larger value", %{
+    conversation: conversation
+  } do
+    result =
+      conversation
+      |> progress("hi", "quantity-bound-1")
+      |> progress("1", "quantity-bound-2")
+      |> progress("1", "quantity-bound-3")
+      |> progress("1", "quantity-bound-4")
+      |> progress("1", "quantity-bound-5")
+
+    assert result.conversation.state == "collecting_quantity"
+
+    assert {:ok, too_high} = handle(result.conversation, "5", "wamid.quantity-bound-6")
+    assert too_high.conversation.state == "collecting_quantity"
+    assert too_high.response_body =~ "Stuur net die aantal kaartjies (1–4)."
+
+    assert {:ok, exact} = handle(too_high.conversation, "4", "wamid.quantity-bound-7")
+    assert exact.conversation.state == "collecting_buyer_name"
+    assert exact.conversation.state_data["quantity"] == 4
+  end
+
+  test "numeric menu index 10 remains invalid when the menu has nine slots", %{
+    conversation: conversation,
+    event: event
+  } do
+    result =
+      conversation
+      |> progress("hi", "menu-bound-1")
+      |> progress("1", "menu-bound-2")
+      |> progress("1", "menu-bound-3")
+
+    assert result.conversation.state == "selecting_event"
+
+    assert {:ok, repeated} = handle(result.conversation, "10", "wamid.menu-bound-4")
+    assert repeated.conversation.state == "selecting_event"
+    assert repeated.response_body =~ event.name
+    refute Map.has_key?(repeated.conversation.state_data, "selected_event_id")
+  end
+
   test "0 from collecting_buyer_name returns to quantity", %{
     conversation: conversation,
     event: event,
@@ -837,7 +878,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert {:ok, backed} = handle(result.conversation, "0", "wamid.back-quantity-7")
 
     assert backed.conversation.state == "collecting_quantity"
-    assert backed.response_body =~ "Hoeveel kaartjies"
+    assert backed.response_body =~ "Stuur net die aantal kaartjies (1–4)."
     assert backed.conversation.state_data["selected_event_id"] == event.id
     assert backed.conversation.state_data["selected_offer_id"] == offer.id
     refute Map.has_key?(backed.conversation.state_data, "quantity")

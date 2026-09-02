@@ -187,6 +187,11 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
                   Template {attempt.template_name || "none"} · Fallback {attempt.fallback_channel ||
                     "none"} · Reason {attempt.failure_reason || attempt.provider_error_code || "none"}
                 </div>
+                <div class="text-xs text-fc-text-muted">
+                  Meta evidence {delivery_status(attempt.provider_status)} · {format_datetime(
+                    attempt.provider_status_at
+                  )}
+                </div>
               </li>
             </ul>
           </.card_content>

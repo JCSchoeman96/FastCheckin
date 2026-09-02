@@ -24,10 +24,17 @@ defmodule FastCheck.Messaging.WhatsApp.InputNormalizerTest do
       assert {:ok, {:text, "jan@example.com"}} = InputNormalizer.normalize("jan@example.com")
     end
 
-    test "rejects blank, non-text, multi-digit, and oversized input" do
+    test "accepts positive multi-digit quantities and rejects malformed numeric input" do
       assert {:error, :blank} = InputNormalizer.normalize("  ")
       assert {:error, :invalid} = InputNormalizer.normalize(nil)
-      assert {:error, :invalid} = InputNormalizer.normalize("10")
+      assert {:ok, {:number, 10}} = InputNormalizer.normalize("10")
+      assert {:ok, {:number, 12}} = InputNormalizer.normalize(" 12 ")
+      assert {:error, :invalid} = InputNormalizer.normalize("01")
+      assert {:error, :invalid} = InputNormalizer.normalize("+1")
+      assert {:error, :invalid} = InputNormalizer.normalize("-1")
+      assert {:error, :invalid} = InputNormalizer.normalize("1.0")
+      assert {:error, :invalid} = InputNormalizer.normalize("9999999999")
+      assert {:ok, :back} = InputNormalizer.normalize("0")
       assert {:error, :too_long} = InputNormalizer.normalize(String.duplicate("a", 257))
     end
   end

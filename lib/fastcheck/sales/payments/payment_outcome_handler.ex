@@ -40,7 +40,7 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
           map(),
           PaymentAttempt.t(),
           Order.t(),
-          CheckoutSession.t(),
+          struct(),
           PaymentEvent.t() | nil,
           map()
         ) :: {:ok, apply_result()} | {:error, term()}
@@ -101,7 +101,7 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
   @spec apply_idempotent_verified(
           PaymentAttempt.t(),
           Order.t(),
-          CheckoutSession.t(),
+          struct(),
           PaymentEvent.t() | nil,
           map()
         ) :: {:ok, :idempotent}
@@ -425,9 +425,6 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
 
         :mark_duplicate ->
           ~w(failure_code failure_message)a
-
-        _ ->
-          Map.keys(attrs)
       end
 
     Map.take(attrs, allowed)

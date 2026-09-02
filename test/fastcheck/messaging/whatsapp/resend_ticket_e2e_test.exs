@@ -130,7 +130,7 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
                delivery_reason: "verified_ticket_resend",
                ticket_resend_challenge_id: challenge_id,
                provider_message_id: "wamid.e2e-resend-ticket"

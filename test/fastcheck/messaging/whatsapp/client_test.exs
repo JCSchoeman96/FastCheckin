@@ -10,6 +10,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     :whatsapp_graph_api_base_url,
     :whatsapp_graph_api_version,
     :whatsapp_phone_number_id,
+    :whatsapp_business_account_id,
     :whatsapp_access_token,
     :whatsapp_app_secret,
     :whatsapp_request_timeout_ms,
@@ -33,6 +34,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     Application.put_env(:fastcheck, :whatsapp_graph_api_base_url, "https://graph.facebook.test")
     Application.put_env(:fastcheck, :whatsapp_graph_api_version, "v99.0")
     Application.put_env(:fastcheck, :whatsapp_phone_number_id, "phone-number-123")
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
     Application.put_env(:fastcheck, :whatsapp_access_token, "EAAG_TEST_TOKEN")
     Application.put_env(:fastcheck, :whatsapp_app_secret, "APP_SECRET")
     Application.put_env(:fastcheck, :whatsapp_request_timeout_ms, 5_000)
@@ -69,7 +71,10 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     assert response.provider == :meta
     assert response.provider_message_id == "wamid.TEST"
     assert response.raw_status == 200
+    assert response.provider_status == "accepted"
+    refute response.ambiguous?
     refute response.retryable?
+    refute inspect(response) =~ "wamid.TEST"
   end
 
   test "send_template posts template payload" do
@@ -119,16 +124,16 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
 
   test "normalizes provider response classes and retryability" do
     cases = [
-      {400, :validation_error, false, false},
-      {401, :auth_error, false, false},
-      {403, :auth_error, false, false},
-      {429, :rate_limited, true, true},
-      {500, :server_error, true, false},
-      {503, :server_error, true, false},
-      {418, :unknown_error, false, false}
+      {400, :validation_error, false, false, false},
+      {401, :auth_error, false, false, false},
+      {403, :auth_error, false, false, false},
+      {429, :rate_limited, true, true, false},
+      {500, :server_error, true, false, true},
+      {503, :server_error, true, false, true},
+      {418, :unknown_error, false, false, false}
     ]
 
-    for {status, expected_status, retryable?, rate_limited?} <- cases do
+    for {status, expected_status, retryable?, rate_limited?, ambiguous?} <- cases do
       Application.put_env(:fastcheck, :whatsapp_request_fun, fn _req ->
         {:ok,
          %Req.Response{
@@ -147,6 +152,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
       assert response.raw_status == status
       assert response.retryable? == retryable?
       assert response.rate_limited? == rate_limited?
+      assert response.ambiguous? == ambiguous?
       assert response.provider_error_code == "131000"
       refute response.provider_error_message =~ "27821234567"
       refute response.provider_error_message =~ "EAAG_TEST_TOKEN"
@@ -155,14 +161,14 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
 
   test "normalizes binary JSON provider error response classes" do
     cases = [
-      {400, :validation_error, false, false},
-      {401, :auth_error, false, false},
-      {403, :auth_error, false, false},
-      {429, :rate_limited, true, true},
-      {500, :server_error, true, false}
+      {400, :validation_error, false, false, false},
+      {401, :auth_error, false, false, false},
+      {403, :auth_error, false, false, false},
+      {429, :rate_limited, true, true, false},
+      {500, :server_error, true, false, true}
     ]
 
-    for {status, expected_status, retryable?, rate_limited?} <- cases do
+    for {status, expected_status, retryable?, rate_limited?, ambiguous?} <- cases do
       Application.put_env(:fastcheck, :whatsapp_request_fun, fn _req ->
         {:ok,
          %Req.Response{
@@ -176,9 +182,23 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
       assert response.raw_status == status
       assert response.retryable? == retryable?
       assert response.rate_limited? == rate_limited?
+      assert response.ambiguous? == ambiguous?
       assert response.provider_error_code == "131000"
       assert response.provider_error_message == "safe provider diagnostic"
     end
+  end
+
+  test "bounds provider error codes before operational logging" do
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _req ->
+      {:ok,
+       %Req.Response{
+         status: 400,
+         body: %{"error" => %{"code" => "customer@example.com/secret"}}
+       }}
+    end)
+
+    assert {:error, response} = Client.send_text("+27821234567", "Hallo")
+    assert is_nil(response.provider_error_code)
   end
 
   test "normalizes timeout, transport errors, and raised request failures" do
@@ -189,6 +209,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     assert {:error, response} = Client.send_text("+27821234567", "Hallo")
     assert response.status == :timeout
     assert response.retryable?
+    assert response.ambiguous?
 
     Application.put_env(:fastcheck, :whatsapp_request_fun, fn _req ->
       {:error, %Req.TransportError{reason: :econnrefused}}
@@ -197,6 +218,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     assert {:error, response} = Client.send_text("+27821234567", "Hallo")
     assert response.status == :transport_error
     assert response.retryable?
+    assert response.ambiguous?
 
     Application.put_env(:fastcheck, :whatsapp_request_fun, fn _req ->
       raise "socket blew up with EAAG_TEST_TOKEN"
@@ -205,6 +227,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     assert {:error, response} = Client.send_text("+27821234567", "Hallo")
     assert response.status == :transport_error
     assert response.retryable?
+    assert response.ambiguous?
     refute inspect(response) =~ "EAAG_TEST_TOKEN"
   end
 
@@ -216,6 +239,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     assert {:error, response} = Client.send_text("+27821234567", "Hallo")
     assert response.status == :unknown_error
     assert response.retryable? == false
+    assert response.ambiguous?
     assert response.raw_status == 200
   end
 
@@ -231,6 +255,7 @@ defmodule FastCheck.Messaging.WhatsApp.ClientTest do
     assert {:error, response} = Client.send_text("+27821234567", "Hallo")
     assert response.status == :unknown_error
     assert response.raw_status == 200
+    assert response.ambiguous?
     refute inspect(response) =~ "EAAG_TEST_TOKEN"
     refute inspect(response) =~ "wamid.BAD"
   end

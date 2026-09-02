@@ -145,15 +145,6 @@ defmodule FastCheck.Sales.AdminRevocations do
       {:error, {:mobile_sync_version_aggregation_failed, _} = error} ->
         {:error, error}
 
-      {:error, {:missing_attendee, ticket_issue_id}} ->
-        {:ok,
-         %{
-           revoked: [],
-           failures: [
-             %{ticket_issue_id: ticket_issue_id, error: {:missing_attendee, ticket_issue_id}}
-           ]
-         }}
-
       {:error, :rollback} ->
         {:ok,
          %{
@@ -345,8 +336,6 @@ defmodule FastCheck.Sales.AdminRevocations do
   end
 
   defp telemetry_metadata(actor, extra) do
-    extra_map = if is_list(extra), do: Map.new(extra), else: extra
-
     Correlation.operational_metadata(
       Map.merge(
         %{
@@ -354,7 +343,7 @@ defmodule FastCheck.Sales.AdminRevocations do
           actor_id: actor_id(actor),
           source: @admin_source
         },
-        extra_map
+        Map.new(extra)
       )
     )
     |> Redactor.safe_metadata()

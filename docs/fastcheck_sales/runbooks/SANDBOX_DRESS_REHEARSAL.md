@@ -16,9 +16,17 @@ source for the order of operations.
 ### 1. Setup test event
 
 - Action: Select or create one sandbox event for the rehearsal.
-- Expected result: Event is active and visible to Sales operators.
+- Expected result: Event is active, visible to Sales operators, and its
+  `whatsapp_sales_enabled` gate is explicitly enabled for the rehearsal.
 - Where to verify: `/dashboard/sales/ops` event filter and admin dashboard.
 - Failure response: Stop; do not test against production launch event.
+
+- Action: Confirm WhatsApp environment intent and provider scope.
+- Expected result: `META_WHATSAPP_SANDBOX_MODE` is explicit for the rehearsal;
+  the configured WABA and phone-number ID match the sandbox assets.
+- Where to verify: Safe redacted application configuration and Meta dashboard.
+- Failure response: Stop if sandbox/production intent or WABA/phone scope is
+  ambiguous.
 
 ### 2. Setup offer and inventory
 
@@ -39,13 +47,34 @@ source for the order of operations.
 - Failure response: Pause WhatsApp entrypoint and inspect inbound webhook,
   Redis session, and conversation audit.
 
+### 3A. Event gate and quantity checks
+
+- Action: Disable the event gate after the conversation has displayed the event,
+  then submit the stale confirmation.
+- Expected result: New WhatsApp discovery and checkout fail closed without a new
+  order or hold; existing paid/in-flight recovery remains available.
+- Where to verify: Event admin, conversation state, order/hold counts, and audit
+  timeline.
+- Failure response: Stop if stale confirmation creates new Sales state or if
+  disabling the gate invalidates existing truth.
+
+- Action: Select a permitted multi-digit quantity when the offer maximum is at
+  least ten.
+- Expected result: AF/EN prompts show the selected offer maximum; values `10`
+  and `12` are accepted when permitted, values above the maximum are rejected,
+  menu index `10` is not treated as a menu option, and `0` remains Back.
+- Where to verify: WhatsApp conversation and checkout order line.
+- Failure response: Stop if checkout permits an above-maximum quantity or a
+  second quantity ceiling appears.
+
 ### 4. Send payment link
 
 - Action: Allow `SendWhatsAppPaymentLinkWorker` to send the payment link.
 - Expected result: Customer receives a payment message; duplicate worker
-  execution does not duplicate sends.
-- Where to verify: DeliveryAttempt rows if recorded, Oban job state, Audit
-  Timeline for conversation/order.
+  execution does not duplicate sends. The attempt is `provider_accepted` after
+  Meta returns a WAMID, not `sent`/`delivered` until provider callbacks arrive.
+- Where to verify: DeliveryAttempt rows, Oban job state, Ops Dashboard, and
+  Audit Timeline for conversation/order.
 - Failure response: Inspect Meta auth, rate limits, outbound dedupe, and manual
   review queue.
 
@@ -86,10 +115,22 @@ source for the order of operations.
 
 - Action: Trigger the status/ticket delivery path and allow
   `SendWhatsAppTicketLinkWorker` to send.
-- Expected result: Ticket link is sent once; delivery attempt is recorded.
-- Where to verify: DeliveryAttempt rows, Audit Timeline for delivery attempt.
+- Expected result: Ticket link is sent once; the DeliveryAttempt records
+  `provider_accepted` first and later signed Meta `sent`, `delivered`, `read`, or
+  `failed` evidence when available.
+- Where to verify: DeliveryAttempt rows, status-evidence records, Ops Dashboard,
+  and Audit Timeline for delivery attempt.
 - Failure response: Inspect 24-hour window policy, template availability, Meta
   auth, and manual review queue.
+
+- Action: If a ticket-link request times out or loses its connection after
+  dispatch, treat it as ambiguous transport.
+- Expected result: The attempt enters `manual_review`; the worker does not
+  release dedupe, retry automatically, or rotate another secure token. A
+  definitively rejected provider response may follow the bounded retry policy.
+- Where to verify: DeliveryAttempt status, dedupe state, worker result, and
+  operator review queue.
+- Failure response: Stop if an ambiguous outcome sends a second link.
 
 ### 10. Open secure ticket page
 
@@ -107,6 +148,17 @@ source for the order of operations.
   scanner visibility count.
 - Failure response: Inspect mobile JWT config, event scope, attendee row, and
   event sync version.
+
+- Action: For the mixed-source regression event, sync after a Tickera-origin
+  attendee and a `fastcheck_sales` attendee are both present.
+- Expected result: Both eligible attendees are visible; the Sales ticket scans
+  successfully, and later Sales revocation invalidates only the Sales attendee.
+  Tickera reconciliation does not overwrite or invalidate the Sales row, and the
+  Tickera attendee remains eligible.
+- Where to verify: Mobile sync, scanner acceptance, attendee source fields, and
+  invalidation/audit records.
+- Failure response: Stop mixed-source approval and create a blocker if source or
+  scanner identity collides.
 
 ### 12. Scanner acceptance
 
@@ -173,8 +225,9 @@ source for the order of operations.
 ### 19. Ops dashboard verification
 
 - Action: Open `/dashboard/sales/ops`.
-- Expected result: Status counts, failures, manual review, delivery failures,
-  scanner visibility, and Oban backlog are visible and redacted.
+- Expected result: Status counts, provider acceptance versus Meta delivery
+  evidence, failures, manual review, delivery failures, scanner visibility, and
+  Oban backlog are visible and redacted.
 - Where to verify: Ops Dashboard.
 - Failure response: Escalate if operator cannot see launch state.
 
@@ -203,4 +256,3 @@ source for the order of operations.
 - Where to verify: Go/No-Go checklist.
 - Failure response: No production launch until failures are resolved or formally
   accepted.
-

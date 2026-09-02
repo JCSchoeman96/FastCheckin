@@ -219,6 +219,8 @@ defmodule FastCheck.Sales.AuditViews do
           channel: d.channel,
           provider: d.provider,
           status: d.status,
+          provider_status: d.provider_status,
+          provider_status_at: d.provider_status_at,
           template_name: d.template_name,
           fallback_channel: d.fallback_channel,
           within_whatsapp_window: d.within_whatsapp_window

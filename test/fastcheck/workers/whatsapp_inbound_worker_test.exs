@@ -103,7 +103,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "Worker Event",
-        scanner_login_code: scanner_code()
+        scanner_login_code: scanner_code(),
+        whatsapp_sales_enabled: true
       })
 
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Worker General")
@@ -157,7 +158,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "Duplicate Worker Event",
-        scanner_login_code: scanner_code()
+        scanner_login_code: scanner_code(),
+        whatsapp_sales_enabled: true
       })
 
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Duplicate General")
@@ -201,7 +203,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "Retry Event",
-        scanner_login_code: scanner_code()
+        scanner_login_code: scanner_code(),
+        whatsapp_sales_enabled: true
       })
 
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Retry General")
@@ -256,7 +259,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     event =
       SalesWebFixtures.insert_event!(%{
         name: "Checkpoint Event",
-        scanner_login_code: scanner_code()
+        scanner_login_code: scanner_code(),
+        whatsapp_sales_enabled: true
       })
 
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Checkpoint General")

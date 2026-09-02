@@ -31,6 +31,7 @@ defmodule FastCheck.Events.Event do
           mobile_access_secret_encrypted: String.t() | nil,
           scanner_login_code: String.t() | nil,
           status: String.t() | nil,
+          whatsapp_sales_enabled: boolean(),
           total_tickets: integer() | nil,
           checked_in_count: integer(),
           attendee_count: integer() | nil,
@@ -68,6 +69,8 @@ defmodule FastCheck.Events.Event do
     field :tickera_end_date, :utc_datetime
     # Event lifecycle status such as "active", "syncing", or "archived"
     field :status, :string
+    # Explicit fail-closed gate for new WhatsApp customer sales entry.
+    field :whatsapp_sales_enabled, :boolean, default: false
     # Total number of tickets made available for the event
     field :total_tickets, :integer
     # Local checked-in total derived from attendee check-in timestamps
@@ -122,6 +125,7 @@ defmodule FastCheck.Events.Event do
       :tickera_start_date,
       :tickera_end_date,
       :status,
+      :whatsapp_sales_enabled,
       :total_tickets,
       :entrance_name,
       :event_date,
