@@ -99,7 +99,7 @@ defmodule FastCheck.Load.MobileIntegrationScenarioTest do
     assert is_integer(state.event_sync_version)
     assert state.event_sync_version >= 2
     assert is_list(state.invalidations)
-    assert length(state.invalidations) >= 1
+    assert state.invalidations != []
     assert Enum.all?(state.invalidations, &Map.has_key?(&1, :reason_code))
   end
 

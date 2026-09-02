@@ -189,32 +189,31 @@ defmodule FastCheck.Scans.HotState.RedisStore do
   def process_scan(%ScanCommand{} = command, namespace) do
     with {:ok, version} <- ensure_event_loaded(command.event_id, namespace) do
       if idempotency_started?(namespace, command.event_id, command.idempotency_key) do
-        with {:ok, response} <- eval_decision(command, namespace, version) do
-          {:ok,
-           to_result(command.event_id, command.idempotency_key, command.ticket_code, response)}
-        end
+        process_started_scan(command, namespace, version)
       else
-        case DbAuthority.check(command.event_id, command.ticket_code) do
-          :ok ->
-            with {:ok, response} <- eval_decision(command, namespace, version) do
-              {:ok,
-               to_result(
-                 command.event_id,
-                 command.idempotency_key,
-                 command.ticket_code,
-                 response
-               )}
-            end
-
-          {:reject, reason} ->
-            result = db_gate_result(command, version, reason)
-
-            case write_idempotency_record(command, namespace, version, result) do
-              {:ok, _} -> {:ok, result}
-              {:error, _} = err -> err
-            end
-        end
+        process_new_scan(command, namespace, version)
       end
+    end
+  end
+
+  defp process_started_scan(command, namespace, version) do
+    with {:ok, response} <- eval_decision(command, namespace, version) do
+      {:ok, to_result(command.event_id, command.idempotency_key, command.ticket_code, response)}
+    end
+  end
+
+  defp process_new_scan(command, namespace, version) do
+    case DbAuthority.check(command.event_id, command.ticket_code) do
+      :ok ->
+        process_started_scan(command, namespace, version)
+
+      {:reject, reason} ->
+        result = db_gate_result(command, version, reason)
+
+        case write_idempotency_record(command, namespace, version, result) do
+          {:ok, _} -> {:ok, result}
+          {:error, _} = err -> err
+        end
     end
   end
 

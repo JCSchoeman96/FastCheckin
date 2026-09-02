@@ -88,7 +88,7 @@ defmodule FastCheck.Sales.Payments.PaystackInitializationIdempotencyTest do
       |> Enum.filter(&match?({:ok, %{status: :initialized}}, &1))
       |> Enum.map(fn {:ok, result} -> result end)
 
-    assert length(successes) >= 1
+    assert [_ | _] = successes
     assert Enum.uniq(Enum.map(successes, & &1.payment_attempt_id)) |> length() == 1
     assert :counters.get(counter, 1) == 1
   end

@@ -51,12 +51,12 @@ defmodule FastCheck.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:phoenix, "~> 1.8.1"},
+      {:phoenix, "~> 1.8.13"},
       {:phoenix_ecto, "~> 4.5"},
-      {:ecto_sql, "~> 3.13"},
-      {:postgrex, ">= 0.0.0"},
-      {:ash, "~> 3.27"},
-      {:ash_postgres, "~> 2.9"},
+      {:ecto_sql, "~> 3.14"},
+      {:postgrex, "~> 0.22.4"},
+      {:ash, "~> 3.32"},
+      {:ash_postgres, "~> 2.13"},
       {:simple_sat, "~> 0.1.4"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
@@ -77,15 +77,14 @@ defmodule FastCheck.MixProject do
       {:cachex, "~> 3.6"},
       {:redix, "~> 1.2"},
       {:oban, "~> 2.17"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.6.3"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.26"},
       {:jason, "~> 1.2"},
       {:eqrcode, "~> 0.2.1"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"},
-      {:mishka_chelekom, "~> 0.0.8"},
+      {:bandit, "~> 1.12"},
       {:sourceror,
        github: "doorgan/sourceror",
        ref: "ffb1ad3c2b111371ff9c568b93ee41a145499349",
@@ -95,20 +94,19 @@ defmodule FastCheck.MixProject do
       {:plug_attack, "~> 0.4.3"},
 
       # Code quality
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7.19", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
 
       # Security scanning
       # Security scanning
-      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.15.0", only: [:dev, :test], runtime: false},
 
       # Mobile Extension
       {:cors_plug, "~> 3.0"},
       {:joken, "~> 2.6"},
 
       # Error monitoring
-      {:sentry, "~> 10.0"},
-      {:hackney, "~> 1.20"},
+      {:sentry, "~> 13.5"},
 
       # Metrics export
       {:telemetry_metrics_prometheus_core, "~> 1.2"}
