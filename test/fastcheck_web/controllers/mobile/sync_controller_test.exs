@@ -292,7 +292,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
                json_response(conn, 200)
 
       # Should include updated attendee
-      assert length(attendees) >= 1
+      assert attendees != []
     end
 
     test "returns 400 on invalid since parameter", %{conn: conn, token: token} do
@@ -1197,7 +1197,7 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       statuses = Enum.map(results, & &1["status"])
 
       assert Enum.all?(statuses, &(&1 in ["success", "duplicate"]))
-      assert Enum.count(statuses, &(&1 == "success")) >= 1
+      assert Enum.any?(statuses, &(&1 == "success"))
       assert Enum.all?(results, &(contract_keys(&1) == ["idempotency_key", "message", "status"]))
 
       perform_all_persist_jobs()

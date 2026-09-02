@@ -80,7 +80,7 @@ defmodule FastCheck.Integration.EndToEndTest do
 
       # Verify attendees were inserted
       attendees = Attendees.list_event_attendees(event.id)
-      assert length(attendees) > 0
+      assert attendees != []
 
       # Get first attendee for scanning
       attendee = List.first(attendees)

@@ -183,10 +183,10 @@ defmodule FastCheckWeb.Components.Accordion do
       |> Enum.filter(&(&1[:open] == true))
       |> Enum.map(& &1.id)
 
-    cond do
-      length(initial_open) > 0 -> Enum.join(initial_open, ",")
-      length(slot_open_items) > 0 -> Enum.join(slot_open_items, ",")
-      true -> ""
+    case {initial_open, slot_open_items} do
+      {[_ | _] = open_items, _} -> Enum.join(open_items, ",")
+      {[], [_ | _] = open_items} -> Enum.join(open_items, ",")
+      _ -> ""
     end
   end
 
