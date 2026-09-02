@@ -608,7 +608,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
-  test "marks DeliveryAttempt failed without storing ticket token when WhatsApp send fails" do
+  test "marks ambiguous provider responses for manual review without storing ticket token" do
     %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
       issued_ticket_fixture()
 
@@ -620,7 +620,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
        }}
     end)
 
-    assert {:error, %{retryable?: true}} =
+    assert {:discard, :ambiguous_transport} =
              perform_job(SendWhatsAppTicketLinkWorker, %{
                "conversation_id" => conversation_id,
                "sales_order_id" => order_id,
@@ -631,15 +631,17 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "failed",
+               status: "manual_review",
                provider_error_message: "whatsapp send failed",
-               failure_reason: "server_error"
+               failure_reason: "server_error",
+               fallback_channel: "manual_review"
              }
            ] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
-                 select: map(d, [:status, :provider_error_message, :failure_reason])
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
              )
 
     attempt_log =
@@ -769,7 +771,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     refute log =~ "/t/"
   end
 
-  test "releases outbound dedupe after retryable failure so retry sends ticket link" do
+  test "releases outbound dedupe after definitive rate-limit rejection so retry sends ticket link" do
     test_pid = self()
     counter = :counters.new(1, [])
 
@@ -784,7 +786,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 
@@ -819,7 +821,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
-  test "resend provider retryable failure does not consume and releases dedupe" do
+  test "resend definitive rate-limit rejection does not consume and releases dedupe" do
     test_pid = self()
     counter = :counters.new(1, [])
 
@@ -836,7 +838,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 

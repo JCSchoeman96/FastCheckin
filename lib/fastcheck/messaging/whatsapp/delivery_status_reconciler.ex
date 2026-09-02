@@ -183,7 +183,9 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
           else: :noop
 
       current_provider_status in [nil, "accepted"] ->
-        {:update, "failed"}
+        if later_or_equal?(event.provider_timestamp, attempt.provider_status_at),
+          do: {:update, "failed"},
+          else: :noop
 
       is_nil(attempt.provider_status_at) or
           later_or_equal?(event.provider_timestamp, attempt.provider_status_at) ->

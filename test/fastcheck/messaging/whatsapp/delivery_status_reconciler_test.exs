@@ -138,6 +138,27 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     assert read_at == stored_timestamp(10)
   end
 
+  test "older failed evidence cannot regress newer provider acceptance" do
+    order_id = insert_order!("out-of-order-accepted-failure")
+    wamid = "wamid.out-of-order-accepted-failure"
+
+    attempt_id =
+      insert_attempt!(order_id,
+        status: "provider_accepted",
+        provider_status: "accepted",
+        provider_status_at: stored_timestamp(20),
+        provider_message_id: wamid
+      )
+
+    assert {:ignored, :out_of_order} =
+             DeliveryStatusReconciler.reconcile(provider_status(wamid, "failed", 19, "131000"))
+
+    assert %{status: "provider_accepted", provider_status: "accepted"} =
+             snapshot_attempt!(attempt_id)
+
+    assert evidence_count(attempt_id) == 1
+  end
+
   test "later contradictory success moves a failed attempt to manual review without retry" do
     order_id = insert_order!("contradictory-status")
     wamid = "wamid.contradictory"

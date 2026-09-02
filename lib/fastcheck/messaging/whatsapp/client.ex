@@ -169,6 +169,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
            raw_status: status,
            provider_error_message: "meta response did not include message id",
            retryable?: false,
+           ambiguous?: true,
            safe_metadata:
              metadata(
                operation,
@@ -184,13 +185,13 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
   end
 
   defp error_from_status(status, body, operation, message_type, correlation_id, duration_ms) do
-    {response_status, retryable?, rate_limited?} =
+    {response_status, retryable?, rate_limited?, ambiguous?} =
       cond do
-        status == 400 -> {:validation_error, false, false}
-        status in [401, 403] -> {:auth_error, false, false}
-        status == 429 -> {:rate_limited, true, true}
-        status >= 500 -> {:server_error, true, false}
-        true -> {:unknown_error, false, false}
+        status == 400 -> {:validation_error, false, false, false}
+        status in [401, 403] -> {:auth_error, false, false, false}
+        status == 429 -> {:rate_limited, true, true, false}
+        status >= 500 -> {:server_error, true, false, true}
+        true -> {:unknown_error, false, false, false}
       end
 
     %Response{
@@ -201,6 +202,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
       provider_error_message: provider_error_message(body),
       retryable?: retryable?,
       rate_limited?: rate_limited?,
+      ambiguous?: ambiguous?,
       safe_metadata:
         metadata(
           operation,
@@ -231,6 +233,8 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
   end
 
   defp decode_error_response(status, operation, message_type, correlation_id, duration_ms) do
+    ambiguous? = status in 200..299 or status >= 500
+
     %Response{
       provider: :meta,
       status: :unknown_error,
@@ -239,6 +243,7 @@ defmodule FastCheck.Messaging.WhatsApp.Client do
       provider_error_message: "meta response could not be decoded",
       retryable?: status >= 500,
       rate_limited?: false,
+      ambiguous?: ambiguous?,
       safe_metadata:
         metadata(
           operation,

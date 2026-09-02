@@ -87,7 +87,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     refute log =~ "+27821234567"
   end
 
-  test "marks DeliveryAttempt failed without storing Paystack URL when WhatsApp send fails", %{
+  test "marks ambiguous provider responses for manual review without storing Paystack URL", %{
     offer: offer
   } do
     {conversation_id, order, attempt} = initialized_payment!(offer)
@@ -100,7 +100,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
        }}
     end)
 
-    assert {:error, %{retryable?: true}} =
+    assert {:discard, :ambiguous_transport} =
              perform_job(SendWhatsAppPaymentLinkWorker, %{
                "conversation_id" => conversation_id,
                "sales_order_id" => order.id,
@@ -109,15 +109,17 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
 
     assert [
              %{
-               status: "failed",
-               provider_error_message: "whatsapp send failed",
-               failure_reason: "server_error"
+               status: "manual_review",
+               provider_error_message: "whatsapp send requires manual review",
+               failure_reason: "server_error",
+               fallback_channel: "manual_review"
              }
            ] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,
-                 select: map(d, [:status, :provider_error_message, :failure_reason])
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
              )
 
     attempt_log =
@@ -181,7 +183,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     refute log =~ attempt.authorization_url
   end
 
-  test "releases outbound dedupe after retryable failure so retry sends", %{offer: offer} do
+  test "releases outbound dedupe after definitive rate-limit rejection so retry sends", %{
+    offer: offer
+  } do
     test_pid = self()
     counter = :counters.new(1, [])
     {conversation_id, order, attempt} = initialized_payment!(offer)
@@ -194,7 +198,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 

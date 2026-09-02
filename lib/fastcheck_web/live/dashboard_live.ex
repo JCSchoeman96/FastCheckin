@@ -2464,12 +2464,14 @@ defmodule FastCheckWeb.DashboardLive do
       |> Enum.map(fn [prev, curr] -> curr.elapsed - prev.elapsed end)
       |> Enum.filter(&(&1 > 0))
 
-    if length(times) > 0 do
-      times
-      |> Enum.sum()
-      |> Kernel./(length(times))
-    else
-      nil
+    case times do
+      [] ->
+        nil
+
+      times ->
+        times
+        |> Enum.sum()
+        |> Kernel./(length(times))
     end
   end
 

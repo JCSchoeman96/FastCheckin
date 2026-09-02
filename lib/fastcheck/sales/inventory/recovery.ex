@@ -58,62 +58,73 @@ defmodule FastCheck.Sales.Inventory.Recovery do
 
     with {:ok, durable} <- DurableSnapshot.fetch(offer_id),
          analysis <- reconciler_analysis(offer_id, durable) do
-      if analysis.manual_review_required? do
-        report = manual_review_report(offer_id, durable, dry_run?, analysis)
-
-        :telemetry.execute(
-          [:fastcheck, :sales, :inventory, :manual_review_required],
-          %{count: 1},
-          %{
-            offer_id: offer_id,
-            event_id: durable.event_id,
-            manual_review_required: true,
-            orphan_hold_count: analysis.orphan_hold_count
-          }
-        )
-
-        {:manual_review_required, report}
-      else
-        counts = rebuild_counts(durable, analysis.expected_available)
-
-        if dry_run? or not allow_repair? do
-          {:ok,
-           base_report(offer_id, durable, true, false, [
-             %{action: :rebuild_inventory, counts: counts}
-           ])}
-        else
-          with :ok <- ReservationLedger.mark_offer_health(offer_id, :rebuilding, "rebuild"),
-               :ok <- ReservationLedger.rebuild_inventory(offer_id, counts),
-               :ok <- ReservationLedger.mark_offer_health(offer_id, :healthy, "rebuild_complete") do
-            :telemetry.execute(
-              [:fastcheck, :sales, :inventory, :rebuilt],
-              %{count: 1},
-              %{
-                offer_id: offer_id,
-                event_id: durable.event_id,
-                safe_available: analysis.expected_available
-              }
-            )
-
-            {:ok,
-             base_report(offer_id, durable, false, true, [
-               %{action: :rebuild_inventory, counts: counts}
-             ])}
-          else
-            {:error, _atom, _meta} = error ->
-              _ =
-                ReservationLedger.mark_offer_health(
-                  offer_id,
-                  :reconciliation_required,
-                  "rebuild_failed"
-                )
-
-              error
-          end
-        end
-      end
+      rebuild_from_analysis(offer_id, durable, dry_run?, allow_repair?, analysis)
     else
       {:error, :offer_not_found} = error -> error
+    end
+  end
+
+  defp rebuild_from_analysis(offer_id, durable, dry_run?, allow_repair?, analysis) do
+    if analysis.manual_review_required? do
+      report = manual_review_report(offer_id, durable, dry_run?, analysis)
+
+      :telemetry.execute(
+        [:fastcheck, :sales, :inventory, :manual_review_required],
+        %{count: 1},
+        %{
+          offer_id: offer_id,
+          event_id: durable.event_id,
+          manual_review_required: true,
+          orphan_hold_count: analysis.orphan_hold_count
+        }
+      )
+
+      {:manual_review_required, report}
+    else
+      counts = rebuild_counts(durable, analysis.expected_available)
+      maybe_apply_rebuild(offer_id, durable, dry_run?, allow_repair?, counts, analysis)
+    end
+  end
+
+  defp maybe_apply_rebuild(offer_id, durable, dry_run?, allow_repair?, counts, analysis) do
+    if dry_run? or not allow_repair? do
+      {:ok,
+       base_report(offer_id, durable, true, false, [
+         %{action: :rebuild_inventory, counts: counts}
+       ])}
+    else
+      apply_rebuild(offer_id, durable, counts, analysis)
+    end
+  end
+
+  defp apply_rebuild(offer_id, durable, counts, analysis) do
+    with :ok <- ReservationLedger.mark_offer_health(offer_id, :rebuilding, "rebuild"),
+         :ok <- ReservationLedger.rebuild_inventory(offer_id, counts),
+         :ok <- ReservationLedger.mark_offer_health(offer_id, :healthy, "rebuild_complete") do
+      :telemetry.execute(
+        [:fastcheck, :sales, :inventory, :rebuilt],
+        %{count: 1},
+        %{
+          offer_id: offer_id,
+          event_id: durable.event_id,
+          safe_available: analysis.expected_available
+        }
+      )
+
+      {:ok,
+       base_report(offer_id, durable, false, true, [
+         %{action: :rebuild_inventory, counts: counts}
+       ])}
+    else
+      {:error, _atom, _meta} = error ->
+        _ =
+          ReservationLedger.mark_offer_health(
+            offer_id,
+            :reconciliation_required,
+            "rebuild_failed"
+          )
+
+        error
     end
   end
 

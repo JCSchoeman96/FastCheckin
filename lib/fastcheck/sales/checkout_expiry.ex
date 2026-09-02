@@ -98,38 +98,49 @@ defmodule FastCheck.Sales.CheckoutExpiry do
 
     with {:ok, session} <- load_session(session_id),
          {:ok, order} <- load_order(session.sales_order_id) do
-      Repo.transaction(fn ->
-        Repo.query!("SELECT pg_advisory_xact_lock($1)", [order.id])
+      expire_loaded_session(session_id, order.id, correlation_id)
+    end
+  end
 
-        session = reload_session!(session_id)
-        order = reload_order!(session.sales_order_id)
+  defp expire_loaded_session(session_id, order_id, correlation_id) do
+    Repo.transaction(fn ->
+      Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
 
-        case classify_after_lock(session, order) do
-          {:skip, reason} ->
-            emit_skip(reason, session, order, correlation_id)
-            reason
+      session = reload_session!(session_id)
+      order = reload_order!(session.sales_order_id)
+      handle_expiry_after_lock(session, order, correlation_id)
+    end)
+    |> normalize_transaction_result()
+  end
 
-          {:manual_review, reason} ->
-            mark_manual_review!(session, order, reason, correlation_id)
-            :manual_review
+  defp handle_expiry_after_lock(session, order, correlation_id) do
+    case classify_after_lock(session, order) do
+      {:skip, reason} ->
+        emit_skip(reason, session, order, correlation_id)
+        reason
 
-          {:expire_with_hold, hold_context} ->
-            case release_hold(hold_context) do
-              :ok ->
-                expire_durable!(session, order, hold_context.context)
-                emit_expired(session, order, correlation_id)
-                :expired
+      {:manual_review, reason} ->
+        mark_manual_review!(session, order, reason, correlation_id)
+        :manual_review
 
-              {:manual_review, reason} ->
-                mark_manual_review!(session, order, reason, correlation_id)
-                :manual_review
+      {:expire_with_hold, hold_context} ->
+        expire_with_hold(session, order, hold_context, correlation_id)
+    end
+  end
 
-              {:retry, reason} ->
-                Repo.rollback(reason)
-            end
-        end
-      end)
-      |> normalize_transaction_result()
+  defp expire_with_hold(session, order, hold_context, correlation_id) do
+    case release_hold(hold_context) do
+      :ok ->
+        expire_durable!(session, order, hold_context.context)
+        emit_expired(session, order, correlation_id)
+        :expired
+
+      {:manual_review, reason} ->
+        mark_manual_review!(session, order, reason, correlation_id)
+        :manual_review
+
+      {:retry, reason} ->
+        Repo.rollback(reason)
     end
   end
 

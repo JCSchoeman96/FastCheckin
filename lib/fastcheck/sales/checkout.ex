@@ -45,23 +45,32 @@ defmodule FastCheck.Sales.Checkout do
     context = build_context(actor, input, opts)
 
     with :ok <- validate_quantity(input),
-         {:ok, existing_order} <- lookup_idempotent_order(input) do
-      if existing_order && not idempotent_inputs_match?(existing_order, input, opts) do
-        {:error, :duplicate_idempotency_conflict}
-      else
-        with :ok <- authorize_actor(actor, input),
-             :ok <- validate_effective_sales_channel(input, opts) do
-          if existing_order do
-            build_idempotent_replay(existing_order)
-          else
-            with :ok <- validate_new_checkout_event_gate(input, opts),
-                 {:ok, offer} <- validate_offer(input, opts, context),
-                 :ok <- validate_quantity_against_offer(input, offer) do
-              create_checkout(offer, input, actor, context)
-            end
-          end
-        end
-      end
+         {:ok, existing_order} <- lookup_idempotent_order(input),
+         :ok <- ensure_idempotent_inputs_match(existing_order, input, opts),
+         :ok <- authorize_actor(actor, input),
+         :ok <- validate_effective_sales_channel(input, opts) do
+      complete_checkout(existing_order, input, actor, context, opts)
+    end
+  end
+
+  defp ensure_idempotent_inputs_match(nil, _input, _opts), do: :ok
+
+  defp ensure_idempotent_inputs_match(existing_order, input, opts) do
+    if idempotent_inputs_match?(existing_order, input, opts),
+      do: :ok,
+      else: {:error, :duplicate_idempotency_conflict}
+  end
+
+  defp complete_checkout(existing_order, _input, _actor, _context, _opts)
+       when not is_nil(existing_order) do
+    build_idempotent_replay(existing_order)
+  end
+
+  defp complete_checkout(nil, input, actor, context, opts) do
+    with :ok <- validate_new_checkout_event_gate(input, opts),
+         {:ok, offer} <- validate_offer(input, opts, context),
+         :ok <- validate_quantity_against_offer(input, offer) do
+      create_checkout(offer, input, actor, context)
     end
   end
 
