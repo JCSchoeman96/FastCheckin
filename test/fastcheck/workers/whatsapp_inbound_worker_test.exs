@@ -11,6 +11,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Sales.Conversation
+  alias FastCheck.SalesE2EFixtures
+  alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Workers.WhatsAppInboundWorker
   alias FastCheckWeb.SalesWebFixtures
@@ -386,6 +388,71 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert handoff_reason == "whatsapp_reply_retry_exhausted"
   end
 
+  test "retrying a failed reply does not repeat checkout payment or inventory effects" do
+    paystack_cleanup = PaymentSupport.setup_paystack!()
+    on_exit(paystack_cleanup)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Retry Checkout Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Retry Checkout General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    state_data = %{
+      "selected_event_id" => event.id,
+      "selected_event_label" => event.name,
+      "selected_offer_id" => offer.id,
+      "selected_offer_label" => offer.name,
+      "selected_offer_max_per_order" => offer.max_per_order,
+      "selected_offer_price_cents" => offer.price_cents,
+      "selected_offer_currency" => offer.currency,
+      "quantity" => 1,
+      "buyer_name" => "Retry Buyer",
+      "buyer_email" => "retry-buyer@example.com"
+    }
+
+    conversation_id = insert_conversation!(state: "confirming_order", state_data: state_data)
+    {:ok, encrypted} = Crypto.encrypt("1")
+    args = inbound_worker_args(conversation_id, "wamid.worker-checkout-retry-1", encrypted)
+    counter = :counters.new(1, [])
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
+    Application.put_env(
+      :fastcheck,
+      :whatsapp_request_fun,
+      retryable_then_success_request_fun(test_pid, counter, "wamid.outbound-checkout-retry")
+    )
+
+    before = sales_effect_counts()
+    inventory_before = SalesE2EFixtures.inventory_snapshot!(offer.id)
+
+    assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args)
+    assert_received {:whatsapp_request, 1, _request}
+    assert :counters.get(counter, 1) == 1
+
+    after_first = sales_effect_counts()
+    assert after_first.orders == before.orders + 1
+    assert after_first.order_lines == before.order_lines + 1
+    assert after_first.payment_attempts == before.payment_attempts + 1
+    inventory_after_first = SalesE2EFixtures.inventory_snapshot!(offer.id)
+    refute inventory_after_first == inventory_before
+    assert pending_order_id(conversation_id)
+    assert length(all_enqueued(worker: FastCheck.Workers.SendWhatsAppPaymentLinkWorker)) == 1
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args)
+    assert_received {:whatsapp_request, 2, _request}
+    assert :counters.get(counter, 1) == 2
+
+    assert sales_effect_counts() == after_first
+    assert SalesE2EFixtures.inventory_snapshot!(offer.id) == inventory_after_first
+    assert length(all_enqueued(worker: FastCheck.Workers.SendWhatsAppPaymentLinkWorker)) == 1
+  end
+
   test "checkpoint preserves event options so event selection advances to ticket offers" do
     test_pid = self()
 
@@ -496,6 +563,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
 
   defp insert_conversation!(opts \\ []) do
     state = Keyword.get(opts, :state, "new")
+    state_data = Keyword.get(opts, :state_data, %{})
 
     %{rows: [[id]]} =
       Repo.query!(
@@ -503,10 +571,10 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
         INSERT INTO sales_conversations
           (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
         VALUES
-          ('+27821234567', '27821234567', 'af', $1, '{}', false, now(), now())
+          ('+27821234567', '27821234567', 'af', $1, $2::jsonb, false, now(), now())
         RETURNING id
         """,
-        [state]
+        [state, state_data]
       )
 
     id
@@ -517,6 +585,24 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
       Repo.query!("SELECT state FROM sales_conversations WHERE id = $1", [conversation_id])
 
     state
+  end
+
+  defp pending_order_id(conversation_id) do
+    %{rows: [[order_id]]} =
+      Repo.query!(
+        "SELECT state_data->>'sales_order_id' FROM sales_conversations WHERE id = $1",
+        [conversation_id]
+      )
+
+    order_id
+  end
+
+  defp sales_effect_counts do
+    %{rows: [[orders]]} = Repo.query!("SELECT count(*) FROM sales_orders")
+    %{rows: [[order_lines]]} = Repo.query!("SELECT count(*) FROM sales_order_lines")
+    %{rows: [[payment_attempts]]} = Repo.query!("SELECT count(*) FROM sales_payment_attempts")
+
+    %{orders: orders, order_lines: order_lines, payment_attempts: payment_attempts}
   end
 
   defp conversation_transition_count(conversation_id) do
