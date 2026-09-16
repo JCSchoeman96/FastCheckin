@@ -15,6 +15,18 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   alias FastCheck.Workers.WhatsAppInboundWorker
   alias FastCheckWeb.SalesWebFixtures
 
+  @unsafe_sentinels [
+    "CUSTOMER_BODY_SENTINEL",
+    "+27829990001",
+    "27829990001",
+    "EAAG_ACCESS_TOKEN_SENTINEL",
+    "https://checkout.paystack.test/payment/SENTINEL",
+    "https://tickets.fastcheck.test/ticket/SENTINEL",
+    "OTP-654321-SENTINEL",
+    ~s({"raw":"META_PAYLOAD_SENTINEL"}),
+    "META_PROVIDER_ERROR_SENTINEL"
+  ]
+
   setup do
     cleanup = WebhookTestSupport.setup_whatsapp!()
 
@@ -68,13 +80,13 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     :telemetry.detach("whatsapp-worker-test")
   end
 
-  test "new/1 args do not contain full message body" do
+  test "new/1 args do not contain plaintext sensitive values" do
     args = %{
       "provider_message_id" => "wamid.worker-2",
       "wa_id" => "27821234567",
       "phone_e164" => "+27821234567",
       "message_type" => "text",
-      "text_body" => "secret full body",
+      "text_body" => Enum.join(@unsafe_sentinels, "|"),
       "conversation_id" => 123,
       "correlation_id" => "corr-worker",
       "received_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
@@ -82,9 +94,12 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     }
 
     assert %Ecto.Changeset{} = changeset = WhatsAppInboundWorker.new(args)
-    refute inspect(changeset.changes.args) =~ "secret full body"
-    refute inspect(changeset.changes.args) =~ "+27821234567"
-    refute inspect(changeset.changes.args) =~ "27821234567"
+    args_output = inspect(changeset.changes.args)
+
+    for sentinel <- @unsafe_sentinels do
+      refute args_output =~ sentinel
+    end
+
     refute Map.has_key?(changeset.changes.args, "text_body")
     refute Map.has_key?(changeset.changes.args, "phone_e164")
     refute Map.has_key?(changeset.changes.args, "wa_id")
@@ -305,6 +320,70 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert :counters.get(counter, 1) == 2
     assert conversation_state(conversation_id) == "main_menu"
     assert conversation_transition_count(conversation_id) == 1
+  end
+
+  test "permanent Meta reply failure becomes an operator-visible terminal outcome" do
+    provider_error = "META_PROVIDER_ERROR_SENTINEL"
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 400,
+         body: Jason.encode!(%{"error" => %{"message" => provider_error}})
+       }}
+    end)
+
+    conversation_id = insert_conversation!(state: "selecting_language")
+    {:ok, encrypted} = Crypto.encrypt("1")
+    args = inbound_worker_args(conversation_id, "wamid.worker-permanent-1", encrypted)
+
+    log =
+      capture_log(fn ->
+        assert {:discard, :whatsapp_reply_failed} = perform_job(WhatsAppInboundWorker, args)
+      end)
+
+    assert_received {:whatsapp_request, _request}
+    assert conversation_state(conversation_id) == "main_menu"
+
+    {state_data, needs_human, handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["pending_reply"]["status"] == "reply_failed"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+    assert needs_human
+    assert handoff_reason == "whatsapp_reply_validation_failure"
+    refute inspect(state_data) =~ provider_error
+    refute log =~ provider_error
+  end
+
+  test "final retryable Meta failure becomes retry-exhausted terminal outcome" do
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 500,
+         body: Jason.encode!(%{"error" => %{"message" => "META_PROVIDER_ERROR_SENTINEL"}})
+       }}
+    end)
+
+    conversation_id = insert_conversation!(state: "selecting_language")
+    {:ok, encrypted} = Crypto.encrypt("1")
+    args = inbound_worker_args(conversation_id, "wamid.worker-exhausted-1", encrypted)
+    job = build_job(WhatsAppInboundWorker, args, attempt: 5)
+
+    assert {:discard, :whatsapp_reply_retry_exhausted} = perform_job(job)
+    assert_received {:whatsapp_request, _request}
+    assert conversation_state(conversation_id) == "main_menu"
+
+    {state_data, needs_human, handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["pending_reply"]["status"] == "reply_failed"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+    assert needs_human
+    assert handoff_reason == "whatsapp_reply_retry_exhausted"
   end
 
   test "checkpoint preserves event options so event selection advances to ticket offers" do
