@@ -3,11 +3,14 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   use Oban.Testing, repo: FastCheck.Repo
 
   import ExUnit.CaptureLog
+  require Ash.Query
 
+  alias Ash.Query
   alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Sales.Conversation
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Workers.WhatsAppInboundWorker
   alias FastCheckWeb.SalesWebFixtures
@@ -183,20 +186,26 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
 
     assert :ok = perform_job(WhatsAppInboundWorker, args)
     refute_received {:whatsapp_request, _request}
+
+    assert conversation_state(conversation_id) == "selecting_language"
+
+    {state_data, needs_human, handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_sent"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+    refute needs_human
+    assert is_nil(handoff_reason)
   end
 
-  test "retryable outbound failure does not reinterpret the same provider message on retry" do
+  test "retryable outbound failure sends the durable exact reply on retry without replaying business transition" do
     test_pid = self()
+    counter = :counters.new(1, [])
 
-    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
-      send(test_pid, {:whatsapp_request, request})
-
-      {:ok,
-       %Req.Response{
-         status: 500,
-         body: Jason.encode!(%{"error" => %{"message" => "temporary provider failure"}})
-       }}
-    end)
+    Application.put_env(
+      :fastcheck,
+      :whatsapp_request_fun,
+      retryable_then_success_request_fun(test_pid, counter, "wamid.outbound-retry")
+    )
 
     event =
       SalesWebFixtures.insert_event!(%{
@@ -221,23 +230,81 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
       "raw_payload_hash" => "hash-worker-retry"
     }
 
-    assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args)
-    assert_received {:whatsapp_request, _request}
+    first_log =
+      capture_log(fn ->
+        assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args)
+      end)
+
+    assert_received {:whatsapp_request, 1, first_request}
+    expected_body = first_request.options.json["text"]["body"]
+    assert :counters.get(counter, 1) == 1
     assert conversation_state(conversation_id) == "main_menu"
 
-    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
-      send(test_pid, {:unexpected_retry_request, request})
+    {state_data, needs_human, handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_retryable"
+    assert state_data["pending_reply"]["provider_message_id"] == args["provider_message_id"]
+    assert {:ok, ^expected_body} = Crypto.decrypt(state_data["pending_reply"]["ciphertext"])
+    assert state_data["pending_reply"]["attempt_count"] == 1
+    refute needs_human
+    assert is_nil(handoff_reason)
 
-      {:ok,
-       %Req.Response{
-         status: 200,
-         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-retry"}]})
-       }}
-    end)
+    refute inspect(WhatsAppInboundWorker.new(args).changes.args) =~ expected_body
+
+    second_log = capture_log(fn -> assert :ok = perform_job(WhatsAppInboundWorker, args) end)
+
+    assert_received {:whatsapp_request, 2, second_request}
+    assert second_request.options.json["text"]["body"] == expected_body
+    assert :counters.get(counter, 1) == 2
+    assert conversation_state(conversation_id) == "main_menu"
+    assert conversation_transition_count(conversation_id) == 1
+
+    {state_data, needs_human, handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_sent"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+    assert state_data["pending_reply"]["outbound_message_id"] == "wamid.outbound-retry"
+    refute needs_human
+    assert is_nil(handoff_reason)
+
+    logs = first_log <> second_log
+    refute logs =~ expected_body
+    refute logs =~ "+27821234567"
+    refute logs =~ "27821234567"
+    refute logs =~ "temporary provider failure"
+  end
+
+  test "retry sends the pending reply after a fresh Conversation reload" do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    Application.put_env(
+      :fastcheck,
+      :whatsapp_request_fun,
+      retryable_then_success_request_fun(test_pid, counter, "wamid.outbound-reload")
+    )
+
+    conversation_id = insert_conversation!(state: "selecting_language")
+    {:ok, encrypted} = Crypto.encrypt("1")
+
+    args = inbound_worker_args(conversation_id, "wamid.worker-reload-1", encrypted)
+
+    assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args)
+    assert_received {:whatsapp_request, 1, first_request}
+    first_body = first_request.options.json["text"]["body"]
+
+    reloaded = reload_conversation!(conversation_id)
+    pending_reply = reloaded.state_data["pending_reply"]
+    assert pending_reply["status"] == "reply_retryable"
+    assert {:ok, persisted_body} = Crypto.decrypt(pending_reply["ciphertext"])
+    assert persisted_body == first_body
 
     assert :ok = perform_job(WhatsAppInboundWorker, args)
-    refute_received {:unexpected_retry_request, _request}
+    assert_received {:whatsapp_request, 2, second_request}
+    assert second_request.options.json["text"]["body"] == persisted_body
+    assert :counters.get(counter, 1) == 2
     assert conversation_state(conversation_id) == "main_menu"
+    assert conversation_transition_count(conversation_id) == 1
   end
 
   test "checkpoint preserves event options so event selection advances to ticket offers" do
@@ -371,6 +438,75 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
       Repo.query!("SELECT state FROM sales_conversations WHERE id = $1", [conversation_id])
 
     state
+  end
+
+  defp conversation_transition_count(conversation_id) do
+    %{rows: [[count]]} =
+      Repo.query!(
+        """
+        SELECT count(*)
+        FROM sales_state_transitions
+        WHERE entity_type = 'conversation' AND entity_id = $1
+        """,
+        [to_string(conversation_id)]
+      )
+
+    count
+  end
+
+  defp conversation_delivery_data(conversation_id) do
+    %{rows: [[state_data, needs_human, handoff_reason]]} =
+      Repo.query!(
+        """
+        SELECT state_data, needs_human, handoff_reason
+        FROM sales_conversations
+        WHERE id = $1
+        """,
+        [conversation_id]
+      )
+
+    {state_data, needs_human, handoff_reason}
+  end
+
+  defp reload_conversation!(conversation_id) do
+    Conversation
+    |> Query.for_read(:get_by_id, %{id: conversation_id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp inbound_worker_args(conversation_id, provider_message_id, encrypted) do
+    %{
+      "provider_message_id" => provider_message_id,
+      "message_type" => "text",
+      "text_body_encrypted" => encrypted,
+      "text_body_redacted_or_reference" => "[FILTERED_MESSAGE]",
+      "conversation_id" => conversation_id,
+      "correlation_id" => "corr-#{provider_message_id}",
+      "received_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "raw_payload_hash" => "hash-#{provider_message_id}"
+    }
+  end
+
+  defp retryable_then_success_request_fun(test_pid, counter, outbound_message_id) do
+    fn request ->
+      :counters.add(counter, 1, 1)
+      attempt = :counters.get(counter, 1)
+      send(test_pid, {:whatsapp_request, attempt, request})
+
+      if attempt == 1 do
+        {:ok,
+         %Req.Response{
+           status: 500,
+           body: Jason.encode!(%{"error" => %{"message" => "temporary provider failure"}})
+         }}
+      else
+        {:ok,
+         %Req.Response{
+           status: 200,
+           body: Jason.encode!(%{"messages" => [%{"id" => outbound_message_id}]})
+         }}
+      end
+    end
   end
 
   defp scanner_code do
