@@ -564,29 +564,31 @@ defmodule FastCheck.Sales.Conversation do
 
     case pending_reply_for_update(changeset, provider_message_id, @pending_reply_statuses) do
       {:ok, pending_reply} ->
-        with {:ok, attempt_count} <- reply_attempt_count(pending_reply) do
-          outbound_message_id = Changeset.get_argument(changeset, :outbound_message_id)
+        case reply_attempt_count(pending_reply) do
+          {:ok, attempt_count} ->
+            outbound_message_id = Changeset.get_argument(changeset, :outbound_message_id)
 
-          if valid_provider_message_id?(outbound_message_id) do
-            pending_reply =
-              pending_reply
-              |> Map.put("status", "reply_sent")
-              |> Map.put("attempt_count", attempt_count + 1)
-              |> Map.put(
-                "last_attempt_at",
-                iso8601(Changeset.get_argument(changeset, :sent_at))
-              )
-              |> Map.put("outbound_message_id", outbound_message_id)
-              |> Map.put("ciphertext", nil)
+            if valid_provider_message_id?(outbound_message_id) do
+              pending_reply =
+                pending_reply
+                |> Map.put("status", "reply_sent")
+                |> Map.put("attempt_count", attempt_count + 1)
+                |> Map.put(
+                  "last_attempt_at",
+                  iso8601(Changeset.get_argument(changeset, :sent_at))
+                )
+                |> Map.put("outbound_message_id", outbound_message_id)
+                |> Map.put("ciphertext", nil)
 
-            changeset
-            |> put_pending_reply(pending_reply)
-            |> Changeset.force_change_attribute(:last_outbound_message_id, outbound_message_id)
-          else
-            reply_state_error(changeset, "outbound provider is invalid")
-          end
-        else
-          {:error, message} -> reply_state_error(changeset, message)
+              changeset
+              |> put_pending_reply(pending_reply)
+              |> Changeset.force_change_attribute(:last_outbound_message_id, outbound_message_id)
+            else
+              reply_state_error(changeset, "outbound provider is invalid")
+            end
+
+          {:error, message} ->
+            reply_state_error(changeset, message)
         end
 
       {:already_terminal, "reply_sent"} ->

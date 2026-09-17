@@ -11,9 +11,9 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Sales.Conversation
-  alias FastCheck.SalesE2EFixtures
   alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
+  alias FastCheck.SalesE2EFixtures
   alias FastCheck.Workers.WhatsAppInboundWorker
   alias FastCheckWeb.SalesWebFixtures
 

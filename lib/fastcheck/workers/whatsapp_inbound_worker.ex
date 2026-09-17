@@ -115,16 +115,18 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   end
 
   defp deliver_stored_reply(job, conversation, pending_reply) do
-    with {:ok, body} <- Crypto.decrypt(pending_reply["ciphertext"]) do
-      deliver_reply_body(
-        job,
-        conversation,
-        pending_reply["provider_message_id"],
-        body,
-        Map.get(job.args, "correlation_id")
-      )
-    else
-      {:error, _reason} -> fail_stored_reply(conversation, pending_reply)
+    case Crypto.decrypt(pending_reply["ciphertext"]) do
+      {:ok, body} ->
+        deliver_reply_body(
+          job,
+          conversation,
+          pending_reply["provider_message_id"],
+          body,
+          Map.get(job.args, "correlation_id")
+        )
+
+      {:error, _reason} ->
+        fail_stored_reply(conversation, pending_reply)
     end
   end
 
