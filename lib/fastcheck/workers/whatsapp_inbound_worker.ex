@@ -13,6 +13,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
 
   require Logger
 
+  alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.Client
@@ -20,6 +21,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Observability.Correlation
   alias FastCheck.Sales.Conversation
+
+  @unresolved_reply_statuses ["reply_pending", "reply_retryable"]
 
   @impl Oban.Worker
   def new(args, opts) when is_map(args) and is_list(opts) do
@@ -29,7 +32,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"conversation_id" => conversation_id} = args}) do
+  def perform(%Oban.Job{args: %{"conversation_id" => conversation_id} = args} = job) do
     with {:ok, %Conversation{} = conversation} <- load_conversation(conversation_id) do
       metadata =
         Correlation.operational_metadata(%{
@@ -50,7 +53,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
       )
 
       Logger.info("whatsapp_inbound_worker_received", metadata)
-      handle_flow(args, conversation)
+      handle_flow(job, args, conversation)
     end
   end
 
@@ -69,16 +72,21 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
     |> Map.update("text_body_redacted_or_reference", nil, fn _ -> "[FILTERED_MESSAGE]" end)
   end
 
-  defp handle_flow(args, conversation) do
+  defp handle_flow(job, args, conversation) do
+    case unresolved_pending_reply(conversation) do
+      {:ok, pending_reply} -> deliver_stored_reply(job, conversation, pending_reply)
+      {:invalid, pending_reply} -> fail_stored_reply(conversation, pending_reply)
+      :none -> process_fresh_inbound(job, args, conversation)
+    end
+  end
+
+  defp process_fresh_inbound(job, args, conversation) do
     case decrypt_text_body(Map.get(args, "text_body_encrypted")) do
       {:ok, text_body} ->
         command = command_from_args(args, conversation, text_body)
 
-        with {:ok, result} <- ConversationStateMachine.handle_inbound(command, conversation),
-             :ok <- maybe_send_reply(conversation, command, result) do
-          :ok
-        else
-          {:error, %{retryable?: true}} -> {:error, :whatsapp_send_retryable}
+        case ConversationStateMachine.handle_inbound(command, conversation) do
+          {:ok, result} -> deliver_computed_reply(job, command, result)
           {:error, reason} -> {:error, reason}
         end
 
@@ -94,16 +102,157 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   defp decrypt_text_body(""), do: :no_text
   defp decrypt_text_body(value) when is_binary(value), do: Crypto.decrypt(value)
 
-  defp maybe_send_reply(_conversation, _command, %{send_reply?: false}), do: :ok
+  defp deliver_computed_reply(_job, _command, %{send_reply?: false}), do: :ok
 
-  defp maybe_send_reply(conversation, command, result) do
-    case Client.send_text(conversation.phone_e164, result.response_body,
-           correlation_id: command.correlation_id
-         ) do
-      {:ok, _response} -> :ok
-      {:error, response} -> {:error, response}
+  defp deliver_computed_reply(job, command, result) do
+    deliver_reply_body(
+      job,
+      result.conversation,
+      command.provider_message_id,
+      result.response_body,
+      command.correlation_id
+    )
+  end
+
+  defp deliver_stored_reply(job, conversation, pending_reply) do
+    with {:ok, body} <- Crypto.decrypt(pending_reply["ciphertext"]) do
+      deliver_reply_body(
+        job,
+        conversation,
+        pending_reply["provider_message_id"],
+        body,
+        Map.get(job.args, "correlation_id")
+      )
+    else
+      {:error, _reason} -> fail_stored_reply(conversation, pending_reply)
     end
   end
+
+  defp deliver_reply_body(job, conversation, provider_message_id, body, correlation_id) do
+    case Client.send_text(conversation.phone_e164, body, correlation_id: correlation_id) do
+      {:ok, response} ->
+        mark_reply_sent(conversation, provider_message_id, response.provider_message_id)
+
+      {:error, response} ->
+        handle_delivery_failure(job, conversation, provider_message_id, response)
+    end
+  end
+
+  defp handle_delivery_failure(job, conversation, provider_message_id, response) do
+    if response.retryable? do
+      handle_retryable_failure(job, conversation, provider_message_id)
+    else
+      failure_class = permanent_failure_class(response)
+
+      case mark_reply_failed(conversation, provider_message_id, failure_class) do
+        :ok -> {:discard, :whatsapp_reply_failed}
+        {:error, _reason} -> {:error, :whatsapp_reply_checkpoint_failed}
+      end
+    end
+  end
+
+  defp handle_retryable_failure(job, conversation, provider_message_id) do
+    if final_attempt?(job) do
+      case mark_reply_failed(conversation, provider_message_id, "whatsapp_reply_retry_exhausted") do
+        :ok -> {:discard, :whatsapp_reply_retry_exhausted}
+        {:error, _reason} -> {:error, :whatsapp_reply_checkpoint_failed}
+      end
+    else
+      case mark_reply_retryable(conversation, provider_message_id) do
+        :ok -> {:error, :whatsapp_send_retryable}
+        {:error, _reason} -> {:error, :whatsapp_reply_checkpoint_failed}
+      end
+    end
+  end
+
+  defp mark_reply_retryable(conversation, provider_message_id) do
+    update_reply(conversation, :mark_reply_retryable, %{
+      provider_message_id: provider_message_id,
+      attempted_at: now(),
+      failure_class: "whatsapp_reply_transport_failure"
+    })
+  end
+
+  defp mark_reply_sent(conversation, provider_message_id, outbound_message_id)
+       when is_binary(outbound_message_id) and outbound_message_id != "" do
+    update_reply(conversation, :mark_reply_sent, %{
+      provider_message_id: provider_message_id,
+      outbound_message_id: outbound_message_id,
+      sent_at: now()
+    })
+  end
+
+  defp mark_reply_sent(_conversation, _provider_message_id, _outbound_message_id),
+    do: {:error, :missing_outbound_message_id}
+
+  defp mark_reply_failed(conversation, provider_message_id, failure_class) do
+    update_reply(conversation, :mark_reply_failed, %{
+      provider_message_id: provider_message_id,
+      failed_at: now(),
+      failure_class: failure_class
+    })
+  end
+
+  defp update_reply(conversation, action, attrs) do
+    actor = %{actor_type: :system, actor_id: "whatsapp_inbound_worker"}
+
+    conversation
+    |> Changeset.for_update(action, attrs, actor: actor)
+    |> Ash.update(authorize?: false)
+    |> case do
+      {:ok, _conversation} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp fail_stored_reply(conversation, pending_reply) do
+    provider_message_id = pending_reply["provider_message_id"]
+
+    if is_binary(provider_message_id) and provider_message_id != "" do
+      case mark_reply_failed(
+             conversation,
+             provider_message_id,
+             "whatsapp_reply_ciphertext_invalid"
+           ) do
+        :ok -> {:discard, :whatsapp_reply_failed}
+        {:error, _reason} -> {:error, :whatsapp_reply_checkpoint_failed}
+      end
+    else
+      {:discard, :whatsapp_reply_failed}
+    end
+  end
+
+  defp unresolved_pending_reply(%{state_data: state_data}) when is_map(state_data) do
+    case Map.get(state_data, "pending_reply") do
+      %{"status" => status, "ciphertext" => ciphertext} = pending_reply
+      when status in @unresolved_reply_statuses and is_binary(ciphertext) and ciphertext != "" ->
+        {:ok, pending_reply}
+
+      %{"status" => status} = pending_reply when status in @unresolved_reply_statuses ->
+        {:invalid, pending_reply}
+
+      _ ->
+        :none
+    end
+  end
+
+  defp unresolved_pending_reply(_conversation), do: :none
+
+  defp final_attempt?(%Oban.Job{attempt: attempt, max_attempts: max_attempts})
+       when is_integer(attempt) and is_integer(max_attempts),
+       do: attempt >= max_attempts
+
+  defp final_attempt?(_job), do: false
+
+  defp permanent_failure_class(%{status: :auth_error}),
+    do: "whatsapp_reply_auth_failure"
+
+  defp permanent_failure_class(%{status: :validation_error}),
+    do: "whatsapp_reply_validation_failure"
+
+  defp permanent_failure_class(_response), do: "whatsapp_reply_failed"
+
+  defp now, do: DateTime.utc_now() |> DateTime.truncate(:second)
 
   defp command_from_args(args, conversation, text_body) do
     %MessageCommand{

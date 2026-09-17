@@ -9,6 +9,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Messaging.WhatsApp.FlowResult
   alias FastCheck.Messaging.WhatsApp.InputNormalizer
@@ -788,19 +789,29 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp mark_handled(_command, %{send_reply?: false} = result), do: {:ok, result}
 
   defp mark_handled(command, %FlowResult{conversation: conversation} = result) do
-    data =
-      conversation
-      |> state_data()
-      |> Map.put("last_handled_inbound_message_id", command.provider_message_id)
-
     actor = %{actor_type: :system, actor_id: "whatsapp_conversation_state_machine"}
 
-    conversation
-    |> Changeset.for_update(:update_inbound_checkpoint, %{state_data: data}, actor: actor)
-    |> Ash.update(authorize?: false)
-    |> case do
-      {:ok, conversation} -> {:ok, %{result | conversation: conversation}}
-      {:error, reason} -> {:error, reason}
+    case Crypto.encrypt(result.response_body) do
+      {:ok, ciphertext} ->
+        conversation
+        |> Changeset.for_update(
+          :store_pending_reply,
+          %{
+            ciphertext: ciphertext,
+            provider_message_id: command.provider_message_id,
+            computed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+            correlation_id: command.correlation_id
+          },
+          actor: actor
+        )
+        |> Ash.update(authorize?: false)
+        |> case do
+          {:ok, conversation} -> {:ok, %{result | conversation: conversation}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, _reason} ->
+        {:error, :reply_encryption_failed}
     end
   end
 
