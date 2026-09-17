@@ -7,6 +7,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.SessionStore
@@ -959,6 +960,41 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute duplicate.send_reply?
     assert duplicate.response_body == ""
     assert duplicate.conversation.state == "selecting_language"
+  end
+
+  test "failed pending-reply checkpoint rolls back its business transition" do
+    {:ok, ciphertext} = Crypto.encrypt("reply A")
+    conversation = insert_conversation!()
+
+    pending_state_data = %{
+      "last_handled_inbound_message_id" => "wamid.pending-a",
+      "pending_reply" => %{
+        "ciphertext" => ciphertext,
+        "provider_message_id" => "wamid.pending-a",
+        "status" => "reply_retryable",
+        "attempt_count" => 1
+      }
+    }
+
+    Repo.query!(
+      "UPDATE sales_conversations SET state = 'selecting_language', state_data = $1::jsonb WHERE id = $2",
+      [pending_state_data, conversation.id]
+    )
+
+    conversation = %{conversation | state: "selecting_language", state_data: pending_state_data}
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             handle(conversation, "1", "wamid.pending-b")
+
+    %{rows: [[state, state_data]]} =
+      Repo.query!(
+        "SELECT state, state_data FROM sales_conversations WHERE id = $1",
+        [conversation.id]
+      )
+
+    assert state == "selecting_language"
+    assert state_data["pending_reply"]["provider_message_id"] == "wamid.pending-a"
+    assert state_data["pending_reply"]["ciphertext"] == ciphertext
   end
 
   defp progress(%{conversation: conversation}, text, suffix),

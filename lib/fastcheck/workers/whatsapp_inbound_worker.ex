@@ -24,6 +24,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   alias FastCheck.Sales.Conversation
 
   @unresolved_reply_statuses ["reply_pending", "reply_retryable"]
+  @active_oban_states ["available", "scheduled", "executing", "retryable"]
+  @terminal_oban_states ["completed", "discarded", "cancelled"]
   @pending_reply_snooze_seconds 5
 
   @impl Oban.Worker
@@ -82,14 +84,14 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
         if pending_reply_belongs_to_job?(pending_reply, args) do
           deliver_stored_reply(job, conversation, pending_reply)
         else
-          defer_inbound_until_pending_reply_resolves()
+          recover_or_defer_inbound(job, args, conversation, pending_reply)
         end
 
       {:invalid, pending_reply} ->
         if pending_reply_belongs_to_job?(pending_reply, args) do
           fail_stored_reply(conversation, pending_reply)
         else
-          defer_inbound_until_pending_reply_resolves()
+          recover_or_defer_inbound(job, args, conversation, pending_reply)
         end
 
       :none ->
@@ -106,6 +108,62 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
 
   defp defer_inbound_until_pending_reply_resolves,
     do: {:snooze, @pending_reply_snooze_seconds}
+
+  defp recover_or_defer_inbound(job, args, conversation, pending_reply) do
+    case pending_reply_job_state(conversation.id, pending_reply["provider_message_id"]) do
+      {:ok, state} when state in @terminal_oban_states ->
+        case mark_reply_failed(
+               conversation,
+               pending_reply["provider_message_id"],
+               "whatsapp_reply_failed"
+             ) do
+          :ok ->
+            case load_conversation(conversation.id) do
+              {:ok, fresh_conversation} -> process_fresh_inbound(job, args, fresh_conversation)
+              {:error, reason} -> {:error, reason}
+            end
+
+          {:error, _reason} ->
+            {:error, :whatsapp_reply_checkpoint_failed}
+        end
+
+      {:ok, state} when state in @active_oban_states ->
+        defer_inbound_until_pending_reply_resolves()
+
+      :unknown ->
+        defer_inbound_until_pending_reply_resolves()
+
+      {:error, _reason} ->
+        defer_inbound_until_pending_reply_resolves()
+    end
+  end
+
+  defp pending_reply_job_state(conversation_id, provider_message_id)
+       when is_integer(conversation_id) and is_binary(provider_message_id) and
+              provider_message_id != "" do
+    case Repo.query(
+           """
+           SELECT state
+           FROM oban_jobs
+           WHERE worker = $1
+             AND args->>'conversation_id' = $2
+             AND args->>'provider_message_id' = $3
+           ORDER BY inserted_at DESC, id DESC
+           LIMIT 1
+           """,
+           [
+             Oban.Worker.to_string(__MODULE__),
+             Integer.to_string(conversation_id),
+             provider_message_id
+           ]
+         ) do
+      {:ok, %{rows: [[state]]}} -> {:ok, state}
+      {:ok, %{rows: []}} -> :unknown
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp pending_reply_job_state(_conversation_id, _provider_message_id), do: :unknown
 
   defp process_fresh_inbound(job, args, conversation) do
     case decrypt_text_body(Map.get(args, "text_body_encrypted")) do

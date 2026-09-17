@@ -352,6 +352,8 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     args_a = inbound_worker_args(conversation_id, "wamid.worker-distinct-a", encrypted_a)
     args_b = inbound_worker_args(conversation_id, "wamid.worker-distinct-b", encrypted_b)
 
+    assert {:ok, _a_job} = WhatsAppInboundWorker.new(args_a) |> Oban.insert()
+
     assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args_a)
     assert_received {:whatsapp_request, 1, first_request}
     expected_a_body = first_request.options.json["text"]["body"]
@@ -461,6 +463,67 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert_received {:whatsapp_request, 3, _request}
     assert conversation_state(conversation_id) == "selecting_event"
     assert conversation_transition_count(conversation_id) == 2
+
+    {state_data, _needs_human, _handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["provider_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_sent"
+  end
+
+  test "a distinct inbound can recover a pending reply whose Oban job was discarded" do
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-recovered-b"}]})
+       }}
+    end)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Discarded Inbound Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Discarded General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    {:ok, encrypted_a} = Crypto.encrypt("reply A")
+
+    conversation_id =
+      insert_conversation!(
+        state: "main_menu",
+        state_data: %{
+          "last_handled_inbound_message_id" => "wamid.discarded-a",
+          "pending_reply" => %{
+            "ciphertext" => encrypted_a,
+            "provider_message_id" => "wamid.discarded-a",
+            "status" => "reply_retryable",
+            "attempt_count" => 1
+          }
+        }
+      )
+
+    {:ok, encrypted_b} = Crypto.encrypt("1")
+    args_a = inbound_worker_args(conversation_id, "wamid.discarded-a", encrypted_a)
+    args_b = inbound_worker_args(conversation_id, "wamid.discarded-b", encrypted_b)
+
+    assert {:ok, discarded_job} = WhatsAppInboundWorker.new(args_a) |> Oban.insert()
+
+    Repo.query!(
+      "UPDATE oban_jobs SET state = 'discarded', discarded_at = now() WHERE id = $1",
+      [discarded_job.id]
+    )
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args_b)
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Discarded Inbound Event"
+    assert conversation_state(conversation_id) == "selecting_event"
+    assert conversation_transition_count(conversation_id) == 1
 
     {state_data, _needs_human, _handoff_reason} = conversation_delivery_data(conversation_id)
     assert state_data["last_handled_inbound_message_id"] == args_b["provider_message_id"]

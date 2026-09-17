@@ -74,12 +74,22 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     if duplicate_inbound?(command, conversation) do
       {:ok, duplicate_result(conversation)}
     else
-      normalized = InputNormalizer.normalize(command.text_body || "")
+      Repo.transaction(fn -> process_inbound_transaction(command, conversation) end)
+    end
+  end
 
-      case dispatch(command, conversation, normalized) do
-        {:ok, result} -> mark_handled(command, result)
-        {:error, reason} -> {:error, reason}
-      end
+  defp process_inbound_transaction(command, conversation) do
+    normalized = InputNormalizer.normalize(command.text_body || "")
+
+    case dispatch(command, conversation, normalized) do
+      {:ok, result} ->
+        case mark_handled(command, result) do
+          {:ok, result} -> result
+          {:error, reason} -> Repo.rollback(reason)
+        end
+
+      {:error, reason} ->
+        Repo.rollback(reason)
     end
   end
 
