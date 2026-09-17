@@ -302,6 +302,132 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     end
   end
 
+  test "marks missing WhatsApp configuration for manual review without a provider call", %{
+    offer: offer
+  } do
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.delete_env(:fastcheck, :whatsapp_access_token)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("missing WhatsApp configuration must not make a provider request")
+    end)
+
+    assert {:discard, :manual_review} =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "missing_config",
+               fallback_channel: "manual_review"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
+             )
+
+    refute_received {:whatsapp_request, _request}
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+
+    assert ttl > 0
+  end
+
+  test "marks an unknown non-retryable provider response for manual review and holds dedupe", %{
+    offer: offer
+  } do
+    test_pid = self()
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 418,
+         body: Jason.encode!(%{"error" => %{"message" => "provider rejected"}})
+       }}
+    end)
+
+    args = payment_job_args(conversation_id, order, attempt)
+
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppPaymentLinkWorker, args)
+    assert :ok = perform_job(SendWhatsAppPaymentLinkWorker, args)
+
+    assert_received {:whatsapp_request, _request}
+    refute_received {:whatsapp_request, _duplicate_request}
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "unknown_error",
+               fallback_channel: "manual_review"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
+             )
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+
+    assert ttl > 0
+  end
+
+  test "returns a stable error and releases dedupe when manual-review persistence fails", %{
+    offer: offer
+  } do
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      Repo.delete_all(from d in "sales_delivery_attempts", where: d.sales_order_id == ^order.id)
+
+      {:ok,
+       %Req.Response{
+         status: 401,
+         body: Jason.encode!(%{"error" => %{"message" => "provider rejected"}})
+       }}
+    end)
+
+    assert {:error, :whatsapp_delivery_attempt_manual_review_failed} =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    assert [] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select: d.status
+             )
+
+    assert {:ok, -2} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+  end
+
   test "marks retryable 429, 5xx, and timeout failures, releases dedupe, and returns the error",
        %{
          offer: offer

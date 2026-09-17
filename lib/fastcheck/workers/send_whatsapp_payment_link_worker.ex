@@ -152,13 +152,19 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
 
   defp mark_provider_failure(
          delivery_attempt,
-         %{status: status} = reason,
-         _release_dedupe,
+         %{retryable?: false, status: status} = reason,
+         release_dedupe,
          _error
        )
-       when status in [:auth_error, :validation_error] do
-    _ = mark_manual_review(delivery_attempt, reason)
-    {:discard, :manual_review}
+       when is_atom(status) do
+    case mark_manual_review(delivery_attempt, reason) do
+      {:ok, _delivery_attempt} ->
+        {:discard, :manual_review}
+
+      {:error, _persistence_reason} ->
+        release_dedupe.()
+        {:error, :whatsapp_delivery_attempt_manual_review_failed}
+    end
   end
 
   defp mark_provider_failure(delivery_attempt, reason, _release_dedupe, error) do
