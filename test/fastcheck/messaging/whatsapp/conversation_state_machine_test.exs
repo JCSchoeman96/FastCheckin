@@ -5,7 +5,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   import Ecto.Query
   require Ash.Query
 
+  alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.SessionStore
@@ -960,6 +962,70 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert duplicate.conversation.state == "selecting_language"
   end
 
+  test "an unresolved pending reply blocks a distinct business transition" do
+    {:ok, ciphertext} = Crypto.encrypt("reply A")
+    conversation = insert_conversation!()
+
+    pending_state_data = %{
+      "last_handled_inbound_message_id" => "wamid.pending-a",
+      "pending_reply" => %{
+        "ciphertext" => ciphertext,
+        "provider_message_id" => "wamid.pending-a",
+        "status" => "reply_retryable",
+        "attempt_count" => 1
+      }
+    }
+
+    Repo.query!(
+      "UPDATE sales_conversations SET state = 'selecting_language', state_data = $1::jsonb WHERE id = $2",
+      [pending_state_data, conversation.id]
+    )
+
+    conversation = %{conversation | state: "selecting_language", state_data: pending_state_data}
+
+    assert {:error, :inbound_reply_pending} =
+             handle(conversation, "1", "wamid.pending-b")
+
+    %{rows: [[state, state_data]]} =
+      Repo.query!(
+        "SELECT state, state_data FROM sales_conversations WHERE id = $1",
+        [conversation.id]
+      )
+
+    assert state == "selecting_language"
+    assert state_data["pending_reply"]["provider_message_id"] == "wamid.pending-a"
+    assert state_data["pending_reply"]["ciphertext"] == ciphertext
+  end
+
+  test "WhatsApp transition checkpoints the handled inbound before reply storage" do
+    conversation = insert_conversation!()
+    received_at = DateTime.utc_now() |> DateTime.truncate(:second)
+    provider_message_id = "wamid.transition-checkpoint"
+
+    assert {:ok, transitioned} =
+             conversation
+             |> Changeset.for_update(
+               :start_language_selection,
+               %{
+                 state_data: %{},
+                 last_inbound_message_id: provider_message_id,
+                 last_message_at: received_at,
+                 expires_at: DateTime.add(received_at, 86_400, :second),
+                 correlation_id: "corr-transition-checkpoint",
+                 idempotency_key: provider_message_id,
+                 transition_metadata: %{source_channel: "whatsapp"}
+               },
+               actor: %{actor_type: :system, actor_id: "conversation_state_machine_test"}
+             )
+             |> Ash.update(authorize?: false)
+
+    assert transitioned.state == "selecting_language"
+    assert transitioned.state_data["last_handled_inbound_message_id"] == provider_message_id
+    assert transitioned.state_data["pending_reply"]["provider_message_id"] == provider_message_id
+    assert transitioned.state_data["pending_reply"]["status"] == "reply_pending"
+    assert is_nil(transitioned.state_data["pending_reply"]["ciphertext"])
+  end
+
   defp progress(%{conversation: conversation}, text, suffix),
     do: progress(conversation, text, suffix)
 
@@ -982,7 +1048,26 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       metadata: %{}
     }
 
-    ConversationStateMachine.handle_inbound(command, conversation)
+    case ConversationStateMachine.handle_inbound(command, conversation) do
+      {:ok, %{send_reply?: true, conversation: updated_conversation} = result} ->
+        assert {:ok, sent_conversation} =
+                 updated_conversation
+                 |> Changeset.for_update(
+                   :mark_reply_sent,
+                   %{
+                     provider_message_id: provider_message_id,
+                     outbound_message_id: "test-outbound-#{provider_message_id}",
+                     sent_at: DateTime.utc_now() |> DateTime.truncate(:second)
+                   },
+                   actor: %{actor_type: :system, actor_id: "conversation_state_machine_test"}
+                 )
+                 |> Ash.update(authorize?: false)
+
+        {:ok, %{result | conversation: sent_conversation}}
+
+      other ->
+        other
+    end
   end
 
   defp insert_conversation!(opts \\ []) do

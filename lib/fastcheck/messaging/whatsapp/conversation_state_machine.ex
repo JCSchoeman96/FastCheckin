@@ -9,6 +9,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Messaging.WhatsApp.FlowResult
   alias FastCheck.Messaging.WhatsApp.InputNormalizer
@@ -26,6 +27,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   @menu_limit 9
   @event_candidate_limit 50
   @session_ttl_seconds 86_400
+  @terminal_reply_statuses ["reply_sent", "reply_failed"]
   @selected_event_keys [
     "selected_event_id",
     "selected_event_label"
@@ -70,15 +72,24 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
   def handle_inbound(%MessageCommand{} = command, %Conversation{} = conversation) do
-    if duplicate_inbound?(command, conversation) do
-      {:ok, duplicate_result(conversation)}
-    else
-      normalized = InputNormalizer.normalize(command.text_body || "")
+    cond do
+      duplicate_inbound?(command, conversation) ->
+        {:ok, duplicate_result(conversation)}
 
-      case dispatch(command, conversation, normalized) do
-        {:ok, result} -> mark_handled(command, result)
-        {:error, reason} -> {:error, reason}
-      end
+      inbound_blocked?(command, conversation) ->
+        {:error, :inbound_reply_pending}
+
+      true ->
+        # Dispatch may call payment, inventory, OTP, or Oban boundaries. Those
+        # effects must not be wrapped in a transaction that can roll back after
+        # an external call succeeds; the Conversation transition writes the
+        # durable handled/reply checkpoint instead.
+        normalized = InputNormalizer.normalize(command.text_body || "")
+
+        case dispatch(command, conversation, normalized) do
+          {:ok, result} -> mark_handled(command, result)
+          {:error, reason} -> {:error, reason}
+        end
     end
   end
 
@@ -785,22 +796,56 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       state_data(conversation)["last_handled_inbound_message_id"] == command.provider_message_id
   end
 
+  defp inbound_blocked?(command, conversation) do
+    data = state_data(conversation)
+
+    unresolved_reply?(data["pending_reply"]) or
+      processing_claim_belongs_to_another_inbound?(data["inbound_processing"], command)
+  end
+
+  defp unresolved_reply?(%{"status" => status}) when status in @terminal_reply_statuses,
+    do: false
+
+  defp unresolved_reply?(%{}), do: true
+
+  defp unresolved_reply?(_pending_reply), do: false
+
+  defp processing_claim_belongs_to_another_inbound?(
+         %{"provider_message_id" => provider_message_id},
+         %MessageCommand{provider_message_id: current_provider_message_id}
+       )
+       when is_binary(provider_message_id) and is_binary(current_provider_message_id),
+       do: provider_message_id != current_provider_message_id
+
+  defp processing_claim_belongs_to_another_inbound?(nil, _command), do: false
+  defp processing_claim_belongs_to_another_inbound?(_claim, _command), do: true
+
   defp mark_handled(_command, %{send_reply?: false} = result), do: {:ok, result}
 
   defp mark_handled(command, %FlowResult{conversation: conversation} = result) do
-    data =
-      conversation
-      |> state_data()
-      |> Map.put("last_handled_inbound_message_id", command.provider_message_id)
-
     actor = %{actor_type: :system, actor_id: "whatsapp_conversation_state_machine"}
 
-    conversation
-    |> Changeset.for_update(:update_inbound_checkpoint, %{state_data: data}, actor: actor)
-    |> Ash.update(authorize?: false)
-    |> case do
-      {:ok, conversation} -> {:ok, %{result | conversation: conversation}}
-      {:error, reason} -> {:error, reason}
+    case Crypto.encrypt(result.response_body) do
+      {:ok, ciphertext} ->
+        conversation
+        |> Changeset.for_update(
+          :store_pending_reply,
+          %{
+            ciphertext: ciphertext,
+            provider_message_id: command.provider_message_id,
+            computed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+            correlation_id: command.correlation_id
+          },
+          actor: actor
+        )
+        |> Ash.update(authorize?: false)
+        |> case do
+          {:ok, conversation} -> {:ok, %{result | conversation: conversation}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, _reason} ->
+        {:error, :reply_encryption_failed}
     end
   end
 

@@ -25,6 +25,17 @@ defmodule FastCheck.Sales.Conversation do
     :needs_human,
     :handoff_reason
   ]
+  @pending_reply_statuses ["reply_pending", "reply_retryable"]
+  @inbound_processing_key "inbound_processing"
+  @terminal_reply_statuses ["reply_sent", "reply_failed"]
+  @reply_failure_classes [
+    "whatsapp_reply_transport_failure",
+    "whatsapp_reply_retry_exhausted",
+    "whatsapp_reply_auth_failure",
+    "whatsapp_reply_validation_failure",
+    "whatsapp_reply_ciphertext_invalid",
+    "whatsapp_reply_failed"
+  ]
 
   postgres do
     table("sales_conversations")
@@ -99,6 +110,43 @@ defmodule FastCheck.Sales.Conversation do
         :needs_human,
         :handoff_reason
       ])
+    end
+
+    update :store_pending_reply do
+      require_atomic?(false)
+      accept([])
+      argument(:ciphertext, :string, allow_nil?: false)
+      argument(:provider_message_id, :string, allow_nil?: false)
+      argument(:computed_at, :utc_datetime, allow_nil?: false)
+      argument(:correlation_id, :string)
+      change(&store_pending_reply_change/2)
+    end
+
+    update :mark_reply_retryable do
+      require_atomic?(false)
+      accept([])
+      argument(:provider_message_id, :string, allow_nil?: false)
+      argument(:attempted_at, :utc_datetime, allow_nil?: false)
+      argument(:failure_class, :string, allow_nil?: false)
+      change(&mark_reply_retryable_change/2)
+    end
+
+    update :mark_reply_sent do
+      require_atomic?(false)
+      accept([])
+      argument(:provider_message_id, :string, allow_nil?: false)
+      argument(:outbound_message_id, :string, allow_nil?: false)
+      argument(:sent_at, :utc_datetime, allow_nil?: false)
+      change(&mark_reply_sent_change/2)
+    end
+
+    update :mark_reply_failed do
+      require_atomic?(false)
+      accept([])
+      argument(:provider_message_id, :string, allow_nil?: false)
+      argument(:failed_at, :utc_datetime, allow_nil?: false)
+      argument(:failure_class, :string, allow_nil?: false)
+      change(&mark_reply_failed_change/2)
     end
 
     update :start_language_selection do
@@ -446,6 +494,268 @@ defmodule FastCheck.Sales.Conversation do
     end
   end
 
+  defp store_pending_reply_change(changeset, _context) do
+    provider_message_id = Changeset.get_argument(changeset, :provider_message_id)
+    state_data = current_state_data(changeset)
+    existing_reply = Map.get(state_data, "pending_reply")
+
+    cond do
+      not valid_provider_message_id?(provider_message_id) ->
+        reply_state_error(changeset, "reply provider is invalid")
+
+      is_map(existing_reply) and
+        Map.get(existing_reply, "provider_message_id") != provider_message_id and
+          Map.get(existing_reply, "status") in @pending_reply_statuses ->
+        reply_state_error(changeset, "reply delivery is already pending")
+
+      is_map(existing_reply) and
+          Map.get(existing_reply, "provider_message_id") == provider_message_id ->
+        store_same_provider_reply(changeset, state_data, existing_reply, provider_message_id)
+
+      is_map(existing_reply) and
+          Map.get(existing_reply, "status") not in @terminal_reply_statuses ->
+        reply_state_error(changeset, "reply delivery state is invalid")
+
+      true ->
+        pending_reply = %{
+          "ciphertext" => Changeset.get_argument(changeset, :ciphertext),
+          "provider_message_id" => provider_message_id,
+          "status" => "reply_pending",
+          "attempt_count" => 0,
+          "computed_at" => iso8601(Changeset.get_argument(changeset, :computed_at)),
+          "last_attempt_at" => nil,
+          "failure_class" => nil,
+          "business_checkpointed" => true
+        }
+
+        state_data =
+          state_data
+          |> Map.put("pending_reply", pending_reply)
+          |> Map.put("last_handled_inbound_message_id", provider_message_id)
+          |> Map.delete(@inbound_processing_key)
+
+        Changeset.force_change_attribute(changeset, :state_data, state_data)
+    end
+  end
+
+  defp store_same_provider_reply(changeset, state_data, existing_reply, provider_message_id) do
+    cond do
+      placeholder_reply?(existing_reply) ->
+        fill_reply_placeholder(changeset, state_data, existing_reply, provider_message_id)
+
+      valid_pending_reply?(existing_reply) or
+          Map.get(existing_reply, "status") in @terminal_reply_statuses ->
+        preserve_same_provider_reply(changeset, state_data, provider_message_id)
+
+      true ->
+        reply_state_error(changeset, "reply delivery state is invalid")
+    end
+  end
+
+  defp fill_reply_placeholder(changeset, state_data, existing_reply, provider_message_id) do
+    case Changeset.get_argument(changeset, :ciphertext) do
+      ciphertext when is_binary(ciphertext) and ciphertext != "" ->
+        pending_reply =
+          existing_reply
+          |> Map.put("ciphertext", ciphertext)
+          |> Map.put("status", "reply_pending")
+          |> Map.put("computed_at", iso8601(Changeset.get_argument(changeset, :computed_at)))
+          |> Map.put("last_attempt_at", nil)
+          |> Map.put("failure_class", nil)
+
+        state_data
+        |> Map.put("pending_reply", pending_reply)
+        |> Map.put("last_handled_inbound_message_id", provider_message_id)
+        |> Map.delete(@inbound_processing_key)
+        |> then(&Changeset.force_change_attribute(changeset, :state_data, &1))
+
+      _ciphertext ->
+        reply_state_error(changeset, "reply ciphertext is invalid")
+    end
+  end
+
+  defp preserve_same_provider_reply(changeset, state_data, provider_message_id) do
+    state_data =
+      state_data
+      |> Map.put("last_handled_inbound_message_id", provider_message_id)
+      |> Map.delete(@inbound_processing_key)
+
+    Changeset.force_change_attribute(changeset, :state_data, state_data)
+  end
+
+  defp valid_pending_reply?(%{"status" => status, "ciphertext" => ciphertext})
+       when status in @pending_reply_statuses and is_binary(ciphertext) and ciphertext != "",
+       do: true
+
+  defp valid_pending_reply?(_reply), do: false
+
+  defp placeholder_reply?(%{"status" => status, "business_checkpointed" => true} = reply)
+       when status in @pending_reply_statuses do
+    not is_binary(Map.get(reply, "ciphertext")) or Map.get(reply, "ciphertext") == ""
+  end
+
+  defp placeholder_reply?(_reply), do: false
+
+  defp mark_reply_retryable_change(changeset, _context) do
+    provider_message_id = Changeset.get_argument(changeset, :provider_message_id)
+
+    with {:ok, pending_reply} <-
+           pending_reply_for_update(changeset, provider_message_id, @pending_reply_statuses),
+         {:ok, attempt_count} <- reply_attempt_count(pending_reply),
+         :ok <- validate_failure_class(Changeset.get_argument(changeset, :failure_class)) do
+      pending_reply =
+        pending_reply
+        |> Map.put("status", "reply_retryable")
+        |> Map.put("attempt_count", attempt_count + 1)
+        |> Map.put("last_attempt_at", iso8601(Changeset.get_argument(changeset, :attempted_at)))
+        |> Map.put("failure_class", Changeset.get_argument(changeset, :failure_class))
+
+      put_pending_reply(changeset, pending_reply)
+    else
+      {:error, message} -> reply_state_error(changeset, message)
+    end
+  end
+
+  defp mark_reply_sent_change(changeset, _context) do
+    provider_message_id = Changeset.get_argument(changeset, :provider_message_id)
+
+    case pending_reply_for_update(changeset, provider_message_id, @pending_reply_statuses) do
+      {:ok, pending_reply} ->
+        case reply_attempt_count(pending_reply) do
+          {:ok, attempt_count} ->
+            outbound_message_id = Changeset.get_argument(changeset, :outbound_message_id)
+
+            if valid_provider_message_id?(outbound_message_id) do
+              pending_reply =
+                pending_reply
+                |> Map.put("status", "reply_sent")
+                |> Map.put("attempt_count", attempt_count + 1)
+                |> Map.put(
+                  "last_attempt_at",
+                  iso8601(Changeset.get_argument(changeset, :sent_at))
+                )
+                |> Map.put("outbound_message_id", outbound_message_id)
+                |> Map.put("ciphertext", nil)
+
+              changeset
+              |> put_pending_reply(pending_reply)
+              |> Changeset.force_change_attribute(:last_outbound_message_id, outbound_message_id)
+            else
+              reply_state_error(changeset, "outbound provider is invalid")
+            end
+
+          {:error, message} ->
+            reply_state_error(changeset, message)
+        end
+
+      {:already_terminal, "reply_sent"} ->
+        changeset
+
+      {:already_terminal, _status} ->
+        reply_state_error(changeset, "reply delivery is terminal")
+
+      {:error, message} ->
+        reply_state_error(changeset, message)
+    end
+  end
+
+  defp mark_reply_failed_change(changeset, _context) do
+    provider_message_id = Changeset.get_argument(changeset, :provider_message_id)
+
+    case pending_reply_for_update(changeset, provider_message_id, @pending_reply_statuses) do
+      {:ok, pending_reply} ->
+        with {:ok, attempt_count} <- reply_attempt_count(pending_reply),
+             :ok <- validate_failure_class(Changeset.get_argument(changeset, :failure_class)) do
+          failure_class = Changeset.get_argument(changeset, :failure_class)
+
+          pending_reply =
+            pending_reply
+            |> Map.put("status", "reply_failed")
+            |> Map.put("attempt_count", attempt_count + 1)
+            |> Map.put(
+              "last_attempt_at",
+              iso8601(Changeset.get_argument(changeset, :failed_at))
+            )
+            |> Map.put("failure_class", failure_class)
+            |> Map.put("ciphertext", nil)
+
+          changeset
+          |> put_pending_reply(pending_reply)
+          |> Changeset.force_change_attribute(:needs_human, true)
+          |> Changeset.force_change_attribute(:handoff_reason, failure_class)
+        else
+          {:error, message} -> reply_state_error(changeset, message)
+        end
+
+      {:already_terminal, "reply_failed"} ->
+        changeset
+
+      {:already_terminal, _status} ->
+        reply_state_error(changeset, "reply delivery is terminal")
+
+      {:error, message} ->
+        reply_state_error(changeset, message)
+    end
+  end
+
+  defp pending_reply_for_update(changeset, provider_message_id, allowed_statuses) do
+    pending_reply = current_state_data(changeset) |> Map.get("pending_reply")
+
+    cond do
+      not valid_provider_message_id?(provider_message_id) ->
+        {:error, "reply provider is invalid"}
+
+      not is_map(pending_reply) ->
+        {:error, "reply delivery state is missing"}
+
+      Map.get(pending_reply, "provider_message_id") != provider_message_id ->
+        {:error, "reply provider does not match"}
+
+      Map.get(pending_reply, "status") in allowed_statuses ->
+        {:ok, pending_reply}
+
+      Map.get(pending_reply, "status") in @terminal_reply_statuses ->
+        {:already_terminal, Map.get(pending_reply, "status")}
+
+      true ->
+        {:error, "reply delivery state is invalid"}
+    end
+  end
+
+  defp reply_attempt_count(%{"attempt_count" => attempt_count})
+       when is_integer(attempt_count) and attempt_count >= 0,
+       do: {:ok, attempt_count}
+
+  defp reply_attempt_count(_pending_reply), do: {:error, "reply attempt count is invalid"}
+
+  defp put_pending_reply(changeset, pending_reply) do
+    state_data =
+      changeset
+      |> current_state_data()
+      |> Map.put("pending_reply", pending_reply)
+      |> Map.delete(@inbound_processing_key)
+
+    Changeset.force_change_attribute(changeset, :state_data, state_data)
+  end
+
+  defp current_state_data(changeset) do
+    case Changeset.get_data(changeset, :state_data) do
+      state_data when is_map(state_data) -> state_data
+      _ -> %{}
+    end
+  end
+
+  defp reply_state_error(changeset, message) do
+    Changeset.add_error(changeset, field: :state_data, message: message)
+  end
+
+  defp valid_provider_message_id?(value), do: is_binary(value) and value != ""
+
+  defp validate_failure_class(value) when value in @reply_failure_classes, do: :ok
+  defp validate_failure_class(_value), do: {:error, "reply failure class is invalid"}
+
+  defp iso8601(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+
   defp transition_state(changeset, context, to_state, action_name) do
     from_state = Changeset.get_data(changeset, :state)
 
@@ -469,6 +779,7 @@ defmodule FastCheck.Sales.Conversation do
 
     changeset
     |> Changeset.force_change_attribute(:state, to_state)
+    |> checkpoint_whatsapp_inbound(transition_metadata, idempotency_key)
     |> Changeset.after_action(fn _changeset, record ->
       case StateTransitionSupport.record!(
              %{
@@ -489,6 +800,78 @@ defmodule FastCheck.Sales.Conversation do
       end
     end)
   end
+
+  defp checkpoint_whatsapp_inbound(changeset, transition_metadata, provider_message_id) do
+    if whatsapp_transition?(transition_metadata) and
+         valid_provider_message_id?(provider_message_id) do
+      state_data = changeset_state_data(changeset)
+
+      cond do
+        reply_slot_occupied?(Map.get(state_data, "pending_reply")) ->
+          reply_state_error(changeset, "reply delivery is already pending")
+
+        processing_claim_for_another_message?(
+          Map.get(state_data, "inbound_processing"),
+          provider_message_id
+        ) ->
+          reply_state_error(changeset, "inbound message is already being processed")
+
+        true ->
+          pending_reply = %{
+            "ciphertext" => nil,
+            "provider_message_id" => provider_message_id,
+            "status" => "reply_pending",
+            "attempt_count" => 0,
+            "computed_at" => nil,
+            "checkpointed_at" =>
+              DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+            "last_attempt_at" => nil,
+            "failure_class" => nil,
+            "business_checkpointed" => true
+          }
+
+          state_data =
+            state_data
+            |> Map.put("last_handled_inbound_message_id", provider_message_id)
+            |> Map.put("pending_reply", pending_reply)
+            |> Map.delete(@inbound_processing_key)
+
+          Changeset.force_change_attribute(changeset, :state_data, state_data)
+      end
+    else
+      changeset
+    end
+  end
+
+  defp changeset_state_data(changeset) do
+    case Changeset.get_attribute(changeset, :state_data) do
+      state_data when is_map(state_data) -> state_data
+      _ -> current_state_data(changeset)
+    end
+  end
+
+  defp whatsapp_transition?(metadata) when is_map(metadata) do
+    Map.get(metadata, :source_channel) == "whatsapp" or
+      Map.get(metadata, "source_channel") == "whatsapp"
+  end
+
+  defp whatsapp_transition?(_metadata), do: false
+
+  defp reply_slot_occupied?(%{"status" => status}) when status in @terminal_reply_statuses,
+    do: false
+
+  defp reply_slot_occupied?(%{}), do: true
+  defp reply_slot_occupied?(_pending_reply), do: false
+
+  defp processing_claim_for_another_message?(
+         %{"provider_message_id" => existing_provider_message_id},
+         provider_message_id
+       )
+       when is_binary(existing_provider_message_id) and is_binary(provider_message_id),
+       do: existing_provider_message_id != provider_message_id
+
+  defp processing_claim_for_another_message?(nil, _provider_message_id), do: false
+  defp processing_claim_for_another_message?(_claim, _provider_message_id), do: true
 
   defp action_context(changeset, context) do
     changeset_context = Map.get(changeset, :context) || %{}

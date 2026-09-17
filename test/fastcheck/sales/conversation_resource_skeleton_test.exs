@@ -46,7 +46,11 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     :cancel_conversation,
     :handoff_conversation,
     :mark_conversation_payment_pending,
-    :request_payment_email
+    :request_payment_email,
+    :store_pending_reply,
+    :mark_reply_retryable,
+    :mark_reply_sent,
+    :mark_reply_failed
   ]
 
   @forbidden_action_names [
