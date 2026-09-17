@@ -962,7 +962,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert duplicate.conversation.state == "selecting_language"
   end
 
-  test "failed pending-reply checkpoint rolls back its business transition" do
+  test "an unresolved pending reply blocks a distinct business transition" do
     {:ok, ciphertext} = Crypto.encrypt("reply A")
     conversation = insert_conversation!()
 
@@ -983,7 +983,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     conversation = %{conversation | state: "selecting_language", state_data: pending_state_data}
 
-    assert {:error, %Ash.Error.Invalid{}} =
+    assert {:error, :inbound_reply_pending} =
              handle(conversation, "1", "wamid.pending-b")
 
     %{rows: [[state, state_data]]} =
@@ -995,6 +995,35 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert state == "selecting_language"
     assert state_data["pending_reply"]["provider_message_id"] == "wamid.pending-a"
     assert state_data["pending_reply"]["ciphertext"] == ciphertext
+  end
+
+  test "WhatsApp transition checkpoints the handled inbound before reply storage" do
+    conversation = insert_conversation!()
+    received_at = DateTime.utc_now() |> DateTime.truncate(:second)
+    provider_message_id = "wamid.transition-checkpoint"
+
+    assert {:ok, transitioned} =
+             conversation
+             |> Changeset.for_update(
+               :start_language_selection,
+               %{
+                 state_data: %{},
+                 last_inbound_message_id: provider_message_id,
+                 last_message_at: received_at,
+                 expires_at: DateTime.add(received_at, 86_400, :second),
+                 correlation_id: "corr-transition-checkpoint",
+                 idempotency_key: provider_message_id,
+                 transition_metadata: %{source_channel: "whatsapp"}
+               },
+               actor: %{actor_type: :system, actor_id: "conversation_state_machine_test"}
+             )
+             |> Ash.update(authorize?: false)
+
+    assert transitioned.state == "selecting_language"
+    assert transitioned.state_data["last_handled_inbound_message_id"] == provider_message_id
+    assert transitioned.state_data["pending_reply"]["provider_message_id"] == provider_message_id
+    assert transitioned.state_data["pending_reply"]["status"] == "reply_pending"
+    assert is_nil(transitioned.state_data["pending_reply"]["ciphertext"])
   end
 
   defp progress(%{conversation: conversation}, text, suffix),

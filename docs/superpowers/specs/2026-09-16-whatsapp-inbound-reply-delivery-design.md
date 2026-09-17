@@ -13,9 +13,12 @@ delivery, so using it for an arbitrary inbound conversation reply would require
 new nullable relationships and payload fields. That would be a larger domain
 change than this issue needs.
 
-The state machine writes the pending reply in the same durable checkpoint update
-that records the provider inbound message as handled. The reply body is
-encrypted with `FastCheck.Crypto` before it enters `state_data`.
+The worker installs a short-lived durable `inbound_processing` claim before
+dispatching a message. A WhatsApp state transition replaces that claim with
+the handled provider ID and a `reply_pending` placeholder in the same database
+update. The state machine then fills that placeholder with a body encrypted by
+`FastCheck.Crypto`. This keeps a checkpoint failure from replaying business
+handling while leaving the reply slot occupied until it has a safe outcome.
 
 The nested value has this shape:
 
@@ -25,9 +28,11 @@ state_data["pending_reply"] = %{
   "provider_message_id" => inbound provider message ID,
   "status" => "reply_pending" | "reply_retryable" | "reply_sent" | "reply_failed",
   "attempt_count" => non-negative integer,
-  "computed_at" => ISO8601 timestamp,
+  "computed_at" => ISO8601 timestamp or nil,
+  "checkpointed_at" => ISO8601 timestamp,
   "last_attempt_at" => ISO8601 timestamp or nil,
-  "failure_class" => stable internal class or nil
+  "failure_class" => stable internal class or nil,
+  "business_checkpointed" => true
 }
 ```
 
@@ -58,13 +63,18 @@ delivery status before changing it.
 
 The worker first loads the conversation and checks for a nested pending or
 retryable reply. If one exists, it decrypts and sends that body directly. This
-path has no access to `ConversationStateMachine.handle_inbound/2`.
+path has no access to `ConversationStateMachine.handle_inbound/2`. If no reply
+is pending, the worker claims the conversation with a row-locked transaction;
+another inbound therefore remains an outstanding Oban job rather than
+overwriting the single reply slot.
 
 If no pending reply exists, the worker decrypts the inbound customer message,
 builds the command, and calls the state machine once. A reply-producing result
-already contains the durable nested pending reply written by the state-machine
+contains the durable nested pending reply written by the state-machine
 checkpoint. The worker sends that exact stored body and records the provider
-outcome.
+outcome. A different inbound snoozes while the predecessor is active; after a
+terminal or pruned predecessor job, the worker closes that predecessor's
+reply slot and processes the outstanding inbound.
 
 Retryable provider responses return an Oban error after recording
 `reply_retryable`. Permanent provider responses record `reply_failed` and are
@@ -80,11 +90,14 @@ sees the durable reply state and resends it without invoking the state machine.
 
 The existing Oban uniqueness and inbound dedupe remain in place. The database
 checkpoint is the authority; Redis remains an acceleration/dedupe layer only.
-State updates merge the reply key into the loaded checkpoint rather than
-replacing the whole map. A provider timeout can leave Meta's acceptance
-unknown, so transport is at-least-once. The invariant is exactly-once business
-processing and one durable logical reply, not mathematically exactly-once
-delivery by an external provider that offers no send idempotency guarantee.
+The conversation row lock is held only for the claim transaction, so this
+works with transaction pooling and never holds a database transaction across
+external effects. State updates merge the reply key into the loaded checkpoint
+rather than replacing the whole map. A provider timeout can leave Meta's
+acceptance unknown, so transport is at-least-once. The invariant is exactly-once
+business processing and one durable logical reply, not mathematically
+exactly-once delivery by an external provider that offers no send idempotency
+guarantee.
 
 ## Verification
 

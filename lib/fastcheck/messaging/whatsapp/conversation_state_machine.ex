@@ -27,6 +27,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   @menu_limit 9
   @event_candidate_limit 50
   @session_ttl_seconds 86_400
+  @terminal_reply_statuses ["reply_sent", "reply_failed"]
   @selected_event_keys [
     "selected_event_id",
     "selected_event_label"
@@ -71,25 +72,24 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
   def handle_inbound(%MessageCommand{} = command, %Conversation{} = conversation) do
-    if duplicate_inbound?(command, conversation) do
-      {:ok, duplicate_result(conversation)}
-    else
-      Repo.transaction(fn -> process_inbound_transaction(command, conversation) end)
-    end
-  end
+    cond do
+      duplicate_inbound?(command, conversation) ->
+        {:ok, duplicate_result(conversation)}
 
-  defp process_inbound_transaction(command, conversation) do
-    normalized = InputNormalizer.normalize(command.text_body || "")
+      inbound_blocked?(command, conversation) ->
+        {:error, :inbound_reply_pending}
 
-    case dispatch(command, conversation, normalized) do
-      {:ok, result} ->
-        case mark_handled(command, result) do
-          {:ok, result} -> result
-          {:error, reason} -> Repo.rollback(reason)
+      true ->
+        # Dispatch may call payment, inventory, OTP, or Oban boundaries. Those
+        # effects must not be wrapped in a transaction that can roll back after
+        # an external call succeeds; the Conversation transition writes the
+        # durable handled/reply checkpoint instead.
+        normalized = InputNormalizer.normalize(command.text_body || "")
+
+        case dispatch(command, conversation, normalized) do
+          {:ok, result} -> mark_handled(command, result)
+          {:error, reason} -> {:error, reason}
         end
-
-      {:error, reason} ->
-        Repo.rollback(reason)
     end
   end
 
@@ -795,6 +795,30 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     is_binary(command.provider_message_id) and command.provider_message_id != "" and
       state_data(conversation)["last_handled_inbound_message_id"] == command.provider_message_id
   end
+
+  defp inbound_blocked?(command, conversation) do
+    data = state_data(conversation)
+
+    unresolved_reply?(data["pending_reply"]) or
+      processing_claim_belongs_to_another_inbound?(data["inbound_processing"], command)
+  end
+
+  defp unresolved_reply?(%{"status" => status}) when status in @terminal_reply_statuses,
+    do: false
+
+  defp unresolved_reply?(%{}), do: true
+
+  defp unresolved_reply?(_pending_reply), do: false
+
+  defp processing_claim_belongs_to_another_inbound?(
+         %{"provider_message_id" => provider_message_id},
+         %MessageCommand{provider_message_id: current_provider_message_id}
+       )
+       when is_binary(provider_message_id) and is_binary(current_provider_message_id),
+       do: provider_message_id != current_provider_message_id
+
+  defp processing_claim_belongs_to_another_inbound?(nil, _command), do: false
+  defp processing_claim_belongs_to_another_inbound?(_claim, _command), do: true
 
   defp mark_handled(_command, %{send_reply?: false} = result), do: {:ok, result}
 

@@ -531,6 +531,61 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert state_data["pending_reply"]["status"] == "reply_sent"
   end
 
+  test "a distinct inbound can recover a pending reply whose Oban row was pruned" do
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-pruned-b"}]})
+       }}
+    end)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Pruned Inbound Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Pruned General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    {:ok, encrypted_a} = Crypto.encrypt("reply A")
+
+    computed_at =
+      DateTime.utc_now()
+      |> DateTime.add(-8 * 24 * 60 * 60, :second)
+      |> DateTime.truncate(:second)
+      |> DateTime.to_iso8601()
+
+    conversation_id =
+      insert_conversation!(
+        state: "main_menu",
+        state_data: %{
+          "last_handled_inbound_message_id" => "wamid.pruned-a",
+          "pending_reply" => %{
+            "ciphertext" => encrypted_a,
+            "provider_message_id" => "wamid.pruned-a",
+            "status" => "reply_retryable",
+            "attempt_count" => 1,
+            "computed_at" => computed_at
+          }
+        }
+      )
+
+    {:ok, encrypted_b} = Crypto.encrypt("1")
+    args_b = inbound_worker_args(conversation_id, "wamid.pruned-b", encrypted_b)
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args_b)
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "Pruned Inbound Event"
+    assert conversation_state(conversation_id) == "selecting_event"
+    assert conversation_transition_count(conversation_id) == 1
+  end
+
   test "concurrent distinct inbound jobs serialize around the pending reply slot" do
     parent = self()
     counter = :counters.new(1, [])
@@ -599,11 +654,13 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     send(task_b.pid, :run_worker)
 
     refute_receive {:whatsapp_request, 2, _request}, 100
+    assert {:snooze, snooze_seconds} = Task.await(task_b, 5_000)
+    assert snooze_seconds > 0
 
     send(task_a.pid, :release_first_request)
     assert :ok = Task.await(task_a, 5_000)
-    assert :ok = Task.await(task_b, 5_000)
 
+    assert :ok = perform_job(WhatsAppInboundWorker, args_b)
     assert_received {:whatsapp_request, 2, _second_request}
     assert :counters.get(counter, 1) == 2
     assert conversation_state(conversation_id) == "selecting_event"
