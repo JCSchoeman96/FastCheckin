@@ -5,6 +5,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   import Ecto.Query
   require Ash.Query
 
+  alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
   alias FastCheck.Messaging.WhatsApp.MessageCommand
@@ -982,7 +983,26 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       metadata: %{}
     }
 
-    ConversationStateMachine.handle_inbound(command, conversation)
+    case ConversationStateMachine.handle_inbound(command, conversation) do
+      {:ok, %{send_reply?: true, conversation: updated_conversation} = result} ->
+        assert {:ok, sent_conversation} =
+                 updated_conversation
+                 |> Changeset.for_update(
+                   :mark_reply_sent,
+                   %{
+                     provider_message_id: provider_message_id,
+                     outbound_message_id: "test-outbound-#{provider_message_id}",
+                     sent_at: DateTime.utc_now() |> DateTime.truncate(:second)
+                   },
+                   actor: %{actor_type: :system, actor_id: "conversation_state_machine_test"}
+                 )
+                 |> Ash.update(authorize?: false)
+
+        {:ok, %{result | conversation: sent_conversation}}
+
+      other ->
+        other
+    end
   end
 
   defp insert_conversation!(opts \\ []) do

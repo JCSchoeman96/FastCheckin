@@ -20,9 +20,11 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
   alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Observability.Correlation
+  alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
 
   @unresolved_reply_statuses ["reply_pending", "reply_retryable"]
+  @pending_reply_snooze_seconds 5
 
   @impl Oban.Worker
   def new(args, opts) when is_map(args) and is_list(opts) do
@@ -33,28 +35,30 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"conversation_id" => conversation_id} = args} = job) do
-    with {:ok, %Conversation{} = conversation} <- load_conversation(conversation_id) do
-      metadata =
-        Correlation.operational_metadata(%{
-          correlation_id: Map.get(args, "correlation_id"),
-          conversation_id: conversation.id,
-          provider: "meta",
-          channel: "whatsapp",
-          status: "received",
-          message_type: Map.get(args, "message_type"),
-          provider_reference_redacted: provider_hash(Map.get(args, "provider_message_id"))
-        })
-        |> Map.new()
+    with_conversation_lock(conversation_id, fn ->
+      with {:ok, %Conversation{} = conversation} <- load_conversation(conversation_id) do
+        metadata =
+          Correlation.operational_metadata(%{
+            correlation_id: Map.get(args, "correlation_id"),
+            conversation_id: conversation.id,
+            provider: "meta",
+            channel: "whatsapp",
+            status: "received",
+            message_type: Map.get(args, "message_type"),
+            provider_reference_redacted: provider_hash(Map.get(args, "provider_message_id"))
+          })
+          |> Map.new()
 
-      :telemetry.execute(
-        [:fastcheck, :sales, :whatsapp, :inbound_received],
-        %{count: 1},
-        metadata
-      )
+        :telemetry.execute(
+          [:fastcheck, :sales, :whatsapp, :inbound_received],
+          %{count: 1},
+          metadata
+        )
 
-      Logger.info("whatsapp_inbound_worker_received", metadata)
-      handle_flow(job, args, conversation)
-    end
+        Logger.info("whatsapp_inbound_worker_received", metadata)
+        handle_flow(job, args, conversation)
+      end
+    end)
   end
 
   def perform(_job), do: {:error, :invalid_args}
@@ -74,11 +78,34 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
 
   defp handle_flow(job, args, conversation) do
     case unresolved_pending_reply(conversation) do
-      {:ok, pending_reply} -> deliver_stored_reply(job, conversation, pending_reply)
-      {:invalid, pending_reply} -> fail_stored_reply(conversation, pending_reply)
-      :none -> process_fresh_inbound(job, args, conversation)
+      {:ok, pending_reply} ->
+        if pending_reply_belongs_to_job?(pending_reply, args) do
+          deliver_stored_reply(job, conversation, pending_reply)
+        else
+          defer_inbound_until_pending_reply_resolves()
+        end
+
+      {:invalid, pending_reply} ->
+        if pending_reply_belongs_to_job?(pending_reply, args) do
+          fail_stored_reply(conversation, pending_reply)
+        else
+          defer_inbound_until_pending_reply_resolves()
+        end
+
+      :none ->
+        process_fresh_inbound(job, args, conversation)
     end
   end
+
+  defp pending_reply_belongs_to_job?(pending_reply, args) do
+    provider_message_id = pending_reply["provider_message_id"]
+
+    is_binary(provider_message_id) and provider_message_id != "" and
+      provider_message_id == Map.get(args, "provider_message_id")
+  end
+
+  defp defer_inbound_until_pending_reply_resolves,
+    do: {:snooze, @pending_reply_snooze_seconds}
 
   defp process_fresh_inbound(job, args, conversation) do
     case decrypt_text_body(Map.get(args, "text_body_encrypted")) do
@@ -306,6 +333,35 @@ defmodule FastCheck.Workers.WhatsAppInboundWorker do
       {:ok, nil} -> {:error, :conversation_not_found}
       other -> other
     end
+  end
+
+  defp with_conversation_lock(conversation_id, fun) when is_function(fun, 0) do
+    case normalize_id(conversation_id) do
+      id when is_integer(id) ->
+        lock_id = conversation_lock_id(id)
+
+        # A checked-out connection keeps the session lock across the individual
+        # checkpoint transactions, including the outbound provider request.
+        Repo.checkout(fn ->
+          Repo.query!("SELECT pg_advisory_lock($1)", [lock_id])
+
+          try do
+            fun.()
+          after
+            Repo.query("SELECT pg_advisory_unlock($1)", [lock_id])
+          end
+        end)
+
+      _ ->
+        {:error, :invalid_conversation_id}
+    end
+  end
+
+  defp conversation_lock_id(id) do
+    :crypto.hash(:sha256, "fastcheck:whatsapp:conversation:#{id}")
+    |> binary_part(0, 8)
+    |> :binary.decode_unsigned()
+    |> rem(9_223_372_036_854_775_807)
   end
 
   defp normalize_id(id) when is_integer(id), do: id

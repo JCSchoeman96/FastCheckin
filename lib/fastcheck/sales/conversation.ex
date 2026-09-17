@@ -505,7 +505,7 @@ defmodule FastCheck.Sales.Conversation do
       is_map(existing_reply) and
         Map.get(existing_reply, "provider_message_id") != provider_message_id and
           Map.get(existing_reply, "status") in @pending_reply_statuses ->
-        changeset
+        reply_state_error(changeset, "reply delivery is already pending")
 
       is_map(existing_reply) and
           Map.get(existing_reply, "provider_message_id") == provider_message_id ->

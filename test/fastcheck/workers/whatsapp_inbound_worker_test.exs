@@ -5,7 +5,10 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   import ExUnit.CaptureLog
   require Ash.Query
 
+  alias Ash.Changeset
+  alias Ash.Error.Invalid
   alias Ash.Query
+  alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Crypto
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
   alias FastCheck.Messaging.WhatsApp.MessageCommand
@@ -322,6 +325,271 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     assert :counters.get(counter, 1) == 2
     assert conversation_state(conversation_id) == "main_menu"
     assert conversation_transition_count(conversation_id) == 1
+  end
+
+  test "distinct inbound remains outstanding while an earlier reply is retryable" do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    Application.put_env(
+      :fastcheck,
+      :whatsapp_request_fun,
+      retryable_then_success_request_fun(test_pid, counter, "wamid.outbound-distinct")
+    )
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Distinct Inbound Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Distinct General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    conversation_id = insert_conversation!(state: "selecting_language")
+    {:ok, encrypted_a} = Crypto.encrypt("1")
+    {:ok, encrypted_b} = Crypto.encrypt("1")
+    args_a = inbound_worker_args(conversation_id, "wamid.worker-distinct-a", encrypted_a)
+    args_b = inbound_worker_args(conversation_id, "wamid.worker-distinct-b", encrypted_b)
+
+    assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args_a)
+    assert_received {:whatsapp_request, 1, first_request}
+    expected_a_body = first_request.options.json["text"]["body"]
+    assert conversation_state(conversation_id) == "main_menu"
+    assert conversation_transition_count(conversation_id) == 1
+
+    assert {:snooze, snooze_seconds} = perform_job(WhatsAppInboundWorker, args_b)
+    assert snooze_seconds > 0
+    refute_received {:whatsapp_request, _, _}
+    assert conversation_state(conversation_id) == "main_menu"
+    assert conversation_transition_count(conversation_id) == 1
+
+    {state_data, _needs_human, _handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["pending_reply"]["provider_message_id"] == args_a["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_retryable"
+    assert {:ok, ^expected_a_body} = Crypto.decrypt(state_data["pending_reply"]["ciphertext"])
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args_a)
+    assert_received {:whatsapp_request, 2, second_request}
+    assert second_request.options.json["text"]["body"] == expected_a_body
+    assert conversation_state(conversation_id) == "main_menu"
+    assert conversation_transition_count(conversation_id) == 1
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args_b)
+    assert_received {:whatsapp_request, 3, third_request}
+    refute third_request.options.json["text"]["body"] == expected_a_body
+    assert :counters.get(counter, 1) == 3
+    assert conversation_state(conversation_id) == "selecting_event"
+    assert conversation_transition_count(conversation_id) == 2
+
+    {state_data, _needs_human, _handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["provider_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_sent"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+  end
+
+  test "permanent failure of an earlier reply does not discard a distinct inbound" do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      :counters.add(counter, 1, 1)
+      attempt = :counters.get(counter, 1)
+      send(test_pid, {:whatsapp_request, attempt, request})
+
+      response =
+        case attempt do
+          1 ->
+            %Req.Response{
+              status: 500,
+              body: Jason.encode!(%{"error" => %{"message" => "temporary"}})
+            }
+
+          2 ->
+            %Req.Response{
+              status: 400,
+              body: Jason.encode!(%{"error" => %{"message" => "invalid"}})
+            }
+
+          _ ->
+            %Req.Response{
+              status: 200,
+              body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-after-failure"}]})
+            }
+        end
+
+      {:ok, response}
+    end)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Permanent Failure Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Permanent Failure General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    conversation_id = insert_conversation!(state: "selecting_language")
+    {:ok, encrypted_a} = Crypto.encrypt("1")
+    {:ok, encrypted_b} = Crypto.encrypt("1")
+    args_a = inbound_worker_args(conversation_id, "wamid.worker-permanent-a", encrypted_a)
+    args_b = inbound_worker_args(conversation_id, "wamid.worker-permanent-b", encrypted_b)
+
+    assert {:error, :whatsapp_send_retryable} = perform_job(WhatsAppInboundWorker, args_a)
+    assert_received {:whatsapp_request, 1, _request}
+
+    assert {:snooze, _snooze_seconds} = perform_job(WhatsAppInboundWorker, args_b)
+    refute_received {:whatsapp_request, _, _}
+
+    assert {:discard, :whatsapp_reply_failed} =
+             perform_job(build_job(WhatsAppInboundWorker, args_a, attempt: 2))
+
+    assert_received {:whatsapp_request, 2, _request}
+    assert conversation_state(conversation_id) == "main_menu"
+    assert conversation_transition_count(conversation_id) == 1
+
+    {state_data, needs_human, handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["pending_reply"]["provider_message_id"] == args_a["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_failed"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+    assert needs_human
+    assert handoff_reason == "whatsapp_reply_validation_failure"
+
+    assert :ok = perform_job(WhatsAppInboundWorker, args_b)
+    assert_received {:whatsapp_request, 3, _request}
+    assert conversation_state(conversation_id) == "selecting_event"
+    assert conversation_transition_count(conversation_id) == 2
+
+    {state_data, _needs_human, _handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["provider_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_sent"
+  end
+
+  test "concurrent distinct inbound jobs serialize around the pending reply slot" do
+    parent = self()
+    counter = :counters.new(1, [])
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      :counters.add(counter, 1, 1)
+      attempt = :counters.get(counter, 1)
+      send(parent, {:whatsapp_request, attempt, request})
+
+      if attempt == 1 do
+        receive do
+          :release_first_request -> :ok
+        end
+      end
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.outbound-concurrent-#{attempt}"}]})
+       }}
+    end)
+
+    event =
+      SalesWebFixtures.insert_event!(%{
+        name: "Concurrent Inbound Event",
+        scanner_login_code: scanner_code()
+      })
+
+    offer = SalesFixtures.insert_offer!(event_id: event.id, name: "Concurrent General")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    conversation_id = insert_conversation!(state: "selecting_language")
+    {:ok, encrypted_a} = Crypto.encrypt("1")
+    {:ok, encrypted_b} = Crypto.encrypt("1")
+    args_a = inbound_worker_args(conversation_id, "wamid.worker-concurrent-a", encrypted_a)
+    args_b = inbound_worker_args(conversation_id, "wamid.worker-concurrent-b", encrypted_b)
+
+    task_a =
+      Task.async(fn ->
+        send(parent, {:worker_ready, :a, self()})
+
+        receive do
+          :run_worker -> perform_job(WhatsAppInboundWorker, args_a)
+        end
+      end)
+
+    task_a_pid = task_a.pid
+    assert_receive {:worker_ready, :a, ^task_a_pid}
+    Sandbox.allow(Repo, self(), task_a.pid)
+    send(task_a.pid, :run_worker)
+
+    assert_receive {:whatsapp_request, 1, _first_request}
+
+    task_b =
+      Task.async(fn ->
+        send(parent, {:worker_ready, :b, self()})
+
+        receive do
+          :run_worker -> perform_job(WhatsAppInboundWorker, args_b)
+        end
+      end)
+
+    task_b_pid = task_b.pid
+    assert_receive {:worker_ready, :b, ^task_b_pid}
+    Sandbox.allow(Repo, self(), task_b.pid)
+    send(task_b.pid, :run_worker)
+
+    refute_receive {:whatsapp_request, 2, _request}, 100
+
+    send(task_a.pid, :release_first_request)
+    assert :ok = Task.await(task_a, 5_000)
+    assert :ok = Task.await(task_b, 5_000)
+
+    assert_received {:whatsapp_request, 2, _second_request}
+    assert :counters.get(counter, 1) == 2
+    assert conversation_state(conversation_id) == "selecting_event"
+    assert conversation_transition_count(conversation_id) == 2
+
+    {state_data, _needs_human, _handoff_reason} = conversation_delivery_data(conversation_id)
+    assert state_data["last_handled_inbound_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["provider_message_id"] == args_b["provider_message_id"]
+    assert state_data["pending_reply"]["status"] == "reply_sent"
+    assert is_nil(state_data["pending_reply"]["ciphertext"])
+  end
+
+  test "storing a distinct provider reply fails closed while another reply is unresolved" do
+    {:ok, ciphertext} = Crypto.encrypt("reply A")
+
+    conversation_id =
+      insert_conversation!(
+        state: "main_menu",
+        state_data: %{
+          "last_handled_inbound_message_id" => "wamid.pending-a",
+          "pending_reply" => %{
+            "ciphertext" => ciphertext,
+            "provider_message_id" => "wamid.pending-a",
+            "status" => "reply_retryable",
+            "attempt_count" => 1
+          }
+        }
+      )
+
+    conversation = reload_conversation!(conversation_id)
+    {:ok, other_ciphertext} = Crypto.encrypt("reply B")
+
+    assert {:error, %Invalid{} = error} =
+             conversation
+             |> Changeset.for_update(
+               :store_pending_reply,
+               %{
+                 ciphertext: other_ciphertext,
+                 provider_message_id: "wamid.pending-b",
+                 computed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+               },
+               actor: %{actor_type: :system, actor_id: "test"}
+             )
+             |> Ash.update(authorize?: false)
+
+    assert inspect(error) =~ "reply delivery is already pending"
+    reloaded = reload_conversation!(conversation_id)
+    assert reloaded.state_data["pending_reply"]["provider_message_id"] == "wamid.pending-a"
+    assert reloaded.state_data["pending_reply"]["ciphertext"] == ciphertext
   end
 
   test "permanent Meta reply failure becomes an operator-visible terminal outcome" do
