@@ -417,14 +417,37 @@ config :fastcheck, FastCheck.Mobile.Token,
   issuer: System.get_env("MOBILE_JWT_ISSUER") || "fastcheck",
   algorithm: System.get_env("MOBILE_JWT_ALGORITHM") || "HS256"
 
-# LiveDashboard is only mounted in dev routes, so dashboard auth is optional.
-# If you enable it in prod, set DASHBOARD_USERNAME and DASHBOARD_PASSWORD.
-dashboard_username = System.get_env("DASHBOARD_USERNAME") || "admin"
-dashboard_password = System.get_env("DASHBOARD_PASSWORD") || "fastcheck"
+dashboard_auth =
+  case FastCheck.RuntimeConfiguration.dashboard_credentials(
+         config_env(),
+         System.get_env("DASHBOARD_USERNAME"),
+         System.get_env("DASHBOARD_PASSWORD")
+       ) do
+    {:ok, credentials} ->
+      credentials
+
+    {:error, :missing_username} ->
+      raise "DASHBOARD_USERNAME must be set in production."
+
+    {:error, :blank_username} ->
+      raise "DASHBOARD_USERNAME must not be blank in production."
+
+    {:error, :missing_password} ->
+      raise "DASHBOARD_PASSWORD must be set in production."
+
+    {:error, :blank_password} ->
+      raise "DASHBOARD_PASSWORD must not be blank in production."
+
+    {:error, :development_fallback_password} ->
+      raise "DASHBOARD_PASSWORD must not use the development fallback in production."
+
+    {:error, :password_too_short} ->
+      raise "DASHBOARD_PASSWORD must be at least 16 bytes in production."
+  end
 
 config :fastcheck, :dashboard_auth, %{
-  username: dashboard_username,
-  password: dashboard_password
+  username: dashboard_auth.username,
+  password: dashboard_auth.password
 }
 
 default_tickera_site_url =
