@@ -284,6 +284,59 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     refute_enqueued(worker: WhatsAppInboundWorker)
   end
 
+  test "signed payload without WABA identity is acknowledged without side effects", %{conn: conn} do
+    provider_message_id = "wamid.missing-waba"
+    wa_id = "27821234572"
+
+    body =
+      WebhookTestSupport.text_body(provider_message_id: provider_message_id, wa_id: wa_id)
+      |> Jason.decode!()
+      |> update_in(["entry", Access.at(0)], &Map.delete(&1, "id"))
+      |> Jason.encode!()
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+    assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", dedupe_key(provider_message_id)])
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, ["EXISTS", SessionStore.key_for_wa_id(wa_id)])
+  end
+
+  test "signed payload without phone identity is acknowledged without side effects", %{conn: conn} do
+    provider_message_id = "wamid.missing-phone"
+    wa_id = "27821234573"
+
+    body =
+      WebhookTestSupport.text_body(provider_message_id: provider_message_id, wa_id: wa_id)
+      |> Jason.decode!()
+      |> update_in(
+        ["entry", Access.at(0), "changes", Access.at(0), "value", "metadata"],
+        &Map.delete(&1, "phone_number_id")
+      )
+      |> Jason.encode!()
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+    assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", dedupe_key(provider_message_id)])
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, ["EXISTS", SessionStore.key_for_wa_id(wa_id)])
+  end
+
   test "out-of-scope payloads do not log provider or customer values", %{conn: conn} do
     body =
       WebhookTestSupport.text_body(
