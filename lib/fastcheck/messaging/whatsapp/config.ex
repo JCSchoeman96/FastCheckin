@@ -95,6 +95,8 @@ defmodule FastCheck.Messaging.WhatsApp.Config do
     with :ok <- validate_enabled(config),
          :ok <- require_present(config.app_secret, "whatsapp_app_secret"),
          :ok <- require_present(config.verify_token, "whatsapp_verify_token"),
+         :ok <- require_present(config.business_account_id, "whatsapp_business_account_id"),
+         :ok <- require_present(config.phone_number_id, "whatsapp_phone_number_id"),
          :ok <- require_timeout(config.session_ttl_seconds, "whatsapp_session_ttl_seconds"),
          :ok <- require_timeout(config.dedupe_ttl_seconds, "whatsapp_dedupe_ttl_seconds"),
          :ok <- validate_inbound_queue_enabled(config) do

@@ -60,12 +60,14 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
     phone = Keyword.get(opts, :phone_e164, "+27821234567")
     wa_id = Keyword.get(opts, :wa_id, String.trim_leading(phone, "+"))
     text = Keyword.get(opts, :text, "2")
+    business_account_id = Keyword.get(opts, :business_account_id, "business-123")
+    phone_number_id = Keyword.get(opts, :phone_number_id, "phone-number-123")
 
     Jason.encode!(%{
       "object" => "whatsapp_business_account",
       "entry" => [
         %{
-          "id" => "business-123",
+          "id" => business_account_id,
           "changes" => [
             %{
               "field" => "messages",
@@ -73,7 +75,7 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
                 "messaging_product" => "whatsapp",
                 "metadata" => %{
                   "display_phone_number" => "27111222333",
-                  "phone_number_id" => "phone-number-123"
+                  "phone_number_id" => phone_number_id
                 },
                 "contacts" => [
                   %{
@@ -122,16 +124,20 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
     |> Jason.encode!()
   end
 
-  def status_body do
+  def status_body(opts \\ []) do
+    business_account_id = Keyword.get(opts, :business_account_id, "business-123")
+    phone_number_id = Keyword.get(opts, :phone_number_id, "phone-number-123")
+
     Jason.encode!(%{
       "object" => "whatsapp_business_account",
       "entry" => [
         %{
-          "id" => "business-123",
+          "id" => business_account_id,
           "changes" => [
             %{
               "field" => "messages",
               "value" => %{
+                "metadata" => %{"phone_number_id" => phone_number_id},
                 "statuses" => [
                   %{"id" => "wamid.status", "status" => "delivered", "timestamp" => "1782477600"}
                 ]
