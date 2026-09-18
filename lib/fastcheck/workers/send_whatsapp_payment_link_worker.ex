@@ -132,7 +132,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
   defp mark_provider_result(result, delivery_attempt, release_dedupe) do
     case result do
       {:ok, response} ->
-        mark_sent(delivery_attempt, response.provider_message_id)
+        mark_provider_accepted(delivery_attempt, response.provider_message_id)
 
       {:error, reason} = error ->
         mark_provider_failure(delivery_attempt, reason, release_dedupe, error)
@@ -190,13 +190,13 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     |> Ash.create(authorize?: false)
   end
 
-  defp mark_sent(delivery_attempt, provider_message_id) do
+  defp mark_provider_accepted(delivery_attempt, provider_message_id) do
     delivery_attempt
     |> Changeset.for_update(
-      :mark_sent,
+      :mark_provider_accepted,
       %{
         provider_message_id: provider_message_id,
-        sent_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
       },
       actor: system_actor()
     )

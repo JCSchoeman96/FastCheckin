@@ -1,15 +1,17 @@
 defmodule FastCheck.Sales.DeliveryAttempt do
   @moduledoc """
-  Durable Sales delivery attempt audit skeleton.
+  Durable provider delivery truth for a Sales delivery attempt.
 
-  VS-01D stores delivery history shape only. WhatsApp, email, resend workers,
-  and provider integration are deferred.
+  Local provider acceptance and later provider delivery evidence are separate
+  lifecycle states. Provider callback normalization belongs to WH-H01A.
   """
 
   use Ash.Resource,
     domain: FastCheck.Sales,
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
+
+  alias Ash.Changeset
 
   postgres do
     table("sales_delivery_attempts")
@@ -74,26 +76,114 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     update :mark_sent do
       require_atomic?(false)
-      accept([:provider_message_id, :sent_at])
-      change(set_attribute(:status, "sent"))
+      accept([:sent_at])
+      validate(&validate_provider_message_id_for_provider_state/2)
+
+      change(fn changeset, _context ->
+        transition_provider_status(changeset, "sent", ["provider_accepted"], :sent_at)
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
+    update :mark_provider_accepted do
+      require_atomic?(false)
+      accept([:provider_message_id, :provider_accepted_at])
+      validate(&validate_usable_provider_message_id/2)
+
+      change(fn changeset, _context ->
+        transition_provider_status(
+          changeset,
+          "accepted",
+          ["queued"],
+          :provider_accepted_at,
+          "provider_accepted"
+        )
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
+    update :mark_delivered do
+      require_atomic?(false)
+      accept([:delivered_at])
+      validate(&validate_provider_message_id_for_provider_state/2)
+
+      change(fn changeset, _context ->
+        transition_provider_status(
+          changeset,
+          "delivered",
+          ["provider_accepted", "sent"],
+          :delivered_at
+        )
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
+    update :mark_read do
+      require_atomic?(false)
+      accept([:read_at])
+      validate(&validate_provider_message_id_for_provider_state/2)
+
+      change(fn changeset, _context ->
+        transition_provider_status(
+          changeset,
+          "read",
+          ["provider_accepted", "sent", "delivered"],
+          :read_at
+        )
+      end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :mark_failed do
       require_atomic?(false)
-      accept([:provider_error_code, :provider_error_message, :failure_reason])
-      change(set_attribute(:status, "failed"))
+      accept([:provider_error_code, :provider_error_message, :failure_reason, :failed_at])
+
+      change(fn changeset, _context ->
+        transition_local_failure(changeset)
+      end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :mark_fallback_required do
       require_atomic?(false)
       accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
-      change(set_attribute(:status, "fallback_required"))
+
+      change(fn changeset, _context ->
+        transition_status(changeset, "fallback_required", ["queued"])
+      end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :mark_manual_review do
       require_atomic?(false)
       accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
-      change(set_attribute(:status, "manual_review"))
+
+      change(fn changeset, _context ->
+        transition_status(
+          changeset,
+          "manual_review",
+          ["queued", "provider_accepted", "sent", "delivered", "failed"]
+        )
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
+    update :mark_cancelled do
+      require_atomic?(false)
+      accept([:failure_reason])
+
+      change(fn changeset, _context ->
+        transition_status(changeset, "cancelled", ["queued", "provider_accepted", "sent"])
+      end)
+
+      change(optimistic_lock(:lock_version))
     end
   end
 
@@ -154,8 +244,18 @@ defmodule FastCheck.Sales.DeliveryAttempt do
     attribute(:failure_reason, :string, sensitive?: true)
     attribute(:fallback_channel, :string)
     attribute(:correlation_id, :string)
+    attribute(:provider_accepted_at, :utc_datetime)
+    attribute(:provider_status, :string)
+    attribute(:provider_status_at, :utc_datetime)
     attribute(:sent_at, :utc_datetime)
     attribute(:delivered_at, :utc_datetime)
+    attribute(:read_at, :utc_datetime)
+    attribute(:failed_at, :utc_datetime)
+
+    attribute :lock_version, :integer do
+      allow_nil?(false)
+      default(1)
+    end
 
     create_timestamp(:inserted_at)
     update_timestamp(:updated_at)
@@ -180,4 +280,94 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       allow_nil?(true)
     end
   end
+
+  defp validate_usable_provider_message_id(changeset, _context) do
+    if usable_provider_message_id?(Changeset.get_attribute(changeset, :provider_message_id)) do
+      :ok
+    else
+      {:error, field: :provider_message_id, message: "must be present and nonblank"}
+    end
+  end
+
+  defp validate_provider_message_id_for_provider_state(changeset, _context) do
+    if Changeset.get_attribute(changeset, :provider) == "meta" and
+         Changeset.get_attribute(changeset, :channel) == "whatsapp" and
+         not usable_provider_message_id?(Changeset.get_attribute(changeset, :provider_message_id)) do
+      {:error, field: :provider_message_id, message: "must be present and nonblank"}
+    else
+      :ok
+    end
+  end
+
+  defp transition_status(changeset, to_status, allowed_from) do
+    from_status = Changeset.get_data(changeset, :status)
+
+    if from_status in allowed_from do
+      Changeset.force_change_attribute(changeset, :status, to_status)
+    else
+      Changeset.add_error(changeset,
+        field: :status,
+        message: "invalid transition from #{from_status} to #{to_status}"
+      )
+    end
+  end
+
+  defp transition_local_failure(changeset) do
+    from_status = Changeset.get_data(changeset, :status)
+
+    if from_status in ["queued", "provider_accepted", "sent"] do
+      failed_at =
+        Changeset.get_attribute(changeset, :failed_at) ||
+          DateTime.utc_now() |> DateTime.truncate(:second)
+
+      changeset
+      |> Changeset.force_change_attribute(:status, "failed")
+      |> Changeset.force_change_attribute(:failed_at, failed_at)
+    else
+      Changeset.add_error(changeset,
+        field: :status,
+        message: "invalid transition from #{from_status} to failed"
+      )
+    end
+  end
+
+  defp transition_provider_status(
+         changeset,
+         provider_status,
+         allowed_from,
+         timestamp_field,
+         to_status \\ nil
+       ) do
+    to_status = to_status || provider_status
+    from_status = Changeset.get_data(changeset, :status)
+
+    if from_status in allowed_from do
+      timestamp =
+        Changeset.get_attribute(changeset, timestamp_field) ||
+          DateTime.utc_now() |> DateTime.truncate(:second)
+
+      changeset =
+        changeset
+        |> Changeset.force_change_attribute(:status, to_status)
+        |> Changeset.force_change_attribute(timestamp_field, timestamp)
+        |> Changeset.force_change_attribute(:provider_status, provider_status)
+        |> Changeset.force_change_attribute(:provider_status_at, timestamp)
+
+      if to_status == "provider_accepted" do
+        Changeset.force_change_attribute(changeset, :sent_at, nil)
+      else
+        changeset
+      end
+    else
+      Changeset.add_error(changeset,
+        field: :status,
+        message: "invalid transition from #{from_status} to #{to_status}"
+      )
+    end
+  end
+
+  defp usable_provider_message_id?(value) when is_binary(value),
+    do: String.trim(value) != ""
+
+  defp usable_provider_message_id?(_value), do: false
 end

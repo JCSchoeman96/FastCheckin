@@ -43,7 +43,6 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
   ]
 
   @delivery_attempt_forbidden_action_names [
-    :mark_delivered,
     :send_whatsapp,
     :send_email,
     :send_template,
@@ -94,9 +93,13 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
 
         assert Enum.map(update_actions, & &1.name) == [
                  :mark_sent,
+                 :mark_provider_accepted,
+                 :mark_delivered,
+                 :mark_read,
                  :mark_failed,
                  :mark_fallback_required,
-                 :mark_manual_review
+                 :mark_manual_review,
+                 :mark_cancelled
                ]
 
         refute Enum.any?(actions, &(&1.type == :destroy)),
@@ -123,10 +126,14 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       else
         for expected <- [
               :create_queued,
+              :mark_provider_accepted,
               :mark_sent,
+              :mark_delivered,
+              :mark_read,
               :mark_failed,
               :mark_fallback_required,
-              :mark_manual_review
+              :mark_manual_review,
+              :mark_cancelled
             ] do
           assert expected in action_names,
                  "#{inspect(resource)} must expose #{inspect(expected)}"
@@ -203,8 +210,14 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       :failure_reason,
       :fallback_channel,
       :correlation_id,
+      :provider_accepted_at,
+      :provider_status,
+      :provider_status_at,
       :sent_at,
       :delivered_at,
+      :read_at,
+      :failed_at,
+      :lock_version,
       :inserted_at,
       :updated_at
     ])
