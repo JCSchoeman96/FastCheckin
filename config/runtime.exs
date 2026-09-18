@@ -291,11 +291,19 @@ whatsapp_receive_timeout_ms =
   end
 
 whatsapp_sandbox_mode =
-  case System.get_env("META_WHATSAPP_SANDBOX_MODE", "true")
-       |> String.trim()
-       |> String.downcase() do
-    value when value in ["1", "true", "yes", "on"] -> true
-    _ -> false
+  case FastCheck.RuntimeConfiguration.whatsapp_sandbox_mode(
+         config_env(),
+         whatsapp_enabled,
+         System.get_env("META_WHATSAPP_SANDBOX_MODE")
+       ) do
+    {:ok, value} ->
+      value
+
+    {:error, :missing} ->
+      raise "META_WHATSAPP_SANDBOX_MODE must be explicitly set when META_WHATSAPP_ENABLED=true in production."
+
+    {:error, :invalid} ->
+      raise "META_WHATSAPP_SANDBOX_MODE must be one of true, 1, yes, on, false, 0, no, or off in production."
   end
 
 whatsapp_session_ttl_raw =
@@ -336,6 +344,12 @@ if config_env() == :prod and whatsapp_enabled do
   if !is_binary(whatsapp_phone_number_id) or whatsapp_phone_number_id == "" do
     raise """
     META_WHATSAPP_PHONE_NUMBER_ID is required when META_WHATSAPP_ENABLED=true.
+    """
+  end
+
+  if !is_binary(whatsapp_business_account_id) or whatsapp_business_account_id == "" do
+    raise """
+    META_WHATSAPP_BUSINESS_ACCOUNT_ID is required when META_WHATSAPP_ENABLED=true.
     """
   end
 

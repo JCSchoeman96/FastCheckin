@@ -114,6 +114,105 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     refute Map.has_key?(job.args, "wa_id")
   end
 
+  test "signed wrong-WABA messages are acknowledged without domain or Redis side effects", %{
+    conn: conn
+  } do
+    provider_message_id = "wamid.wrong-waba"
+    wa_id = "27821234567"
+
+    body =
+      WebhookTestSupport.text_body(
+        provider_message_id: provider_message_id,
+        business_account_id: "business-other",
+        wa_id: wa_id
+      )
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+    assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", dedupe_key(provider_message_id)])
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, ["EXISTS", SessionStore.key_for_wa_id(wa_id)])
+  end
+
+  test "signed wrong-phone messages are acknowledged without domain or Redis side effects", %{
+    conn: conn
+  } do
+    provider_message_id = "wamid.wrong-phone"
+    wa_id = "27821234568"
+
+    body =
+      WebhookTestSupport.text_body(
+        provider_message_id: provider_message_id,
+        phone_number_id: "phone-other",
+        wa_id: wa_id
+      )
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+    assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", dedupe_key(provider_message_id)])
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, ["EXISTS", SessionStore.key_for_wa_id(wa_id)])
+  end
+
+  test "mixed payloads process only the matching change", %{conn: conn} do
+    matching_id = "wamid.mixed-match"
+    other_id = "wamid.mixed-other"
+
+    matching =
+      WebhookTestSupport.text_body(
+        provider_message_id: matching_id,
+        phone_e164: "+27821234569"
+      )
+      |> Jason.decode!()
+
+    other =
+      WebhookTestSupport.text_body(
+        provider_message_id: other_id,
+        phone_number_id: "phone-other",
+        phone_e164: "+27821234570"
+      )
+      |> Jason.decode!()
+
+    mixed =
+      matching
+      |> put_in(
+        ["entry", Access.at(0), "changes"],
+        get_in(matching, ["entry", Access.at(0), "changes"]) ++
+          get_in(other, ["entry", Access.at(0), "changes"])
+      )
+      |> Jason.encode!()
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(mixed))
+      |> post(@webhook_path, mixed)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 1
+    assert_enqueued(worker: WhatsAppInboundWorker, args: %{"provider_message_id" => matching_id})
+
+    refute Enum.any?(all_enqueued(worker: WhatsAppInboundWorker), fn job ->
+             job.args["provider_message_id"] == other_id
+           end)
+  end
+
   test "duplicate provider message does not enqueue twice", %{conn: conn} do
     body = WebhookTestSupport.text_body(provider_message_id: "wamid.duplicate")
     signature = WebhookTestSupport.sign_body(body)
@@ -168,6 +267,46 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     assert response(conn, 200) == ""
     assert count_conversations() == 0
     refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
+  test "signed wrong-scope status payload is acknowledged as a no-op", %{conn: conn} do
+    body = WebhookTestSupport.status_body(business_account_id: "business-other")
+    signature = WebhookTestSupport.sign_body(body)
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", signature)
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert count_conversations() == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
+  test "out-of-scope payloads do not log provider or customer values", %{conn: conn} do
+    body =
+      WebhookTestSupport.text_body(
+        provider_message_id: "wamid.log-scope",
+        business_account_id: "business-other",
+        phone_e164: "+27821234571",
+        text: "private customer text"
+      )
+
+    log =
+      capture_log(fn ->
+        conn =
+          conn
+          |> put_req_header("content-type", "application/json")
+          |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+          |> post(@webhook_path, body)
+
+        assert response(conn, 200) == ""
+      end)
+
+    refute log =~ "private customer text"
+    refute log =~ "27821234571"
+    refute log =~ WebhookTestSupport.app_secret()
   end
 
   test "unsupported media payload is accepted as no-op without state", %{conn: conn} do

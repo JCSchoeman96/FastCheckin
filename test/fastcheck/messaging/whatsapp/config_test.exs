@@ -2,6 +2,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
   use ExUnit.Case, async: false
 
   alias FastCheck.Messaging.WhatsApp.Config
+  alias FastCheck.RuntimeConfiguration
 
   @keys [
     :whatsapp_enabled,
@@ -73,8 +74,10 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
     assert error.provider_error_code == "whatsapp_request_timeout_ms"
   end
 
-  test "validate_for_webhook requires app secret verify token TTLs and queue" do
+  test "validate_for_webhook requires app secret verify token TTLs queue and scope identity" do
     Application.put_env(:fastcheck, :whatsapp_enabled, true)
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
+    Application.put_env(:fastcheck, :whatsapp_phone_number_id, "phone-123")
     Application.put_env(:fastcheck, :whatsapp_app_secret, "META_APP_SECRET")
     Application.put_env(:fastcheck, :whatsapp_verify_token, "VERIFY_TOKEN")
     Application.put_env(:fastcheck, :whatsapp_session_ttl_seconds, 86_400)
@@ -90,6 +93,41 @@ defmodule FastCheck.Messaging.WhatsApp.ConfigTest do
     assert {:error, error} = Config.validate_for_webhook()
     assert error.status == :missing_config
     assert error.provider_error_code == "whatsapp_inbound_queue_enabled"
+  end
+
+  test "validate_for_webhook requires both WABA and phone identity" do
+    Application.put_env(:fastcheck, :whatsapp_enabled, true)
+    Application.put_env(:fastcheck, :whatsapp_app_secret, "META_APP_SECRET")
+    Application.put_env(:fastcheck, :whatsapp_verify_token, "VERIFY_TOKEN")
+    Application.put_env(:fastcheck, :whatsapp_session_ttl_seconds, 86_400)
+    Application.put_env(:fastcheck, :whatsapp_dedupe_ttl_seconds, 86_400)
+    Application.put_env(:fastcheck, :whatsapp_inbound_queue_enabled, true)
+    Application.delete_env(:fastcheck, :whatsapp_business_account_id)
+    Application.put_env(:fastcheck, :whatsapp_phone_number_id, "phone-123")
+
+    assert {:error, error} = Config.validate_for_webhook()
+    assert error.provider_error_code == "whatsapp_business_account_id"
+
+    Application.put_env(:fastcheck, :whatsapp_business_account_id, "business-123")
+    Application.delete_env(:fastcheck, :whatsapp_phone_number_id)
+
+    assert {:error, error} = Config.validate_for_webhook()
+    assert error.provider_error_code == "whatsapp_phone_number_id"
+  end
+
+  test "sandbox mode accepts only documented boolean forms" do
+    for value <- ["1", "true", "yes", "on", "TRUE", " Yes "] do
+      assert {:ok, true} = RuntimeConfiguration.whatsapp_sandbox_mode(:prod, true, value)
+    end
+
+    for value <- ["0", "false", "no", "off", "FALSE", " Off "] do
+      assert {:ok, false} = RuntimeConfiguration.whatsapp_sandbox_mode(:prod, true, value)
+    end
+
+    assert {:error, :missing} = RuntimeConfiguration.whatsapp_sandbox_mode(:prod, true, nil)
+    assert {:error, :invalid} = RuntimeConfiguration.whatsapp_sandbox_mode(:prod, true, "maybe")
+    assert {:ok, true} = RuntimeConfiguration.whatsapp_sandbox_mode(:test, true, nil)
+    assert {:ok, false} = RuntimeConfiguration.whatsapp_sandbox_mode(:test, true, "maybe")
   end
 
   test "get, inspect, and redacted_summary never expose access token or app secret" do

@@ -16,6 +16,7 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
   alias FastCheck.Messaging.WhatsApp.InboundNormalizer
   alias FastCheck.Messaging.WhatsApp.SessionStore
+  alias FastCheck.Messaging.WhatsApp.WebhookScope
   alias FastCheck.Messaging.WhatsApp.WebhookVerifier
   alias FastCheck.Workers.WhatsAppInboundWorker
 
@@ -40,9 +41,10 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
     with {:ok, config} <- Config.validate_for_webhook(),
          :ok <- WebhookVerifier.verify_signature(raw_body, signature, config.app_secret),
          {:ok, payload} <- decode_json(raw_body),
+         {:ok, scoped_payload} <- WebhookScope.filter(payload, config),
          raw_payload_hash <- payload_hash(raw_body),
          {:ok, commands} <-
-           InboundNormalizer.normalize(payload,
+           InboundNormalizer.normalize(scoped_payload,
              raw_payload_hash: raw_payload_hash,
              correlation_id: correlation_id || Logger.metadata()[:request_id]
            ),
@@ -63,6 +65,12 @@ defmodule FastCheckWeb.Webhooks.WhatsAppController do
 
       {:error, :malformed_json} ->
         send_resp(conn, 400, "")
+
+      {:ignore, :out_of_scope} ->
+        send_resp(conn, 200, "")
+
+      {:ignore, :malformed_scope} ->
+        send_resp(conn, 200, "")
 
       {:error, :redis_unavailable} ->
         send_resp(conn, 503, "")
