@@ -17,6 +17,15 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryPolicy do
 
   @spec select_ticket_delivery(map() | struct(), keyword()) :: decision()
   def select_ticket_delivery(conversation, opts \\ []) do
+    select_delivery(conversation, opts, &ticket_ready_template_key/1)
+  end
+
+  @spec select_payment_link_delivery(map() | struct(), keyword()) :: decision()
+  def select_payment_link_delivery(conversation, opts \\ []) do
+    select_delivery(conversation, opts, &payment_link_template_key/1)
+  end
+
+  defp select_delivery(conversation, opts, template_key_selector) do
     now = Keyword.get(opts, :now, DateTime.utc_now())
     fetch_template = Keyword.get(opts, :fetch_template, &TemplateCatalog.fetch/1)
     last_message_at = value(conversation, :last_message_at)
@@ -32,7 +41,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryPolicy do
         failure_reason: nil
       }
     else
-      template_key = ticket_ready_template_key(value(conversation, :preferred_language))
+      template_key = template_key_selector.(value(conversation, :preferred_language))
 
       case fetch_template.(template_key) do
         {:ok, template} ->
@@ -60,6 +69,9 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryPolicy do
 
   defp ticket_ready_template_key("en"), do: :ticket_ready_en
   defp ticket_ready_template_key(_language), do: :ticket_ready_af
+
+  defp payment_link_template_key("en"), do: :payment_link_en
+  defp payment_link_template_key(_language), do: :payment_link_af
 
   defp value(%{} = map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
   defp value(struct, key), do: Map.get(struct, key)

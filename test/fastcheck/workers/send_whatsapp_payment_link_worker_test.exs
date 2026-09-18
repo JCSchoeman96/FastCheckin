@@ -11,10 +11,13 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
 
+  @payment_link_template_fetch_key :whatsapp_payment_link_template_fetch_fun
+
   setup do
     WebhookTestSupport.flush_redis_keys!()
     whatsapp_cleanup = WebhookTestSupport.setup_whatsapp!()
     paystack_cleanup = PaymentSupport.setup_paystack!()
+    template_fetch_fun = Application.get_env(:fastcheck, @payment_link_template_fetch_key)
     offer = SalesFixtures.insert_offer!()
 
     on_exit(fn ->
@@ -22,6 +25,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
       WebhookTestSupport.flush_redis_keys!()
       whatsapp_cleanup.()
       paystack_cleanup.()
+      restore_application_env(@payment_link_template_fetch_key, template_fetch_fun)
     end)
 
     {:ok, offer: offer}
@@ -61,7 +65,15 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
       Repo.all(
         from d in "sales_delivery_attempts",
           where: d.sales_order_id == ^order.id,
-          select: map(d, [:ticket_issue_id, :recipient, :status, :provider_message_id])
+          select:
+            map(d, [
+              :ticket_issue_id,
+              :recipient,
+              :status,
+              :provider_message_id,
+              :within_whatsapp_window,
+              :template_name
+            ])
       )
 
     assert [
@@ -69,7 +81,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
                ticket_issue_id: nil,
                recipient: recipient,
                status: "sent",
-               provider_message_id: "wamid.payment-out"
+               provider_message_id: "wamid.payment-out",
+               within_whatsapp_window: true,
+               template_name: nil
              }
            ] = attempts
 
@@ -77,6 +91,507 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     refute recipient =~ "+27821234567"
     refute log =~ attempt.authorization_url
     refute log =~ "+27821234567"
+  end
+
+  test "sends an Afrikaans payment-link template outside the 24-hour window", %{offer: offer} do
+    test_pid = self()
+
+    {conversation_id, order, attempt} =
+      initialized_payment!(offer,
+        preferred_language: "af",
+        last_message_at: DateTime.utc_now() |> DateTime.add(-25, :hour)
+      )
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.payment-af"}]})
+       }}
+    end)
+
+    assert :ok =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["type"] == "template"
+    assert request.options.json["template"]["name"] == "fastcheck_payment_link_af"
+    assert request.options.json["template"]["language"]["code"] == "af"
+
+    assert request.options.json["template"]["components"] == [
+             %{
+               "type" => "body",
+               "parameters" => [%{"type" => "text", "text" => attempt.authorization_url}]
+             }
+           ]
+
+    assert [
+             %{
+               status: "sent",
+               within_whatsapp_window: false,
+               template_name: "fastcheck_payment_link_af"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select: map(d, [:status, :within_whatsapp_window, :template_name])
+             )
+  end
+
+  test "sends an English payment-link template outside the 24-hour window", %{offer: offer} do
+    test_pid = self()
+
+    {conversation_id, order, attempt} =
+      initialized_payment!(offer,
+        preferred_language: "en",
+        last_message_at: DateTime.utc_now() |> DateTime.add(-25, :hour)
+      )
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.payment-en"}]})
+       }}
+    end)
+
+    assert :ok =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["type"] == "template"
+    assert request.options.json["template"]["name"] == "fastcheck_payment_link_en"
+    assert request.options.json["template"]["language"]["code"] == "en_US"
+
+    assert request.options.json["template"]["components"] == [
+             %{
+               "type" => "body",
+               "parameters" => [%{"type" => "text", "text" => attempt.authorization_url}]
+             }
+           ]
+
+    assert [
+             %{
+               status: "sent",
+               within_whatsapp_window: false,
+               template_name: "fastcheck_payment_link_en"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select: map(d, [:status, :within_whatsapp_window, :template_name])
+             )
+  end
+
+  test "marks unavailable outside-window payment template for fallback without a Meta request", %{
+    offer: offer
+  } do
+    {conversation_id, order, attempt} =
+      initialized_payment!(offer,
+        preferred_language: "en",
+        last_message_at: DateTime.utc_now() |> DateTime.add(-25, :hour)
+      )
+
+    Application.put_env(:fastcheck, @payment_link_template_fetch_key, fn _key -> :error end)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("an unavailable payment-link template must not make a Meta request")
+    end)
+
+    assert {:discard, :fallback_required} =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    refute_received {:whatsapp_request, _request}
+
+    assert [
+             %{
+               status: "fallback_required",
+               provider_error_code: "whatsapp_delivery_fallback_required",
+               provider_error_message: "whatsapp delivery fallback required",
+               failure_reason: "whatsapp_template_unavailable",
+               fallback_channel: "manual_review",
+               within_whatsapp_window: false,
+               template_name: nil
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_error_code,
+                     :provider_error_message,
+                     :failure_reason,
+                     :fallback_channel,
+                     :within_whatsapp_window,
+                     :template_name
+                   ])
+             )
+  end
+
+  test "marks Meta auth and validation failures for manual review without retrying", %{
+    offer: offer
+  } do
+    for {status, expected_failure_reason} <- [
+          {401, "auth_error"},
+          {403, "auth_error"},
+          {400, "validation_error"}
+        ] do
+      {conversation_id, order, attempt} = initialized_payment!(offer)
+
+      Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+        {:ok,
+         %Req.Response{
+           status: status,
+           body:
+             Jason.encode!(%{"error" => %{"code" => 131_000, "message" => "provider rejected"}})
+         }}
+      end)
+
+      assert {:discard, :manual_review} =
+               perform_job(
+                 SendWhatsAppPaymentLinkWorker,
+                 payment_job_args(conversation_id, order, attempt)
+               )
+
+      assert [
+               %{
+                 status: "manual_review",
+                 provider_error_code: "131000",
+                 provider_error_message: "whatsapp send failed",
+                 failure_reason: ^expected_failure_reason,
+                 fallback_channel: "manual_review"
+               }
+             ] =
+               Repo.all(
+                 from d in "sales_delivery_attempts",
+                   where: d.sales_order_id == ^order.id,
+                   select:
+                     map(d, [
+                       :status,
+                       :provider_error_code,
+                       :provider_error_message,
+                       :failure_reason,
+                       :fallback_channel
+                     ])
+               )
+
+      assert {:ok, ttl} =
+               Redix.command(FastCheck.Redix, [
+                 "TTL",
+                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               ])
+
+      assert ttl > 0
+    end
+  end
+
+  test "marks missing WhatsApp configuration for manual review without a provider call", %{
+    offer: offer
+  } do
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.delete_env(:fastcheck, :whatsapp_access_token)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("missing WhatsApp configuration must not make a provider request")
+    end)
+
+    assert {:discard, :manual_review} =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "missing_config",
+               fallback_channel: "manual_review"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
+             )
+
+    refute_received {:whatsapp_request, _request}
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+
+    assert ttl > 0
+  end
+
+  test "marks an unknown non-retryable provider response for manual review and holds dedupe", %{
+    offer: offer
+  } do
+    test_pid = self()
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 418,
+         body: Jason.encode!(%{"error" => %{"message" => "provider rejected"}})
+       }}
+    end)
+
+    args = payment_job_args(conversation_id, order, attempt)
+
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppPaymentLinkWorker, args)
+    assert :ok = perform_job(SendWhatsAppPaymentLinkWorker, args)
+
+    assert_received {:whatsapp_request, _request}
+    refute_received {:whatsapp_request, _duplicate_request}
+
+    assert [
+             %{
+               status: "manual_review",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "unknown_error",
+               fallback_channel: "manual_review"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select:
+                   map(d, [:status, :provider_error_message, :failure_reason, :fallback_channel])
+             )
+
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+
+    assert ttl > 0
+  end
+
+  test "returns a stable error and releases dedupe when manual-review persistence fails", %{
+    offer: offer
+  } do
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      Repo.delete_all(from d in "sales_delivery_attempts", where: d.sales_order_id == ^order.id)
+
+      {:ok,
+       %Req.Response{
+         status: 401,
+         body: Jason.encode!(%{"error" => %{"message" => "provider rejected"}})
+       }}
+    end)
+
+    assert {:error, :whatsapp_delivery_attempt_manual_review_failed} =
+             perform_job(
+               SendWhatsAppPaymentLinkWorker,
+               payment_job_args(conversation_id, order, attempt)
+             )
+
+    assert [] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select: d.status
+             )
+
+    assert {:ok, -2} =
+             Redix.command(FastCheck.Redix, [
+               "TTL",
+               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+             ])
+  end
+
+  test "marks retryable 429, 5xx, and timeout failures, releases dedupe, and returns the error",
+       %{
+         offer: offer
+       } do
+    for {provider_result, expected_status} <- [
+          {{:http, 429}, :rate_limited},
+          {{:http, 503}, :server_error},
+          {:timeout, :timeout}
+        ] do
+      {conversation_id, order, attempt} = initialized_payment!(offer)
+
+      request_fun =
+        case provider_result do
+          {:http, status} ->
+            fn _request ->
+              {:ok,
+               %Req.Response{
+                 status: status,
+                 body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
+               }}
+            end
+
+          :timeout ->
+            fn _request -> {:error, %Req.TransportError{reason: :timeout}} end
+        end
+
+      Application.put_env(:fastcheck, :whatsapp_request_fun, request_fun)
+
+      assert {:error, %{status: ^expected_status, retryable?: true} = error} =
+               perform_job(
+                 SendWhatsAppPaymentLinkWorker,
+                 payment_job_args(conversation_id, order, attempt)
+               )
+
+      assert error.retryable?
+
+      assert [%{status: "failed", provider_error_message: "whatsapp send failed"}] =
+               Repo.all(
+                 from d in "sales_delivery_attempts",
+                   where: d.sales_order_id == ^order.id,
+                   select: map(d, [:status, :provider_error_message])
+               )
+
+      assert {:ok, -2} =
+               Redix.command(FastCheck.Redix, [
+                 "TTL",
+                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               ])
+    end
+  end
+
+  test "retry creates a sent second delivery attempt without a new Paystack attempt or order mutation",
+       %{
+         offer: offer
+       } do
+    test_pid = self()
+    counter = :counters.new(1, [])
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+
+    order_before =
+      Repo.one!(
+        from o in "sales_orders",
+          where: o.id == ^order.id,
+          select: map(o, [:status, :total_amount_cents, :currency, :manual_review_reason])
+      )
+
+    payment_attempt_count_before =
+      Repo.one!(
+        from p in "sales_payment_attempts",
+          where: p.sales_order_id == ^order.id,
+          select: count(p.id)
+      )
+
+    {paystack_request_fun, paystack_counter} = PaymentSupport.flunk_paystack_request_fun()
+    Application.put_env(:fastcheck, :paystack_request_fun, paystack_request_fun)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      case :counters.get(counter, 1) do
+        1 ->
+          {:ok,
+           %Req.Response{
+             status: 500,
+             body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
+           }}
+
+        _ ->
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body: Jason.encode!(%{"messages" => [%{"id" => "wamid.payment-retry"}]})
+           }}
+      end
+    end)
+
+    args = payment_job_args(conversation_id, order, attempt)
+    assert {:error, %{retryable?: true}} = perform_job(SendWhatsAppPaymentLinkWorker, args)
+    assert :ok = perform_job(SendWhatsAppPaymentLinkWorker, args)
+
+    assert_received {:whatsapp_request, _failed_request}
+    assert_received {:whatsapp_request, _retry_request}
+    refute_received {:whatsapp_request, _extra_request}
+
+    assert ["failed", "sent"] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 order_by: [asc: d.id],
+                 select: d.status
+             )
+
+    assert Repo.one!(
+             from p in "sales_payment_attempts",
+               where: p.sales_order_id == ^order.id,
+               select: count(p.id)
+           ) == payment_attempt_count_before
+
+    assert Repo.one!(
+             from o in "sales_orders",
+               where: o.id == ^order.id,
+               select: map(o, [:status, :total_amount_cents, :currency, :manual_review_reason])
+           ) == order_before
+
+    assert :counters.get(paystack_counter, 1) == 0
+  end
+
+  test "does not persist or log the payment authorization URL in a provider failure", %{
+    offer: offer
+  } do
+    {conversation_id, order, attempt} = initialized_payment!(offer)
+    url = attempt.authorization_url
+    args = payment_job_args(conversation_id, order, attempt)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      {:ok,
+       %Req.Response{
+         status: 500,
+         body: Jason.encode!(%{"error" => %{"message" => "provider rejected #{url}"}})
+       }}
+    end)
+
+    log =
+      capture_log(fn ->
+        assert {:error, %{retryable?: true}} = perform_job(SendWhatsAppPaymentLinkWorker, args)
+      end)
+
+    assert [
+             %{
+               provider_error_message: provider_error_message,
+               failure_reason: failure_reason
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.sales_order_id == ^order.id,
+                 select: map(d, [:provider_error_message, :failure_reason])
+             )
+
+    refute provider_error_message =~ url
+    refute failure_reason =~ url
+    refute log =~ url
+    refute inspect(args) =~ url
   end
 
   test "marks DeliveryAttempt failed without storing Paystack URL when WhatsApp send fails", %{
@@ -170,7 +685,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
              )
   end
 
-  defp initialized_payment!(offer) do
+  defp initialized_payment!(offer, opts \\ []) do
     {order, session} =
       PaymentSupport.checkout_ready_for_payment!(offer, %{
         source_channel: "whatsapp",
@@ -182,12 +697,16 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
       Repo.query!(
         """
         INSERT INTO sales_conversations
-          (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
+          (phone_e164, wa_id, preferred_language, state, state_data, last_message_at, needs_human, inserted_at, updated_at)
         VALUES
-          ('+27821234567', '27821234567', 'af', 'payment_pending', $1, false, now(), now())
+          ('+27821234567', '27821234567', $1, 'payment_pending', $2, $3, false, now(), now())
         RETURNING id
         """,
-        [%{"sales_order_id" => order.id, "order_public_reference" => order.public_reference}]
+        [
+          Keyword.get(opts, :preferred_language, "af"),
+          %{"sales_order_id" => order.id, "order_public_reference" => order.public_reference},
+          Keyword.get(opts, :last_message_at, DateTime.utc_now() |> DateTime.truncate(:second))
+        ]
       )
 
     Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
@@ -205,4 +724,17 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
 
     {conversation_id, order, attempt}
   end
+
+  defp payment_job_args(conversation_id, order, attempt) do
+    %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order.id,
+      "payment_attempt_id" => attempt.id
+    }
+  end
+
+  defp restore_application_env(key, nil), do: Application.delete_env(:fastcheck, key)
+
+  defp restore_application_env(key, value),
+    do: Application.put_env(:fastcheck, key, value)
 end

@@ -46,6 +46,66 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryPolicyTest do
              DeliveryPolicy.select_ticket_delivery(conversation, now: @now)
   end
 
+  test "selects a session message for payment links inside the 24 hour window" do
+    conversation = conversation(last_message_at: ~U[2026-06-27 09:00:00Z])
+
+    assert %{
+             mode: :session_message,
+             within_whatsapp_window: true,
+             template_key: nil,
+             template: nil,
+             fallback_channel: nil,
+             failure_reason: nil
+           } = DeliveryPolicy.select_payment_link_delivery(conversation, now: @now)
+  end
+
+  test "selects the Afrikaans payment-link template for default and unknown languages" do
+    for preferred_language <- [nil, "zu"] do
+      conversation = conversation(last_message_at: nil, preferred_language: preferred_language)
+
+      assert %{
+               mode: :template_message,
+               within_whatsapp_window: false,
+               template_key: :payment_link_af,
+               template: %{name: "fastcheck_payment_link_af", language_code: "af"},
+               fallback_channel: nil,
+               failure_reason: nil
+             } = DeliveryPolicy.select_payment_link_delivery(conversation, now: @now)
+    end
+  end
+
+  test "selects the English payment-link template outside the 24 hour window" do
+    conversation = conversation(last_message_at: nil, preferred_language: "en")
+
+    assert %{
+             mode: :template_message,
+             within_whatsapp_window: false,
+             template_key: :payment_link_en,
+             template: %{name: "fastcheck_payment_link_en", language_code: "en_US"},
+             fallback_channel: nil,
+             failure_reason: nil
+           } = DeliveryPolicy.select_payment_link_delivery(conversation, now: @now)
+  end
+
+  test "requires manual review when the payment-link template is unavailable" do
+    conversation = conversation(last_message_at: nil, preferred_language: "en")
+
+    fetch_template = fn :payment_link_en -> :error end
+
+    assert %{
+             mode: :fallback_required,
+             within_whatsapp_window: false,
+             template_key: :payment_link_en,
+             template: nil,
+             fallback_channel: "manual_review",
+             failure_reason: "whatsapp_template_unavailable"
+           } =
+             DeliveryPolicy.select_payment_link_delivery(conversation,
+               now: @now,
+               fetch_template: fetch_template
+             )
+  end
+
   test "requires fallback when the outside-window template is not configured" do
     conversation = conversation(last_message_at: nil, preferred_language: "en")
 
