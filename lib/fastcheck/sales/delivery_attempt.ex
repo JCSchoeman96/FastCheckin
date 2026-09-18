@@ -76,7 +76,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     update :mark_sent do
       require_atomic?(false)
-      accept([:provider_message_id, :sent_at])
+      accept([:sent_at])
       validate(&validate_provider_message_id_for_provider_state/2)
 
       change(fn changeset, _context ->
@@ -106,7 +106,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     update :mark_delivered do
       require_atomic?(false)
-      accept([:provider_message_id, :delivered_at])
+      accept([:delivered_at])
       validate(&validate_provider_message_id_for_provider_state/2)
 
       change(fn changeset, _context ->
@@ -123,7 +123,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     update :mark_read do
       require_atomic?(false)
-      accept([:provider_message_id, :read_at])
+      accept([:read_at])
       validate(&validate_provider_message_id_for_provider_state/2)
 
       change(fn changeset, _context ->
@@ -143,12 +143,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       accept([:provider_error_code, :provider_error_message, :failure_reason, :failed_at])
 
       change(fn changeset, _context ->
-        transition_provider_status(
-          changeset,
-          "failed",
-          ["queued", "provider_accepted", "sent"],
-          :failed_at
-        )
+        transition_local_failure(changeset)
       end)
 
       change(optimistic_lock(:lock_version))
@@ -313,6 +308,25 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       Changeset.add_error(changeset,
         field: :status,
         message: "invalid transition from #{from_status} to #{to_status}"
+      )
+    end
+  end
+
+  defp transition_local_failure(changeset) do
+    from_status = Changeset.get_data(changeset, :status)
+
+    if from_status in ["queued", "provider_accepted", "sent"] do
+      failed_at =
+        Changeset.get_attribute(changeset, :failed_at) ||
+          DateTime.utc_now() |> DateTime.truncate(:second)
+
+      changeset
+      |> Changeset.force_change_attribute(:status, "failed")
+      |> Changeset.force_change_attribute(:failed_at, failed_at)
+    else
+      Changeset.add_error(changeset,
+        field: :status,
+        message: "invalid transition from #{from_status} to failed"
       )
     end
   end

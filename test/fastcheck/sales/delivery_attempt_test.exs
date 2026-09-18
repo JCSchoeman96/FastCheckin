@@ -131,6 +131,7 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
 
     assert {:ok, sent} = update_attempt(accepted, :mark_sent, %{sent_at: sent_at})
     assert sent.status == "sent"
+    assert sent.provider_message_id == "wamid.lifecycle-evidence"
     assert sent.provider_status == "sent"
     assert sent.provider_status_at == sent_at
     assert sent.sent_at == sent_at
@@ -139,15 +140,46 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
              update_attempt(sent, :mark_delivered, %{delivered_at: delivered_at})
 
     assert delivered.status == "delivered"
+    assert delivered.provider_message_id == "wamid.lifecycle-evidence"
     assert delivered.provider_status == "delivered"
     assert delivered.provider_status_at == delivered_at
     assert delivered.delivered_at == delivered_at
 
     assert {:ok, read} = update_attempt(delivered, :mark_read, %{read_at: read_at})
     assert read.status == "read"
+    assert read.provider_message_id == "wamid.lifecycle-evidence"
     assert read.provider_status == "read"
     assert read.provider_status_at == read_at
     assert read.read_at == read_at
+  end
+
+  test "later provider evidence actions cannot replace the accepted WAMID" do
+    for {action, timestamp_field, timestamp} <- [
+          {:mark_sent, :sent_at, ~U[2026-07-05 10:01:00Z]},
+          {:mark_delivered, :delivered_at, ~U[2026-07-05 10:02:00Z]},
+          {:mark_read, :read_at, ~U[2026-07-05 10:03:00Z]}
+        ] do
+      accepted_wamid = "wamid.lifecycle-immutable-#{action}"
+      {:ok, accepted} = provider_accepted_attempt!(accepted_wamid)
+
+      result =
+        update_attempt(accepted, action, %{
+          timestamp_field => timestamp,
+          provider_message_id: "wamid.lifecycle-replacement"
+        })
+
+      case result do
+        {:ok, updated} -> assert updated.provider_message_id == accepted_wamid
+        {:error, _error} -> :ok
+      end
+
+      reloaded =
+        DeliveryAttempt
+        |> Ash.Query.for_read(:get_by_id, %{id: accepted.id})
+        |> Ash.read_one!(authorize?: false)
+
+      assert reloaded.provider_message_id == accepted_wamid
+    end
   end
 
   test "provider success evidence may skip intermediate states" do
@@ -215,14 +247,19 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
 
     {:ok, failed} =
       update_attempt(create_queued_attempt!(), :mark_failed, %{
+        provider_error_code: "timeout",
+        provider_error_message: "whatsapp send failed",
         failure_reason: "provider_rejected",
         failed_at: failed_at
       })
 
     assert failed.status == "failed"
+    assert failed.provider_error_code == "timeout"
+    assert failed.provider_error_message == "whatsapp send failed"
+    assert failed.failure_reason == "provider_rejected"
     assert failed.failed_at == failed_at
-    assert failed.provider_status == "failed"
-    assert failed.provider_status_at == failed_at
+    assert is_nil(failed.provider_status)
+    assert is_nil(failed.provider_status_at)
 
     assert {:ok, reviewed} =
              update_attempt(failed, :mark_manual_review, %{
@@ -254,11 +291,12 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
     assert inspect(error) =~ "StaleRecord"
   end
 
-  defp provider_accepted_attempt! do
+  defp provider_accepted_attempt!(provider_message_id \\ nil) do
     attempt = create_queued_attempt!()
 
     update_attempt(attempt, :mark_provider_accepted, %{
-      provider_message_id: "wamid.lifecycle-#{System.unique_integer([:positive])}",
+      provider_message_id:
+        provider_message_id || "wamid.lifecycle-#{System.unique_integer([:positive])}",
       provider_accepted_at: ~U[2026-07-05 10:04:00Z]
     })
   end

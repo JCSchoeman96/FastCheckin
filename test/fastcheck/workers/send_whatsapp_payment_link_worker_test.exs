@@ -644,14 +644,27 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
              %{
                status: "failed",
                provider_error_message: "whatsapp send failed",
-               failure_reason: "server_error"
+               failure_reason: "server_error",
+               failed_at: failed_at,
+               provider_status: nil,
+               provider_status_at: nil
              }
            ] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,
-                 select: map(d, [:status, :provider_error_message, :failure_reason])
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_error_message,
+                     :failure_reason,
+                     :failed_at,
+                     :provider_status,
+                     :provider_status_at
+                   ])
              )
+
+    assert %NaiveDateTime{} = failed_at
 
     attempt_log =
       Repo.one!(
