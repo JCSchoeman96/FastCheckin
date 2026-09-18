@@ -87,8 +87,11 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
                provider_message_id: "wamid.ticket-out",
+               provider_status: "accepted",
+               provider_accepted_at: accepted_at,
+               sent_at: nil,
                delivery_reason: nil,
                ticket_resend_challenge_id: nil
              }
@@ -100,6 +103,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                    map(d, [
                      :status,
                      :provider_message_id,
+                     :provider_status,
+                     :provider_accepted_at,
+                     :sent_at,
                      :delivery_reason,
                      :ticket_resend_challenge_id,
                      :within_whatsapp_window,
@@ -113,10 +119,15 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                Map.take(row, [
                  :status,
                  :provider_message_id,
+                 :provider_status,
+                 :provider_accepted_at,
+                 :sent_at,
                  :delivery_reason,
                  :ticket_resend_challenge_id
                ])
              end)
+
+    assert %NaiveDateTime{} = accepted_at
   end
 
   test "normal ticket link job with unknown delivery reason stores nil audit fields" do
@@ -229,8 +240,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
                provider_message_id: "wamid.ticket-template",
+               provider_status: "accepted",
                within_whatsapp_window: false,
                template_name: "fastcheck_ticket_ready_en"
              }
@@ -242,6 +254,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                    map(d, [
                      :status,
                      :provider_message_id,
+                     :provider_status,
                      :within_whatsapp_window,
                      :template_name
                    ])
@@ -284,7 +297,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert ttl > 80_000
 
-    assert ["sent"] =
+    assert ["provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
@@ -329,8 +342,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
                provider_message_id: "wamid.resend-ticket",
+               provider_status: "accepted",
                delivery_reason: "verified_ticket_resend",
                ticket_resend_challenge_id: challenge_id,
                recipient: "+27***4567"
@@ -343,6 +357,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                    map(d, [
                      :status,
                      :provider_message_id,
+                     :provider_status,
                      :delivery_reason,
                      :ticket_resend_challenge_id,
                      :recipient
@@ -741,7 +756,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert_received {:whatsapp_request, _retry_request}
     refute_received {:whatsapp_request, _extra_request}
 
-    assert ["failed", "sent"] =
+    assert ["failed", "provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,

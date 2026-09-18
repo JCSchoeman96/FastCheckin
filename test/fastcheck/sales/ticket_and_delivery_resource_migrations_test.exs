@@ -6,6 +6,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
   @sales_tables [
     "sales_checkout_sessions",
     "sales_delivery_attempts",
+    "sales_delivery_status_events",
     "sales_order_lines",
     "sales_orders",
     "sales_payment_attempts",
@@ -75,8 +76,29 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
       "failure_reason",
       "fallback_channel",
       "correlation_id",
+      "provider_accepted_at",
+      "provider_status",
+      "provider_status_at",
       "sent_at",
       "delivered_at",
+      "read_at",
+      "failed_at",
+      "lock_version",
+      "inserted_at",
+      "updated_at"
+    ])
+
+    assert_columns("sales_delivery_status_events", [
+      "id",
+      "delivery_attempt_id",
+      "provider",
+      "channel",
+      "provider_message_id",
+      "provider_status",
+      "provider_status_at",
+      "provider_error_code",
+      "raw_payload_hash",
+      "correlation_id",
       "inserted_at",
       "updated_at"
     ])
@@ -86,6 +108,13 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_column_type("sales_ticket_issues", "line_item_sequence", "integer")
     assert_column_type("sales_ticket_issues", "last_scanner_sync_version", "integer")
     assert_column_type("sales_delivery_attempts", "attempt_number", "integer")
+    assert_column_type("sales_delivery_attempts", "lock_version", "integer")
+
+    assert_column_type(
+      "sales_delivery_status_events",
+      "provider_status_at",
+      "timestamp without time zone"
+    )
   end
 
   test "required indexes and partial unique indexes exist" do
@@ -103,6 +132,9 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_index("sales_delivery_attempts_order_channel_status_inserted_at_idx")
     assert_index("sales_delivery_attempts_correlation_id_idx")
     assert_index("sales_delivery_attempts_resend_challenge_id_idx")
+    assert_index("sales_delivery_attempts_meta_whatsapp_wamid_uidx")
+    assert_index("sales_delivery_status_events_attempt_status_at_idx")
+    assert_index("sales_delivery_status_events_identity_uidx")
 
     assert_index_where("sales_ticket_issues_ticket_code_uidx", "ticket_code IS NOT NULL")
     assert_index_where("sales_ticket_issues_attendee_id_uidx", "attendee_id IS NOT NULL")
@@ -110,6 +142,11 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     assert_index_where(
       "sales_delivery_attempts_resend_challenge_id_idx",
       "ticket_resend_challenge_id IS NOT NULL"
+    )
+
+    assert_index_where(
+      "sales_delivery_attempts_meta_whatsapp_wamid_uidx",
+      "provider)::text = 'meta'::text"
     )
   end
 
@@ -177,6 +214,65 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
       insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
         delivery_reason: "unknown_reason"
       )
+    end)
+  end
+
+  test "Meta WhatsApp provider states require a usable WAMID" do
+    order_id = insert_order!()
+
+    for status <- ~w(provider_accepted sent delivered read) do
+      assert_db_error(~r/sales_delivery_attempts_meta_whatsapp_provider_message_id_valid/, fn ->
+        insert_delivery_attempt!(order_id, nil, "whatsapp", status,
+          provider: "meta",
+          provider_message_id: " "
+        )
+      end)
+    end
+  end
+
+  test "Meta WhatsApp WAMIDs are unique while unrelated rows remain allowed" do
+    order_id = insert_order!()
+
+    insert_delivery_attempt!(order_id, nil, "whatsapp", "provider_accepted",
+      provider: "meta",
+      provider_message_id: "wamid.unique-migration-test"
+    )
+
+    assert_db_error(~r/sales_delivery_attempts_meta_whatsapp_wamid_uidx/, fn ->
+      insert_delivery_attempt!(order_id, nil, "whatsapp", "provider_accepted",
+        attempt_number: 2,
+        provider: "meta",
+        provider_message_id: "wamid.unique-migration-test"
+      )
+    end)
+
+    assert :ok =
+             insert_delivery_attempt!(order_id, nil, "email", "sent",
+               provider: "other",
+               provider_message_id: "wamid.unique-migration-test"
+             )
+  end
+
+  test "delivery status evidence has an immutable identity and restrictive attempt foreign key" do
+    order_id = insert_order!()
+
+    attempt_id =
+      insert_delivery_attempt!(order_id, nil, "whatsapp", "provider_accepted",
+        provider: "meta",
+        provider_message_id: "wamid.evidence-test",
+        return_id: true
+      )
+
+    status_at = ~U[2026-07-05 10:30:00Z]
+
+    insert_status_event!(attempt_id, status_at)
+
+    assert_db_error(~r/sales_delivery_status_events_identity_uidx/, fn ->
+      insert_status_event!(attempt_id, status_at)
+    end)
+
+    assert_db_error(~r/sales_delivery_status_events_delivery_attempt_id_fkey/, fn ->
+      Repo.query!("DELETE FROM sales_delivery_attempts WHERE id = $1", [attempt_id])
     end)
   end
 
@@ -347,27 +443,54 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
     attempt_number = Keyword.get(opts, :attempt_number, 1)
     delivery_reason = Keyword.get(opts, :delivery_reason)
     ticket_resend_challenge_id = Keyword.get(opts, :ticket_resend_challenge_id)
+    provider = Keyword.get(opts, :provider)
+    provider_message_id = Keyword.get(opts, :provider_message_id)
+    return_id? = Keyword.get(opts, :return_id, false)
 
+    result =
+      Repo.query!(
+        """
+        INSERT INTO sales_delivery_attempts
+          (sales_order_id, ticket_issue_id, ticket_resend_challenge_id, channel, provider, status,
+           provider_message_id, attempt_number, delivery_reason, inserted_at, updated_at)
+        VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+        RETURNING id
+        """,
+        [
+          order_id,
+          ticket_issue_id,
+          ticket_resend_challenge_id,
+          channel,
+          provider,
+          status,
+          provider_message_id,
+          attempt_number,
+          delivery_reason
+        ]
+      )
+
+    if return_id? do
+      [[id]] = result.rows
+      id
+    else
+      :ok
+    end
+  end
+
+  defp insert_status_event!(attempt_id, status_at) do
     Repo.query!(
       """
-      INSERT INTO sales_delivery_attempts
-        (sales_order_id, ticket_issue_id, ticket_resend_challenge_id, channel, status,
-         attempt_number, delivery_reason, inserted_at, updated_at)
+      INSERT INTO sales_delivery_status_events
+        (delivery_attempt_id, provider, channel, provider_message_id, provider_status,
+         provider_status_at, provider_error_code, raw_payload_hash, correlation_id,
+         inserted_at, updated_at)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, now(), now())
+        ($1, 'meta', 'whatsapp', 'wamid.evidence-test', 'delivered', $2, NULL,
+         'hash-evidence-test', 'corr-evidence-test', now(), now())
       """,
-      [
-        order_id,
-        ticket_issue_id,
-        ticket_resend_challenge_id,
-        channel,
-        status,
-        attempt_number,
-        delivery_reason
-      ]
+      [attempt_id, status_at]
     )
-
-    :ok
   end
 
   defp insert_resend_challenge!(order_id, ticket_issue_id) do

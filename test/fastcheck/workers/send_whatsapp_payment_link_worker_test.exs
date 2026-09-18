@@ -71,6 +71,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
               :recipient,
               :status,
               :provider_message_id,
+              :provider_status,
+              :provider_accepted_at,
+              :sent_at,
               :within_whatsapp_window,
               :template_name
             ])
@@ -80,12 +83,17 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
              %{
                ticket_issue_id: nil,
                recipient: recipient,
-               status: "sent",
+               status: "provider_accepted",
                provider_message_id: "wamid.payment-out",
+               provider_status: "accepted",
+               provider_accepted_at: accepted_at,
+               sent_at: nil,
                within_whatsapp_window: true,
                template_name: nil
              }
            ] = attempts
+
+    assert %NaiveDateTime{} = accepted_at
 
     assert recipient =~ "***"
     refute recipient =~ "+27821234567"
@@ -132,7 +140,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
+               provider_message_id: "wamid.payment-af",
+               provider_status: "accepted",
                within_whatsapp_window: false,
                template_name: "fastcheck_payment_link_af"
              }
@@ -140,7 +150,14 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,
-                 select: map(d, [:status, :within_whatsapp_window, :template_name])
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_message_id,
+                     :provider_status,
+                     :within_whatsapp_window,
+                     :template_name
+                   ])
              )
   end
 
@@ -183,7 +200,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
 
     assert [
              %{
-               status: "sent",
+               status: "provider_accepted",
+               provider_message_id: "wamid.payment-en",
+               provider_status: "accepted",
                within_whatsapp_window: false,
                template_name: "fastcheck_payment_link_en"
              }
@@ -191,7 +210,14 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,
-                 select: map(d, [:status, :within_whatsapp_window, :template_name])
+                 select:
+                   map(d, [
+                     :status,
+                     :provider_message_id,
+                     :provider_status,
+                     :within_whatsapp_window,
+                     :template_name
+                   ])
              )
   end
 
@@ -533,7 +559,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert_received {:whatsapp_request, _retry_request}
     refute_received {:whatsapp_request, _extra_request}
 
-    assert ["failed", "sent"] =
+    assert ["failed", "provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,
@@ -676,7 +702,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert_received {:whatsapp_request, _retry_request}
     refute_received {:whatsapp_request, _extra_request}
 
-    assert ["failed", "sent"] =
+    assert ["failed", "provider_accepted"] =
              Repo.all(
                from d in "sales_delivery_attempts",
                  where: d.sales_order_id == ^order.id,
