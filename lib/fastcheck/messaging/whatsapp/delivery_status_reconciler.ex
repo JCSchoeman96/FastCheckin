@@ -152,6 +152,9 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
        when is_binary(status),
        do: :observational_status
 
+  defp transition(%{status: "failed", provider_status: nil}, %ProviderStatus{} = event),
+    do: {:conflict, conflict_attrs(event)}
+
   defp transition(%{status: status}, _event) when status in @terminal_statuses,
     do: :observational_status
 
@@ -238,7 +241,6 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
   defp current_provider_status(%{status: status}) when status in ["sent", "delivered", "read"],
     do: status
 
-  defp current_provider_status(%{status: "failed"}), do: "failed"
   defp current_provider_status(_attempt), do: nil
 
   defp later_or_equal?(_timestamp, nil), do: true

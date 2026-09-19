@@ -96,6 +96,29 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     assert Repo.aggregate("sales_delivery_status_events", :count, :id) == 0
   end
 
+  test "ambiguous WAMIDs fail safely without choosing an attempt" do
+    Repo.query!("DROP INDEX sales_delivery_attempts_meta_whatsapp_wamid_uidx")
+
+    first_id =
+      insert_attempt!(
+        status: "provider_accepted",
+        provider_status: "accepted",
+        provider_message_id: "wamid.ambiguous"
+      )
+
+    second_id =
+      insert_attempt!(
+        status: "provider_accepted",
+        provider_status: "accepted",
+        provider_message_id: "wamid.ambiguous"
+      )
+
+    assert first_id != second_id
+
+    assert {:error, :ambiguous_provider_message_id} =
+             reconcile(event("wamid.ambiguous", "delivered", 8))
+  end
+
   test "older sent evidence cannot regress a newer delivered state" do
     attempt_id =
       insert_attempt!(
@@ -179,6 +202,24 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
 
       assert evidence_count(attempt_id) == 2
     end
+  end
+
+  test "local failure is not treated as Meta provider failure" do
+    attempt_id =
+      insert_attempt!(
+        status: "failed",
+        provider_status: nil,
+        provider_status_at: nil,
+        provider_message_id: "wamid.local-failure"
+      )
+
+    assert {:conflict, :manual_review} =
+             reconcile(event("wamid.local-failure", "delivered", 18))
+
+    assert %{status: "manual_review", provider_status: "delivered"} =
+             snapshot_attempt!(attempt_id)
+
+    assert evidence_count(attempt_id) == 1
   end
 
   test "deleted evidence is observational and leaves the projection unchanged" do
