@@ -6,6 +6,7 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
 
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Repo
   alias FastCheck.Workers.WhatsAppInboundWorker
 
   @webhook_path "/api/v1/webhooks/whatsapp"
@@ -269,6 +270,127 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
     refute_enqueued(worker: WhatsAppInboundWorker)
   end
 
+  test "signed scoped status callback reconciles without inbound side effects", %{conn: conn} do
+    attempt_id = insert_provider_accepted_attempt!("wamid.controller-status")
+
+    body =
+      WebhookTestSupport.status_body(
+        provider_message_id: "wamid.controller-status",
+        status: "delivered"
+      )
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert snapshot_attempt!(attempt_id).status == "delivered"
+    assert evidence_count(attempt_id) == 1
+    assert count_conversations() == 0
+    refute_enqueued(worker: WhatsAppInboundWorker)
+  end
+
+  test "mixed scoped status and message changes use both pipelines", %{conn: conn} do
+    status_wamid = "wamid.controller-mixed-status"
+    message_wamid = "wamid.controller-mixed-message"
+    attempt_id = insert_provider_accepted_attempt!(status_wamid)
+
+    status_payload =
+      WebhookTestSupport.status_body(provider_message_id: status_wamid)
+      |> Jason.decode!()
+
+    message_payload =
+      WebhookTestSupport.text_body(provider_message_id: message_wamid)
+      |> Jason.decode!()
+
+    body =
+      status_payload
+      |> put_in(
+        ["entry", Access.at(0), "changes"],
+        get_in(status_payload, ["entry", Access.at(0), "changes"]) ++
+          get_in(message_payload, ["entry", Access.at(0), "changes"])
+      )
+      |> Jason.encode!()
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert snapshot_attempt!(attempt_id).status == "delivered"
+    assert evidence_count(attempt_id) == 1
+    assert count_conversations() == 1
+
+    assert_enqueued(
+      worker: WhatsAppInboundWorker,
+      args: %{"provider_message_id" => message_wamid}
+    )
+  end
+
+  test "invalid signature leaves status evidence and projection unchanged", %{conn: conn} do
+    attempt_id = insert_provider_accepted_attempt!("wamid.controller-invalid-signature")
+
+    body =
+      WebhookTestSupport.status_body(
+        provider_message_id: "wamid.controller-invalid-signature",
+        status: "read"
+      )
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", "sha256=bad")
+      |> post(@webhook_path, body)
+
+    assert response(conn, 401) == ""
+    assert snapshot_attempt!(attempt_id).status == "provider_accepted"
+    assert evidence_count(attempt_id) == 0
+  end
+
+  test "wrong WABA status is acknowledged without evidence", %{conn: conn} do
+    attempt_id = insert_provider_accepted_attempt!("wamid.controller-wrong-waba")
+
+    body =
+      WebhookTestSupport.status_body(
+        provider_message_id: "wamid.controller-wrong-waba",
+        business_account_id: "business-other"
+      )
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert snapshot_attempt!(attempt_id).status == "provider_accepted"
+    assert evidence_count(attempt_id) == 0
+  end
+
+  test "wrong phone status is acknowledged without evidence", %{conn: conn} do
+    attempt_id = insert_provider_accepted_attempt!("wamid.controller-wrong-phone")
+
+    body =
+      WebhookTestSupport.status_body(
+        provider_message_id: "wamid.controller-wrong-phone",
+        phone_number_id: "phone-other"
+      )
+
+    conn =
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-hub-signature-256", WebhookTestSupport.sign_body(body))
+      |> post(@webhook_path, body)
+
+    assert response(conn, 200) == ""
+    assert snapshot_attempt!(attempt_id).status == "provider_accepted"
+    assert evidence_count(attempt_id) == 0
+  end
+
   test "signed wrong-scope status payload is acknowledged as a no-op", %{conn: conn} do
     body = WebhookTestSupport.status_body(business_account_id: "business-other")
     signature = WebhookTestSupport.sign_body(body)
@@ -455,5 +577,54 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
 
   defp dedupe_key(provider_message_id) do
     "fastcheck:whatsapp:dedupe:message:#{provider_message_id}"
+  end
+
+  defp insert_provider_accepted_attempt!(provider_message_id) do
+    %{rows: [[order_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_orders
+          (public_reference, event_id, source_channel, status, total_amount_cents, currency,
+           inserted_at, updated_at)
+        VALUES ($1, 90001, 'whatsapp', 'paid_verified', 100, 'ZAR', now(), now())
+        RETURNING id
+        """,
+        ["FC-CONTROLLER-#{System.unique_integer([:positive])}"]
+      )
+
+    %{rows: [[attempt_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_delivery_attempts
+          (sales_order_id, ticket_issue_id, channel, provider, status, provider_message_id,
+           provider_status, provider_status_at, attempt_number, inserted_at, updated_at)
+        VALUES ($1, NULL, 'whatsapp', 'meta', 'provider_accepted', $2, 'accepted',
+                '2026-06-26 12:40:00', 1, now(), now())
+        RETURNING id
+        """,
+        [order_id, provider_message_id]
+      )
+
+    attempt_id
+  end
+
+  defp snapshot_attempt!(attempt_id) do
+    %{rows: [[status]]} =
+      Repo.query!(
+        "SELECT status FROM sales_delivery_attempts WHERE id = $1",
+        [attempt_id]
+      )
+
+    %{status: status}
+  end
+
+  defp evidence_count(attempt_id) do
+    %{rows: [[count]]} =
+      Repo.query!(
+        "SELECT count(*)::int FROM sales_delivery_status_events WHERE delivery_attempt_id = $1",
+        [attempt_id]
+      )
+
+    count
   end
 end
