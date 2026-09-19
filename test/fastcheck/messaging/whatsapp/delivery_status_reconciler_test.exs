@@ -50,6 +50,24 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     assert snapshot_attempt!(read_id).status == "read"
   end
 
+  test "success evidence older than provider acceptance does not advance the projection" do
+    attempt_id =
+      insert_attempt!(
+        status: "provider_accepted",
+        provider_status: "accepted",
+        provider_status_at: timestamp(2),
+        provider_message_id: "wamid.before-acceptance"
+      )
+
+    assert {:ignored, :out_of_order} =
+             reconcile(event("wamid.before-acceptance", "delivered", 1))
+
+    assert %{status: "provider_accepted", provider_status: "accepted"} =
+             snapshot_attempt!(attempt_id)
+
+    assert evidence_count(attempt_id) == 1
+  end
+
   test "provider failure is recorded without using local failure semantics" do
     attempt_id =
       insert_attempt!(
@@ -173,7 +191,8 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              status: "manual_review",
              provider_status: "delivered",
              provider_status_at: provider_status_at,
-             failure_reason: "provider_status_conflict"
+             failure_reason: "provider_status_conflict",
+             provider_error_code: "131026"
            } = snapshot_attempt!(attempt_id)
 
     assert provider_status_at == DateTime.to_naive(timestamp(14))
@@ -217,6 +236,24 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
              reconcile(event("wamid.local-failure", "delivered", 18))
 
     assert %{status: "manual_review", provider_status: "delivered"} =
+             snapshot_attempt!(attempt_id)
+
+    assert evidence_count(attempt_id) == 1
+  end
+
+  test "local failure after provider acceptance retains later provider failure evidence" do
+    attempt_id =
+      insert_attempt!(
+        status: "failed",
+        provider_status: "accepted",
+        provider_status_at: timestamp(22),
+        provider_message_id: "wamid.local-failure-provider-failed"
+      )
+
+    assert {:ignored, :observational_status} =
+             reconcile(event("wamid.local-failure-provider-failed", "failed", 23, "131026"))
+
+    assert %{status: "failed", provider_status: "accepted"} =
              snapshot_attempt!(attempt_id)
 
     assert evidence_count(attempt_id) == 1

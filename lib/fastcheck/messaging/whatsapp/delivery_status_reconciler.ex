@@ -152,8 +152,24 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
        when is_binary(status),
        do: :observational_status
 
+  # A local mark_failed may retain the last accepted/sent provider status.
+  # Keep that provenance distinct from an explicit Meta failed callback.
   defp transition(%{status: "failed", provider_status: nil}, %ProviderStatus{} = event),
     do: {:conflict, conflict_attrs(event)}
+
+  defp transition(
+         %{status: "failed", provider_status: provider_status},
+         %ProviderStatus{status: "failed"}
+       )
+       when provider_status in ["accepted", "sent"],
+       do: :observational_status
+
+  defp transition(
+         %{status: "failed", provider_status: provider_status},
+         %ProviderStatus{} = event
+       )
+       when provider_status in ["accepted", "sent"],
+       do: {:conflict, conflict_attrs(event)}
 
   defp transition(%{status: status}, _event) when status in @terminal_statuses,
     do: :observational_status
@@ -173,7 +189,12 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
       incoming_rank <= current_rank ->
         :out_of_order
 
-      current_status in [nil, "accepted"] or is_nil(attempt.provider_status_at) ->
+      current_status in [nil, "accepted"] ->
+        if later_or_equal?(event.provider_timestamp, attempt.provider_status_at),
+          do: success_update(incoming_status, event.provider_timestamp),
+          else: :out_of_order
+
+      is_nil(attempt.provider_status_at) ->
         success_update(incoming_status, event.provider_timestamp)
 
       later_or_equal?(event.provider_timestamp, attempt.provider_status_at) ->
@@ -225,14 +246,19 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler do
   end
 
   defp conflict_attrs(%ProviderStatus{} = event) do
-    %{
+    attrs = %{
       provider_status: event.status,
       provider_status_at: event.provider_timestamp,
-      provider_error_code: event.provider_error_code,
       provider_error_message: "conflicting Meta delivery status evidence",
       failure_reason: "provider_status_conflict",
       fallback_channel: "manual_review"
     }
+
+    if is_nil(event.provider_error_code) do
+      attrs
+    else
+      Map.put(attrs, :provider_error_code, event.provider_error_code)
+    end
   end
 
   defp current_provider_status(%{provider_status: status}) when is_binary(status),
