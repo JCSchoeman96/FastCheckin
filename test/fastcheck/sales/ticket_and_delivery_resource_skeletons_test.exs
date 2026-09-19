@@ -97,6 +97,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
                  :mark_delivered,
                  :mark_read,
                  :mark_failed,
+                 :mark_provider_failed,
                  :mark_fallback_required,
                  :mark_manual_review,
                  :mark_cancelled
@@ -131,6 +132,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
               :mark_delivered,
               :mark_read,
               :mark_failed,
+              :mark_provider_failed,
               :mark_fallback_required,
               :mark_manual_review,
               :mark_cancelled

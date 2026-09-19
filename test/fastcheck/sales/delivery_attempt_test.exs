@@ -270,6 +270,56 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
     assert reviewed.status == "manual_review"
   end
 
+  test "Meta provider failure uses a separate lifecycle action" do
+    {:ok, accepted} = provider_accepted_attempt!("wamid.provider-failed")
+
+    assert {:ok, failed} =
+             update_attempt(accepted, :mark_provider_failed, %{
+               provider_error_code: "131026",
+               failed_at: ~U[2026-07-05 10:30:00Z]
+             })
+
+    assert failed.status == "failed"
+    assert failed.provider_status == "failed"
+    assert failed.provider_status_at == ~U[2026-07-05 10:30:00Z]
+    assert failed.failed_at == ~U[2026-07-05 10:30:00Z]
+    assert failed.failure_reason == "provider_status_failed"
+    assert failed.provider_error_code == "131026"
+  end
+
+  test "provider failure cannot replace delivered provider evidence" do
+    {:ok, accepted} = provider_accepted_attempt!("wamid.provider-failed-delivered")
+
+    {:ok, delivered} =
+      update_attempt(accepted, :mark_delivered, %{delivered_at: ~U[2026-07-05 10:31:00Z]})
+
+    assert {:error, _error} =
+             update_attempt(delivered, :mark_provider_failed, %{
+               provider_error_code: "131026",
+               failed_at: ~U[2026-07-05 10:32:00Z]
+             })
+  end
+
+  test "manual review accepts provider conflict metadata from a read projection" do
+    {:ok, accepted} = provider_accepted_attempt!("wamid.provider-conflict-read")
+
+    {:ok, read} =
+      update_attempt(accepted, :mark_read, %{read_at: ~U[2026-07-05 10:33:00Z]})
+
+    assert {:ok, reviewed} =
+             update_attempt(read, :mark_manual_review, %{
+               provider_status: "failed",
+               provider_status_at: ~U[2026-07-05 10:34:00Z],
+               provider_error_code: "131026",
+               failure_reason: "provider_status_conflict",
+               fallback_channel: "manual_review"
+             })
+
+    assert reviewed.status == "manual_review"
+    assert reviewed.provider_status == "failed"
+    assert reviewed.provider_status_at == ~U[2026-07-05 10:34:00Z]
+  end
+
   test "stale lifecycle writes fail optimistic locking" do
     attempt = create_queued_attempt!()
     stale = attempt
