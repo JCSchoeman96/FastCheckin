@@ -149,6 +149,18 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       change(optimistic_lock(:lock_version))
     end
 
+    update :mark_provider_failed do
+      require_atomic?(false)
+      accept([:provider_error_code, :failed_at])
+      validate(&validate_provider_message_id_for_provider_state/2)
+
+      change(fn changeset, _context ->
+        transition_provider_failure(changeset)
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
     update :mark_fallback_required do
       require_atomic?(false)
       accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
@@ -162,13 +174,21 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     update :mark_manual_review do
       require_atomic?(false)
-      accept([:provider_error_code, :provider_error_message, :failure_reason, :fallback_channel])
+
+      accept([
+        :provider_error_code,
+        :provider_error_message,
+        :failure_reason,
+        :fallback_channel,
+        :provider_status,
+        :provider_status_at
+      ])
 
       change(fn changeset, _context ->
         transition_status(
           changeset,
           "manual_review",
-          ["queued", "provider_accepted", "sent", "delivered", "failed"]
+          ["queued", "provider_accepted", "sent", "delivered", "read", "failed"]
         )
       end)
 
@@ -329,6 +349,16 @@ defmodule FastCheck.Sales.DeliveryAttempt do
         message: "invalid transition from #{from_status} to failed"
       )
     end
+  end
+
+  defp transition_provider_failure(changeset) do
+    changeset
+    |> transition_provider_status(
+      "failed",
+      ["provider_accepted", "sent"],
+      :failed_at
+    )
+    |> Changeset.force_change_attribute(:failure_reason, "provider_status_failed")
   end
 
   defp transition_provider_status(
