@@ -126,7 +126,45 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     event = event("wamid.concurrent-duplicate", "delivered", 24)
     parent = self()
 
-    on_exit(fn -> cleanup_unboxed_fixture(attempt_id, order_id) end)
+    lock_task =
+      Task.async(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.query!("BEGIN")
+
+          Repo.query!(
+            "SELECT id FROM sales_delivery_attempts WHERE id = $1 FOR UPDATE",
+            [attempt_id]
+          )
+
+          send(parent, {:lock_held, self()})
+
+          receive do
+            {:await_lock_waiters, backend_pids} ->
+              await_lock_waiters!(backend_pids)
+              send(parent, :lock_waiters_ready)
+
+              receive do
+                :release ->
+                  Repo.query!("ROLLBACK")
+                  :released
+              end
+
+            :release ->
+              Repo.query!("ROLLBACK")
+              :released
+          end
+        end)
+      end)
+
+    lock_pid = lock_task.pid
+
+    on_exit(fn ->
+      send(lock_pid, :release)
+      stop_lock_task(lock_pid)
+      cleanup_unboxed_fixture(attempt_id, order_id)
+    end)
+
+    assert_receive {:lock_held, ^lock_pid}, 5_000
 
     tasks =
       for _ <- 1..2 do
@@ -157,6 +195,10 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
 
     assert length(Enum.uniq(ready)) == 2
     Enum.each(tasks, &send(&1.pid, :go))
+    send(lock_pid, {:await_lock_waiters, ready})
+    assert_receive :lock_waiters_ready, 5_000
+    send(lock_pid, :release)
+    assert :released == Task.await(lock_task, 5_000)
 
     results = Enum.map(tasks, &Task.await(&1, 5_000))
 
@@ -499,15 +541,56 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     )
   end
 
-  defp cleanup_unboxed_fixture(attempt_id, order_id) do
-    Sandbox.unboxed_run(Repo, fn ->
+  defp await_lock_waiters!(backend_pids, attempts \\ 500)
+
+  defp await_lock_waiters!(_backend_pids, 0) do
+    raise "reconciliation connections did not both wait for the attempt row lock"
+  end
+
+  defp await_lock_waiters!(backend_pids, attempts) do
+    %{rows: rows} =
       Repo.query!(
-        "DELETE FROM sales_delivery_status_events WHERE delivery_attempt_id = $1",
-        [attempt_id]
+        """
+        SELECT pid, wait_event_type
+        FROM pg_stat_activity
+        WHERE pid = ANY($1::int[])
+        """,
+        [backend_pids]
       )
 
-      Repo.query!("DELETE FROM sales_delivery_attempts WHERE id = $1", [attempt_id])
-      Repo.query!("DELETE FROM sales_orders WHERE id = $1", [order_id])
+    if length(rows) == length(backend_pids) and
+         Enum.all?(rows, fn [_pid, wait_event_type] -> wait_event_type == "Lock" end) do
+      :ok
+    else
+      Process.sleep(10)
+      await_lock_waiters!(backend_pids, attempts - 1)
+    end
+  end
+
+  defp stop_lock_task(lock_pid) do
+    lock_ref = Process.monitor(lock_pid)
+    Process.exit(lock_pid, :kill)
+
+    receive do
+      {:DOWN, ^lock_ref, :process, ^lock_pid, _reason} -> :ok
+    after
+      1_000 ->
+        Process.demonitor(lock_ref, [:flush])
+        :ok
+    end
+  end
+
+  defp cleanup_unboxed_fixture(attempt_id, order_id) do
+    Sandbox.unboxed_run(Repo, fn ->
+      Repo.transaction(fn ->
+        Repo.query!(
+          "DELETE FROM sales_delivery_status_events WHERE delivery_attempt_id = $1",
+          [attempt_id]
+        )
+
+        Repo.query!("DELETE FROM sales_delivery_attempts WHERE id = $1", [attempt_id])
+        Repo.query!("DELETE FROM sales_orders WHERE id = $1", [order_id])
+      end)
     end)
   end
 end
