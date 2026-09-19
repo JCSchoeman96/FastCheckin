@@ -153,6 +153,7 @@ logger_metadata = [
   :delivery_attempt_id,
   :conversation_id,
   :provider,
+  :provider_message_id_hash,
   :provider_reference_redacted,
   :message_type,
   :channel,
