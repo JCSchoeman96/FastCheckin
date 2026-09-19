@@ -127,6 +127,18 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
   def status_body(opts \\ []) do
     business_account_id = Keyword.get(opts, :business_account_id, "business-123")
     phone_number_id = Keyword.get(opts, :phone_number_id, "phone-number-123")
+    provider_message_id = Keyword.get(opts, :provider_message_id, "wamid.status")
+    status = Keyword.get(opts, :status, "delivered")
+    timestamp = Keyword.get(opts, :timestamp, "1782477600")
+    error_code = Keyword.get(opts, :error_code)
+
+    status_event =
+      %{
+        "id" => provider_message_id,
+        "status" => status,
+        "timestamp" => timestamp
+      }
+      |> maybe_put_status_error(error_code)
 
     Jason.encode!(%{
       "object" => "whatsapp_business_account",
@@ -139,7 +151,7 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
               "value" => %{
                 "metadata" => %{"phone_number_id" => phone_number_id},
                 "statuses" => [
-                  %{"id" => "wamid.status", "status" => "delivered", "timestamp" => "1782477600"}
+                  status_event
                 ]
               }
             }
@@ -147,6 +159,12 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
         }
       ]
     })
+  end
+
+  defp maybe_put_status_error(status_event, nil), do: status_event
+
+  defp maybe_put_status_error(status_event, error_code) do
+    Map.put(status_event, "errors", [%{"code" => error_code}])
   end
 
   def sign_body(body, secret \\ app_secret()) when is_binary(body) do
