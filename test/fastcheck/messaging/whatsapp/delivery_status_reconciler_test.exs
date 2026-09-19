@@ -3,6 +3,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
 
   import Ecto.Query
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Messaging.WhatsApp.DeliveryStatusReconciler
   alias FastCheck.Messaging.WhatsApp.ProviderStatus
   alias FastCheck.Repo
@@ -104,6 +105,85 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
     assert {:duplicate, "delivered"} = reconcile(event)
     assert evidence_count(attempt_id) == 1
     assert snapshot_attempt!(attempt_id).status == "delivered"
+  end
+
+  test "concurrent duplicate reconciliation commits one evidence row" do
+    {attempt_id, order_id} =
+      Sandbox.unboxed_run(Repo, fn ->
+        order_id = insert_order!("concurrent-duplicate")
+
+        attempt_id =
+          insert_attempt!(
+            order_id: order_id,
+            status: "provider_accepted",
+            provider_status: "accepted",
+            provider_message_id: "wamid.concurrent-duplicate"
+          )
+
+        {attempt_id, order_id}
+      end)
+
+    event = event("wamid.concurrent-duplicate", "delivered", 24)
+    parent = self()
+
+    on_exit(fn -> cleanup_unboxed_fixture(attempt_id, order_id) end)
+
+    tasks =
+      for _ <- 1..2 do
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            %{rows: [[backend_pid]]} = Repo.query!("SELECT pg_backend_pid()")
+            send(parent, {:ready, self(), backend_pid})
+
+            receive do
+              :go ->
+                try do
+                  {:ok, DeliveryStatusReconciler.reconcile(event)}
+                rescue
+                  exception -> {:raised, exception}
+                catch
+                  kind, value -> {:caught, kind, value}
+                end
+            end
+          end)
+        end)
+      end
+
+    ready =
+      for _ <- tasks do
+        assert_receive {:ready, _pid, backend_pid}, 5_000
+        backend_pid
+      end
+
+    assert length(Enum.uniq(ready)) == 2
+    Enum.each(tasks, &send(&1.pid, :go))
+
+    results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+    assert Enum.sort(results) == [
+             {:ok, {:duplicate, "delivered"}},
+             {:ok, {:updated, "delivered"}}
+           ]
+
+    assert evidence_count(attempt_id) == 1
+
+    assert %{
+             status: "delivered",
+             provider_status: "delivered",
+             provider_message_id: "wamid.concurrent-duplicate"
+           } = snapshot_attempt!(attempt_id)
+
+    assert Repo.one!(
+             from attempt in "sales_delivery_attempts",
+               where: attempt.id == ^attempt_id,
+               select: attempt.sales_order_id
+           ) == order_id
+
+    assert Repo.one!(
+             from order in "sales_orders",
+               where: order.id == ^order_id,
+               select: order.status
+           ) == "awaiting_payment"
   end
 
   test "unknown WAMIDs do not create evidence or attempts" do
@@ -398,6 +478,7 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
             :status,
             :provider_status,
             :provider_status_at,
+            :provider_message_id,
             :provider_error_code,
             :failure_reason,
             :sent_at,
@@ -416,5 +497,17 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
       :count,
       :id
     )
+  end
+
+  defp cleanup_unboxed_fixture(attempt_id, order_id) do
+    Sandbox.unboxed_run(Repo, fn ->
+      Repo.query!(
+        "DELETE FROM sales_delivery_status_events WHERE delivery_attempt_id = $1",
+        [attempt_id]
+      )
+
+      Repo.query!("DELETE FROM sales_delivery_attempts WHERE id = $1", [attempt_id])
+      Repo.query!("DELETE FROM sales_orders WHERE id = $1", [order_id])
+    end)
   end
 end
