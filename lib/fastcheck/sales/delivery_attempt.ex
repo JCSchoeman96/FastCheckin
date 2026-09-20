@@ -74,6 +74,17 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       change(set_attribute(:status, "queued"))
     end
 
+    update :mark_dispatching do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, _context ->
+        transition_status(changeset, "dispatching", ["queued"])
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
     update :mark_sent do
       require_atomic?(false)
       accept([:sent_at])
@@ -95,7 +106,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
         transition_provider_status(
           changeset,
           "accepted",
-          ["queued"],
+          ["queued", "dispatching"],
           :provider_accepted_at,
           "provider_accepted"
         )
@@ -188,7 +199,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
         transition_status(
           changeset,
           "manual_review",
-          ["queued", "provider_accepted", "sent", "delivered", "read", "failed"]
+          ["queued", "dispatching", "provider_accepted", "sent", "delivered", "read", "failed"]
         )
       end)
 
@@ -200,7 +211,12 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       accept([:failure_reason])
 
       change(fn changeset, _context ->
-        transition_status(changeset, "cancelled", ["queued", "provider_accepted", "sent"])
+        transition_status(changeset, "cancelled", [
+          "queued",
+          "dispatching",
+          "provider_accepted",
+          "sent"
+        ])
       end)
 
       change(optimistic_lock(:lock_version))
@@ -335,7 +351,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
   defp transition_local_failure(changeset) do
     from_status = Changeset.get_data(changeset, :status)
 
-    if from_status in ["queued", "provider_accepted", "sent"] do
+    if from_status in ["queued", "dispatching", "provider_accepted", "sent"] do
       failed_at =
         Changeset.get_attribute(changeset, :failed_at) ||
           DateTime.utc_now() |> DateTime.truncate(:second)

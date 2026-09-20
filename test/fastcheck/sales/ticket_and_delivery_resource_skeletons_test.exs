@@ -92,6 +92,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
         assert Enum.map(create_actions, & &1.name) == [:create_queued]
 
         assert Enum.map(update_actions, & &1.name) == [
+                 :mark_dispatching,
                  :mark_sent,
                  :mark_provider_accepted,
                  :mark_delivered,
@@ -127,6 +128,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       else
         for expected <- [
               :create_queued,
+              :mark_dispatching,
               :mark_provider_accepted,
               :mark_sent,
               :mark_delivered,
