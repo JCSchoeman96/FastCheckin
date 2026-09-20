@@ -213,7 +213,6 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       change(fn changeset, _context ->
         transition_status(changeset, "cancelled", [
           "queued",
-          "dispatching",
           "provider_accepted",
           "sent"
         ])

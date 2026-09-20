@@ -136,6 +136,18 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
     assert is_nil(reviewed.provider_status_at)
   end
 
+  test "dispatching attempts reject cancellation" do
+    queued = create_queued_attempt!()
+    {:ok, dispatching} = update_attempt(queued, :mark_dispatching, %{})
+
+    assert {:error, _changeset} =
+             update_attempt(dispatching, :mark_cancelled, %{
+               failure_reason: "operator_cancelled"
+             })
+
+    assert Repo.get!(DeliveryAttempt, dispatching.id).status == "dispatching"
+  end
+
   test "queued attempts become provider_accepted with a WAMID and no sent timestamp" do
     attempt = create_queued_attempt!()
     accepted_at = ~U[2026-07-05 10:00:00Z]

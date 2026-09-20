@@ -78,7 +78,12 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     attempts =
       Repo.all(
         from d in "sales_delivery_attempts",
-          where: d.sales_order_id == ^order_id and is_nil(d.ticket_issue_id),
+          where:
+            d.sales_order_id == ^order_id and
+              is_nil(d.ticket_issue_id) and
+              d.provider == "meta" and
+              d.channel == "whatsapp" and
+              d.status in ["dispatching", "manual_review"],
           order_by: [desc: d.attempt_number, desc: d.id],
           select: %{id: d.id, status: d.status}
       )
