@@ -3,7 +3,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   Sends a secure ticket page link through WhatsApp after backend issuance exists.
   """
 
-  import Ecto.Query, only: [from: 2]
+  import Ecto.Query, only: [from: 2, dynamic: 2]
 
   require Logger
 
@@ -117,28 +117,37 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
          ticket_resend_challenge_id: challenge_id
        })
        when is_integer(challenge_id) do
-    attempts =
-      Repo.all(
-        from d in "sales_delivery_attempts",
-          where:
-            d.ticket_issue_id == ^ticket_issue_id and
-              d.ticket_resend_challenge_id == ^challenge_id and
-              d.delivery_reason == "verified_ticket_resend" and
-              d.provider == "meta" and
-              d.channel == "whatsapp" and
-              d.status in [
-                "dispatching",
-                "manual_review",
-                "provider_accepted",
-                "sent",
-                "delivered",
-                "read"
-              ],
-          order_by: [desc: d.attempt_number, desc: d.id],
-          select: %{id: d.id, status: d.status}
-      )
+    case Repo.one(
+           from d in "sales_delivery_attempts",
+             where: ^verified_resend_scope(ticket_issue_id, challenge_id, "dispatching"),
+             order_by: [desc: d.attempt_number, desc: d.id],
+             limit: 1,
+             select: %{id: d.id}
+         ) do
+      %{id: attempt_id} ->
+        resolve_unresolved_dispatching(attempt_id)
+        {:discard, :manual_review}
 
-    eval_resend_attempts(attempts, challenge_id)
+      nil ->
+        cond do
+          Repo.exists?(
+            from d in "sales_delivery_attempts",
+              where: ^verified_resend_scope(ticket_issue_id, challenge_id, "manual_review")
+          ) ->
+            {:discard, :manual_review}
+
+          Repo.exists?(
+            from d in "sales_delivery_attempts",
+              where:
+                ^verified_resend_scope(ticket_issue_id, challenge_id, :with_acceptance_evidence)
+          ) ->
+            recover_consumed_resend_challenge(challenge_id)
+            {:discard, :resend_challenge_already_delivered}
+
+          true ->
+            :ok
+        end
+    end
   end
 
   defp check_ticket_link_ambiguity_guard(_ticket_issue_id, _audit_context), do: :ok
@@ -157,21 +166,27 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     end
   end
 
-  defp eval_resend_attempts(attempts, challenge_id) do
-    cond do
-      dispatching_attempt = Enum.find(attempts, &(&1.status == "dispatching")) ->
-        resolve_unresolved_dispatching(dispatching_attempt.id)
-        {:discard, :manual_review}
+  defp verified_resend_scope(ticket_issue_id, challenge_id, status_or_evidence) do
+    base =
+      dynamic(
+        [d],
+        d.ticket_issue_id == ^ticket_issue_id and
+          d.ticket_resend_challenge_id == ^challenge_id and
+          d.delivery_reason == "verified_ticket_resend" and
+          d.provider == "meta" and
+          d.channel == "whatsapp"
+      )
 
-      Enum.any?(attempts, &(&1.status == "manual_review")) ->
-        {:discard, :manual_review}
+    case status_or_evidence do
+      :with_acceptance_evidence ->
+        dynamic(
+          [d],
+          ^base and not is_nil(d.provider_message_id) and
+            fragment("trim(?) <> ''", d.provider_message_id)
+        )
 
-      Enum.any?(attempts, &(&1.status in ["provider_accepted", "sent", "delivered", "read"])) ->
-        recover_consumed_resend_challenge(challenge_id)
-        {:discard, :resend_challenge_already_delivered}
-
-      true ->
-        :ok
+      status when is_binary(status) ->
+        dynamic([d], ^base and d.status == ^status)
     end
   end
 
