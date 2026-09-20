@@ -46,6 +46,49 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
     refute disabled_again.whatsapp_sales_enabled
   end
 
+  test "real gate and lifecycle transitions update updated_at without fake no-op changes" do
+    event = create_event(%{name: "Gate timestamps"})
+
+    old_timestamp =
+      NaiveDateTime.utc_now()
+      |> NaiveDateTime.add(-3_600, :second)
+      |> NaiveDateTime.truncate(:second)
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, enabled} = Events.enable_whatsapp_sales(event.id)
+    assert NaiveDateTime.compare(enabled.updated_at, old_timestamp) == :gt
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, enabled_again} = Events.enable_whatsapp_sales(event.id)
+    assert enabled_again.updated_at == old_timestamp
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, disabled} = Events.disable_whatsapp_sales(event.id)
+    assert NaiveDateTime.compare(disabled.updated_at, old_timestamp) == :gt
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, disabled_again} = Events.disable_whatsapp_sales(event.id)
+    assert disabled_again.updated_at == old_timestamp
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, archived} = Events.archive_event(event.id)
+    assert archived.status == "archived"
+    assert NaiveDateTime.compare(archived.updated_at, old_timestamp) == :gt
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, archived_again} = Events.archive_event(event.id)
+    assert archived_again.updated_at == old_timestamp
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, unarchived} = Events.unarchive_event(event.id)
+    assert unarchived.status == "active"
+    assert NaiveDateTime.compare(unarchived.updated_at, old_timestamp) == :gt
+
+    set_updated_at!(event.id, old_timestamp)
+    assert {:ok, unarchived_again} = Events.unarchive_event(event.id)
+    assert unarchived_again.updated_at == old_timestamp
+  end
+
   test "archived events cannot be enabled and archive forces the gate off" do
     event = create_event(%{name: "Gate archive"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
@@ -105,6 +148,20 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
     refute unchanged.whatsapp_sales_enabled
   end
 
+  test "generic archive changes report the gate invariant as a safe error" do
+    event = create_event(%{name: "Gate changeset constraint"})
+    assert {:ok, _enabled} = Events.enable_whatsapp_sales(event.id)
+
+    assert {:error, failed_changeset} =
+             Events.update_event(event.id, %{"status" => "archived"})
+
+    assert Keyword.has_key?(failed_changeset.errors, :status)
+
+    persisted = Repo.get!(Event, event.id)
+    assert persisted.status == "active"
+    assert persisted.whatsapp_sales_enabled
+  end
+
   test "the database rejects archived events with the gate enabled" do
     event = create_event(%{name: "Gate constraint"})
 
@@ -114,5 +171,13 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
         [event.id]
       )
     end
+  end
+
+  defp set_updated_at!(event_id, timestamp) do
+    assert {1, nil} =
+             Repo.update_all(
+               from(e in Event, where: e.id == ^event_id),
+               set: [updated_at: timestamp]
+             )
   end
 end

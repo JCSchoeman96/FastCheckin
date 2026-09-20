@@ -294,30 +294,49 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, _normalized)
        when conversation.state == "selecting_ticket_type" do
-    repeat_offer_menu(command, conversation)
+    event_id = Map.get(state_data(conversation), "selected_event_id")
+
+    case ensure_whatsapp_sales_enabled(event_id) do
+      :ok ->
+        repeat_offer_menu(command, conversation)
+
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
+    end
   end
 
   defp dispatch(command, conversation, {:ok, :back})
        when conversation.state == "collecting_quantity" do
     data = state_data(conversation)
     event_id = Map.get(data, "selected_event_id")
-    offers = active_offers(event_id)
 
-    if offers == [] do
-      return_to_refreshed_event_selection(command, conversation)
-    else
-      data =
-        data
-        |> clear_after_offer_selection()
-        |> Map.put("offer_options", option_ids(offers))
+    case ensure_whatsapp_sales_enabled(event_id) do
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
 
-      with {:ok, conversation} <-
-             transition(command, conversation, :return_to_ticket_type_selection, %{
-               state_data: data
-             }) do
-        {:ok,
-         result(conversation, MenuRenderer.offer_menu(language(conversation), offers), command)}
-      end
+      :ok ->
+        offers = active_offers(event_id)
+
+        if offers == [] do
+          return_to_refreshed_event_selection(command, conversation)
+        else
+          data =
+            data
+            |> clear_after_offer_selection()
+            |> Map.put("offer_options", option_ids(offers))
+
+          with {:ok, conversation} <-
+                 transition(command, conversation, :return_to_ticket_type_selection, %{
+                   state_data: data
+                 }) do
+            {:ok,
+             result(
+               conversation,
+               MenuRenderer.offer_menu(language(conversation), offers),
+               command
+             )}
+          end
+        end
     end
   end
 

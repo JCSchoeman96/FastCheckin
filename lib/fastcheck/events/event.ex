@@ -151,6 +151,7 @@ defmodule FastCheck.Events.Event do
     |> validate_inclusion(:status, ["active", "syncing", "archived"])
     |> validate_number(:total_tickets, greater_than_or_equal_to: 0)
     |> check_constraint(:status, name: "events_status_must_be_valid")
+    |> check_constraint(:status, name: "events_whatsapp_sales_archived_invariant")
     |> validate_required([
       :name,
       :tickera_api_key_encrypted,

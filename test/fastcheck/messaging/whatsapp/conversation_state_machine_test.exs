@@ -210,6 +210,60 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute result.response_body =~ event.name
   end
 
+  test "invalid input does not render offers after the selected event is disabled", %{
+    conversation: conversation,
+    event: event
+  } do
+    selecting_offer_menu =
+      conversation
+      |> progress("hi", "gate-stale-invalid-1")
+      |> progress("1", "gate-stale-invalid-2")
+      |> progress("1", "gate-stale-invalid-3")
+      |> progress("1", "gate-stale-invalid-4")
+
+    assert selecting_offer_menu.conversation.state == "selecting_ticket_type"
+    assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
+
+    assert {:ok, result} =
+             handle(selecting_offer_menu.conversation, "not-a-choice", "gate-stale-invalid-5")
+
+    assert result.conversation.state == "main_menu"
+    assert result.response_body =~ "WhatsApp-kaartjieverkope"
+    refute result.response_body =~ "General - R10"
+    assert_flow_fields_absent(result.conversation.state_data)
+    assert Repo.aggregate(from(o in "sales_orders"), :count) == 0
+    assert Repo.aggregate(from(s in "sales_checkout_sessions"), :count) == 0
+    assert Repo.aggregate(from(p in "sales_payment_attempts"), :count) == 0
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+  end
+
+  test "back from quantity does not render offers after the selected event is disabled", %{
+    conversation: conversation,
+    event: event
+  } do
+    collecting_quantity =
+      conversation
+      |> progress("hi", "gate-stale-back-1")
+      |> progress("1", "gate-stale-back-2")
+      |> progress("1", "gate-stale-back-3")
+      |> progress("1", "gate-stale-back-4")
+      |> progress("1", "gate-stale-back-5")
+
+    assert collecting_quantity.conversation.state == "collecting_quantity"
+    assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
+
+    assert {:ok, result} = handle(collecting_quantity.conversation, "0", "gate-stale-back-6")
+
+    assert result.conversation.state == "main_menu"
+    assert result.response_body =~ "WhatsApp-kaartjieverkope"
+    refute result.response_body =~ "General - R10"
+    assert_flow_fields_absent(result.conversation.state_data)
+    assert Repo.aggregate(from(o in "sales_orders"), :count) == 0
+    assert Repo.aggregate(from(s in "sales_checkout_sessions"), :count) == 0
+    assert Repo.aggregate(from(p in "sales_payment_attempts"), :count) == 0
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+  end
+
   test "disabling an event at confirmation creates no new sales side effects", %{
     conversation: conversation,
     event: event,

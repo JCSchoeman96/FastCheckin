@@ -238,9 +238,15 @@ defmodule FastCheck.Events do
           {:ok, Event.t()}
           | {:error, :invalid_event_id | :not_found | :event_archived}
   def enable_whatsapp_sales(event_id) when is_integer(event_id) and event_id > 0 do
+    now = NaiveDateTime.utc_now()
+
     updated_count =
-      from(e in Event, where: e.id == ^event_id and e.status != "archived")
-      |> Repo.update_all(set: [whatsapp_sales_enabled: true])
+      from(e in Event,
+        where:
+          e.id == ^event_id and e.status != "archived" and
+            e.whatsapp_sales_enabled == false
+      )
+      |> Repo.update_all(set: [whatsapp_sales_enabled: true, updated_at: now])
       |> elem(0)
 
     case updated_count do
@@ -251,7 +257,7 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       0 ->
-        case Repo.get(Event, event_id, select: [:id, :status]) do
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
           nil ->
             Logger.info(
               "WhatsApp sales gate event_id=#{event_id} action=enable outcome=not_found"
@@ -265,6 +271,16 @@ defmodule FastCheck.Events do
             )
 
             {:error, :event_archived}
+
+          %Event{whatsapp_sales_enabled: true} ->
+            event = Repo.get!(Event, event_id)
+            invalidate_whatsapp_sales_caches(event_id)
+
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=enable outcome=already_enabled"
+            )
+
+            {:ok, event}
 
           _event ->
             Logger.info(
@@ -282,9 +298,11 @@ defmodule FastCheck.Events do
   @spec disable_whatsapp_sales(integer()) ::
           {:ok, Event.t()} | {:error, :invalid_event_id | :not_found}
   def disable_whatsapp_sales(event_id) when is_integer(event_id) and event_id > 0 do
+    now = NaiveDateTime.utc_now()
+
     updated_count =
-      from(e in Event, where: e.id == ^event_id)
-      |> Repo.update_all(set: [whatsapp_sales_enabled: false])
+      from(e in Event, where: e.id == ^event_id and e.whatsapp_sales_enabled == true)
+      |> Repo.update_all(set: [whatsapp_sales_enabled: false, updated_at: now])
       |> elem(0)
 
     case updated_count do
@@ -295,8 +313,31 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       0 ->
-        Logger.info("WhatsApp sales gate event_id=#{event_id} action=disable outcome=not_found")
-        {:error, :not_found}
+        case Repo.get(Event, event_id, select: [:id, :whatsapp_sales_enabled]) do
+          nil ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=disable outcome=not_found"
+            )
+
+            {:error, :not_found}
+
+          %Event{whatsapp_sales_enabled: false} ->
+            event = Repo.get!(Event, event_id)
+            invalidate_whatsapp_sales_caches(event_id)
+
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=disable outcome=already_disabled"
+            )
+
+            {:ok, event}
+
+          _event ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=disable outcome=not_found"
+            )
+
+            {:error, :not_found}
+        end
     end
   end
 
@@ -476,9 +517,15 @@ defmodule FastCheck.Events do
   """
   @spec archive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
   def archive_event(event_id) when is_integer(event_id) and event_id > 0 do
+    now = NaiveDateTime.utc_now()
+
     case Repo.update_all(
-           from(e in Event, where: e.id == ^event_id),
-           set: [status: "archived", whatsapp_sales_enabled: false]
+           from(e in Event,
+             where:
+               e.id == ^event_id and
+                 (e.status != "archived" or e.whatsapp_sales_enabled == true)
+           ),
+           set: [status: "archived", whatsapp_sales_enabled: false, updated_at: now]
          ) do
       {1, _} ->
         event = Repo.get!(Event, event_id)
@@ -487,7 +534,17 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       {0, _} ->
-        {:error, :not_found}
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+          nil ->
+            {:error, :not_found}
+
+          %Event{status: "archived", whatsapp_sales_enabled: false} = event ->
+            invalidate_whatsapp_sales_caches(event_id)
+            {:ok, Repo.get!(Event, event.id)}
+
+          _event ->
+            {:error, :not_found}
+        end
     end
   end
 
@@ -505,9 +562,15 @@ defmodule FastCheck.Events do
   """
   @spec unarchive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
   def unarchive_event(event_id) when is_integer(event_id) and event_id > 0 do
+    now = NaiveDateTime.utc_now()
+
     case Repo.update_all(
-           from(e in Event, where: e.id == ^event_id),
-           set: [status: "active", whatsapp_sales_enabled: false]
+           from(e in Event,
+             where:
+               e.id == ^event_id and
+                 (e.status != "active" or e.whatsapp_sales_enabled == true)
+           ),
+           set: [status: "active", whatsapp_sales_enabled: false, updated_at: now]
          ) do
       {1, _} ->
         event = Repo.get!(Event, event_id)
@@ -516,7 +579,17 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       {0, _} ->
-        {:error, :not_found}
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+          nil ->
+            {:error, :not_found}
+
+          %Event{status: "active", whatsapp_sales_enabled: false} = event ->
+            invalidate_whatsapp_sales_caches(event_id)
+            {:ok, Repo.get!(Event, event.id)}
+
+          _event ->
+            {:error, :not_found}
+        end
     end
   end
 
