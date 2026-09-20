@@ -194,6 +194,50 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute has_element?(view, "#export-attendees-#{event.id}", "Preparing...")
       refute has_element?(view, "#export-checkins-#{event.id}", "Preparing...")
     end
+
+    test "operator can enable and disable WhatsApp Sales for an event", %{conn: conn} do
+      event = insert_event!(%{name: "WhatsApp Gate Event"})
+
+      {:ok, view, html} = mount_dashboard(conn)
+
+      assert html =~ "WhatsApp Sales:"
+      assert has_element?(view, "#whatsapp-sales-control-#{event.id}", "Disabled")
+      assert has_element?(view, "#enable-whatsapp-sales-#{event.id}", "Enable")
+      refute has_element?(view, "#disable-whatsapp-sales-#{event.id}")
+
+      view
+      |> element("#enable-whatsapp-sales-#{event.id}")
+      |> render_click()
+
+      assert has_element?(view, "#whatsapp-sales-control-#{event.id}", "Enabled")
+      assert has_element?(view, "#disable-whatsapp-sales-#{event.id}", "Disable")
+      refute has_element?(view, "#enable-whatsapp-sales-#{event.id}")
+      assert Events.get_event!(event.id).whatsapp_sales_enabled
+
+      view
+      |> element("#disable-whatsapp-sales-#{event.id}")
+      |> render_click()
+
+      assert has_element?(view, "#whatsapp-sales-control-#{event.id}", "Disabled")
+      assert has_element?(view, "#enable-whatsapp-sales-#{event.id}", "Enable")
+      refute Events.get_event!(event.id).whatsapp_sales_enabled
+    end
+
+    test "archived events never show an enable WhatsApp Sales action", %{conn: conn} do
+      event = insert_event!(%{name: "Archived WhatsApp Gate Event"})
+      assert {:ok, _event} = Events.enable_whatsapp_sales(event.id)
+      assert {:ok, _event} = Events.archive_event(event.id)
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#events-tab-archived")
+      |> render_click()
+
+      assert has_element?(view, "#whatsapp-sales-control-#{event.id}", "Disabled")
+      refute has_element?(view, "#enable-whatsapp-sales-#{event.id}")
+      refute Events.get_event!(event.id).whatsapp_sales_enabled
+    end
   end
 
   describe "event card sync totals" do

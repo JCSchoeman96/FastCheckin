@@ -10,6 +10,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
   alias Ash.Query
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Crypto
+  alias FastCheck.Events
   alias FastCheck.Messaging.WhatsApp.InboundCheckpoint
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
@@ -124,7 +125,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Worker Event",
         scanner_login_code: scanner_code()
       })
@@ -178,7 +179,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Duplicate Worker Event",
         scanner_login_code: scanner_code()
       })
@@ -228,7 +229,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     )
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Retry Event",
         scanner_login_code: scanner_code()
       })
@@ -338,7 +339,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     )
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Distinct Inbound Event",
         scanner_login_code: scanner_code()
       })
@@ -425,7 +426,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Permanent Failure Event",
         scanner_login_code: scanner_code()
       })
@@ -484,7 +485,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Discarded Inbound Event",
         scanner_login_code: scanner_code()
       })
@@ -545,7 +546,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Pruned Inbound Event",
         scanner_login_code: scanner_code()
       })
@@ -609,7 +610,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Concurrent Inbound Event",
         scanner_login_code: scanner_code()
       })
@@ -781,7 +782,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     on_exit(paystack_cleanup)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Retry Checkout Event",
         scanner_login_code: scanner_code()
       })
@@ -855,7 +856,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
     end)
 
     event =
-      SalesWebFixtures.insert_event!(%{
+      insert_whatsapp_event!(%{
         name: "Checkpoint Event",
         scanner_login_code: scanner_code()
       })
@@ -1060,6 +1061,12 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
          }}
       end
     end
+  end
+
+  defp insert_whatsapp_event!(attrs) do
+    event = SalesWebFixtures.insert_event!(attrs)
+    {:ok, event} = Events.enable_whatsapp_sales(event.id)
+    event
   end
 
   defp scanner_code do

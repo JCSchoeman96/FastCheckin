@@ -8,12 +8,15 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Crypto
+  alias FastCheck.Events
   alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.DeliveryAttempt
+  alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
@@ -38,6 +41,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         name: "Voelgoed Live",
         scanner_login_code: scanner_code()
       })
+
+    {:ok, event} = Events.enable_whatsapp_sales(event.id)
 
     offer =
       SalesFixtures.insert_offer!(
@@ -145,6 +150,102 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
         "payment_attempt_id" => state_data["payment_attempt_id"]
       }
     )
+  end
+
+  test "disabled event is omitted from the WhatsApp buy menu", %{
+    conversation: conversation,
+    event: event
+  } do
+    assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
+
+    result =
+      conversation
+      |> progress("hi", "gate-menu-off-1")
+      |> progress("1", "gate-menu-off-2")
+      |> progress("1", "gate-menu-off-3")
+
+    assert result.conversation.state == "main_menu"
+    assert result.response_body =~ "Daar is nie nou kaartjies beskikbaar nie"
+    refute result.response_body =~ "Voelgoed Live"
+  end
+
+  test "all WhatsApp offers disabled removes the event from the buy menu", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    Repo.update_all(
+      from(o in "sales_ticket_offers", where: o.id == ^offer.id),
+      set: [sales_enabled: false]
+    )
+
+    result =
+      conversation
+      |> progress("hi", "gate-offers-disabled-1")
+      |> progress("1", "gate-offers-disabled-2")
+      |> progress("1", "gate-offers-disabled-3")
+
+    assert result.conversation.state == "main_menu"
+    refute result.response_body =~ event.name
+  end
+
+  test "a stale event selection is rejected after the durable gate is disabled", %{
+    conversation: conversation,
+    event: event
+  } do
+    selecting_event =
+      conversation
+      |> progress("hi", "gate-stale-1")
+      |> progress("1", "gate-stale-2")
+      |> progress("1", "gate-stale-3")
+
+    assert selecting_event.conversation.state == "selecting_event"
+    assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
+
+    assert {:ok, result} = handle(selecting_event.conversation, "1", "gate-stale-4")
+    assert result.conversation.state == "main_menu"
+    assert result.response_body =~ "WhatsApp-kaartjieverkope"
+    refute Map.has_key?(result.conversation.state_data, "selected_event_id")
+    refute Map.has_key?(result.conversation.state_data, "selected_offer_id")
+    refute result.response_body =~ event.name
+  end
+
+  test "disabling an event at confirmation creates no new sales side effects", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    confirming =
+      conversation
+      |> progress("hi", "gate-confirm-1")
+      |> progress("1", "gate-confirm-2")
+      |> progress("1", "gate-confirm-3")
+      |> progress("1", "gate-confirm-4")
+      |> progress("1", "gate-confirm-5")
+      |> progress("1", "gate-confirm-6")
+      |> progress("Jan Burger", "gate-confirm-7")
+      |> progress("jan@example.com", "gate-confirm-8")
+
+    assert confirming.conversation.state == "confirming_order"
+    assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
+    assert {:ok, before_inventory} = ReservationLedger.get_availability(offer.id)
+
+    assert {:ok, result} = handle(confirming.conversation, "1", "gate-confirm-9")
+    assert result.conversation.state == "main_menu"
+    assert result.response_body =~ "WhatsApp-kaartjieverkope"
+    assert_flow_fields_absent(result.conversation.state_data)
+    assert Repo.aggregate(from(o in "sales_orders"), :count) == 0
+    assert Repo.aggregate(from(l in "sales_order_lines"), :count) == 0
+    assert Repo.aggregate(from(s in "sales_checkout_sessions"), :count) == 0
+    assert Repo.aggregate(from(p in "sales_payment_attempts"), :count) == 0
+    assert {:ok, after_inventory} = ReservationLedger.get_availability(offer.id)
+    assert after_inventory == before_inventory
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+
+    assert {:ok, _event} = Events.enable_whatsapp_sales(event.id)
+    assert {:ok, restarted} = handle(result.conversation, "1", "gate-confirm-10")
+    assert restarted.conversation.state == "selecting_event"
+    assert restarted.response_body =~ event.name
   end
 
   test "customer can request ticket resend OTP without ticket delivery side effects", %{

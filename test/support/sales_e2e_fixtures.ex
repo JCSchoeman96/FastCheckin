@@ -7,6 +7,7 @@ defmodule FastCheck.SalesE2EFixtures do
 
   alias Ash.Query
   alias FastCheck.Crypto
+  alias FastCheck.Events
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
   alias FastCheck.Repo
@@ -43,6 +44,14 @@ defmodule FastCheck.SalesE2EFixtures do
         max_per_order: Keyword.get(opts, :max_per_order, 5),
         name: Keyword.get(opts, :name, "VS-22 #{channel} Offer")
       )
+
+    event =
+      if channel in ["whatsapp", "all"] do
+        {:ok, enabled_event} = Events.enable_whatsapp_sales(event.id)
+        enabled_event
+      else
+        event
+      end
 
     {event, offer}
   end

@@ -10,6 +10,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Crypto
+  alias FastCheck.Events
   alias FastCheck.Events.Event
   alias FastCheck.Messaging.WhatsApp.FlowResult
   alias FastCheck.Messaging.WhatsApp.InputNormalizer
@@ -238,6 +239,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     data = state_data(conversation)
 
     with {:ok, event_id} <- option_id(data, "event_options", index),
+         :ok <- ensure_whatsapp_sales_enabled(event_id),
          offers when offers != [] <- active_offers(event_id),
          event <- event_label(event_id),
          data <-
@@ -250,7 +252,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       {:ok,
        result(conversation, MenuRenderer.offer_menu(language(conversation), offers), command)}
     else
-      _ -> repeat_event_menu(command, conversation)
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
+
+      _ ->
+        repeat_event_menu(command, conversation)
     end
   end
 
@@ -264,7 +270,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     data = state_data(conversation)
     event_id = Map.get(data, "selected_event_id")
 
-    with {:ok, offer_id} <- option_id(data, "offer_options", index),
+    with :ok <- ensure_whatsapp_sales_enabled(event_id),
+         {:ok, offer_id} <- option_id(data, "offer_options", index),
          {:ok, offer} <- active_offer(event_id, offer_id),
          data <-
            data
@@ -277,7 +284,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            transition(command, conversation, :select_ticket_type, %{state_data: data}) do
       {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
     else
-      _ -> repeat_offer_menu(command, conversation)
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
+
+      _ ->
+        repeat_offer_menu(command, conversation)
     end
   end
 
@@ -573,7 +584,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, {:ok, {:number, 1}})
        when conversation.state == "confirming_order" do
-    PaymentFlow.confirm_checkout_from_conversation(command, conversation)
+    case PaymentFlow.confirm_checkout_from_conversation(command, conversation) do
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
+
+      result ->
+        result
+    end
   end
 
   defp dispatch(command, conversation, _normalized)
@@ -614,7 +631,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
   end
 
-  defp return_to_refreshed_event_selection(command, conversation) do
+  defp return_to_refreshed_event_selection(command, conversation, notice \\ nil) do
     events = sellable_events()
 
     if events == [] do
@@ -622,7 +639,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
              transition(command, conversation, :return_to_main_menu, %{
                state_data: clear_current_flow(state_data(conversation))
              }) do
-        {:ok, result(conversation, MenuRenderer.no_events(language(conversation)), command)}
+        {:ok,
+         result(
+           conversation,
+           unavailable_event_response(language(conversation), notice),
+           command
+         )}
       end
     else
       data =
@@ -634,7 +656,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       with {:ok, conversation} <-
              transition(command, conversation, :return_to_event_selection, %{state_data: data}) do
         {:ok,
-         result(conversation, MenuRenderer.event_menu(language(conversation), events), command)}
+         result(
+           conversation,
+           event_selection_response(language(conversation), events, notice),
+           command
+         )}
       end
     end
   end
@@ -865,7 +891,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp sellable_events do
     events =
       from(e in Event,
-        where: e.status != "archived",
+        where: e.status != "archived" and e.whatsapp_sales_enabled == true,
         order_by: [desc: e.id],
         limit: ^@event_candidate_limit,
         select: %{id: e.id, label: e.name}
@@ -909,6 +935,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp active_offers(_event_id), do: []
 
+  defp ensure_whatsapp_sales_enabled(event_id) when is_integer(event_id) do
+    if Events.whatsapp_sales_enabled?(event_id), do: :ok, else: {:error, :whatsapp_sales_disabled}
+  end
+
+  defp ensure_whatsapp_sales_enabled(_event_id), do: {:error, :whatsapp_sales_disabled}
+
   defp active_offer(event_id, offer_id) do
     event_id
     |> active_offers()
@@ -937,6 +969,21 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     from(e in Event, where: e.id == ^event_id, select: e.name)
     |> Repo.one()
   end
+
+  defp event_selection_response(language, events, :whatsapp_sales_disabled) do
+    MenuRenderer.whatsapp_sales_unavailable(language) <>
+      "\n\n" <> MenuRenderer.event_menu(language, events)
+  end
+
+  defp event_selection_response(language, events, _notice),
+    do: MenuRenderer.event_menu(language, events)
+
+  defp unavailable_event_response(language, :whatsapp_sales_disabled) do
+    MenuRenderer.whatsapp_sales_unavailable(language) <>
+      "\n\n" <> MenuRenderer.no_events(language)
+  end
+
+  defp unavailable_event_response(language, _notice), do: MenuRenderer.no_events(language)
 
   defp clear_current_flow(data), do: drop_flow_keys(data, @all_flow_keys)
 

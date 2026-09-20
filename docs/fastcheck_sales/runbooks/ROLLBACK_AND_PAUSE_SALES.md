@@ -8,12 +8,16 @@ state, or WhatsApp conversations.
 ## Safe Pause Order
 
 1. Pause new customer entrypoints.
-2. Pause WhatsApp outbound checkout/payment-link creation if needed.
-3. Pause admin-assisted checkout creation at `/dashboard/sales/checkout/:event_id`.
-4. Pause internal pilot checkout creation at
+2. For an event-specific pause, use the authenticated event dashboard control to
+   disable `Event.whatsapp_sales_enabled`. This stops new WhatsApp checkout
+   creation for that event while existing orders continue through payment,
+   issuance, and delivery.
+3. Pause WhatsApp outbound checkout/payment-link creation globally if needed.
+4. Pause admin-assisted checkout creation at `/dashboard/sales/checkout/:event_id`.
+5. Pause internal pilot checkout creation at
    `/dashboard/sales/internal-pilot/checkout/:event_id`.
-5. Hide or disable any public-facing launch links if they exist.
-6. Keep operator access to `/dashboard/sales/ops`, `/dashboard/sales/reviews`,
+6. Hide or disable any public-facing launch links if they exist.
+7. Keep operator access to `/dashboard/sales/ops`, `/dashboard/sales/reviews`,
    and order/audit pages available.
 
 ## What Must Continue Running
@@ -65,4 +69,3 @@ or leave revoked tickets scannable.
 - Manual review backlog is understood and assigned.
 - WhatsApp outbound path is healthy if resuming WhatsApp.
 - Launch owner signs off.
-

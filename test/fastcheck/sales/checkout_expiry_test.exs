@@ -8,6 +8,7 @@ defmodule FastCheck.Sales.CheckoutExpiryTest do
   require Ash.Query
 
   alias Ash.Query
+  alias FastCheck.Events
   alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Sales.Checkout
@@ -324,6 +325,7 @@ defmodule FastCheck.Sales.CheckoutExpiryTest do
     event = WebFixtures.insert_event!()
     offer = Fixtures.insert_offer!(event_id: event.id, configured_quantity_available: 10)
     on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
+    assert {:ok, _event} = Events.enable_whatsapp_sales(event.id)
 
     {order, session} = checkout_with_expiry!(offer, minutes_ago: 5)
     before = event_sync_version(order.event_id)

@@ -14,6 +14,7 @@ defmodule FastCheck.Sales.Checkout do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Events
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
@@ -52,7 +53,8 @@ defmodule FastCheck.Sales.Checkout do
           if existing_order do
             build_idempotent_replay(existing_order)
           else
-            with {:ok, offer} <- validate_offer(input, opts, context),
+            with :ok <- validate_whatsapp_sales_gate(input, context),
+                 {:ok, offer} <- validate_offer(input, opts, context),
                  :ok <- validate_quantity_against_offer(input, offer) do
               create_checkout(offer, input, actor, context)
             end
@@ -104,6 +106,16 @@ defmodule FastCheck.Sales.Checkout do
   defp validate_quantity_against_offer(%{quantity: quantity}, %{max_per_order: max}) do
     if quantity > max, do: {:error, :max_per_order_exceeded}, else: :ok
   end
+
+  defp validate_whatsapp_sales_gate(%{event_id: event_id}, %{effective_sales_channel: "whatsapp"}) do
+    if Events.whatsapp_sales_enabled?(event_id) do
+      :ok
+    else
+      {:error, :whatsapp_sales_disabled}
+    end
+  end
+
+  defp validate_whatsapp_sales_gate(_input, _context), do: :ok
 
   defp lookup_idempotent_order(%{idempotency_key: key}) when is_binary(key) and key != "" do
     Order
