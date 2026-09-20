@@ -14,6 +14,7 @@ defmodule FastCheck.Sales.SandboxFixtures do
   alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Crypto
+  alias FastCheck.Events
   alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
   alias FastCheck.Repo
@@ -232,14 +233,7 @@ defmodule FastCheck.Sales.SandboxFixtures do
   end
 
   defp archive_event!(%Event{} = event) do
-    event =
-      event
-      |> Event.changeset(%{status: "archived"})
-      |> Repo.update!()
-
-    Cache.invalidate_event_cache(event.id)
-    Cache.invalidate_events_list_cache()
-
+    {:ok, event} = Events.archive_event(event.id)
     event
   end
 
@@ -439,6 +433,7 @@ defmodule FastCheck.Sales.SandboxFixtures do
   end
 
   defp persist_active_event!(%Event{} = event) do
+    {:ok, event} = Events.enable_whatsapp_sales(event.id)
     Cache.persist_event_cache(event)
     Cache.invalidate_events_list_cache()
     event

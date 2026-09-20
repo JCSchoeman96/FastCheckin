@@ -3,6 +3,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
   use Oban.Testing, repo: FastCheck.Repo
 
   alias Ash.Changeset
+  alias FastCheck.Events
   alias FastCheck.Fixtures
   import Ecto.Query
 
@@ -29,6 +30,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
         name: "VS-19 Event",
         scanner_login_code: scanner_code()
       })
+
+    {:ok, event} = Events.enable_whatsapp_sales(event.id)
 
     offer = SalesFixtures.insert_offer!(event_id: event.id, name: "VS-19 General")
 
@@ -139,6 +142,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
       )
 
     before_count = Repo.one!(from o in "sales_orders", select: count(o.id))
+    assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
     Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
 
     assert {:ok, result} =

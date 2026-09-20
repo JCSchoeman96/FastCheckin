@@ -137,6 +137,10 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
   @spec no_events(String.t() | nil) :: String.t()
   def no_events(language), do: Copy.text(language, :no_events)
 
+  @spec whatsapp_sales_unavailable(String.t() | nil) :: String.t()
+  def whatsapp_sales_unavailable(language),
+    do: Copy.text(language, :whatsapp_sales_unavailable)
+
   @spec help(String.t() | nil) :: String.t()
   def help(language), do: Copy.text(language, :support)
 

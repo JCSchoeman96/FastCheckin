@@ -228,6 +228,139 @@ defmodule FastCheck.Events do
 
   def can_check_in?(_, _), do: {:error, {:event_missing, "Event not available"}}
 
+  @doc """
+  Enables new WhatsApp sales for an event.
+
+  The update is scoped to non-archived rows so an archive racing with this
+  operation cannot leave the durable event gate enabled.
+  """
+  @spec enable_whatsapp_sales(integer()) ::
+          {:ok, Event.t()}
+          | {:error, :invalid_event_id | :not_found | :event_archived}
+  def enable_whatsapp_sales(event_id) when is_integer(event_id) and event_id > 0 do
+    now = NaiveDateTime.utc_now()
+
+    updated_count =
+      from(e in Event,
+        where:
+          e.id == ^event_id and e.status != "archived" and
+            e.whatsapp_sales_enabled == false
+      )
+      |> Repo.update_all(set: [whatsapp_sales_enabled: true, updated_at: now])
+      |> elem(0)
+
+    case updated_count do
+      1 ->
+        event = Repo.get!(Event, event_id)
+        invalidate_whatsapp_sales_caches(event_id)
+        Logger.info("WhatsApp sales gate event_id=#{event_id} action=enable outcome=success")
+        {:ok, event}
+
+      0 ->
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+          nil ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=enable outcome=not_found"
+            )
+
+            {:error, :not_found}
+
+          %Event{status: "archived"} ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=enable outcome=event_archived"
+            )
+
+            {:error, :event_archived}
+
+          %Event{whatsapp_sales_enabled: true} ->
+            event = Repo.get!(Event, event_id)
+            invalidate_whatsapp_sales_caches(event_id)
+
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=enable outcome=already_enabled"
+            )
+
+            {:ok, event}
+
+          _event ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=enable outcome=not_found"
+            )
+
+            {:error, :not_found}
+        end
+    end
+  end
+
+  def enable_whatsapp_sales(_event_id), do: {:error, :invalid_event_id}
+
+  @doc "Disables new WhatsApp sales for an event."
+  @spec disable_whatsapp_sales(integer()) ::
+          {:ok, Event.t()} | {:error, :invalid_event_id | :not_found}
+  def disable_whatsapp_sales(event_id) when is_integer(event_id) and event_id > 0 do
+    now = NaiveDateTime.utc_now()
+
+    updated_count =
+      from(e in Event, where: e.id == ^event_id and e.whatsapp_sales_enabled == true)
+      |> Repo.update_all(set: [whatsapp_sales_enabled: false, updated_at: now])
+      |> elem(0)
+
+    case updated_count do
+      1 ->
+        event = Repo.get!(Event, event_id)
+        invalidate_whatsapp_sales_caches(event_id)
+        Logger.info("WhatsApp sales gate event_id=#{event_id} action=disable outcome=success")
+        {:ok, event}
+
+      0 ->
+        case Repo.get(Event, event_id, select: [:id, :whatsapp_sales_enabled]) do
+          nil ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=disable outcome=not_found"
+            )
+
+            {:error, :not_found}
+
+          %Event{whatsapp_sales_enabled: false} ->
+            event = Repo.get!(Event, event_id)
+            invalidate_whatsapp_sales_caches(event_id)
+
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=disable outcome=already_disabled"
+            )
+
+            {:ok, event}
+
+          _event ->
+            Logger.info(
+              "WhatsApp sales gate event_id=#{event_id} action=disable outcome=not_found"
+            )
+
+            {:error, :not_found}
+        end
+    end
+  end
+
+  def disable_whatsapp_sales(_event_id), do: {:error, :invalid_event_id}
+
+  @doc "Reads the durable event gate used to authorize new WhatsApp checkouts."
+  @spec whatsapp_sales_enabled?(integer()) :: boolean()
+  def whatsapp_sales_enabled?(event_id) when is_integer(event_id) and event_id > 0 do
+    Repo.exists?(
+      from(e in Event,
+        where: e.id == ^event_id and e.status != "archived" and e.whatsapp_sales_enabled == true
+      )
+    )
+  end
+
+  def whatsapp_sales_enabled?(_event_id), do: false
+
+  defp invalidate_whatsapp_sales_caches(event_id) do
+    _ = Cache.invalidate_event_cache(event_id)
+    _ = Cache.invalidate_events_list_cache()
+    :ok
+  end
+
   # Delegation Functions (Backwards Compatibility)
 
   @doc "Lists all cached events."
@@ -384,28 +517,34 @@ defmodule FastCheck.Events do
   """
   @spec archive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
   def archive_event(event_id) when is_integer(event_id) and event_id > 0 do
-    case fetch_cached_event(event_id) do
-      {:ok, %Event{status: "archived"} = event} ->
+    now = NaiveDateTime.utc_now()
+
+    case Repo.update_all(
+           from(e in Event,
+             where:
+               e.id == ^event_id and
+                 (e.status != "archived" or e.whatsapp_sales_enabled == true)
+           ),
+           set: [status: "archived", whatsapp_sales_enabled: false, updated_at: now]
+         ) do
+      {1, _} ->
+        event = Repo.get!(Event, event_id)
+        invalidate_whatsapp_sales_caches(event_id)
+        Logger.info("Archived event #{event_id}")
         {:ok, event}
 
-      {:ok, %Event{} = event} ->
-        event
-        |> Event.changeset(%{status: "archived"})
-        |> Repo.update()
-        |> case do
-          {:ok, updated} ->
-            Cache.invalidate_event_cache(updated.id)
-            Cache.invalidate_events_list_cache()
-            Logger.info("Archived event #{event_id}")
-            {:ok, updated}
+      {0, _} ->
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+          nil ->
+            {:error, :not_found}
 
-          {:error, reason} ->
-            Logger.error("Failed to archive event #{event_id}: #{inspect(reason)}")
-            {:error, reason}
+          %Event{status: "archived", whatsapp_sales_enabled: false} = event ->
+            invalidate_whatsapp_sales_caches(event_id)
+            {:ok, Repo.get!(Event, event.id)}
+
+          _event ->
+            {:error, :not_found}
         end
-
-      {:error, :not_found} ->
-        {:error, :not_found}
     end
   end
 
@@ -423,28 +562,34 @@ defmodule FastCheck.Events do
   """
   @spec unarchive_event(integer()) :: {:ok, Event.t()} | {:error, term()}
   def unarchive_event(event_id) when is_integer(event_id) and event_id > 0 do
-    case fetch_cached_event(event_id) do
-      {:ok, %Event{status: "active"} = event} ->
+    now = NaiveDateTime.utc_now()
+
+    case Repo.update_all(
+           from(e in Event,
+             where:
+               e.id == ^event_id and
+                 (e.status != "active" or e.whatsapp_sales_enabled == true)
+           ),
+           set: [status: "active", whatsapp_sales_enabled: false, updated_at: now]
+         ) do
+      {1, _} ->
+        event = Repo.get!(Event, event_id)
+        invalidate_whatsapp_sales_caches(event_id)
+        Logger.info("Unarchived event #{event_id}")
         {:ok, event}
 
-      {:ok, %Event{} = event} ->
-        event
-        |> Event.changeset(%{status: "active"})
-        |> Repo.update()
-        |> case do
-          {:ok, updated} ->
-            Cache.invalidate_event_cache(updated.id)
-            Cache.invalidate_events_list_cache()
-            Logger.info("Unarchived event #{event_id}")
-            {:ok, updated}
+      {0, _} ->
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+          nil ->
+            {:error, :not_found}
 
-          {:error, reason} ->
-            Logger.error("Failed to unarchive event #{event_id}: #{inspect(reason)}")
-            {:error, reason}
+          %Event{status: "active", whatsapp_sales_enabled: false} = event ->
+            invalidate_whatsapp_sales_caches(event_id)
+            {:ok, Repo.get!(Event, event.id)}
+
+          _event ->
+            {:error, :not_found}
         end
-
-      {:error, :not_found} ->
-        {:error, :not_found}
     end
   end
 

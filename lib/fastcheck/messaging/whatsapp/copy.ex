@@ -66,6 +66,10 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   defp af(:no_events),
     do: "Daar is nie nou kaartjies beskikbaar nie. Probeer asseblief later weer."
 
+  defp af(:whatsapp_sales_unavailable),
+    do:
+      "WhatsApp-kaartjieverkope vir hierdie geleentheid is tans nie beskikbaar nie. Kies asseblief 'n ander geleentheid."
+
   defp af(:support),
     do: "Antwoord met 1 om kaartjies te koop, of kontak ondersteuning as jy hulp nodig het."
 
@@ -126,6 +130,11 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
 
   defp en(:invalid), do: "Please reply with one of the numbers shown."
   defp en(:no_events), do: "No tickets are available right now. Please try again later."
+
+  defp en(:whatsapp_sales_unavailable),
+    do:
+      "WhatsApp ticket sales for this event are temporarily unavailable. Please choose another event."
+
   defp en(:support), do: "Reply with 1 to buy tickets, or contact support if you need help."
   defp en(:cancelled), do: "The conversation has been cancelled. Reply # to start again."
   defp en(_key), do: "Please reply with a valid option."

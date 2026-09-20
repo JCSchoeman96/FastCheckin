@@ -250,6 +250,46 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("enable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param),
+         {:ok, _event} <- Events.enable_whatsapp_sales(event_id) do
+      {:noreply, refresh_events(socket, "WhatsApp Sales enabled for event #{event_id}")}
+    else
+      {:error, reason} ->
+        {:noreply,
+         assign(
+           socket,
+           :sync_status,
+           "Unable to enable WhatsApp Sales: #{whatsapp_sales_error_message(reason)}"
+         )}
+    end
+  end
+
+  def handle_event("enable_whatsapp_sales", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
+  def handle_event("disable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param),
+         {:ok, _event} <- Events.disable_whatsapp_sales(event_id) do
+      {:noreply, refresh_events(socket, "WhatsApp Sales disabled for event #{event_id}")}
+    else
+      {:error, reason} ->
+        {:noreply,
+         assign(
+           socket,
+           :sync_status,
+           "Unable to disable WhatsApp Sales: #{whatsapp_sales_error_message(reason)}"
+         )}
+    end
+  end
+
+  def handle_event("disable_whatsapp_sales", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
   def handle_event("show_edit_form", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
          {:ok, %Event{} = event} <- fetch_event_for_edit(event_id) do
@@ -1101,6 +1141,51 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
 
                 <div class="mt-6 space-y-3">
+                  <div
+                    id={"whatsapp-sales-control-#{event.id}"}
+                    class="flex flex-col gap-2 rounded-xl border border-fc-border-default dark:border-glass-border p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <p class="text-sm font-semibold text-fc-text-primary">
+                      WhatsApp Sales:
+                      <span class={
+                        if(event.whatsapp_sales_enabled && !archived_event,
+                          do: "text-success-dark",
+                          else: "text-fc-text-muted"
+                        )
+                      }>
+                        {if event.whatsapp_sales_enabled && !archived_event,
+                          do: "Enabled",
+                          else: "Disabled"}
+                      </span>
+                    </p>
+
+                    <.button
+                      :if={!archived_event && !event.whatsapp_sales_enabled}
+                      id={"enable-whatsapp-sales-#{event.id}"}
+                      type="button"
+                      phx-click="enable_whatsapp_sales"
+                      phx-value-event_id={event.id}
+                      variant="bordered"
+                      color="success"
+                      size="small"
+                    >
+                      Enable
+                    </.button>
+
+                    <.button
+                      :if={!archived_event && event.whatsapp_sales_enabled}
+                      id={"disable-whatsapp-sales-#{event.id}"}
+                      type="button"
+                      phx-click="disable_whatsapp_sales"
+                      phx-value-event_id={event.id}
+                      variant="bordered"
+                      color="warning"
+                      size="small"
+                    >
+                      Disable
+                    </.button>
+                  </div>
+
                   <div :if={!archived_event} class="space-y-3">
                     <%!-- Sync controls during active sync --%>
                     <div
@@ -2524,6 +2609,22 @@ defmodule FastCheckWeb.DashboardLive do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
+
+  defp whatsapp_sales_error_message(:event_archived),
+    do: "Archived events cannot enable WhatsApp Sales"
+
+  defp whatsapp_sales_error_message(:not_found), do: "Event not found"
+  defp whatsapp_sales_error_message(:invalid_event_id), do: "Invalid event identifier"
+  defp whatsapp_sales_error_message(reason), do: format_error(reason)
+
+  defp refresh_events(socket, status) do
+    refreshed_events = Events.list_events()
+
+    socket
+    |> assign(:events, refreshed_events)
+    |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+    |> assign(:sync_status, status)
+  end
 
   defp filter_events(events, query) when is_binary(query) do
     trimmed = String.trim(query) |> String.downcase()
