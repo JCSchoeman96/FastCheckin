@@ -60,6 +60,94 @@ defmodule FastCheck.Sales.DeliveryAttemptTest do
     assert attempt.ticket_resend_challenge_id == nil
   end
 
+  test "queued attempt transitions to dispatching before provider call" do
+    queued = create_queued_attempt!()
+
+    assert {:ok, dispatching} = update_attempt(queued, :mark_dispatching, %{})
+    assert dispatching.status == "dispatching"
+    assert is_nil(dispatching.provider_status)
+    assert is_nil(dispatching.provider_status_at)
+    assert is_nil(dispatching.provider_message_id)
+
+    # Rejects invalid direct transitions from dispatching to sent/delivered
+    assert {:error, _} =
+             update_attempt(dispatching, :mark_sent, %{sent_at: ~U[2026-07-06 10:00:00Z]})
+
+    assert {:error, _} =
+             update_attempt(dispatching, :mark_delivered, %{
+               delivered_at: ~U[2026-07-06 10:00:00Z]
+             })
+  end
+
+  test "dispatching attempt transitions to provider_accepted with valid WAMID" do
+    queued = create_queued_attempt!()
+    {:ok, dispatching} = update_attempt(queued, :mark_dispatching, %{})
+    accepted_at = ~U[2026-07-06 10:01:00Z]
+
+    assert {:ok, accepted} =
+             update_attempt(dispatching, :mark_provider_accepted, %{
+               provider_message_id: "wamid.from-dispatching",
+               provider_accepted_at: accepted_at
+             })
+
+    assert accepted.status == "provider_accepted"
+    assert accepted.provider_message_id == "wamid.from-dispatching"
+    assert accepted.provider_status == "accepted"
+    assert accepted.provider_accepted_at == accepted_at
+    assert is_nil(accepted.sent_at)
+  end
+
+  test "dispatching attempt transitions to failed for local or safe retry error" do
+    queued = create_queued_attempt!()
+    {:ok, dispatching} = update_attempt(queued, :mark_dispatching, %{})
+    failed_at = ~U[2026-07-06 10:02:00Z]
+
+    assert {:ok, failed} =
+             update_attempt(dispatching, :mark_failed, %{
+               provider_error_code: "131000",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "rate_limited",
+               failed_at: failed_at
+             })
+
+    assert failed.status == "failed"
+    assert failed.failure_reason == "rate_limited"
+    assert is_nil(failed.provider_status)
+    assert is_nil(failed.provider_status_at)
+    assert failed.failed_at == failed_at
+  end
+
+  test "dispatching attempt transitions to manual_review for ambiguous transport outcome" do
+    queued = create_queued_attempt!()
+    {:ok, dispatching} = update_attempt(queued, :mark_dispatching, %{})
+
+    assert {:ok, reviewed} =
+             update_attempt(dispatching, :mark_manual_review, %{
+               provider_error_code: "timeout",
+               provider_error_message: "whatsapp send failed",
+               failure_reason: "ambiguous_transport_outcome",
+               fallback_channel: "manual_review"
+             })
+
+    assert reviewed.status == "manual_review"
+    assert reviewed.failure_reason == "ambiguous_transport_outcome"
+    assert reviewed.fallback_channel == "manual_review"
+    assert is_nil(reviewed.provider_status)
+    assert is_nil(reviewed.provider_status_at)
+  end
+
+  test "dispatching attempts reject cancellation" do
+    queued = create_queued_attempt!()
+    {:ok, dispatching} = update_attempt(queued, :mark_dispatching, %{})
+
+    assert {:error, _changeset} =
+             update_attempt(dispatching, :mark_cancelled, %{
+               failure_reason: "operator_cancelled"
+             })
+
+    assert Repo.get!(DeliveryAttempt, dispatching.id).status == "dispatching"
+  end
+
   test "queued attempts become provider_accepted with a WAMID and no sent timestamp" do
     attempt = create_queued_attempt!()
     accepted_at = ~U[2026-07-05 10:00:00Z]

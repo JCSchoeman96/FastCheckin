@@ -110,7 +110,7 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
       when is_integer(conversation_id) and is_integer(ticket_issue_id) and
              is_integer(ttl_seconds) and ttl_seconds > 0 do
     claim_key(
-      @send_ticket_link_prefix <> "#{conversation_id}:#{ticket_issue_id}",
+      send_ticket_link_identity(conversation_id, ticket_issue_id),
       ttl_seconds,
       redis_name
     )
@@ -119,19 +119,94 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
   def claim_send_ticket_link(_conversation_id, _ticket_issue_id, _ttl_seconds, _redis_name),
     do: {:error, :invalid_args}
 
+  @spec claim_send_ticket_link_for_challenge(
+          integer(),
+          integer(),
+          integer(),
+          pos_integer(),
+          atom()
+        ) ::
+          {:ok, :new | :duplicate} | {:error, term()}
+  def claim_send_ticket_link_for_challenge(
+        conversation_id,
+        ticket_issue_id,
+        ticket_resend_challenge_id,
+        ttl_seconds,
+        redis_name
+      )
+      when is_integer(conversation_id) and is_integer(ticket_issue_id) and
+             is_integer(ticket_resend_challenge_id) and is_integer(ttl_seconds) and
+             ttl_seconds > 0 do
+    claim_key(
+      send_ticket_link_identity(conversation_id, ticket_issue_id, ticket_resend_challenge_id),
+      ttl_seconds,
+      redis_name
+    )
+  end
+
+  def claim_send_ticket_link_for_challenge(
+        _conversation_id,
+        _ticket_issue_id,
+        _ticket_resend_challenge_id,
+        _ttl_seconds,
+        _redis_name
+      ),
+      do: {:error, :invalid_args}
+
   @spec release_send_ticket_link(integer(), integer(), atom()) :: :ok
   def release_send_ticket_link(conversation_id, ticket_issue_id, redis_name \\ FastCheck.Redix)
 
   def release_send_ticket_link(conversation_id, ticket_issue_id, redis_name)
       when is_integer(conversation_id) and is_integer(ticket_issue_id) do
     release_key(
-      @send_ticket_link_prefix <> "#{conversation_id}:#{ticket_issue_id}",
+      send_ticket_link_identity(conversation_id, ticket_issue_id),
       "whatsapp_ticket_link_dedupe_release_failed",
       redis_name
     )
   end
 
   def release_send_ticket_link(_conversation_id, _ticket_issue_id, _redis_name), do: :ok
+
+  @spec release_send_ticket_link_for_challenge(integer(), integer(), integer(), atom()) :: :ok
+  def release_send_ticket_link_for_challenge(
+        conversation_id,
+        ticket_issue_id,
+        ticket_resend_challenge_id,
+        redis_name
+      )
+      when is_integer(conversation_id) and is_integer(ticket_issue_id) and
+             is_integer(ticket_resend_challenge_id) do
+    release_key(
+      send_ticket_link_identity(conversation_id, ticket_issue_id, ticket_resend_challenge_id),
+      "whatsapp_ticket_link_dedupe_release_failed",
+      redis_name
+    )
+  end
+
+  def release_send_ticket_link_for_challenge(
+        _conversation_id,
+        _ticket_issue_id,
+        _ticket_resend_challenge_id,
+        _redis_name
+      ),
+      do: :ok
+
+  @spec send_ticket_link_identity(integer(), integer(), integer() | nil) :: String.t()
+  def send_ticket_link_identity(
+        conversation_id,
+        ticket_issue_id,
+        ticket_resend_challenge_id \\ nil
+      )
+
+  def send_ticket_link_identity(conversation_id, ticket_issue_id, nil),
+    do: @send_ticket_link_prefix <> "#{conversation_id}:#{ticket_issue_id}"
+
+  def send_ticket_link_identity(conversation_id, ticket_issue_id, ticket_resend_challenge_id)
+      when is_integer(conversation_id) and is_integer(ticket_issue_id) and
+             is_integer(ticket_resend_challenge_id) do
+    @send_ticket_link_prefix <>
+      "#{conversation_id}:#{ticket_issue_id}:challenge:#{ticket_resend_challenge_id}"
+  end
 
   defp key(provider_message_id), do: @prefix <> provider_message_id
 

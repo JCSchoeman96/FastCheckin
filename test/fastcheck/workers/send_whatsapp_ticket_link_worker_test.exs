@@ -7,8 +7,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
 
   alias Ash.Changeset
   alias FastCheck.Fixtures
+  alias FastCheck.Messaging.WhatsApp.Dedupe
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Repo
+  alias FastCheck.Sales.DeliveryAttempt
   alias FastCheck.Sales.TicketIssue
   alias FastCheck.Sales.TicketResendChallenge
   alias FastCheck.Tickets.DeliveryToken
@@ -623,8 +625,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
       {:ok,
        %Req.Response{
-         status: 500,
-         body: Jason.encode!(%{"error" => %{"message" => "raw provider message"}})
+         status: 429,
+         body: Jason.encode!(%{"error" => %{"message" => "rate limited"}})
        }}
     end)
 
@@ -641,7 +643,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              %{
                status: "failed",
                provider_error_message: "whatsapp send failed",
-               failure_reason: "server_error",
+               failure_reason: "rate_limited",
                failed_at: failed_at,
                provider_status: nil,
                provider_status_at: nil
@@ -743,7 +745,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 
@@ -795,7 +797,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
         1 ->
           {:ok,
            %Req.Response{
-             status: 500,
+             status: 429,
              body: Jason.encode!(%{"error" => %{"message" => "retry later"}})
            }}
 
@@ -865,13 +867,965 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert_received {:whatsapp_request, _request}
     refute_received {:whatsapp_request, _duplicate}
 
-    assert {:ok, ttl} =
-             Redix.command(FastCheck.Redix, [
-               "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
-             ])
+    challenge_dedupe_key =
+      "fastcheck:whatsapp:dedupe:send_ticket_link:" <>
+        "#{conversation_id}:#{issue_id}:challenge:#{challenge.id}"
+
+    assert {:ok, ttl} = Redix.command(FastCheck.Redix, ["TTL", challenge_dedupe_key])
 
     assert ttl > 0
+  end
+
+  test "marks ambiguous 5xx, timeout, and missing WAMID ticket responses for manual review, holds dedupe",
+       %{} do
+    for provider_result <- [
+          {:http, 500},
+          {:http, 503},
+          :timeout,
+          :missing_wamid
+        ] do
+      %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+        issued_ticket_fixture()
+
+      request_fun =
+        case provider_result do
+          {:http, status} ->
+            fn _request ->
+              {:ok,
+               %Req.Response{
+                 status: status,
+                 body: Jason.encode!(%{"error" => %{"message" => "upstream issue"}})
+               }}
+            end
+
+          :timeout ->
+            fn _request -> {:error, %Req.TransportError{reason: :timeout}} end
+
+          :missing_wamid ->
+            fn _request ->
+              {:ok,
+               %Req.Response{
+                 status: 200,
+                 body: Jason.encode!(%{"messages" => []})
+               }}
+            end
+        end
+
+      Application.put_env(:fastcheck, :whatsapp_request_fun, request_fun)
+
+      assert {:discard, :manual_review} =
+               perform_job(SendWhatsAppTicketLinkWorker, %{
+                 "conversation_id" => conversation_id,
+                 "sales_order_id" => order_id,
+                 "ticket_issue_id" => issue_id
+               })
+
+      assert [
+               %{
+                 status: "manual_review",
+                 failure_reason: "ambiguous_transport_outcome",
+                 fallback_channel: "manual_review",
+                 provider_status: nil,
+                 provider_status_at: nil
+               }
+             ] =
+               Repo.all(
+                 from d in "sales_delivery_attempts",
+                   where: d.ticket_issue_id == ^issue_id,
+                   select:
+                     map(d, [
+                       :status,
+                       :failure_reason,
+                       :fallback_channel,
+                       :provider_status,
+                       :provider_status_at
+                     ])
+               )
+
+      assert {:ok, ttl} =
+               Redix.command(FastCheck.Redix, [
+                 "TTL",
+                 "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               ])
+
+      assert ttl > 0
+    end
+  end
+
+  test "ambiguous ticket delivery blocks re-send after Redis expiry and keeps token stable",
+       %{} do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 503,
+         body: Jason.encode!(%{"error" => %{"message" => "upstream overload"}})
+       }}
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id
+    }
+
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    assert_received {:whatsapp_request, _initial_request}
+
+    token_after_attempt = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    # Simulate Redis dedupe expiry by deleting key
+    dedupe_key = "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+    {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", dedupe_key])
+
+    # Re-executing the job is blocked by DB guard with zero Meta calls and no token rotation
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    refute_received {:whatsapp_request, _second_request}
+
+    assert Repo.get!(TicketIssue, issue_id).delivery_token_hash == token_after_attempt
+
+    assert 1 =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: count(d.id)
+             )
+  end
+
+  test "crash window: unresolved dispatching blocks ticket re-run with zero Meta calls and no rotation",
+       %{} do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.ticket-crash"}]})
+       }}
+    end)
+
+    {:ok, queued} =
+      DeliveryAttempt
+      |> Changeset.for_create(
+        :create_queued,
+        %{
+          sales_order_id: order_id,
+          ticket_issue_id: issue_id,
+          channel: "whatsapp",
+          provider: "meta",
+          recipient: "27***4567",
+          delivery_reason: nil,
+          attempt_number: 1,
+          correlation_id: "whatsapp-ticket-link-#{issue_id}"
+        },
+        actor: system_actor()
+      )
+      |> Ash.create(authorize?: false)
+
+    {:ok, _dispatching} =
+      queued
+      |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+      |> Ash.update(authorize?: false)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id
+    }
+
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    refute_received {:whatsapp_request, _meta_request}
+
+    assert Repo.get!(TicketIssue, issue_id).delivery_token_hash == old_hash
+
+    assert [
+             %{status: "manual_review", failure_reason: "ambiguous_transport_outcome"}
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: map(d, [:status, :failure_reason])
+             )
+  end
+
+  test "verified resend ambiguous outcome holds challenge; same challenge blocked; new challenge sends",
+       %{} do
+    test_pid = self()
+    counter = :counters.new(1, [])
+    request_count = :counters.new(1, [])
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      case :counters.get(counter, 1) do
+        1 ->
+          {:ok,
+           %Req.Response{
+             status: 503,
+             body: Jason.encode!(%{"error" => %{"message" => "upstream overload"}})
+           }}
+
+        _ ->
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body: Jason.encode!(%{"messages" => [%{"id" => "wamid.resend-other-challenge"}]})
+           }}
+      end
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "ticket_resend_challenge_id" => challenge.id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    assert_received {:whatsapp_request, _initial_request}
+    :counters.add(request_count, 1, 1)
+
+    assert %{status: "verified", consumed_at: nil} = resend_challenge_snapshot(challenge.id)
+
+    challenge_dedupe_key =
+      Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge.id)
+
+    {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", challenge_dedupe_key])
+
+    # Same verified challenge re-executes: DB guard blocks before any Meta call
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    refute_received {:whatsapp_request, _blocked_request}
+    assert %{status: "verified", consumed_at: nil} = resend_challenge_snapshot(challenge.id)
+
+    # The blocked re-run re-claims the challenge-scoped dedupe hold
+
+    # A new independently verified challenge is allowed WITHOUT deleting the old challenge key
+    new_challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    assert :ok =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id,
+               "ticket_resend_challenge_id" => new_challenge.id,
+               "delivery_reason" => "verified_ticket_resend"
+             })
+
+    assert_received {:whatsapp_request, _new_challenge_request}
+    :counters.add(request_count, 1, 1)
+
+    assert %{status: "consumed", consumed_at: consumed_at} =
+             resend_challenge_snapshot(new_challenge.id)
+
+    assert consumed_at
+
+    # The old challenge's challenge-scoped dedupe hold is still retained after the new challenge sends
+    assert {:ok, ttl} =
+             Redix.command(FastCheck.Redix, ["TTL", challenge_dedupe_key])
+
+    assert ttl > 0
+
+    assert :counters.get(request_count, 1) == 2
+  end
+
+  test "successful provider acceptance does not permanently block a later ticket re-send", %{} do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body:
+           Jason.encode!(%{
+             "messages" => [%{"id" => "wamid.ticket-#{:counters.get(counter, 1)}"}]
+           })
+       }}
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id
+    }
+
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    # A customer ticket re-request after the dedupe window must still be sendable
+    dedupe_key = "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+    {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", dedupe_key])
+
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    assert_received {:whatsapp_request, _first}
+    assert_received {:whatsapp_request, _second}
+    refute_received {:whatsapp_request, _third}
+
+    assert ["provider_accepted", "provider_accepted"] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 order_by: [asc: d.id],
+                 select: d.status
+             )
+  end
+
+  test "duplicate verified resend enqueue is scoped by challenge id in Oban uniqueness", %{} do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge_a = verified_resend_challenge!(conversation_id, order_id, issue_id)
+    challenge_b = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    base = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    args_a = Map.put(base, "ticket_resend_challenge_id", challenge_a.id)
+    args_b = Map.put(base, "ticket_resend_challenge_id", challenge_b.id)
+
+    assert {:ok, %Oban.Job{conflict?: false}} =
+             Oban.insert(SendWhatsAppTicketLinkWorker.new(args_a))
+
+    assert {:ok, %Oban.Job{conflict?: true}} =
+             Oban.insert(SendWhatsAppTicketLinkWorker.new(args_a))
+
+    assert {:ok, %Oban.Job{conflict?: false}} =
+             Oban.insert(SendWhatsAppTicketLinkWorker.new(args_b))
+  end
+
+  test "same verified challenge never calls Meta again after provider acceptance when consume was lost",
+       %{} do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    # Simulate a past execution that reached provider acceptance and crashed before consuming
+    {:ok, accepted} =
+      DeliveryAttempt
+      |> Changeset.for_create(
+        :create_queued,
+        %{
+          sales_order_id: order_id,
+          ticket_issue_id: issue_id,
+          ticket_resend_challenge_id: challenge.id,
+          channel: "whatsapp",
+          provider: "meta",
+          recipient: "+27***4567",
+          delivery_reason: "verified_ticket_resend",
+          attempt_number: 1,
+          correlation_id: "whatsapp-ticket-link-#{issue_id}"
+        },
+        actor: system_actor()
+      )
+      |> Ash.create(authorize?: false)
+
+    {:ok, dispatchable} =
+      accepted
+      |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+      |> Ash.update(authorize?: false)
+
+    {:ok, _provider_accepted} =
+      dispatchable
+      |> Changeset.for_update(
+        :mark_provider_accepted,
+        %{
+          provider_message_id: "wamid.accepted-before-crash",
+          provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        },
+        actor: system_actor()
+      )
+      |> Ash.update(authorize?: false)
+
+    # Model Redis dedupe expiry between the crashed run and the retry
+    challenge_dedupe_key =
+      Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge.id)
+
+    {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", challenge_dedupe_key])
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "ticket_resend_challenge_id" => challenge.id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("same verified challenge with a prior provider acceptance must not call Meta again")
+    end)
+
+    assert {:discard, :resend_challenge_already_delivered} =
+             perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    refute_received {:whatsapp_request, _meta_request}
+
+    # No token rotation happened
+    assert Repo.get!(TicketIssue, issue_id).delivery_token_hash == old_hash
+
+    # The previously-lost consume step is recovered idempotently
+    assert %{status: "consumed", consumed_at: consumed_at} =
+             resend_challenge_snapshot(challenge.id)
+
+    assert consumed_at
+
+    # No second DeliveryAttempt was created
+    assert 1 =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: count(d.id)
+             )
+  end
+
+  test "same verified challenge stays suppressed after a provider failure post-acceptance", %{} do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    # Simulate a past execution that reached provider acceptance and later failed via the
+    # provider-status reconciliation path (H01A equivalent) before the consume step ran.
+    {:ok, queued} =
+      DeliveryAttempt
+      |> Changeset.for_create(
+        :create_queued,
+        %{
+          sales_order_id: order_id,
+          ticket_issue_id: issue_id,
+          ticket_resend_challenge_id: challenge.id,
+          channel: "whatsapp",
+          provider: "meta",
+          recipient: "+27***4567",
+          delivery_reason: "verified_ticket_resend",
+          attempt_number: 1,
+          correlation_id: "whatsapp-ticket-link-#{issue_id}"
+        },
+        actor: system_actor()
+      )
+      |> Ash.create(authorize?: false)
+
+    {:ok, dispatching} =
+      queued
+      |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+      |> Ash.update(authorize?: false)
+
+    {:ok, accepted} =
+      dispatching
+      |> Changeset.for_update(
+        :mark_provider_accepted,
+        %{
+          provider_message_id: "wamid.accepted-then-provider-failed",
+          provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        },
+        actor: system_actor()
+      )
+      |> Ash.update(authorize?: false)
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {:ok, failed} =
+      accepted
+      |> Changeset.for_update(
+        :mark_provider_failed,
+        %{provider_error_code: "131047", failed_at: now},
+        actor: system_actor()
+      )
+      |> Ash.update(authorize?: false)
+
+    assert failed.status == "failed"
+    assert failed.failure_reason == "provider_status_failed"
+    assert failed.provider_message_id == "wamid.accepted-then-provider-failed"
+
+    # Model Redis dedupe expiry between the crashed run and the retry
+    challenge_dedupe_key =
+      Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge.id)
+
+    {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", challenge_dedupe_key])
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "ticket_resend_challenge_id" => challenge.id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("same verified challenge with a prior provider acceptance must not call Meta again")
+    end)
+
+    assert {:discard, :resend_challenge_already_delivered} =
+             perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    refute_received {:whatsapp_request, _meta_request}
+
+    # No token rotation happened
+    assert Repo.get!(TicketIssue, issue_id).delivery_token_hash == old_hash
+
+    # The never-consumed challenge is recovered idempotently
+    assert %{status: "consumed", consumed_at: consumed_at} =
+             resend_challenge_snapshot(challenge.id)
+
+    assert consumed_at
+
+    # No second DeliveryAttempt was created
+    assert 1 =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: count(d.id)
+             )
+  end
+
+  test "same verified challenge stays suppressed after cancelling a provider-accepted attempt",
+       %{} do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+    old_hash = Repo.get!(TicketIssue, issue_id).delivery_token_hash
+
+    # Simulate a past execution that reached provider acceptance and was later cancelled by an
+    # operator before the consume step ran.
+    {:ok, queued} =
+      DeliveryAttempt
+      |> Changeset.for_create(
+        :create_queued,
+        %{
+          sales_order_id: order_id,
+          ticket_issue_id: issue_id,
+          ticket_resend_challenge_id: challenge.id,
+          channel: "whatsapp",
+          provider: "meta",
+          recipient: "+27***4567",
+          delivery_reason: "verified_ticket_resend",
+          attempt_number: 1,
+          correlation_id: "whatsapp-ticket-link-#{issue_id}"
+        },
+        actor: system_actor()
+      )
+      |> Ash.create(authorize?: false)
+
+    {:ok, dispatching} =
+      queued
+      |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+      |> Ash.update(authorize?: false)
+
+    {:ok, accepted} =
+      dispatching
+      |> Changeset.for_update(
+        :mark_provider_accepted,
+        %{
+          provider_message_id: "wamid.accepted-then-cancelled",
+          provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        },
+        actor: system_actor()
+      )
+      |> Ash.update(authorize?: false)
+
+    {:ok, cancelled} =
+      accepted
+      |> Changeset.for_update(:mark_cancelled, %{failure_reason: "operator_cancelled"},
+        actor: system_actor()
+      )
+      |> Ash.update(authorize?: false)
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.provider_message_id == "wamid.accepted-then-cancelled"
+
+    # Model Redis dedupe expiry between the crashed run and the retry
+    challenge_dedupe_key =
+      Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge.id)
+
+    {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", challenge_dedupe_key])
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "ticket_resend_challenge_id" => challenge.id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("same verified challenge with a prior provider acceptance must not call Meta again")
+    end)
+
+    assert {:discard, :resend_challenge_already_delivered} =
+             perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    refute_received {:whatsapp_request, _meta_request}
+
+    # No token rotation happened
+    assert Repo.get!(TicketIssue, issue_id).delivery_token_hash == old_hash
+
+    # The never-consumed challenge is recovered idempotently
+    assert %{status: "consumed", consumed_at: consumed_at} =
+             resend_challenge_snapshot(challenge.id)
+
+    assert consumed_at
+
+    # No second DeliveryAttempt was created
+    assert 1 =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: count(d.id)
+             )
+  end
+
+  test "a local rate_limited failure without a WAMID keeps the verified resend challenge spendable",
+       %{} do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    # Simulate a past run that failed locally (Meta 429) before any provider acceptance:
+    # guessed-safe, so the challenge must remain spendable for a retry.
+    {:ok, queued} =
+      DeliveryAttempt
+      |> Changeset.for_create(
+        :create_queued,
+        %{
+          sales_order_id: order_id,
+          ticket_issue_id: issue_id,
+          ticket_resend_challenge_id: challenge.id,
+          channel: "whatsapp",
+          provider: "meta",
+          recipient: "+27***4567",
+          delivery_reason: "verified_ticket_resend",
+          attempt_number: 1,
+          correlation_id: "whatsapp-ticket-link-#{issue_id}"
+        },
+        actor: system_actor()
+      )
+      |> Ash.create(authorize?: false)
+
+    {:ok, dispatching} =
+      queued
+      |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+      |> Ash.update(authorize?: false)
+
+    {:ok, failed} =
+      dispatching
+      |> Changeset.for_update(
+        :mark_failed,
+        %{
+          provider_error_code: "130429",
+          provider_error_message: "user is sending too many messages",
+          failure_reason: "rate_limited"
+        },
+        actor: system_actor()
+      )
+      |> Ash.update(authorize?: false)
+
+    assert failed.status == "failed"
+    assert failed.failure_reason == "rate_limited"
+    assert is_nil(failed.provider_message_id)
+    assert is_nil(failed.provider_status)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.post-429-retry"}]})
+       }}
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "ticket_resend_challenge_id" => challenge.id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+
+    assert_received {:whatsapp_request, _retry_request}
+
+    # The challenge is consumed by the successful retry
+    assert %{status: "consumed", consumed_at: consumed_at} =
+             resend_challenge_snapshot(challenge.id)
+
+    assert consumed_at
+
+    # Exactly one new DeliveryAttempt on top of the failed seed
+    assert 2 =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: count(d.id)
+             )
+  end
+
+  test "provider-accepted challenge A does not suppress an independent challenge B resend", %{} do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge_a = verified_resend_challenge!(conversation_id, order_id, issue_id)
+    challenge_b = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body:
+           Jason.encode!(%{
+             "messages" => [%{"id" => "wamid.resend-#{:counters.get(counter, 1)}"}]
+           })
+       }}
+    end)
+
+    base = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    assert :ok =
+             perform_job(
+               SendWhatsAppTicketLinkWorker,
+               Map.put(base, "ticket_resend_challenge_id", challenge_a.id)
+             )
+
+    assert :ok =
+             perform_job(
+               SendWhatsAppTicketLinkWorker,
+               Map.put(base, "ticket_resend_challenge_id", challenge_b.id)
+             )
+
+    assert_received {:whatsapp_request, _a_request}
+    assert_received {:whatsapp_request, _b_request}
+    refute_received {:whatsapp_request, _extra_request}
+
+    assert %{status: "consumed"} = resend_challenge_snapshot(challenge_a.id)
+    assert %{status: "consumed"} = resend_challenge_snapshot(challenge_b.id)
+
+    key_a = Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge_a.id)
+    key_b = Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge_b.id)
+
+    assert {:ok, ttl_a} = Redix.command(FastCheck.Redix, ["TTL", key_a])
+    assert ttl_a > 0
+
+    assert {:ok, ttl_b} = Redix.command(FastCheck.Redix, ["TTL", key_b])
+    assert ttl_b > 0
+  end
+
+  test "verified resend retry within the dedupe TTL is suppressed as an idempotent no-op", %{} do
+    test_pid = self()
+    counter = :counters.new(1, [])
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+      :counters.add(counter, 1, 1)
+
+      {:ok, %Req.Response{status: 503, body: "server error"}}
+    end)
+
+    args = %{
+      "conversation_id" => conversation_id,
+      "sales_order_id" => order_id,
+      "ticket_issue_id" => issue_id,
+      "ticket_resend_challenge_id" => challenge.id,
+      "delivery_reason" => "verified_ticket_resend"
+    }
+
+    # First run is ambiguous: manual_review outcome, challenge NOT consumed, Redis hold retained
+    assert {:discard, :manual_review} = perform_job(SendWhatsAppTicketLinkWorker, args)
+    assert_received {:whatsapp_request, _first_request}
+
+    # A retry of the same job while the challenge-scoped Redis hold is still live
+    assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+    refute_received {:whatsapp_request, _second_request}
+    assert :counters.get(counter, 1) == 1
+
+    assert %{status: "verified"} = resend_challenge_snapshot(challenge.id)
+
+    assert 1 =
+             Repo.one!(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_issue_id == ^issue_id,
+                 select: count(d.id)
+             )
+  end
+
+  test "non-Meta and non-WhatsApp delivery rows cannot block a WhatsApp ticket send", %{} do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    challenge = verified_resend_challenge!(conversation_id, order_id, issue_id)
+
+    # An ambiguity row for the ticket issue that is NOT a Meta WhatsApp attempt
+    seed_delivery_attempt!(order_id, issue_id, %{
+      channel: "email",
+      provider: "braintree",
+      delivery_reason: nil,
+      status: "manual_review"
+    })
+
+    # A provider-accepted row for the SAME resend challenge that is NOT a Meta WhatsApp attempt
+    seed_delivery_attempt!(order_id, issue_id, %{
+      ticket_resend_challenge_id: challenge.id,
+      channel: "email",
+      provider: "braintree",
+      delivery_reason: "verified_ticket_resend",
+      provider_message_id: "external.provider-message-1",
+      status: "provider_accepted"
+    })
+
+    counter = :counters.new(1, [])
+
+    Application.put_env(
+      :fastcheck,
+      :whatsapp_request_fun,
+      fn _request ->
+        send(test_pid, {:whatsapp_request, :request})
+
+        :counters.add(counter, 1, 1)
+
+        {:ok,
+         %Req.Response{
+           status: 200,
+           body:
+             Jason.encode!(%{
+               "messages" => [%{"id" => "wamid.not-blocked-#{:counters.get(counter, 1)}"}]
+             })
+         }}
+      end
+    )
+
+    assert :ok =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id
+             })
+
+    assert :ok =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id,
+               "ticket_resend_challenge_id" => challenge.id,
+               "delivery_reason" => "verified_ticket_resend"
+             })
+
+    assert_received {:whatsapp_request, _ordinary_request}
+    assert_received {:whatsapp_request, _resend_request}
+  end
+
+  test "ambiguity guard stays bounded to blocking statuses across attempt history", %{} do
+    test_pid = self()
+
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    # A large history of non-blocking provider-accepted attempts must not block a fresh send
+    for attempt_number <- 1..10 do
+      seed_delivery_attempt!(order_id, issue_id, %{
+        status: "provider_accepted",
+        attempt_number: attempt_number,
+        provider_message_id: "wamid.history-#{attempt_number}"
+      })
+    end
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.fresh-send"}]})
+       }}
+    end)
+
+    assert :ok =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id
+             })
+
+    assert_received {:whatsapp_request, _fresh_request}
+  end
+
+  test "ambiguity guard detects a blocking row among non-blocking history", %{} do
+    %{conversation_id: conversation_id, order_id: order_id, ticket_issue_id: issue_id} =
+      issued_ticket_fixture()
+
+    for attempt_number <- 1..10 do
+      seed_delivery_attempt!(order_id, issue_id, %{
+        status: "provider_accepted",
+        attempt_number: attempt_number,
+        provider_message_id: "wamid.history-#{attempt_number}"
+      })
+    end
+
+    seed_delivery_attempt!(order_id, issue_id, %{status: "manual_review", attempt_number: 11})
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      flunk("a manual_review row in the history must block a second automatic send")
+    end)
+
+    assert {:discard, :manual_review} =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "conversation_id" => conversation_id,
+               "sales_order_id" => order_id,
+               "ticket_issue_id" => issue_id
+             })
   end
 
   defp extract_ticket_link_token!(body) when is_binary(body) do
@@ -997,6 +1951,60 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       )
 
     conversation_id
+  end
+
+  defp seed_delivery_attempt!(order_id, ticket_issue_id, opts) do
+    attrs = %{
+      sales_order_id: order_id,
+      ticket_issue_id: ticket_issue_id,
+      ticket_resend_challenge_id: Map.get(opts, :ticket_resend_challenge_id),
+      channel: Map.get(opts, :channel, "whatsapp"),
+      provider: Map.get(opts, :provider, "meta"),
+      recipient: "+27***4567",
+      delivery_reason: Map.get(opts, :delivery_reason),
+      attempt_number: Map.get(opts, :attempt_number) || 1,
+      correlation_id: "seed-#{System.unique_integer([:positive])}"
+    }
+
+    assert {:ok, queued} =
+             DeliveryAttempt
+             |> Changeset.for_create(:create_queued, attrs, actor: system_actor())
+             |> Ash.create(authorize?: false)
+
+    {:ok, dispatching} =
+      queued
+      |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+      |> Ash.update(authorize?: false)
+
+    case Map.get(opts, :status, "dispatching") do
+      "provider_accepted" ->
+        {:ok, _accepted} =
+          dispatching
+          |> Changeset.for_update(
+            :mark_provider_accepted,
+            %{
+              provider_message_id: Map.get(opts, :provider_message_id, "wamid.seeded"),
+              provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            },
+            actor: system_actor()
+          )
+          |> Ash.update(authorize?: false)
+
+      "manual_review" ->
+        {:ok, _reviewed} =
+          dispatching
+          |> Changeset.for_update(
+            :mark_manual_review,
+            %{
+              provider_error_code: "timeout",
+              provider_error_message: "whatsapp send failed",
+              failure_reason: "ambiguous_transport_outcome",
+              fallback_channel: "manual_review"
+            },
+            actor: system_actor()
+          )
+          |> Ash.update(authorize?: false)
+    end
   end
 
   defp consume_resend_challenge!(challenge_id) do

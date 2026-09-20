@@ -15,6 +15,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
   alias FastCheck.Messaging.WhatsApp.Client
   alias FastCheck.Messaging.WhatsApp.Dedupe
   alias FastCheck.Messaging.WhatsApp.DeliveryPolicy
+  alias FastCheck.Messaging.WhatsApp.OutboundDeliveryPolicy
   alias FastCheck.Messaging.WhatsApp.TemplateCatalog
   alias FastCheck.Observability.Redactor
   alias FastCheck.Repo
@@ -36,6 +37,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     payment_attempt_id = normalize_id(payment_attempt_id)
 
     with {:ok, :new} <- Dedupe.claim_send_payment_link(conversation_id, order_id),
+         :ok <- check_payment_link_ambiguity_guard(order_id),
          {:ok, conversation} <- load_conversation(conversation_id),
          {:ok, order} <- load_order(order_id),
          {:ok, attempt} <- load_payment_attempt(payment_attempt_id),
@@ -72,6 +74,46 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
 
   def perform(_job), do: {:discard, :invalid_args}
 
+  defp check_payment_link_ambiguity_guard(order_id) do
+    attempts =
+      Repo.all(
+        from d in "sales_delivery_attempts",
+          where:
+            d.sales_order_id == ^order_id and
+              is_nil(d.ticket_issue_id) and
+              d.provider == "meta" and
+              d.channel == "whatsapp" and
+              d.status in ["dispatching", "manual_review"],
+          order_by: [desc: d.attempt_number, desc: d.id],
+          select: %{id: d.id, status: d.status}
+      )
+
+    cond do
+      dispatching_attempt = Enum.find(attempts, &(&1.status == "dispatching")) ->
+        resolve_unresolved_dispatching(dispatching_attempt.id)
+        {:discard, :manual_review}
+
+      Enum.any?(attempts, &(&1.status == "manual_review")) ->
+        {:discard, :manual_review}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp resolve_unresolved_dispatching(attempt_id) do
+    with {:ok, %DeliveryAttempt{} = attempt} <-
+           DeliveryAttempt
+           |> Query.for_read(:get_by_id, %{id: attempt_id})
+           |> Ash.read_one(authorize?: false) do
+      mark_manual_review(
+        attempt,
+        %{status: :ambiguous_transport_outcome},
+        "ambiguous_transport_outcome"
+      )
+    end
+  end
+
   defp payment_body("en", url) do
     "Pay securely with Paystack: #{url}\n\nWe will prepare your ticket once payment is confirmed."
   end
@@ -87,12 +129,14 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
          url,
          release_dedupe
        ) do
-    body = payment_body(conversation.preferred_language, url)
+    with {:ok, delivery_attempt} <- mark_dispatching(delivery_attempt) do
+      body = payment_body(conversation.preferred_language, url)
 
-    Client.send_text(conversation.phone_e164, body,
-      correlation_id: delivery_attempt.correlation_id
-    )
-    |> mark_provider_result(delivery_attempt, release_dedupe)
+      Client.send_text(conversation.phone_e164, body,
+        correlation_id: delivery_attempt.correlation_id
+      )
+      |> mark_provider_result(delivery_attempt, release_dedupe)
+    end
   end
 
   defp deliver_and_mark(
@@ -102,14 +146,16 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
          url,
          release_dedupe
        ) do
-    Client.send_template(
-      conversation.phone_e164,
-      template_key,
-      template.language_code,
-      payment_link_template_components(url),
-      correlation_id: delivery_attempt.correlation_id
-    )
-    |> mark_provider_result(delivery_attempt, release_dedupe)
+    with {:ok, delivery_attempt} <- mark_dispatching(delivery_attempt) do
+      Client.send_template(
+        conversation.phone_e164,
+        template_key,
+        template.language_code,
+        payment_link_template_components(url),
+        correlation_id: delivery_attempt.correlation_id
+      )
+      |> mark_provider_result(delivery_attempt, release_dedupe)
+    end
   end
 
   defp deliver_and_mark(
@@ -139,37 +185,32 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     end
   end
 
-  defp mark_provider_failure(
-         delivery_attempt,
-         %{retryable?: true} = reason,
-         release_dedupe,
-         error
-       ) do
-    _ = mark_failed(delivery_attempt, reason)
-    release_dedupe.()
-    error
-  end
-
-  defp mark_provider_failure(
-         delivery_attempt,
-         %{retryable?: false, status: status} = reason,
-         release_dedupe,
-         _error
-       )
-       when is_atom(status) do
-    case mark_manual_review(delivery_attempt, reason) do
-      {:ok, _delivery_attempt} ->
-        {:discard, :manual_review}
-
-      {:error, _persistence_reason} ->
+  defp mark_provider_failure(delivery_attempt, reason, release_dedupe, error) do
+    case OutboundDeliveryPolicy.classify(reason) do
+      :safe_retry ->
+        _ = mark_failed(delivery_attempt, reason)
         release_dedupe.()
-        {:error, :whatsapp_delivery_attempt_manual_review_failed}
-    end
-  end
+        error
 
-  defp mark_provider_failure(delivery_attempt, reason, _release_dedupe, error) do
-    _ = mark_failed(delivery_attempt, reason)
-    error
+      :ambiguous_manual_review ->
+        case mark_manual_review(delivery_attempt, reason, "ambiguous_transport_outcome") do
+          {:ok, _delivery_attempt} ->
+            {:discard, :manual_review}
+
+          {:error, _persistence_reason} ->
+            {:error, :whatsapp_delivery_attempt_manual_review_failed}
+        end
+
+      :permanent_manual_review ->
+        case mark_manual_review(delivery_attempt, reason) do
+          {:ok, _delivery_attempt} ->
+            {:discard, :manual_review}
+
+          {:error, _persistence_reason} ->
+            release_dedupe.()
+            {:error, :whatsapp_delivery_attempt_manual_review_failed}
+        end
+    end
   end
 
   defp create_delivery_attempt(order, conversation, decision) do
@@ -188,6 +229,12 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     DeliveryAttempt
     |> Changeset.for_create(:create_queued, attrs, actor: system_actor())
     |> Ash.create(authorize?: false)
+  end
+
+  defp mark_dispatching(delivery_attempt) do
+    delivery_attempt
+    |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+    |> Ash.update(authorize?: false)
   end
 
   defp mark_provider_accepted(delivery_attempt, provider_message_id) do
@@ -232,14 +279,14 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
     |> Ash.update(authorize?: false)
   end
 
-  defp mark_manual_review(delivery_attempt, reason) do
+  defp mark_manual_review(delivery_attempt, reason, explicit_failure_reason \\ nil) do
     delivery_attempt
     |> Changeset.for_update(
       :mark_manual_review,
       %{
         provider_error_code: provider_error_code(reason),
         provider_error_message: "whatsapp send failed",
-        failure_reason: failure_reason(reason),
+        failure_reason: explicit_failure_reason || failure_reason(reason),
         fallback_channel: "manual_review"
       },
       actor: system_actor()
@@ -252,6 +299,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorker do
   defp provider_error_code(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp provider_error_code(_reason), do: "whatsapp_send_failed"
 
+  defp failure_reason(%{safe_metadata: %{missing_field: _field}}), do: "missing_config"
   defp failure_reason({:error, reason}), do: failure_reason(reason)
   defp failure_reason(%{status: status}) when is_atom(status), do: Atom.to_string(status)
   defp failure_reason(_reason), do: "whatsapp_send_failed"

@@ -3,20 +3,25 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   Sends a secure ticket page link through WhatsApp after backend issuance exists.
   """
 
-  import Ecto.Query, only: [from: 2]
+  import Ecto.Query, only: [from: 2, dynamic: 2]
 
   require Logger
 
   use Oban.Worker,
     queue: :whatsapp_outbound,
     max_attempts: 5,
-    unique: [period: 600, fields: [:args], keys: [:conversation_id, :ticket_issue_id]]
+    unique: [
+      period: 600,
+      fields: [:args],
+      keys: [:conversation_id, :ticket_issue_id, :ticket_resend_challenge_id]
+    ]
 
   alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Messaging.WhatsApp.Client
   alias FastCheck.Messaging.WhatsApp.Dedupe
   alias FastCheck.Messaging.WhatsApp.DeliveryPolicy
+  alias FastCheck.Messaging.WhatsApp.OutboundDeliveryPolicy
   alias FastCheck.Messaging.WhatsApp.TicketLinkRenderer
   alias FastCheck.Observability.Redactor
   alias FastCheck.Repo
@@ -50,12 +55,8 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
              order_id,
              ticket_issue_id
            ),
-         {:ok, :new} <-
-           Dedupe.claim_send_ticket_link(
-             conversation_id,
-             ticket_issue_id,
-             ticket_delivery_dedupe_ttl_seconds()
-           ),
+         {:ok, :new} <- claim_ticket_link_dedupe(conversation_id, ticket_issue_id, audit_context),
+         :ok <- check_ticket_link_ambiguity_guard(ticket_issue_id, audit_context),
          {:ok, conversation} <- load_conversation(conversation_id),
          {:ok, order} <- load_order(order_id),
          :ok <- ensure_order_deliverable(order),
@@ -70,7 +71,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
            create_delivery_attempt(order, ticket_issue, conversation, decision, audit_context),
          {:ok, _delivery_attempt} <-
            deliver_and_mark(delivery_attempt, conversation, decision, url, fn ->
-             Dedupe.release_send_ticket_link(conversation_id, ticket_issue_id)
+             release_ticket_link_dedupe(conversation_id, ticket_issue_id, audit_context)
            end),
          :ok <- consume_resend_challenge(resend_challenge_id) do
       :ok
@@ -93,6 +94,143 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   end
 
   def perform(_job), do: {:discard, :invalid_args}
+
+  defp check_ticket_link_ambiguity_guard(ticket_issue_id, %{delivery_reason: nil}) do
+    attempts =
+      Repo.all(
+        from d in "sales_delivery_attempts",
+          where:
+            d.ticket_issue_id == ^ticket_issue_id and
+              is_nil(d.delivery_reason) and
+              d.provider == "meta" and
+              d.channel == "whatsapp" and
+              d.status in ["dispatching", "manual_review"],
+          order_by: [desc: d.attempt_number, desc: d.id],
+          select: %{id: d.id, status: d.status}
+      )
+
+    eval_ambiguity_attempts(attempts)
+  end
+
+  defp check_ticket_link_ambiguity_guard(ticket_issue_id, %{
+         delivery_reason: "verified_ticket_resend",
+         ticket_resend_challenge_id: challenge_id
+       })
+       when is_integer(challenge_id) do
+    case Repo.one(
+           from d in "sales_delivery_attempts",
+             where: ^verified_resend_scope(ticket_issue_id, challenge_id, "dispatching"),
+             order_by: [desc: d.attempt_number, desc: d.id],
+             limit: 1,
+             select: %{id: d.id}
+         ) do
+      %{id: attempt_id} ->
+        resolve_unresolved_dispatching(attempt_id)
+        {:discard, :manual_review}
+
+      nil ->
+        cond do
+          Repo.exists?(
+            from d in "sales_delivery_attempts",
+              where: ^verified_resend_scope(ticket_issue_id, challenge_id, "manual_review")
+          ) ->
+            {:discard, :manual_review}
+
+          Repo.exists?(
+            from d in "sales_delivery_attempts",
+              where:
+                ^verified_resend_scope(ticket_issue_id, challenge_id, :with_acceptance_evidence)
+          ) ->
+            recover_consumed_resend_challenge(challenge_id)
+            {:discard, :resend_challenge_already_delivered}
+
+          true ->
+            :ok
+        end
+    end
+  end
+
+  defp check_ticket_link_ambiguity_guard(_ticket_issue_id, _audit_context), do: :ok
+
+  defp eval_ambiguity_attempts(attempts) do
+    cond do
+      dispatching_attempt = Enum.find(attempts, &(&1.status == "dispatching")) ->
+        resolve_unresolved_dispatching(dispatching_attempt.id)
+        {:discard, :manual_review}
+
+      Enum.any?(attempts, &(&1.status == "manual_review")) ->
+        {:discard, :manual_review}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp verified_resend_scope(ticket_issue_id, challenge_id, status_or_evidence) do
+    base =
+      dynamic(
+        [d],
+        d.ticket_issue_id == ^ticket_issue_id and
+          d.ticket_resend_challenge_id == ^challenge_id and
+          d.delivery_reason == "verified_ticket_resend" and
+          d.provider == "meta" and
+          d.channel == "whatsapp"
+      )
+
+    case status_or_evidence do
+      :with_acceptance_evidence ->
+        dynamic(
+          [d],
+          ^base and not is_nil(d.provider_message_id) and
+            fragment("trim(?) <> ''", d.provider_message_id)
+        )
+
+      status when is_binary(status) ->
+        dynamic([d], ^base and d.status == ^status)
+    end
+  end
+
+  defp recover_consumed_resend_challenge(challenge_id) do
+    case load_resend_challenge(challenge_id) do
+      {:ok, %TicketResendChallenge{status: "verified", consumed_at: nil} = challenge} ->
+        case challenge
+             |> Changeset.for_update(
+               :mark_consumed,
+               %{consumed_at: DateTime.utc_now() |> DateTime.truncate(:second)},
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false) do
+          {:ok, _challenge} ->
+            :ok
+
+          {:error, _reason} ->
+            Logger.warning("whatsapp_resend_challenge_recovery_failed",
+              source: "send_whatsapp_ticket_link_worker"
+            )
+
+            :ok
+        end
+
+      {:ok, _challenge} ->
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp resolve_unresolved_dispatching(attempt_id) do
+    with {:ok, %DeliveryAttempt{} = attempt} <-
+           DeliveryAttempt
+           |> Query.for_read(:get_by_id, %{id: attempt_id})
+           |> Ash.read_one(authorize?: false) do
+      mark_manual_review(
+        attempt,
+        %{status: :ambiguous_transport_outcome},
+        "ambiguous_transport_outcome"
+      )
+    end
+  end
 
   defp validate_delivery_audit(
          nil,
@@ -201,12 +339,14 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
          url,
          release_dedupe
        ) do
-    body = TicketLinkRenderer.ticket_link(conversation.preferred_language, url)
+    with {:ok, delivery_attempt} <- mark_dispatching(delivery_attempt) do
+      body = TicketLinkRenderer.ticket_link(conversation.preferred_language, url)
 
-    Client.send_text(conversation.phone_e164, body,
-      correlation_id: delivery_attempt.correlation_id
-    )
-    |> mark_provider_result(delivery_attempt, release_dedupe)
+      Client.send_text(conversation.phone_e164, body,
+        correlation_id: delivery_attempt.correlation_id
+      )
+      |> mark_provider_result(delivery_attempt, release_dedupe)
+    end
   end
 
   defp deliver_and_mark(
@@ -216,14 +356,16 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
          url,
          release_dedupe
        ) do
-    Client.send_template(
-      conversation.phone_e164,
-      template_key,
-      template.language_code,
-      ticket_link_template_components(url),
-      correlation_id: delivery_attempt.correlation_id
-    )
-    |> mark_provider_result(delivery_attempt, release_dedupe)
+    with {:ok, delivery_attempt} <- mark_dispatching(delivery_attempt) do
+      Client.send_template(
+        conversation.phone_e164,
+        template_key,
+        template.language_code,
+        ticket_link_template_components(url),
+        correlation_id: delivery_attempt.correlation_id
+      )
+      |> mark_provider_result(delivery_attempt, release_dedupe)
+    end
   end
 
   defp deliver_and_mark(
@@ -253,31 +395,32 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     end
   end
 
-  defp mark_provider_failure(
-         delivery_attempt,
-         %{retryable?: true} = reason,
-         release_dedupe,
-         error
-       ) do
-    _ = mark_failed(delivery_attempt, reason)
-    release_dedupe.()
-    error
-  end
+  defp mark_provider_failure(delivery_attempt, reason, release_dedupe, error) do
+    case OutboundDeliveryPolicy.classify(reason) do
+      :safe_retry ->
+        _ = mark_failed(delivery_attempt, reason)
+        release_dedupe.()
+        error
 
-  defp mark_provider_failure(
-         delivery_attempt,
-         %{status: status} = reason,
-         _release_dedupe,
-         _error
-       )
-       when status in [:auth_error, :validation_error] do
-    _ = mark_manual_review(delivery_attempt, reason)
-    {:discard, :manual_review}
-  end
+      :ambiguous_manual_review ->
+        case mark_manual_review(delivery_attempt, reason, "ambiguous_transport_outcome") do
+          {:ok, _delivery_attempt} ->
+            {:discard, :manual_review}
 
-  defp mark_provider_failure(delivery_attempt, reason, _release_dedupe, error) do
-    _ = mark_failed(delivery_attempt, reason)
-    error
+          {:error, _persistence_reason} ->
+            {:error, :whatsapp_delivery_attempt_manual_review_failed}
+        end
+
+      :permanent_manual_review ->
+        case mark_manual_review(delivery_attempt, reason) do
+          {:ok, _delivery_attempt} ->
+            {:discard, :manual_review}
+
+          {:error, _persistence_reason} ->
+            release_dedupe.()
+            {:error, :whatsapp_delivery_attempt_manual_review_failed}
+        end
+    end
   end
 
   defp create_delivery_attempt(order, ticket_issue, conversation, decision, audit_context) do
@@ -298,6 +441,12 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     DeliveryAttempt
     |> Changeset.for_create(:create_queued, attrs, actor: system_actor())
     |> Ash.create(authorize?: false)
+  end
+
+  defp mark_dispatching(delivery_attempt) do
+    delivery_attempt
+    |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+    |> Ash.update(authorize?: false)
   end
 
   defp mark_provider_accepted(delivery_attempt, provider_message_id) do
@@ -342,14 +491,14 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     |> Ash.update(authorize?: false)
   end
 
-  defp mark_manual_review(delivery_attempt, reason) do
+  defp mark_manual_review(delivery_attempt, reason, explicit_failure_reason \\ nil) do
     delivery_attempt
     |> Changeset.for_update(
       :mark_manual_review,
       %{
         provider_error_code: provider_error_code(reason),
         provider_error_message: "whatsapp send failed",
-        failure_reason: failure_reason(reason),
+        failure_reason: explicit_failure_reason || failure_reason(reason),
         fallback_channel: "manual_review"
       },
       actor: system_actor()
@@ -467,6 +616,45 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   defp normalize_optional_id(nil), do: nil
   defp normalize_optional_id(""), do: nil
   defp normalize_optional_id(id), do: normalize_id(id)
+
+  defp claim_ticket_link_dedupe(conversation_id, ticket_issue_id, %{
+         delivery_reason: "verified_ticket_resend",
+         ticket_resend_challenge_id: challenge_id
+       })
+       when is_integer(challenge_id) do
+    Dedupe.claim_send_ticket_link_for_challenge(
+      conversation_id,
+      ticket_issue_id,
+      challenge_id,
+      ticket_delivery_dedupe_ttl_seconds(),
+      FastCheck.Redix
+    )
+  end
+
+  defp claim_ticket_link_dedupe(conversation_id, ticket_issue_id, _audit_context) do
+    Dedupe.claim_send_ticket_link(
+      conversation_id,
+      ticket_issue_id,
+      ticket_delivery_dedupe_ttl_seconds()
+    )
+  end
+
+  defp release_ticket_link_dedupe(conversation_id, ticket_issue_id, %{
+         delivery_reason: "verified_ticket_resend",
+         ticket_resend_challenge_id: challenge_id
+       })
+       when is_integer(challenge_id) do
+    Dedupe.release_send_ticket_link_for_challenge(
+      conversation_id,
+      ticket_issue_id,
+      challenge_id,
+      FastCheck.Redix
+    )
+  end
+
+  defp release_ticket_link_dedupe(conversation_id, ticket_issue_id, _audit_context) do
+    Dedupe.release_send_ticket_link(conversation_id, ticket_issue_id)
+  end
 
   defp ticket_delivery_dedupe_ttl_seconds do
     Application.get_env(:fastcheck, :whatsapp_ticket_delivery_dedupe_ttl_seconds, 86_400)
