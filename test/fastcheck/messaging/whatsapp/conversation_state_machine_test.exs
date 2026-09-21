@@ -152,6 +152,79 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     )
   end
 
+  test "stale offer selection is rejected after admin changes price before confirmation", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    confirming =
+      conversation
+      |> progress("hi", "offer-stale-1")
+      |> progress("1", "offer-stale-2")
+      |> progress("1", "offer-stale-3")
+      |> progress("1", "offer-stale-4")
+      |> progress("1", "offer-stale-5")
+      |> progress("1", "offer-stale-6")
+      |> progress("Jan Burger", "offer-stale-7")
+      |> progress("jan@example.com", "offer-stale-8")
+
+    assert confirming.conversation.state == "confirming_order"
+    assert confirming.conversation.state_data["selected_offer_lock_version"] == offer.lock_version
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{price_cents: 2_000},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: false)
+
+    {request_fun, counter} = PaymentSupport.flunk_paystack_request_fun()
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+
+    assert {:ok, result} = handle(confirming.conversation, "1", "offer-stale-9")
+    assert result.conversation.state == "selecting_ticket_type"
+    assert result.response_body =~ "verander"
+    refute result.conversation.state_data["selected_offer_id"]
+    assert :counters.get(counter, 1) == 0
+
+    assert Repo.aggregate(from(o in "sales_orders", select: count()), :count, :id) == 0
+    assert Repo.aggregate(from(ol in "sales_order_lines", select: count()), :count, :id) == 0
+
+    assert Repo.aggregate(from(cs in "sales_checkout_sessions", select: count()), :count, :id) ==
+             0
+
+    assert Repo.aggregate(from(pa in "sales_payment_attempts", select: count()), :count, :id) == 0
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+
+    assert {:ok, reselected} = handle(result.conversation, "1", "offer-stale-10")
+    assert reselected.conversation.state == "collecting_quantity"
+    assert reselected.conversation.state_data["selected_offer_price_cents"] == 2_000
+
+    assert {:ok, qty_result} = handle(reselected.conversation, "1", "offer-stale-11")
+    assert {:ok, name_result} = handle(qty_result.conversation, "Jan Burger", "offer-stale-12")
+
+    assert {:ok, email_result} =
+             handle(name_result.conversation, "jan@example.com", "offer-stale-13")
+
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
+    assert {:ok, checkout_result} = handle(email_result.conversation, "1", "offer-stale-14")
+    assert checkout_result.conversation.state == "payment_pending"
+
+    order_id = checkout_result.conversation.state_data["sales_order_id"]
+
+    line =
+      Repo.one!(
+        from(ol in "sales_order_lines",
+          where: ol.sales_order_id == ^order_id,
+          select: %{unit_amount_cents: ol.unit_amount_cents}
+        )
+      )
+
+    assert line.unit_amount_cents == 2_000
+  end
+
   test "disabled event is omitted from the WhatsApp buy menu", %{
     conversation: conversation,
     event: event

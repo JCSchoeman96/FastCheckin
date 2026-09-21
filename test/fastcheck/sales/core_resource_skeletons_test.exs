@@ -71,6 +71,7 @@ defmodule FastCheck.Sales.CoreResourceSkeletonsTest do
     assert :enable_sales in action_names
     assert :disable_sales in action_names
     assert :list_active_for_event in action_names
+    assert :list_manageable_for_event in action_names
     assert :get_available_for_checkout in action_names
   end
 
@@ -81,6 +82,7 @@ defmodule FastCheck.Sales.CoreResourceSkeletonsTest do
       :name,
       :ticket_type,
       :price_cents,
+      :regular_price_cents,
       :currency,
       :configured_quantity_available,
       :initial_quantity,

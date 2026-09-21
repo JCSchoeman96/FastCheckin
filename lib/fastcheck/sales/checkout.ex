@@ -31,7 +31,8 @@ defmodule FastCheck.Sales.Checkout do
           required(:source_channel) => String.t(),
           required(:idempotency_key) => String.t(),
           optional(:correlation_id) => String.t() | nil,
-          required(:event_name) => String.t()
+          required(:event_name) => String.t(),
+          optional(:expected_offer_lock_version) => integer() | nil
         }
 
   @checkout_actor_types [:system, :admin, :customer_session]
@@ -55,6 +56,7 @@ defmodule FastCheck.Sales.Checkout do
           else
             with :ok <- validate_whatsapp_sales_gate(input, context),
                  {:ok, offer} <- validate_offer(input, opts, context),
+                 :ok <- validate_offer_lock_version(input, offer),
                  :ok <- validate_quantity_against_offer(input, offer) do
               create_checkout(offer, input, actor, context)
             end
@@ -106,6 +108,15 @@ defmodule FastCheck.Sales.Checkout do
   defp validate_quantity_against_offer(%{quantity: quantity}, %{max_per_order: max}) do
     if quantity > max, do: {:error, :max_per_order_exceeded}, else: :ok
   end
+
+  defp validate_offer_lock_version(%{expected_offer_lock_version: expected}, %{
+         lock_version: current
+       })
+       when is_integer(expected) and is_integer(current) do
+    if expected == current, do: :ok, else: {:error, :offer_changed}
+  end
+
+  defp validate_offer_lock_version(_input, _offer), do: :ok
 
   defp validate_whatsapp_sales_gate(%{event_id: event_id}, %{effective_sales_channel: "whatsapp"}) do
     if Events.whatsapp_sales_enabled?(event_id) do

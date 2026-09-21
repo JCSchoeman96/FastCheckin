@@ -47,6 +47,8 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/delivery_attempt.ex",
              "lib/fastcheck/sales/manual_review.ex",
              "lib/fastcheck/sales/manual_review_action.ex",
+             "lib/fastcheck/sales/money_input.ex",
+             "lib/fastcheck/sales/offer_management.ex",
              "lib/fastcheck/sales/ops_metrics.ex",
              "lib/fastcheck/sales/order.ex",
              "lib/fastcheck/sales/order_line.ex",

@@ -176,7 +176,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
       source_channel: "whatsapp",
       idempotency_key: "whatsapp:conversation:#{conversation.id}:checkout",
       correlation_id: command.correlation_id,
-      event_name: Map.fetch!(data, "selected_event_label")
+      event_name: Map.fetch!(data, "selected_event_label"),
+      expected_offer_lock_version: Map.get(data, "selected_offer_lock_version")
     }
 
     actor = customer_actor(input.event_id)

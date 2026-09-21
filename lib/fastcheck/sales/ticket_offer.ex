@@ -19,6 +19,13 @@ defmodule FastCheck.Sales.TicketOffer do
     repo(FastCheck.Repo)
 
     identity_index_names(unique_active_name_per_event: "sales_ticket_offers_active_name_uidx")
+
+    check_constraints do
+      check_constraint(:regular_price_cents, "sales_ticket_offers_regular_price_invariant",
+        check: "regular_price_cents IS NULL OR regular_price_cents >= price_cents",
+        message: "regular reference price must be greater than or equal to the selling price"
+      )
+    end
   end
 
   actions do
@@ -32,6 +39,7 @@ defmodule FastCheck.Sales.TicketOffer do
         :name,
         :ticket_type,
         :price_cents,
+        :regular_price_cents,
         :currency,
         :configured_quantity_available,
         :initial_quantity,
@@ -43,8 +51,12 @@ defmodule FastCheck.Sales.TicketOffer do
         :archived_at
       ])
 
+      change(&normalize_regular_price_cents/2)
+
       validate(present([:event_id, :name, :ticket_type, :sales_channel]))
       validate(compare(:price_cents, greater_than_or_equal_to: 0))
+      validate(compare(:regular_price_cents, greater_than_or_equal_to: 0))
+      validate(&validate_regular_price_invariant/2)
       validate(compare(:configured_quantity_available, greater_than_or_equal_to: 0))
       validate(compare(:initial_quantity, greater_than_or_equal_to: 0))
       validate(compare(:max_per_order, greater_than_or_equal_to: 1))
@@ -61,6 +73,7 @@ defmodule FastCheck.Sales.TicketOffer do
         :name,
         :ticket_type,
         :price_cents,
+        :regular_price_cents,
         :currency,
         :configured_quantity_available,
         :initial_quantity,
@@ -72,9 +85,12 @@ defmodule FastCheck.Sales.TicketOffer do
       ])
 
       change(optimistic_lock(:lock_version))
+      change(&normalize_regular_price_cents/2)
       change(&attach_cache_invalidation/2)
 
       validate(compare(:price_cents, greater_than_or_equal_to: 0))
+      validate(compare(:regular_price_cents, greater_than_or_equal_to: 0))
+      validate(&validate_regular_price_invariant/2)
       validate(compare(:configured_quantity_available, greater_than_or_equal_to: 0))
       validate(compare(:initial_quantity, greater_than_or_equal_to: 0))
       validate(compare(:max_per_order, greater_than_or_equal_to: 1))
@@ -143,6 +159,24 @@ defmodule FastCheck.Sales.TicketOffer do
       )
     end
 
+    read :list_manageable_for_event do
+      argument :event_id, :integer do
+        allow_nil?(false)
+      end
+
+      filter(
+        expr(
+          event_id == ^arg(:event_id) and is_nil(archived_at) and
+            (sales_channel == "whatsapp" or sales_channel == "all")
+        )
+      )
+
+      prepare(fn query, _context ->
+        Ash.Query.sort(query, name: :asc)
+        |> Ash.Query.limit(100)
+      end)
+    end
+
     read :get_available_for_checkout do
       get?(true)
 
@@ -191,6 +225,11 @@ defmodule FastCheck.Sales.TicketOffer do
       )
     end
 
+    policy action(:list_manageable_for_event) do
+      access_type(:strict)
+      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
+    end
+
     policy action([:create_offer, :update_offer, :enable_sales, :disable_sales]) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
@@ -211,6 +250,10 @@ defmodule FastCheck.Sales.TicketOffer do
         {FastCheck.Sales.PolicyChecks.EventAllowed,
          actor_types: [:admin, :operator, :customer_session]}
       )
+    end
+
+    policy action(:list_manageable_for_event) do
+      authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, actor_types: [:admin]})
     end
   end
 
@@ -242,6 +285,10 @@ defmodule FastCheck.Sales.TicketOffer do
 
     attribute :price_cents, :integer do
       allow_nil?(false)
+    end
+
+    attribute :regular_price_cents, :integer do
+      allow_nil?(true)
     end
 
     attribute :currency, :string do
@@ -305,5 +352,42 @@ defmodule FastCheck.Sales.TicketOffer do
       CacheInvalidation.invalidate_event_offers(record.event_id)
       {:ok, record}
     end)
+  end
+
+  defp normalize_regular_price_cents(changeset, _context) do
+    regular = Changeset.get_attribute(changeset, :regular_price_cents)
+    price = current_price_cents(changeset)
+
+    if is_integer(regular) and is_integer(price) and regular == price do
+      Changeset.force_change_attribute(changeset, :regular_price_cents, nil)
+    else
+      changeset
+    end
+  end
+
+  defp validate_regular_price_invariant(changeset, _context) do
+    regular = Changeset.get_attribute(changeset, :regular_price_cents)
+    price = current_price_cents(changeset)
+
+    cond do
+      is_nil(regular) ->
+        :ok
+
+      not is_integer(regular) or not is_integer(price) ->
+        :ok
+
+      regular < price ->
+        {:error,
+         field: :regular_price_cents,
+         message: "must be greater than or equal to the selling price"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp current_price_cents(changeset) do
+    Changeset.get_attribute(changeset, :price_cents) ||
+      Changeset.get_data(changeset, :price_cents)
   end
 end

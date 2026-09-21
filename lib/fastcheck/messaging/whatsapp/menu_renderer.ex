@@ -36,6 +36,11 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     render_offer_options(language, Copy.text(language, :choose_ticket_type), offers)
   end
 
+  @spec offer_changed_notice(String.t() | nil) :: String.t()
+  def offer_changed_notice(language) do
+    Copy.text(language, :offer_changed)
+  end
+
   @spec confirm_order(String.t() | nil, map()) :: String.t()
   def confirm_order(language, summary) when is_map(summary) do
     buyer_name =
