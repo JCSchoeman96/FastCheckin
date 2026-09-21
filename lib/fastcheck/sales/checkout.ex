@@ -31,7 +31,8 @@ defmodule FastCheck.Sales.Checkout do
           required(:source_channel) => String.t(),
           required(:idempotency_key) => String.t(),
           optional(:correlation_id) => String.t() | nil,
-          required(:event_name) => String.t()
+          required(:event_name) => String.t(),
+          optional(:expected_offer_lock_version) => integer() | nil
         }
 
   @checkout_actor_types [:system, :admin, :customer_session]
@@ -106,6 +107,34 @@ defmodule FastCheck.Sales.Checkout do
   defp validate_quantity_against_offer(%{quantity: quantity}, %{max_per_order: max}) do
     if quantity > max, do: {:error, :max_per_order_exceeded}, else: :ok
   end
+
+  defp validate_offer_lock_version(input, offer, %{effective_sales_channel: "whatsapp"}) do
+    validate_required_whatsapp_offer_lock_version(input, offer)
+  end
+
+  defp validate_offer_lock_version(input, offer, _context) do
+    validate_optional_offer_lock_version(input, offer)
+  end
+
+  defp validate_required_whatsapp_offer_lock_version(
+         %{expected_offer_lock_version: expected},
+         %{lock_version: current}
+       )
+       when is_integer(expected) and expected > 0 and is_integer(current) do
+    if expected == current, do: :ok, else: {:error, :offer_changed}
+  end
+
+  defp validate_required_whatsapp_offer_lock_version(_input, _offer),
+    do: {:error, :offer_changed}
+
+  defp validate_optional_offer_lock_version(%{expected_offer_lock_version: expected}, %{
+         lock_version: current
+       })
+       when is_integer(expected) and is_integer(current) do
+    if expected == current, do: :ok, else: {:error, :offer_changed}
+  end
+
+  defp validate_optional_offer_lock_version(_input, _offer), do: :ok
 
   defp validate_whatsapp_sales_gate(%{event_id: event_id}, %{effective_sales_channel: "whatsapp"}) do
     if Events.whatsapp_sales_enabled?(event_id) do
@@ -186,17 +215,29 @@ defmodule FastCheck.Sales.Checkout do
     |> Ash.read_one(authorize?: false)
   end
 
-  defp validate_offer(input, opts, _context) do
+  defp validate_offer(input, opts, context) do
     offer_id = Map.fetch!(input, :ticket_offer_id)
     event_id = Map.fetch!(input, :event_id)
     as_of = DateTime.utc_now() |> DateTime.truncate(:second)
     effective_channel = effective_sales_channel(Map.get(input, :source_channel), opts)
 
     case load_offer(offer_id) do
-      {:ok, nil} -> {:error, :offer_not_found}
-      {:ok, offer} -> validate_offer_record(offer, event_id, as_of, effective_channel)
-      {:error, _} = error -> error
+      {:ok, nil} ->
+        {:error, :offer_not_found}
+
+      {:ok, offer} ->
+        with :ok <- validate_offer_event_scope(offer, event_id),
+             :ok <- validate_offer_lock_version(input, offer, context) do
+          validate_offer_eligibility(offer, as_of, effective_channel)
+        end
+
+      {:error, _} = error ->
+        error
     end
+  end
+
+  defp validate_offer_event_scope(offer, event_id) do
+    if offer.event_id == event_id, do: :ok, else: {:error, :offer_not_found}
   end
 
   defp load_offer(offer_id) do
@@ -207,11 +248,8 @@ defmodule FastCheck.Sales.Checkout do
     |> Ash.read_one(authorize?: false)
   end
 
-  defp validate_offer_record(offer, event_id, as_of, effective_channel) do
+  defp validate_offer_eligibility(offer, as_of, effective_channel) do
     cond do
-      offer.event_id != event_id ->
-        {:error, :offer_not_found}
-
       not is_nil(offer.archived_at) or offer.sales_enabled != true ->
         {:error, :sales_disabled}
 

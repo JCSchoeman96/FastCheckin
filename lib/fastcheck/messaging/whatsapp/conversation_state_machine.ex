@@ -38,7 +38,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     "selected_offer_label",
     "selected_offer_max_per_order",
     "selected_offer_price_cents",
-    "selected_offer_currency"
+    "selected_offer_currency",
+    "selected_offer_lock_version"
   ]
   @buyer_keys [
     "buyer_name",
@@ -279,7 +280,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            |> Map.put("selected_offer_label", offer.name)
            |> Map.put("selected_offer_max_per_order", offer.max_per_order)
            |> Map.put("selected_offer_price_cents", offer.price_cents)
-           |> Map.put("selected_offer_currency", offer.currency),
+           |> Map.put("selected_offer_currency", offer.currency)
+           |> Map.put("selected_offer_lock_version", offer.lock_version),
          {:ok, conversation} <-
            transition(command, conversation, :select_ticket_type, %{state_data: data}) do
       {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
@@ -607,6 +609,15 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       {:error, :whatsapp_sales_disabled} ->
         return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
 
+      {:error, reason}
+      when reason in [
+             :offer_changed,
+             :sales_disabled,
+             :sales_window_closed,
+             :sales_channel_unavailable
+           ] ->
+        return_to_refreshed_offer_selection(command, conversation, :offer_changed)
+
       result ->
         result
     end
@@ -648,6 +659,10 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, _normalized) do
     {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
+  end
+
+  defp return_to_refreshed_offer_selection(command, conversation, notice) do
+    refresh_ticket_type_selection(command, conversation, notice: notice)
   end
 
   defp return_to_refreshed_event_selection(command, conversation, notice \\ nil) do
@@ -699,18 +714,63 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp repeat_offer_menu(command, conversation) do
-    data = state_data(conversation)
-    offers = active_offers(Map.get(data, "selected_event_id"))
+    refresh_ticket_type_selection(command, conversation, invalid_input: true)
+  end
 
-    {:ok,
-     result(
-       conversation,
-       MenuRenderer.invalid_input(
-         language(conversation),
-         MenuRenderer.offer_menu(language(conversation), offers)
-       ),
-       command
-     )}
+  defp refresh_ticket_type_selection(command, conversation, opts) do
+    data = state_data(conversation)
+    event_id = Map.get(data, "selected_event_id")
+    notice = Keyword.get(opts, :notice)
+    invalid_input? = Keyword.get(opts, :invalid_input, false)
+
+    case ensure_whatsapp_sales_enabled(event_id) do
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
+
+      :ok ->
+        offers = active_offers(event_id)
+
+        if offers == [] do
+          return_to_refreshed_event_selection(command, conversation, notice)
+        else
+          refreshed_data =
+            data
+            |> clear_after_offer_selection()
+            |> Map.put("offer_options", option_ids(offers))
+
+          menu =
+            offer_menu_response(
+              language(conversation),
+              offers,
+              notice: notice,
+              invalid_input: invalid_input?
+            )
+
+          with {:ok, conversation} <-
+                 transition(command, conversation, :return_to_ticket_type_selection, %{
+                   state_data: refreshed_data
+                 }) do
+            {:ok, result(conversation, menu, command)}
+          end
+        end
+    end
+  end
+
+  defp offer_menu_response(language, offers, opts) do
+    notice = Keyword.get(opts, :notice)
+    invalid_input? = Keyword.get(opts, :invalid_input, false)
+    base_menu = MenuRenderer.offer_menu(language, offers)
+
+    cond do
+      invalid_input? ->
+        MenuRenderer.invalid_input(language, base_menu)
+
+      notice ->
+        offer_selection_response(language, offers, notice)
+
+      true ->
+        base_menu
+    end
   end
 
   defp repeat_resend_name_prompt(command, conversation) do
@@ -942,7 +1002,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
             name: &1.name,
             max_per_order: &1.max_per_order,
             price_cents: &1.price_cents,
-            currency: &1.currency
+            currency: &1.currency,
+            lock_version: &1.lock_version
           }
         )
         |> Enum.take(@menu_limit)
@@ -996,6 +1057,14 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp event_selection_response(language, events, _notice),
     do: MenuRenderer.event_menu(language, events)
+
+  defp offer_selection_response(language, offers, :offer_changed) do
+    MenuRenderer.offer_changed_notice(language) <>
+      "\n\n" <> MenuRenderer.offer_menu(language, offers)
+  end
+
+  defp offer_selection_response(language, offers, _notice),
+    do: MenuRenderer.offer_menu(language, offers)
 
   defp unavailable_event_response(language, :whatsapp_sales_disabled) do
     MenuRenderer.whatsapp_sales_unavailable(language) <>

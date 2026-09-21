@@ -62,6 +62,32 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   def initialize_offer(offer_id, _configured_quantity),
     do: {:error, :invalid_quantity, %{offer_id: offer_id}}
 
+  @spec initialize_offer_if_absent(integer(), integer()) ::
+          :ok | {:error, atom(), map()}
+  def initialize_offer_if_absent(offer_id, configured_quantity)
+      when is_integer(offer_id) and is_integer(configured_quantity) do
+    if configured_quantity < 0 do
+      {:error, :invalid_quantity, %{offer_id: offer_id}}
+    else
+      RedisScripts.initialize_offer_if_absent(
+        offer_id: offer_id,
+        keys: [inventory_key(offer_id)],
+        argv: [
+          Integer.to_string(offer_id),
+          Integer.to_string(configured_quantity),
+          Integer.to_string(now_ms())
+        ]
+      )
+      |> case do
+        {:ok, %{initialized: true}} -> :ok
+        {:error, _atom, _meta} = error -> error
+      end
+    end
+  end
+
+  def initialize_offer_if_absent(offer_id, _configured_quantity),
+    do: {:error, :invalid_quantity, %{offer_id: offer_id}}
+
   @spec reserve(integer(), String.t(), integer(), integer(), String.t()) ::
           {:ok, map()} | {:error, atom(), map()}
   def reserve(offer_id, order_public_reference, quantity, ttl_seconds, idempotency_key) do

@@ -9,6 +9,33 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   @dedupe_ttl_seconds 86_400
   @order_lock_ttl_ms 5_000
 
+  @initialize_if_absent_script """
+  local inventory_key = KEYS[1]
+
+  local offer_id = ARGV[1]
+  local configured_quantity = ARGV[2]
+  local now_ms = ARGV[3]
+
+  if redis.call("EXISTS", inventory_key) == 1 then
+    return {"ALREADY_INITIALIZED"}
+  end
+
+  redis.call(
+    "HSET",
+    inventory_key,
+    "offer_id", offer_id,
+    "configured_quantity", configured_quantity,
+    "available_quantity", configured_quantity,
+    "reserved_quantity", "0",
+    "consumed_quantity", "0",
+    "revision", "1",
+    "ledger_state", "healthy",
+    "updated_at", now_ms
+  )
+
+  return {"INITIALIZED"}
+  """
+
   @reserve_script """
   local inventory_key = KEYS[1]
   local holds_key = KEYS[2]
@@ -528,6 +555,9 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   return {"EXPIRED"}
   """
 
+  @spec initialize_offer_if_absent(keyword()) :: {:ok, map()} | {:error, atom(), map()}
+  def initialize_offer_if_absent(opts), do: eval_script(@initialize_if_absent_script, opts)
+
   @spec reserve(keyword()) :: {:ok, map()} | {:error, atom(), map()}
   def reserve(opts), do: eval_script(@reserve_script, opts)
 
@@ -597,6 +627,11 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
 
     {:ok, payload}
   end
+
+  defp decode_response(["INITIALIZED"], _offer_id), do: {:ok, %{initialized: true}}
+
+  defp decode_response(["ALREADY_INITIALIZED"], offer_id),
+    do: {:error, :already_initialized, %{offer_id: offer_id}}
 
   defp decode_response(["EXPIRED"], _offer_id), do: {:ok, %{expired: true}}
   defp decode_response(["SKIP_MISSING"], _offer_id), do: {:ok, %{skipped: :missing}}

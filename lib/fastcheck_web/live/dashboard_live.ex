@@ -1184,6 +1184,15 @@ defmodule FastCheckWeb.DashboardLive do
                     >
                       Disable
                     </.button>
+
+                    <.link
+                      :if={!archived_event}
+                      id={"manage-whatsapp-offers-#{event.id}"}
+                      navigate={~p"/dashboard/events/#{event.id}/whatsapp-offers"}
+                      class="text-sm font-medium text-primary hover:underline"
+                    >
+                      Manage WhatsApp tickets
+                    </.link>
                   </div>
 
                   <div :if={!archived_event} class="space-y-3">

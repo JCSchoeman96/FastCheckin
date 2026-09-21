@@ -3,6 +3,7 @@ defmodule FastCheck.Sales.TicketOfferTest do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Repo
   alias FastCheck.Sales.TicketOffer
 
   @event_id 12_001
@@ -146,6 +147,75 @@ defmodule FastCheck.Sales.TicketOfferTest do
       |> Ash.read!(authorize?: true)
 
     assert Enum.map(results, & &1.id) == [active.id]
+  end
+
+  test "regular_price_cents nil and valid reference pricing" do
+    actor = admin_actor([@event_id])
+
+    offer =
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        valid_offer_attrs(@event_id, %{regular_price_cents: 15_000, price_cents: 10_000}),
+        actor: actor,
+        authorize?: true
+      )
+      |> Ash.create!(authorize?: true)
+
+    assert offer.regular_price_cents == 15_000
+
+    assert_raise Ash.Error.Invalid, fn ->
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        valid_offer_attrs(@event_id, %{regular_price_cents: 9_000, price_cents: 10_000}),
+        actor: actor,
+        authorize?: true
+      )
+      |> Ash.create!(authorize?: true)
+    end
+  end
+
+  test "database check constraint rejects invalid regular_price_cents" do
+    assert_raise Postgrex.Error, fn ->
+      Repo.query!(
+        """
+        INSERT INTO sales_ticket_offers
+          (event_id, name, ticket_type, price_cents, regular_price_cents, currency,
+           configured_quantity_available, initial_quantity, max_per_order, sales_enabled,
+           sales_channel, lock_version, inserted_at, updated_at)
+        VALUES
+          ($1, 'Bad Regular', 'bad', 10000, 5000, 'ZAR', 10, 10, 1, false, 'whatsapp', 1, now(), now())
+        """,
+        [@event_id]
+      )
+    end
+  end
+
+  test "list_manageable_for_event scopes to event and whatsapp-compatible channels" do
+    whatsapp = insert_offer!(event_id: @event_id, sales_channel: "whatsapp")
+    all_channel = insert_offer!(event_id: @event_id, sales_channel: "all")
+    _admin = insert_offer!(event_id: @event_id, sales_channel: "admin")
+
+    _archived =
+      insert_offer!(
+        event_id: @event_id,
+        archived_at: DateTime.utc_now(),
+        sales_channel: "whatsapp"
+      )
+
+    _other_event = insert_offer!(event_id: @event_id + 1, sales_channel: "whatsapp")
+
+    results =
+      TicketOffer
+      |> Query.for_read(:list_manageable_for_event, %{event_id: @event_id},
+        actor: admin_actor([@event_id]),
+        authorize?: true
+      )
+      |> Ash.read!(authorize?: true)
+
+    assert Enum.map(results, & &1.id) |> Enum.sort() ==
+             Enum.sort([whatsapp.id, all_channel.id])
   end
 
   test "get_available_for_checkout only returns durable eligible offer" do
