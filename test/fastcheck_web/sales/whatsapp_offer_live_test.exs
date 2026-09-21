@@ -102,6 +102,32 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
     assert has_element?(view, "#manage-whatsapp-offers-#{event.id}", "Manage WhatsApp tickets")
   end
 
+  test "inventory initialization failure still shows persisted disabled offer", %{
+    conn: conn,
+    event: event
+  } do
+    SalesFixtures.with_redis_stopped(fn ->
+      assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+      view
+      |> form("#whatsapp-offer-create-form", %{
+        "offer_create" => %{
+          "name" => "Partial Create Offer",
+          "price" => "88",
+          "regular_price" => "",
+          "initial_quantity" => "5",
+          "max_per_order" => "1"
+        }
+      })
+      |> render_submit()
+
+      html = render(view)
+      assert html =~ "Partial Create Offer"
+      assert html =~ "Retry inventory setup"
+      assert html =~ "live inventory could not be initialized"
+    end)
+  end
+
   test "stale optimistic lock conflict reloads safely", %{conn: conn, event: event} do
     offer =
       SalesFixtures.insert_offer!(

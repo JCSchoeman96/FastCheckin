@@ -1,11 +1,9 @@
 defmodule FastCheck.Sales.OfferManagementTest do
   use FastCheck.DataCase, async: false
 
-  require Ash.Query
-  require Ash.Expr
+  import Ecto.Query
 
   alias Ash.Changeset
-  alias Ash.Query
   alias FastCheck.Repo
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.OfferManagement
@@ -147,6 +145,165 @@ defmodule FastCheck.Sales.OfferManagementTest do
     assert updated.regular_price_cents == 9500
     assert updated.max_per_order == 2
     assert updated.configured_quantity_available == 12
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "create_offer persists disabled offer when redis initialization fails", %{
+    event: event,
+    actor: actor
+  } do
+    SalesFixtures.with_redis_stopped(fn ->
+      assert {:error, :inventory_initialization_failed} =
+               OfferManagement.create_offer(actor, event.id, %{
+                 "name" => "Redis Down Create",
+                 "price" => "60",
+                 "initial_quantity" => "8",
+                 "max_per_order" => "1",
+                 "sales_enabled" => "true"
+               })
+
+      offer =
+        Repo.one!(
+          from(o in "sales_ticket_offers",
+            where: o.name == "Redis Down Create" and o.event_id == ^event.id,
+            select: map(o, [:id, :sales_enabled])
+          )
+        )
+
+      refute offer.sales_enabled
+      assert {:error, _, _} = ReservationLedger.get_availability(offer.id)
+    end)
+  end
+
+  test "safe retry refuses offers referenced by order lines", %{event: event, actor: actor} do
+    offer =
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        %{
+          event_id: event.id,
+          name: "Order Line Offer",
+          ticket_type: "order_line_offer",
+          price_cents: 5000,
+          currency: "ZAR",
+          configured_quantity_available: 4,
+          initial_quantity: 4,
+          max_per_order: 1,
+          sales_enabled: false,
+          sales_channel: "whatsapp"
+        },
+        actor: actor
+      )
+      |> Ash.create!(authorize?: true)
+
+    order_id =
+      Repo.query!(
+        """
+        INSERT INTO sales_orders
+          (public_reference, event_id, buyer_name, buyer_phone, buyer_email, source_channel,
+           status, total_amount_cents, currency, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 'Buyer', '+27820000000', 'buyer@example.com', 'whatsapp',
+           'draft', 5000, 'ZAR', now(), now())
+        RETURNING id
+        """,
+        ["FC-#{System.unique_integer([:positive])}", event.id]
+      )
+      |> Map.fetch!(:rows)
+      |> List.first()
+      |> List.first()
+
+    Repo.query!(
+      """
+      INSERT INTO sales_order_lines
+        (sales_order_id, ticket_offer_id, line_number, ticket_type, offer_name_snapshot,
+         event_name_snapshot, quantity, unit_amount_cents, total_amount_cents, currency,
+         inserted_at, updated_at)
+      VALUES
+        ($1, $2, 1, 'general', 'Order Line Offer', 'Event', 1, 5000, 5000, 'ZAR', now(), now())
+      """,
+      [order_id, offer.id]
+    )
+
+    assert {:error, :inventory_retry_not_allowed} =
+             OfferManagement.retry_inventory_initialization(actor, event.id, offer.id)
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "safe retry refuses an already-existing redis ledger", %{event: event, actor: actor} do
+    {:ok, offer} =
+      OfferManagement.create_offer(actor, event.id, %{
+        "name" => "Existing Ledger",
+        "price" => "40",
+        "initial_quantity" => "6",
+        "max_per_order" => "1"
+      })
+
+    assert {:error, :inventory_retry_not_allowed} =
+             OfferManagement.retry_inventory_initialization(actor, event.id, offer.id)
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "safe retry refuses redis unavailable state", %{event: event, actor: actor} do
+    offer =
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        %{
+          event_id: event.id,
+          name: "Retry Redis Down",
+          ticket_type: "retry_redis_down",
+          price_cents: 5000,
+          currency: "ZAR",
+          configured_quantity_available: 3,
+          initial_quantity: 3,
+          max_per_order: 1,
+          sales_enabled: false,
+          sales_channel: "whatsapp"
+        },
+        actor: actor
+      )
+      |> Ash.create!(authorize?: true)
+
+    SalesFixtures.with_redis_stopped(fn ->
+      assert {:error, :inventory_retry_not_allowed} =
+               OfferManagement.retry_inventory_initialization(actor, event.id, offer.id)
+    end)
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "enable_offer refuses durable and redis configured quantity mismatch", %{
+    event: event,
+    actor: actor
+  } do
+    offer =
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        %{
+          event_id: event.id,
+          name: "Mismatch Inventory",
+          ticket_type: "mismatch_inventory",
+          price_cents: 5000,
+          currency: "ZAR",
+          configured_quantity_available: 10,
+          initial_quantity: 10,
+          max_per_order: 1,
+          sales_enabled: false,
+          sales_channel: "whatsapp"
+        },
+        actor: actor
+      )
+      |> Ash.create!(authorize?: true)
+
+    assert :ok = ReservationLedger.initialize_offer(offer.id, 7)
+
+    assert {:error, :inventory_not_ready} =
+             OfferManagement.enable_offer(actor, event.id, offer.id)
 
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
   end

@@ -798,6 +798,7 @@ defmodule FastCheck.Workers.WhatsAppInboundWorkerTest do
       "selected_offer_max_per_order" => offer.max_per_order,
       "selected_offer_price_cents" => offer.price_cents,
       "selected_offer_currency" => offer.currency,
+      "selected_offer_lock_version" => offer.lock_version,
       "quantity" => 1,
       "buyer_name" => "Retry Buyer",
       "buyer_email" => "retry-buyer@example.com"

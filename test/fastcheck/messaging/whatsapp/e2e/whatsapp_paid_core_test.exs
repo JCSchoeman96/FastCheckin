@@ -236,6 +236,7 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
       "selected_event_label" => event.name,
       "selected_offer_id" => offer.id,
       "selected_offer_label" => offer.name,
+      "selected_offer_lock_version" => offer.lock_version,
       "quantity" => 1,
       "buyer_name" => "VS-22 Buyer",
       "buyer_email" => "vs22-buyer@example.com"

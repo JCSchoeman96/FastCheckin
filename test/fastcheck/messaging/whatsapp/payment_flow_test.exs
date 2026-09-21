@@ -117,7 +117,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
   } do
     {:ok, %{order: order}} =
       Checkout.start_checkout(
-        %{
+        SalesFixtures.checkout_input(%{
           event_id: event.id,
           ticket_offer_id: offer.id,
           quantity: 1,
@@ -128,7 +128,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
           idempotency_key: "status-#{System.unique_integer([:positive])}",
           correlation_id: "corr-status",
           event_name: event.name
-        },
+        }),
         %{actor_type: :customer_session, actor_id: "customer-1", allowed_event_ids: [event.id]}
       )
 
@@ -188,6 +188,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
       "selected_event_label" => event.name,
       "selected_offer_id" => offer.id,
       "selected_offer_label" => offer.name,
+      "selected_offer_lock_version" => offer.lock_version,
       "quantity" => 1,
       "buyer_name" => "Jan Burger",
       "buyer_email" => buyer_email

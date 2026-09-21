@@ -27,6 +27,57 @@ defmodule FastCheck.Sales.CheckoutOfferVersionTest do
     {:ok, event: event, offer: offer, actor: actor}
   end
 
+  test "fresh whatsapp checkout without expected offer lock version fails closed", %{
+    event: event,
+    offer: offer,
+    actor: actor
+  } do
+    input =
+      SalesFixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        source_channel: "whatsapp",
+        skip_whatsapp_lock_version: true
+      })
+
+    assert {:error, :offer_changed} = Checkout.start_checkout(input, actor)
+
+    assert Repo.aggregate(from(o in "sales_orders", select: count()), :count, :id) == 0
+    assert Repo.aggregate(from(ol in "sales_order_lines", select: count()), :count, :id) == 0
+
+    assert Repo.aggregate(from(cs in "sales_checkout_sessions", select: count()), :count, :id) ==
+             0
+
+    assert Repo.aggregate(from(pa in "sales_payment_attempts", select: count()), :count, :id) ==
+             0
+  end
+
+  test "non-whatsapp checkout does not require expected offer lock version", %{
+    event: event
+  } do
+    admin_offer =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        sales_channel: "admin",
+        name: "Admin Counter"
+      )
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(admin_offer.id) end)
+
+    input =
+      SalesFixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: admin_offer.id,
+        source_channel: "admin",
+        skip_whatsapp_lock_version: true
+      })
+
+    assert {:ok, %{order: order}} =
+             Checkout.start_checkout(input, SalesFixtures.admin_actor([event.id]))
+
+    assert order.source_channel == "admin"
+  end
+
   test "checkout rejects stale expected offer lock version with zero side effects", %{
     event: event,
     offer: offer,
@@ -75,7 +126,9 @@ defmodule FastCheck.Sales.CheckoutOfferVersionTest do
     )
     |> Ash.update!(authorize?: false)
 
-    assert {:ok, %{order: replayed}} = Checkout.start_checkout(input, actor)
+    replay_input = Map.delete(input, :expected_offer_lock_version)
+
+    assert {:ok, %{order: replayed}} = Checkout.start_checkout(replay_input, actor)
     assert replayed.id == order.id
 
     line =

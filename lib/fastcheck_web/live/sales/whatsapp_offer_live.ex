@@ -79,6 +79,15 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
            |> assign(:create_form, to_form(default_create_params(), as: :offer_create))
            |> put_flash(:info, "WhatsApp ticket offer created.")}
 
+        {:error, :inventory_initialization_failed} ->
+          {:noreply,
+           socket
+           |> refresh_offers()
+           |> put_flash(
+             :error,
+             OfferManagement.safe_error_message(:inventory_initialization_failed)
+           )}
+
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, OfferManagement.safe_error_message(reason))}
       end

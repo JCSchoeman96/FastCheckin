@@ -1,6 +1,8 @@
 defmodule FastCheck.SalesCheckoutFixtures do
   @moduledoc false
 
+  import Ecto.Query
+
   alias FastCheck.Events
   alias FastCheck.Events.Event
   alias FastCheck.Repo
@@ -32,6 +34,9 @@ defmodule FastCheck.SalesCheckoutFixtures do
   end
 
   def checkout_input(overrides \\ %{}) do
+    skip_lock_version? = Map.get(overrides, :skip_whatsapp_lock_version, false)
+    overrides = Map.delete(overrides, :skip_whatsapp_lock_version)
+
     base = %{
       event_id: @event_id,
       ticket_offer_id: nil,
@@ -45,8 +50,33 @@ defmodule FastCheck.SalesCheckoutFixtures do
       event_name: "Test Event"
     }
 
-    Map.merge(base, overrides)
+    input = Map.merge(base, overrides)
+
+    if skip_lock_version? do
+      input
+    else
+      maybe_attach_whatsapp_lock_version(input)
+    end
   end
+
+  defp maybe_attach_whatsapp_lock_version(%{ticket_offer_id: offer_id} = input)
+       when is_integer(offer_id) do
+    if Map.has_key?(input, :expected_offer_lock_version) do
+      input
+    else
+      case Repo.one(
+             from(o in "sales_ticket_offers", where: o.id == ^offer_id, select: o.lock_version)
+           ) do
+        version when is_integer(version) ->
+          Map.put(input, :expected_offer_lock_version, version)
+
+        _ ->
+          input
+      end
+    end
+  end
+
+  defp maybe_attach_whatsapp_lock_version(input), do: input
 
   def insert_offer!(opts \\ []) do
     event_id = Keyword.get(opts, :event_id, @event_id)
@@ -122,6 +152,56 @@ defmodule FastCheck.SalesCheckoutFixtures do
       status: "active"
     })
     |> Repo.insert!()
+  end
+
+  def with_redis_stopped(fun) when is_function(fun, 0) do
+    stop_redis_connection!()
+
+    try do
+      fun.()
+    after
+      start_redis_connection!()
+    end
+  end
+
+  def stop_redis_connection! do
+    case Supervisor.terminate_child(FastCheck.Supervisor, FastCheck.Redis.Connection) do
+      :ok -> :ok
+      {:ok, _pid} -> :ok
+      {:error, :not_found} -> :ok
+      other -> other
+    end
+  end
+
+  def start_redis_connection! do
+    case Supervisor.restart_child(FastCheck.Supervisor, FastCheck.Redis.Connection) do
+      :ok -> :ok
+      {:ok, _pid} -> :ok
+      {:error, :already_started, _pid} -> :ok
+      other -> other
+    end
+
+    wait_for_redis!()
+  end
+
+  defp wait_for_redis!(attempts \\ 20) do
+    if Process.whereis(FastCheck.Redix) && redis_ping_ok?() do
+      :ok
+    else
+      if attempts > 0 do
+        Process.sleep(50)
+        wait_for_redis!(attempts - 1)
+      else
+        raise "Redis connection did not restart for tests"
+      end
+    end
+  end
+
+  defp redis_ping_ok? do
+    case Redix.command(FastCheck.Redix, ["PING"]) do
+      {:ok, "PONG"} -> true
+      _ -> false
+    end
   end
 
   def flush_inventory_keys(offer_id) do

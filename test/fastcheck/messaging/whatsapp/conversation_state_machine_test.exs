@@ -152,6 +152,123 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     )
   end
 
+  test "disabled offer at confirmation returns customer to refreshed offer selection", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    offer_b =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        name: "VIP",
+        price_cents: 2_000,
+        max_per_order: 2
+      )
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer_b.id) end)
+
+    confirming =
+      conversation
+      |> progress("hi", "offer-disable-1")
+      |> progress("1", "offer-disable-2")
+      |> progress("1", "offer-disable-3")
+      |> progress("1", "offer-disable-4")
+      |> progress("1", "offer-disable-5")
+      |> progress("1", "offer-disable-6")
+      |> progress("Jan Burger", "offer-disable-7")
+      |> progress("jan@example.com", "offer-disable-8")
+
+    assert confirming.conversation.state == "confirming_order"
+
+    offer
+    |> Changeset.for_update(:disable_sales, %{}, actor: SalesFixtures.admin_actor([event.id]))
+    |> Ash.update!(authorize?: false)
+
+    {request_fun, counter} = PaymentSupport.flunk_paystack_request_fun()
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+
+    assert {:ok, result} = handle(confirming.conversation, "1", "offer-disable-9")
+    assert result.conversation.state == "selecting_ticket_type"
+    assert result.response_body =~ "verander"
+    assert result.response_body =~ "VIP"
+    refute result.conversation.state_data["selected_offer_id"]
+    assert result.conversation.state_data["offer_options"]["1"] == offer_b.id
+    assert :counters.get(counter, 1) == 0
+
+    assert Repo.aggregate(from(o in "sales_orders", select: count()), :count, :id) == 0
+    assert Repo.aggregate(from(ol in "sales_order_lines", select: count()), :count, :id) == 0
+
+    assert Repo.aggregate(from(cs in "sales_checkout_sessions", select: count()), :count, :id) ==
+             0
+
+    assert Repo.aggregate(from(pa in "sales_payment_attempts", select: count()), :count, :id) == 0
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+  end
+
+  test "stale offer index mapping is refreshed when an offer becomes unavailable", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    offer_b =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        name: "VIP",
+        price_cents: 2_000,
+        max_per_order: 2
+      )
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer_b.id) end)
+
+    selecting =
+      conversation
+      |> progress("hi", "offer-map-1")
+      |> progress("1", "offer-map-2")
+      |> progress("1", "offer-map-3")
+      |> progress("1", "offer-map-4")
+
+    assert selecting.conversation.state == "selecting_ticket_type"
+    assert selecting.conversation.state_data["offer_options"]["1"] == offer.id
+    assert selecting.conversation.state_data["offer_options"]["2"] == offer_b.id
+
+    offer
+    |> Changeset.for_update(:disable_sales, %{}, actor: SalesFixtures.admin_actor([event.id]))
+    |> Ash.update!(authorize?: false)
+
+    assert {:ok, refreshed} = handle(selecting.conversation, "1", "offer-map-5")
+    assert refreshed.conversation.state == "selecting_ticket_type"
+    assert refreshed.conversation.state_data["offer_options"]["1"] == offer_b.id
+    assert refreshed.response_body =~ "VIP"
+
+    assert {:ok, selected} = handle(refreshed.conversation, "1", "offer-map-6")
+    assert selected.conversation.state == "collecting_quantity"
+    assert selected.conversation.state_data["selected_offer_id"] == offer_b.id
+  end
+
+  test "only available offer disabled returns customer to refreshed event selection", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    selecting =
+      conversation
+      |> progress("hi", "offer-empty-1")
+      |> progress("1", "offer-empty-2")
+      |> progress("1", "offer-empty-3")
+      |> progress("1", "offer-empty-4")
+
+    assert selecting.conversation.state == "selecting_ticket_type"
+
+    offer
+    |> Changeset.for_update(:disable_sales, %{}, actor: SalesFixtures.admin_actor([event.id]))
+    |> Ash.update!(authorize?: false)
+
+    assert {:ok, result} = handle(selecting.conversation, "1", "offer-empty-5")
+    assert result.conversation.state in ["selecting_event", "main_menu"]
+    refute Map.has_key?(result.conversation.state_data, "selected_offer_id")
+    refute result.response_body =~ "General - R10"
+  end
+
   test "stale offer selection is rejected after admin changes price before confirmation", %{
     conversation: conversation,
     event: event,

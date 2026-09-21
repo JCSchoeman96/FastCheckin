@@ -609,7 +609,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       {:error, :whatsapp_sales_disabled} ->
         return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
 
-      {:error, :offer_changed} ->
+      {:error, reason}
+      when reason in [
+             :offer_changed,
+             :sales_disabled,
+             :sales_window_closed,
+             :sales_channel_unavailable
+           ] ->
         return_to_refreshed_offer_selection(command, conversation, :offer_changed)
 
       result ->
@@ -656,37 +662,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp return_to_refreshed_offer_selection(command, conversation, notice) do
-    data = state_data(conversation)
-    event_id = Map.get(data, "selected_event_id")
-
-    case ensure_whatsapp_sales_enabled(event_id) do
-      {:error, :whatsapp_sales_disabled} ->
-        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
-
-      :ok ->
-        offers = active_offers(event_id)
-
-        if offers == [] do
-          return_to_refreshed_event_selection(command, conversation, notice)
-        else
-          refreshed_data =
-            data
-            |> clear_after_offer_selection()
-            |> Map.put("offer_options", option_ids(offers))
-
-          with {:ok, conversation} <-
-                 transition(command, conversation, :return_to_ticket_type_selection, %{
-                   state_data: refreshed_data
-                 }) do
-            {:ok,
-             result(
-               conversation,
-               offer_selection_response(language(conversation), offers, notice),
-               command
-             )}
-          end
-        end
-    end
+    refresh_ticket_type_selection(command, conversation, notice: notice)
   end
 
   defp return_to_refreshed_event_selection(command, conversation, notice \\ nil) do
@@ -738,18 +714,63 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp repeat_offer_menu(command, conversation) do
-    data = state_data(conversation)
-    offers = active_offers(Map.get(data, "selected_event_id"))
+    refresh_ticket_type_selection(command, conversation, invalid_input: true)
+  end
 
-    {:ok,
-     result(
-       conversation,
-       MenuRenderer.invalid_input(
-         language(conversation),
-         MenuRenderer.offer_menu(language(conversation), offers)
-       ),
-       command
-     )}
+  defp refresh_ticket_type_selection(command, conversation, opts) do
+    data = state_data(conversation)
+    event_id = Map.get(data, "selected_event_id")
+    notice = Keyword.get(opts, :notice)
+    invalid_input? = Keyword.get(opts, :invalid_input, false)
+
+    case ensure_whatsapp_sales_enabled(event_id) do
+      {:error, :whatsapp_sales_disabled} ->
+        return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
+
+      :ok ->
+        offers = active_offers(event_id)
+
+        if offers == [] do
+          return_to_refreshed_event_selection(command, conversation, notice)
+        else
+          refreshed_data =
+            data
+            |> clear_after_offer_selection()
+            |> Map.put("offer_options", option_ids(offers))
+
+          menu =
+            offer_menu_response(
+              language(conversation),
+              offers,
+              notice: notice,
+              invalid_input: invalid_input?
+            )
+
+          with {:ok, conversation} <-
+                 transition(command, conversation, :return_to_ticket_type_selection, %{
+                   state_data: refreshed_data
+                 }) do
+            {:ok, result(conversation, menu, command)}
+          end
+        end
+    end
+  end
+
+  defp offer_menu_response(language, offers, opts) do
+    notice = Keyword.get(opts, :notice)
+    invalid_input? = Keyword.get(opts, :invalid_input, false)
+    base_menu = MenuRenderer.offer_menu(language, offers)
+
+    cond do
+      invalid_input? ->
+        MenuRenderer.invalid_input(language, base_menu)
+
+      notice ->
+        offer_selection_response(language, offers, notice)
+
+      true ->
+        base_menu
+    end
   end
 
   defp repeat_resend_name_prompt(command, conversation) do
