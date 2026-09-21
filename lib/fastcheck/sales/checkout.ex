@@ -56,7 +56,8 @@ defmodule FastCheck.Sales.Checkout do
           else
             with :ok <- validate_whatsapp_sales_gate(input, context),
                  {:ok, offer} <- validate_offer(input, opts, context),
-                 :ok <- validate_quantity_against_offer(input, offer) do
+                 :ok <- validate_quantity_against_offer(input, offer),
+                 :ok <- validate_quantity_against_event_cap(input, context) do
               create_checkout(offer, input, actor, context)
             end
           end
@@ -107,6 +108,23 @@ defmodule FastCheck.Sales.Checkout do
   defp validate_quantity_against_offer(%{quantity: quantity}, %{max_per_order: max}) do
     if quantity > max, do: {:error, :max_per_order_exceeded}, else: :ok
   end
+
+  defp validate_quantity_against_event_cap(%{event_id: event_id, quantity: quantity}, %{
+         effective_sales_channel: "whatsapp"
+       }) do
+    case Events.whatsapp_max_tickets_per_order(event_id) do
+      cap when is_integer(cap) and quantity > cap ->
+        {:error, :event_max_per_order_exceeded}
+
+      cap when is_integer(cap) ->
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp validate_quantity_against_event_cap(_input, _context), do: :ok
 
   defp validate_offer_lock_version(input, offer, %{effective_sales_channel: "whatsapp"}) do
     validate_required_whatsapp_offer_lock_version(input, offer)

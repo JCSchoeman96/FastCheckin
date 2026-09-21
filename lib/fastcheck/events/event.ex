@@ -32,6 +32,7 @@ defmodule FastCheck.Events.Event do
           scanner_login_code: String.t() | nil,
           status: String.t() | nil,
           whatsapp_sales_enabled: boolean(),
+          whatsapp_max_tickets_per_order: integer(),
           total_tickets: integer() | nil,
           checked_in_count: integer(),
           attendee_count: integer() | nil,
@@ -71,6 +72,8 @@ defmodule FastCheck.Events.Event do
     field :status, :string
     # Explicit operator-controlled gate for starting new WhatsApp sales.
     field :whatsapp_sales_enabled, :boolean, default: false
+    # Operator-controlled per-order WhatsApp quantity ceiling (independent of offer max).
+    field :whatsapp_max_tickets_per_order, :integer, default: 9
     # Total number of tickets made available for the event
     field :total_tickets, :integer
     # Local checked-in total derived from attendee check-in timestamps
@@ -152,6 +155,9 @@ defmodule FastCheck.Events.Event do
     |> validate_number(:total_tickets, greater_than_or_equal_to: 0)
     |> check_constraint(:status, name: "events_status_must_be_valid")
     |> check_constraint(:status, name: "events_whatsapp_sales_archived_invariant")
+    |> check_constraint(:whatsapp_max_tickets_per_order,
+      name: "events_whatsapp_max_tickets_per_order_positive"
+    )
     |> validate_required([
       :name,
       :tickera_api_key_encrypted,
@@ -238,4 +244,20 @@ defmodule FastCheck.Events.Event do
 
   defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""
   defp present_binary?(_value), do: false
+
+  @doc """
+  Changeset for explicit operator updates to the WhatsApp per-order quantity ceiling.
+
+  Not used by generic event sync or Tickera flows.
+  """
+  @spec whatsapp_max_tickets_per_order_changeset(t(), integer()) :: Ecto.Changeset.t()
+  def whatsapp_max_tickets_per_order_changeset(event, limit) do
+    event
+    |> cast(%{whatsapp_max_tickets_per_order: limit}, [:whatsapp_max_tickets_per_order])
+    |> validate_required([:whatsapp_max_tickets_per_order])
+    |> validate_number(:whatsapp_max_tickets_per_order, greater_than: 0)
+    |> check_constraint(:whatsapp_max_tickets_per_order,
+      name: "events_whatsapp_max_tickets_per_order_positive"
+    )
+  end
 end

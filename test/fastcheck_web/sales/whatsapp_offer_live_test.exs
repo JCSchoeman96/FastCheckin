@@ -93,6 +93,94 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
     assert reloaded.name == "All Channel Updated"
   end
 
+  test "authenticated admin sees event WhatsApp order limit with helper copy", %{
+    conn: conn,
+    event: event
+  } do
+    assert {:ok, _view, html} = mount_offers(conn, event.id)
+
+    assert html =~ "Event max tickets per WhatsApp order"
+    assert html =~ "effective customer limit is the lower"
+    assert html =~ "Event 4 + Offer 6"
+    assert html =~ "Event 6 + Offer 2"
+    assert html =~ ~s|value="9"| or html =~ "9"
+  end
+
+  test "admin can change event cap from 9 to 3", %{conn: conn, event: event} do
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "3"}
+    })
+    |> render_submit()
+
+    assert render(view) =~ "Event WhatsApp order limit updated."
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 3
+  end
+
+  test "invalid event cap 0 is rejected in admin UI", %{conn: conn, event: event} do
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "0"}
+    })
+    |> render_submit()
+
+    assert render(view) =~ "1 to 9"
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 9
+  end
+
+  test "admin UI refuses event cap above 9", %{conn: conn, event: event} do
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "12"}
+    })
+    |> render_submit()
+
+    assert render(view) =~ "1 to 9"
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 9
+  end
+
+  test "archived event shows event cap read-only", %{conn: conn, event: event} do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+    assert {:ok, _} = Events.archive_event(event.id)
+
+    assert {:ok, _view, html} = mount_offers(conn, event.id)
+    assert html =~ "Current limit"
+    assert html =~ "4"
+    refute html =~ "event-quantity-cap-form"
+  end
+
+  test "changing event cap does not alter ticket offer max_per_order", %{conn: conn, event: event} do
+    offer =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        name: "Cap Isolation",
+        max_per_order: 5
+      )
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "2"}
+    })
+    |> render_submit()
+
+    reloaded =
+      TicketOffer
+      |> Ash.Query.for_read(:get_by_id, %{id: offer.id})
+      |> Ash.read_one!(authorize?: false)
+
+    assert reloaded.max_per_order == 5
+  end
+
   test "dashboard contains manage whatsapp tickets link", %{conn: conn, event: event} do
     {:ok, view, _html} =
       conn
