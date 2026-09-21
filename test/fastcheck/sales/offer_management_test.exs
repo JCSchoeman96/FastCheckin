@@ -232,6 +232,50 @@ defmodule FastCheck.Sales.OfferManagementTest do
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
   end
 
+  test "safe retry refuses an already-existing redis ledger even with active reservations", %{
+    event: event,
+    actor: actor
+  } do
+    offer =
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        %{
+          event_id: event.id,
+          name: "Reserved Ledger",
+          ticket_type: "reserved_ledger",
+          price_cents: 5000,
+          currency: "ZAR",
+          configured_quantity_available: 6,
+          initial_quantity: 6,
+          max_per_order: 1,
+          sales_enabled: false,
+          sales_channel: "whatsapp"
+        },
+        actor: actor
+      )
+      |> Ash.create!(authorize?: true)
+
+    assert :ok = ReservationLedger.initialize_offer_if_absent(offer.id, 6)
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(
+               offer.id,
+               "ORD-RETRY-#{System.unique_integer([:positive])}",
+               1,
+               120,
+               "idem-retry-#{System.unique_integer([:positive])}"
+             )
+
+    assert {:error, :inventory_retry_not_allowed} =
+             OfferManagement.retry_inventory_initialization(actor, event.id, offer.id)
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
+    assert snapshot.reserved_quantity == 1
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
   test "safe retry refuses an already-existing redis ledger", %{event: event, actor: actor} do
     {:ok, offer} =
       OfferManagement.create_offer(actor, event.id, %{

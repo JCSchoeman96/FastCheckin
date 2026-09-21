@@ -67,8 +67,8 @@ defmodule FastCheck.Sales.OfferManagement do
     with :ok <- ensure_manageable_event(event_id),
          {:ok, attrs} <- build_create_attrs(event_id, params),
          {:ok, offer} <- create_disabled_offer(actor, attrs),
-         :ok <- initialize_inventory(offer),
-         {:ok, offer} <- maybe_enable_requested(actor, offer, params) do
+         {:ok, init_result} <- initialize_inventory_for_create(offer),
+         {:ok, offer} <- maybe_enable_after_create_init(actor, offer, params, init_result) do
       {:ok, offer}
     else
       {:error, :inventory_initialization_failed} = error ->
@@ -115,7 +115,7 @@ defmodule FastCheck.Sales.OfferManagement do
     with :ok <- ensure_manageable_event(event_id),
          {:ok, offer} <- fetch_manageable_offer(actor, event_id, offer_id),
          :ok <- ensure_safe_retry_allowed(offer),
-         :ok <- initialize_inventory(offer) do
+         :ok <- initialize_inventory_for_retry(offer) do
       {:ok, offer}
     end
   end
@@ -245,8 +245,8 @@ defmodule FastCheck.Sales.OfferManagement do
     |> map_stale_error()
   end
 
-  defp maybe_enable_requested(actor, offer, params) do
-    if truthy?(Map.get(params, "sales_enabled")) do
+  defp maybe_enable_after_create_init(actor, offer, params, init_result) do
+    if truthy?(Map.get(params, "sales_enabled")) and init_result == :initialized do
       with :ok <- ensure_inventory_ready_for_enable(offer) do
         persist_enable(actor, offer)
       end
@@ -255,9 +255,18 @@ defmodule FastCheck.Sales.OfferManagement do
     end
   end
 
-  defp initialize_inventory(%{id: offer_id, configured_quantity_available: quantity}) do
-    case ReservationLedger.initialize_offer(offer_id, quantity) do
+  defp initialize_inventory_for_create(%{id: offer_id, configured_quantity_available: quantity}) do
+    case ReservationLedger.initialize_offer_if_absent(offer_id, quantity) do
+      :ok -> {:ok, :initialized}
+      {:error, :already_initialized, _} -> {:ok, :already_present}
+      {:error, _, _} -> {:error, :inventory_initialization_failed}
+    end
+  end
+
+  defp initialize_inventory_for_retry(%{id: offer_id, configured_quantity_available: quantity}) do
+    case ReservationLedger.initialize_offer_if_absent(offer_id, quantity) do
       :ok -> :ok
+      {:error, :already_initialized, _} -> {:error, :inventory_retry_not_allowed}
       {:error, _, _} -> {:error, :inventory_initialization_failed}
     end
   end
