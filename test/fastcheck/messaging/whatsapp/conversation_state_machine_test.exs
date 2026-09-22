@@ -1515,6 +1515,73 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert availability.reserved_quantity == 12
   end
 
+  test "confirmation recovers to quantity collection when order total exceeds INTEGER storage", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    offer =
+      offer
+      |> Changeset.for_update(
+        :update_offer,
+        %{max_per_order: 12, price_cents: 200_000_000},
+        actor: SalesFixtures.admin_actor([event.id])
+      )
+      |> Ash.update!(authorize?: true)
+
+    confirming =
+      conversation
+      |> progress("hi", "total-overflow-1")
+      |> progress("1", "total-overflow-2")
+      |> progress("1", "total-overflow-3")
+      |> progress("1", "total-overflow-4")
+      |> progress("1", "total-overflow-5")
+      |> progress("12", "total-overflow-6")
+      |> progress("Jan Burger", "total-overflow-7")
+      |> progress("jan@example.com", "total-overflow-8")
+
+    assert confirming.conversation.state == "confirming_order"
+    assert {:ok, before_inventory} = ReservationLedger.get_availability(offer.id)
+
+    {request_fun, counter} = PaymentSupport.flunk_paystack_request_fun()
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+
+    assert {:ok, result} = handle(confirming.conversation, "1", "total-overflow-9")
+    assert result.conversation.state == "collecting_quantity"
+    assert result.response_body =~ "Antwoord asseblief"
+    assert result.response_body =~ "Hoeveel kaartjies"
+    refute result.response_body =~ "order_total_too_large"
+
+    data = result.conversation.state_data
+    assert data["selected_event_id"] == event.id
+    assert data["selected_offer_id"] == offer.id
+    assert data["selected_offer_lock_version"] == offer.lock_version
+    assert data["selected_offer_price_cents"] == 200_000_000
+    refute Map.has_key?(data, "quantity")
+    refute Map.has_key?(data, "buyer_name")
+    refute Map.has_key?(data, "buyer_email")
+    refute Map.has_key?(data, "sales_order_id")
+    refute Map.has_key?(data, "payment_attempt_id")
+    refute Map.has_key?(data, "order_public_reference")
+
+    assert Repo.aggregate(from(o in "sales_orders"), :count) == 0
+    assert Repo.aggregate(from(l in "sales_order_lines"), :count) == 0
+    assert Repo.aggregate(from(s in "sales_checkout_sessions"), :count) == 0
+    assert Repo.aggregate(from(p in "sales_payment_attempts"), :count) == 0
+    assert {:ok, after_inventory} = ReservationLedger.get_availability(offer.id)
+    assert after_inventory == before_inventory
+    assert :counters.get(counter, 1) == 0
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
+    assert {:ok, resumed} = handle(result.conversation, "9", "total-overflow-10")
+    assert resumed.conversation.state == "collecting_buyer_name"
+    assert resumed.conversation.state_data["quantity"] == 9
+  end
+
   test "confirmation after event cap decrease returns to quantity collection safely", %{
     conversation: conversation,
     event: event,
