@@ -352,6 +352,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
                view,
                "#edit-manage-whatsapp-offers-#{event.id}[href='/dashboard/events/#{event.id}/whatsapp-offers']"
              )
+
+      refute has_element?(view, "#edit-manage-whatsapp-offers-#{event.id} button")
     end
   end
 
