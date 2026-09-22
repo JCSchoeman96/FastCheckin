@@ -7,6 +7,13 @@ defmodule FastCheck.Messaging.WhatsApp.Copy do
   def text("en", key), do: en(key)
   def text(_language, key), do: af(key)
 
+  @spec quantity_range_instruction(String.t() | nil, pos_integer()) :: String.t()
+  def quantity_range_instruction("en", max) when is_integer(max) and max > 0,
+    do: "For the ticket quantity, send a number from 1 to #{max}."
+
+  def quantity_range_instruction(_language, max) when is_integer(max) and max > 0,
+    do: "Vir die aantal kaartjies, stuur 'n nommer van 1 tot #{max}."
+
   defp af(:main_menu_title), do: "Kies 'n opsie:"
   defp af(:buy_tickets), do: "Koop kaartjies"
   defp af(:resend_ticket), do: "Stuur my kaartjie weer"

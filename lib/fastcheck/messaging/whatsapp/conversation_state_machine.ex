@@ -289,7 +289,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            |> Map.put("selected_offer_lock_version", offer.lock_version),
          {:ok, conversation} <-
            transition(command, conversation, :select_ticket_type, %{state_data: data}) do
-      {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
+      {:ok, result(conversation, quantity_prompt_for(conversation), command)}
     else
       {:error, :whatsapp_sales_disabled} ->
         return_to_refreshed_event_selection(command, conversation, :whatsapp_sales_disabled)
@@ -372,7 +372,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
          conversation,
          MenuRenderer.invalid_input(
            language(conversation),
-           MenuRenderer.quantity_prompt(language(conversation))
+           quantity_prompt_for(conversation)
          ),
          command
        )}
@@ -386,7 +386,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
        conversation,
        MenuRenderer.invalid_input(
          language(conversation),
-         MenuRenderer.quantity_prompt(language(conversation))
+         quantity_prompt_for(conversation)
        ),
        command
      )}
@@ -398,7 +398,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
            transition(command, conversation, :return_to_quantity_collection, %{
              state_data: clear_after_quantity(state_data(conversation))
            }) do
-      {:ok, result(conversation, MenuRenderer.quantity_prompt(language(conversation)), command)}
+      {:ok, result(conversation, quantity_prompt_for(conversation), command)}
     end
   end
 
@@ -701,11 +701,20 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
          conversation,
          MenuRenderer.invalid_input(
            language(conversation),
-           MenuRenderer.quantity_prompt(language(conversation))
+           quantity_prompt_for(conversation)
          ),
          command
        )}
     end
+  end
+
+  defp quantity_prompt_for(conversation) do
+    data = state_data(conversation)
+    event_id = Map.get(data, "selected_event_id")
+    event_cap = Events.whatsapp_max_tickets_per_order(event_id)
+    offer_max = Map.get(data, "selected_offer_max_per_order", 1)
+    effective_max = min_positive_cap(event_cap, offer_max)
+    MenuRenderer.quantity_prompt(language(conversation), effective_max)
   end
 
   defp min_positive_cap(event_cap, offer_max)
