@@ -9,8 +9,12 @@ defmodule FastCheck.Sales.AdminDashboard do
 
   import Ecto.Query
 
+  alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Sales.Inventory.Health
+
+  @attendee_sources ~w(tickera fastcheck_sales)
+  @whatsapp_channel "whatsapp"
 
   @default_limit 25
   @max_limit 100
@@ -112,6 +116,46 @@ defmodule FastCheck.Sales.AdminDashboard do
   end
 
   @doc """
+  Returns a read-only, event-scoped cross-source overview for admin display.
+
+  Aggregate counts only — no attendee or buyer PII, provider references, or secrets.
+  """
+  @spec event_overview(term()) ::
+          {:ok, map()} | {:error, :not_found}
+  def event_overview(event_id) do
+    with {:ok, id} <- parse_integer(event_id),
+         %Event{} = event <- Repo.get(Event, id) do
+      attendee_by_source = attendee_source_metrics(id)
+      orders_by_status = whatsapp_orders_by_status(id)
+      ticket_issues_by_status = whatsapp_ticket_issues_by_status(id)
+
+      {:ok,
+       %{
+         event: %{
+           id: event.id,
+           name: event.name,
+           status: event.status,
+           whatsapp_sales_enabled: event.whatsapp_sales_enabled
+         },
+         attendees: %{
+           tickera: Map.get(attendee_by_source, "tickera", empty_attendee_metrics()),
+           fastcheck_sales:
+             Map.get(attendee_by_source, "fastcheck_sales", empty_attendee_metrics())
+         },
+         whatsapp: %{
+           order_count: sum_counts(orders_by_status),
+           orders_by_status: orders_by_status,
+           ticket_issue_count: sum_counts(ticket_issues_by_status),
+           ticket_issues_by_status: ticket_issues_by_status,
+           ticket_types: whatsapp_ticket_type_breakdown(id)
+         }
+       }}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @doc """
   Returns capped read-only inventory health summaries for visible offers.
   """
   def inventory_summary(filters \\ %{}, opts \\ []) do
@@ -133,6 +177,93 @@ defmodule FastCheck.Sales.AdminDashboard do
     })
     |> Repo.all()
     |> Enum.map(&attach_inventory_health/1)
+  end
+
+  defp empty_attendee_metrics do
+    %{total: 0, scannable: 0, not_scannable: 0, currently_inside: 0}
+  end
+
+  defp attendee_source_metrics(event_id) do
+    "attendees"
+    |> where([a], a.event_id == ^event_id)
+    |> where([a], a.source in ^@attendee_sources)
+    |> group_by([a], a.source)
+    |> select([a], %{
+      source: a.source,
+      total: count(a.id),
+      scannable:
+        filter(count(a.id), a.scan_eligibility == "active" or is_nil(a.scan_eligibility)),
+      not_scannable: filter(count(a.id), a.scan_eligibility == "not_scannable"),
+      currently_inside: filter(count(a.id), a.is_currently_inside == true)
+    })
+    |> Repo.all()
+    |> Map.new(fn row ->
+      {row.source,
+       %{
+         total: row.total,
+         scannable: row.scannable,
+         not_scannable: row.not_scannable,
+         currently_inside: row.currently_inside
+       }}
+    end)
+  end
+
+  defp whatsapp_orders_by_status(event_id) do
+    "sales_orders"
+    |> where([o], o.event_id == ^event_id and o.source_channel == ^@whatsapp_channel)
+    |> group_by([o], o.status)
+    |> select([o], %{status: o.status, count: count(o.id)})
+    |> Repo.all()
+    |> counts_by_status()
+  end
+
+  defp whatsapp_ticket_issues_by_status(event_id) do
+    "sales_ticket_issues"
+    |> join(:inner, [t], o in "sales_orders", on: o.id == t.sales_order_id)
+    |> where([t, o], o.event_id == ^event_id and o.source_channel == ^@whatsapp_channel)
+    |> group_by([t], t.status)
+    |> select([t], %{status: t.status, count: count(t.id)})
+    |> Repo.all()
+    |> counts_by_status()
+  end
+
+  defp whatsapp_ticket_type_breakdown(event_id) do
+    rows =
+      "sales_ticket_issues"
+      |> join(:inner, [t], l in "sales_order_lines", on: l.id == t.sales_order_line_id)
+      |> join(:inner, [t, l], o in "sales_orders", on: o.id == t.sales_order_id)
+      |> where([t, l, o], o.event_id == ^event_id and o.source_channel == ^@whatsapp_channel)
+      |> group_by([t, l, o], [l.ticket_type, l.offer_name_snapshot, t.status])
+      |> select([t, l], %{
+        ticket_type: l.ticket_type,
+        offer_name: l.offer_name_snapshot,
+        status: t.status,
+        count: count(t.id)
+      })
+      |> Repo.all()
+
+    rows
+    |> Enum.group_by(fn row -> {row.ticket_type, row.offer_name} end)
+    |> Enum.map(fn {{ticket_type, offer_name}, status_rows} ->
+      by_status = Map.new(status_rows, fn row -> {row.status, row.count} end)
+
+      %{
+        ticket_type: ticket_type,
+        offer_name: offer_name,
+        total_ticket_issues: Enum.sum(Enum.map(status_rows, & &1.count)),
+        issued: Map.get(by_status, "issued", 0),
+        other_statuses: Map.drop(by_status, ["issued"])
+      }
+    end)
+    |> Enum.sort_by(&{&1.ticket_type || "", &1.offer_name || ""})
+  end
+
+  defp counts_by_status(rows) do
+    Map.new(rows, fn %{status: status, count: count} -> {status, count} end)
+  end
+
+  defp sum_counts(counts_by_status) when is_map(counts_by_status) do
+    counts_by_status |> Map.values() |> Enum.sum()
   end
 
   defp filtered_orders_query(filters, from_dt, to_dt) do
