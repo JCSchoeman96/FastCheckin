@@ -269,6 +269,51 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
       refute Map.has_key?(attendee_json, "sales_ticket_issue_id")
     end
 
+    test "returns active tickera and fastcheck_sales ticket codes for the same event without lineage fields",
+         %{
+           conn: conn,
+           token: token,
+           event: event,
+           attendee1: tickera_attendee
+         } do
+      sales_attendee =
+        %Attendee{
+          event_id: event.id,
+          ticket_code: "FC-MIXED-SALES-001",
+          first_name: "Sales",
+          last_name: "Mixed",
+          email: "sales-mixed@example.com",
+          payment_status: "completed",
+          allowed_checkins: 1,
+          checkins_remaining: 1,
+          scan_eligibility: "active",
+          source: "fastcheck_sales",
+          source_reference: "sales:#{System.unique_integer([:positive])}:1:1",
+          sales_order_id: System.unique_integer([:positive])
+        }
+        |> Repo.insert!()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
+
+      assert %{"data" => %{"attendees" => attendees}} = json_response(conn, 200)
+
+      codes = MapSet.new(attendees, & &1["ticket_code"])
+
+      assert MapSet.member?(codes, tickera_attendee.ticket_code)
+      assert MapSet.member?(codes, sales_attendee.ticket_code)
+      refute MapSet.member?(codes, "OTHER001")
+
+      sales_json = Enum.find(attendees, &(&1["ticket_code"] == sales_attendee.ticket_code))
+
+      refute Map.has_key?(sales_json, "source")
+      refute Map.has_key?(sales_json, "source_reference")
+      refute Map.has_key?(sales_json, "sales_order_id")
+      refute Map.has_key?(sales_json, "sales_ticket_issue_id")
+    end
+
     test "supports incremental sync with since parameter", %{
       conn: conn,
       token: token,
