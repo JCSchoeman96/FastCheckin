@@ -52,7 +52,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert has_element?(
                view,
                "#edit-whatsapp-sales-section-#{event.id}",
-               "WhatsApp ticket sales"
+               "Ticket Sales / WhatsApp Sales"
              )
 
       assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}", "Disabled")
@@ -125,21 +125,23 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert has_element?(view, "#edit-event-form")
       assert has_element?(view, "#edit-event-new-api-key")
-      name_input_html = view |> element("#edit-event-form input[name='event[name]']") |> render()
+
+      name_input_html =
+        view |> element("input[name='event[name]'][form='edit-event-form']") |> render()
 
       site_url_input_html =
         view
-        |> element("#edit-event-form input[name='event[tickera_site_url]']")
+        |> element("input[name='event[tickera_site_url]'][form='edit-event-form']")
         |> render()
 
       location_input_html =
         view
-        |> element("#edit-event-form input[name='event[location]']")
+        |> element("input[name='event[location]'][form='edit-event-form']")
         |> render()
 
       entrance_input_html =
         view
-        |> element("#edit-event-form input[name='event[entrance_name]']")
+        |> element("input[name='event[entrance_name]'][form='edit-event-form']")
         |> render()
 
       assert name_input_html =~ ~s(value="Modal Smoke Event")
@@ -226,6 +228,130 @@ defmodule FastCheckWeb.DashboardLiveTest do
                Events.verify_mobile_access_secret(updated, "old-scanner-secret")
 
       refute has_element?(view, "#edit-event-form")
+    end
+
+    test "edit modal groups settings into General, Scanning, sales, and Integrations sections", %{
+      conn: conn
+    } do
+      event = insert_event!(%{name: "Section Layout Event"})
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      assert has_element?(view, "#edit-event-section-general", "General")
+      assert has_element?(view, "#edit-event-section-scanning", "Scanning")
+      assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}", "Ticket Sales")
+      assert has_element?(view, "#edit-event-section-integrations", "Integrations")
+    end
+
+    test "edit modal uses scanner password terminology and login identifier copy", %{conn: conn} do
+      event = insert_event!(%{name: "Scanner Copy Event"})
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      html = render(view)
+      assert html =~ "Scanner password"
+      assert html =~ "New scanner password"
+      refute html =~ "Mobile access code"
+      assert has_element?(view, "#edit-event-scanner-password-help", "scanner password")
+      refute has_element?(view, "#edit-event-scanner-password-help", "scanner login code")
+      assert has_element?(view, "#edit-event-scan-event-id", "Event ID")
+      assert has_element?(view, "#edit-event-scan-scanner-code", "Scanner code")
+      assert has_element?(view, "#edit-event-scan-login-help", "numeric Event ID")
+      refute has_element?(view, "#edit-event-form input[name='event[scanner_login_code]']")
+    end
+
+    test "generic dashboard update ignores injected scanner_login_code", %{conn: conn} do
+      event = insert_event!(%{name: "Scanner Code Immutable"})
+      original_code = event.scanner_login_code
+      assert is_binary(original_code)
+
+      alternate_code =
+        if original_code == "ABCDEF" do
+          "ABCDEG"
+        else
+          "ABCDEF"
+        end
+
+      {:ok, view, _html} = mount_dashboard(conn)
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      render_submit(view, "update_event", %{
+        "event" => %{
+          "name" => event.name,
+          "tickera_site_url" => event.tickera_site_url,
+          "tickera_api_key_encrypted" => "",
+          "location" => event.location || "",
+          "entrance_name" => event.entrance_name || "Main Gate",
+          "mobile_access_code" => "",
+          "scanner_login_code" => alternate_code
+        }
+      })
+
+      assert Events.get_event!(event.id).scanner_login_code == original_code
+    end
+
+    test "edit modal keeps shortname editable", %{conn: conn} do
+      event = insert_event!(%{name: "Shortname Event", shortname: "short-old"})
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+      assert has_element?(view, "input[name='event[shortname]'][form='edit-event-form']")
+
+      view
+      |> form("#edit-event-form", %{
+        "event" => %{
+          "name" => event.name,
+          "shortname" => "short-new",
+          "tickera_site_url" => event.tickera_site_url,
+          "tickera_api_key_encrypted" => "",
+          "location" => event.location || "",
+          "entrance_name" => event.entrance_name || "Main Gate",
+          "mobile_access_code" => ""
+        }
+      })
+      |> render_submit()
+
+      assert Events.get_event!(event.id).shortname == "short-new"
+    end
+
+    test "edit modal integrations show Tickera URL and masked API key only", %{conn: conn} do
+      event =
+        insert_event!(%{
+          name: "Integrations Event",
+          tickera_site_url: "https://integrations.example.com",
+          tickera_api_key_last4: "1234"
+        })
+
+      {:ok, view, _html} = mount_dashboard(conn)
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      assert has_element?(
+               view,
+               "#edit-event-section-integrations input[name='event[tickera_site_url]']"
+             )
+
+      last4_html =
+        view
+        |> element("#edit-event-section-integrations input[name='event[tickera_api_key_last4]']")
+        |> render()
+
+      assert last4_html =~ ~s(value="1234")
+      refute render(view) =~ "live-api-key"
+      assert has_element?(view, "#edit-event-new-api-key")
+    end
+
+    test "edit modal links to WhatsApp offer management", %{conn: conn} do
+      event = insert_event!(%{name: "Offers Link Event"})
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      assert has_element?(
+               view,
+               "#edit-manage-whatsapp-offers-#{event.id}[href='/dashboard/events/#{event.id}/whatsapp-offers']"
+             )
     end
   end
 
@@ -425,6 +551,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
         |> render()
 
       assert site_url_input_html =~ ~s(value="https://voelgoed.co.za")
+
+      assert html =~ "numeric Event ID"
+      refute html =~ "6-character event code"
     end
 
     test "submitting minimal create form auto-starts full sync in background", %{conn: conn} do

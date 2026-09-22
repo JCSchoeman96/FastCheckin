@@ -352,6 +352,8 @@ defmodule FastCheckWeb.DashboardLive do
     event_id = socket.assigns.editing_event_id
 
     if event_id do
+      event_params = sanitize_dashboard_edit_event_params(event_params)
+
       case Events.update_event(event_id, event_params) do
         {:ok, _event} ->
           refreshed_events = Events.list_events()
@@ -927,7 +929,8 @@ defmodule FastCheckWeb.DashboardLive do
                 Event name, date, and ticket counts are pulled from Tickera automatically.
               </p>
               <p class="md:col-span-2 -mt-3 text-xs text-fc-text-muted">
-                Scanner login uses a 6-character event code + scanner password + operator name.
+                After creation, browser and mobile scanner login use the numeric Event ID, scanner
+                password, and operator name (browser only).
               </p>
 
               <details
@@ -1535,300 +1538,341 @@ defmodule FastCheckWeb.DashboardLive do
           color="natural"
           on_cancel={JS.push("hide_edit_form")}
         >
-          <p :if={@editing_event_id} class="text-sm text-fc-text-secondary">
-            Event ID {@editing_event_id}
-          </p>
-          <p :if={@edit_form} class="text-sm text-fc-text-secondary">
-            Scanner code {safe_form_value(@edit_form, :scanner_login_code) || "Unavailable"}
-          </p>
-
-          <div
-            :if={@edit_form && @editing_event}
-            class="mb-4 rounded-xl border border-fc-border-default dark:border-glass-border p-3 space-y-3"
-          >
-            <p class="text-sm font-semibold text-fc-text-primary">Current scanner password</p>
-
-            <div :if={is_nil(@editing_event.mobile_access_secret_encrypted)}>
-              <p class="text-sm text-fc-text-secondary">Not set.</p>
-            </div>
-
-            <div
-              :if={@editing_event.mobile_access_secret_encrypted && is_nil(@edit_revealed_secret)}
-              class="space-y-2"
+          <div :if={@edit_form} class="space-y-5">
+            <section
+              id="edit-event-section-general"
+              class="space-y-4 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
             >
-              <div class="flex flex-wrap items-center gap-2">
-                <input
-                  type="password"
-                  readonly
-                  class="input w-full max-w-md flex-1"
-                  value="••••••••"
-                  aria-label="Scanner password hidden"
-                />
-                <.button
-                  id="edit-reveal-show-challenge"
-                  type="button"
-                  phx-click="show_edit_reveal_challenge"
-                  variant="bordered"
-                  color="natural"
-                  size="small"
-                  disabled={@edit_reveal_challenge_active}
-                >
-                  Reveal
-                </.button>
-              </div>
+              <h3 class="text-sm font-semibold text-fc-text-primary">General</h3>
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:name]}
+                type="text"
+                label="Event name"
+                value={edit_form_value(@edit_form, :name, @editing_event && @editing_event.name)}
+                required
+              />
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:shortname]}
+                type="text"
+                label="Event shortname (optional)"
+                value={
+                  edit_form_value(@edit_form, :shortname, @editing_event && @editing_event.shortname)
+                }
+              />
+              <p class="-mt-2 text-xs text-fc-text-muted">
+                Optional operator-facing label for this event. Not used for scanner login (use Event ID).
+              </p>
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:location]}
+                type="text"
+                label="Location"
+                value={
+                  edit_form_value(@edit_form, :location, @editing_event && @editing_event.location)
+                }
+              />
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:entrance_name]}
+                type="text"
+                label="Entrance name"
+                value={
+                  edit_form_value(
+                    @edit_form,
+                    :entrance_name,
+                    @editing_event && @editing_event.entrance_name
+                  )
+                }
+              />
+            </section>
 
-              <div
-                :if={@edit_reveal_challenge_active}
-                class="space-y-2 border-t border-fc-border-default dark:border-glass-border pt-3"
-              >
-                <p class="text-xs text-fc-text-muted">
-                  Re-enter your dashboard password to view the current scanner password.
-                </p>
-                <p :if={@reveal_error} class="text-sm text-error">{@reveal_error}</p>
-                <form phx-submit="confirm_reveal_secret" id="edit-reveal-secret-form">
-                  <input type="hidden" name="source" value="edit_modal" />
-                  <.input
-                    type="password"
-                    name="admin_password"
-                    id="edit-reveal-admin-password"
-                    label="Admin password"
-                    value=""
-                    errors={[]}
-                    autocomplete="current-password"
-                    required
-                  />
-                  <div class="mt-3 flex flex-wrap gap-2">
+            <section
+              :if={@editing_event}
+              id="edit-event-section-scanning"
+              class="space-y-3 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
+            >
+              <h3 class="text-sm font-semibold text-fc-text-primary">Scanning</h3>
+              <p id="edit-event-scan-event-id" class="text-sm text-fc-text-secondary">
+                Event ID
+                <span class="font-mono font-semibold text-fc-text-primary">{@editing_event_id}</span>
+              </p>
+              <p id="edit-event-scan-scanner-code" class="text-sm text-fc-text-secondary">
+                Scanner code
+                <span class="font-mono font-semibold text-fc-text-primary">
+                  {event_scanner_code(@editing_event)}
+                </span>
+              </p>
+              <p id="edit-event-scan-login-help" class="text-xs text-fc-text-muted">
+                Browser and mobile scanner login use the numeric Event ID and scanner password. The
+                generated scanner code is for reference only and is not the current login identifier.
+                Browser scanner login also requires an operator name.
+              </p>
+
+              <div class="space-y-3 border-t border-fc-border-default dark:border-glass-border pt-3">
+                <p class="text-sm font-semibold text-fc-text-primary">Scanner password</p>
+
+                <div :if={is_nil(@editing_event.mobile_access_secret_encrypted)}>
+                  <p class="text-sm text-fc-text-secondary">Not set.</p>
+                </div>
+
+                <div
+                  :if={@editing_event.mobile_access_secret_encrypted && is_nil(@edit_revealed_secret)}
+                  class="space-y-2"
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <input
+                      type="password"
+                      readonly
+                      class="input w-full max-w-md flex-1"
+                      value="••••••••"
+                      aria-label="Scanner password hidden"
+                    />
                     <.button
-                      id="edit-reveal-confirm"
-                      type="submit"
-                      color="primary"
-                      variant="shadow"
+                      id="edit-reveal-show-challenge"
+                      type="button"
+                      phx-click="show_edit_reveal_challenge"
+                      variant="bordered"
+                      color="natural"
                       size="small"
+                      disabled={@edit_reveal_challenge_active}
                     >
-                      Confirm
+                      Reveal
                     </.button>
+                  </div>
+
+                  <div
+                    :if={@edit_reveal_challenge_active}
+                    class="space-y-2 border-t border-fc-border-default dark:border-glass-border pt-3"
+                  >
+                    <p class="text-xs text-fc-text-muted">
+                      Re-enter your dashboard password to view the current scanner password.
+                    </p>
+                    <p :if={@reveal_error} class="text-sm text-error">{@reveal_error}</p>
+                    <form phx-submit="confirm_reveal_secret" id="edit-reveal-secret-form">
+                      <input type="hidden" name="source" value="edit_modal" />
+                      <.input
+                        type="password"
+                        name="admin_password"
+                        id="edit-reveal-admin-password"
+                        label="Admin password"
+                        value=""
+                        errors={[]}
+                        autocomplete="current-password"
+                        required
+                      />
+                      <div class="mt-3 flex flex-wrap gap-2">
+                        <.button
+                          id="edit-reveal-confirm"
+                          type="submit"
+                          color="primary"
+                          variant="shadow"
+                          size="small"
+                        >
+                          Confirm
+                        </.button>
+                        <.button
+                          type="button"
+                          phx-click="cancel_edit_reveal_challenge"
+                          variant="bordered"
+                          color="natural"
+                          size="small"
+                        >
+                          Cancel
+                        </.button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+
+                <div :if={@edit_revealed_secret} class="space-y-2">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <input
+                      type={if(@edit_reveal_show_plain, do: "text", else: "password")}
+                      readonly
+                      class="input w-full max-w-md flex-1 font-mono text-sm"
+                      value={@edit_revealed_secret}
+                      id="edit-revealed-secret-display"
+                    />
                     <.button
                       type="button"
-                      phx-click="cancel_edit_reveal_challenge"
+                      phx-click="toggle_edit_reveal_secret_plain"
                       variant="bordered"
                       color="natural"
                       size="small"
                     >
-                      Cancel
+                      {if @edit_reveal_show_plain, do: "Mask", else: "Show"}
+                    </.button>
+                    <.clipboard
+                      text={@edit_revealed_secret}
+                      id={"edit-copy-scanner-secret-#{@editing_event_id}"}
+                    >
+                      <:trigger>
+                        <.button type="button" color="primary" variant="shadow" size="small">
+                          Copy
+                        </.button>
+                      </:trigger>
+                    </.clipboard>
+                    <.button
+                      id="edit-reveal-hide-value"
+                      type="button"
+                      phx-click="clear_edit_revealed_secret"
+                      variant="bordered"
+                      color="natural"
+                      size="small"
+                    >
+                      Hide
                     </.button>
                   </div>
-                </form>
+                </div>
+              </div>
+
+              <.input
+                form="edit-event-form"
+                id="edit-event-new-scanner-password"
+                name="event[mobile_access_code]"
+                type="password"
+                label="New scanner password (optional)"
+                value={edit_form_value(@edit_form, :mobile_access_code, "")}
+                placeholder="Enter new password to rotate"
+                autocomplete="new-password"
+              />
+              <p id="edit-event-scanner-password-help" class="-mt-2 text-xs text-fc-text-muted">
+                Leave blank to keep the current scanner password.
+              </p>
+            </section>
+
+            <div
+              :if={@editing_event}
+              id={"edit-whatsapp-sales-section-#{@editing_event.id}"}
+              class="space-y-3 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
+            >
+              <h3 class="text-sm font-semibold text-fc-text-primary">
+                Ticket Sales / WhatsApp Sales
+              </h3>
+              <p class="text-sm text-fc-text-secondary">
+                Status:
+                <span class={
+                  if(@editing_event.whatsapp_sales_enabled && @editing_event.status != "archived",
+                    do: "font-semibold text-success-dark",
+                    else: "font-semibold text-fc-text-muted"
+                  )
+                }>
+                  {if @editing_event.whatsapp_sales_enabled && @editing_event.status != "archived",
+                    do: "Enabled",
+                    else: "Disabled"}
+                </span>
+              </p>
+              <p class="text-xs text-fc-text-muted">
+                Disabled events will not appear in WhatsApp ticket-buying menus.
+              </p>
+              <p class="text-xs text-fc-text-muted">
+                Enabling WhatsApp sales does not make the event available until it has an active sellable WhatsApp ticket offer.
+              </p>
+
+              <div class="flex flex-wrap gap-2">
+                <.button
+                  :if={@editing_event.status != "archived" && !@editing_event.whatsapp_sales_enabled}
+                  id={"edit-enable-whatsapp-sales-#{@editing_event.id}"}
+                  type="button"
+                  phx-click="enable_whatsapp_sales"
+                  phx-value-event_id={@editing_event.id}
+                  variant="bordered"
+                  color="success"
+                  size="small"
+                >
+                  Enable
+                </.button>
+
+                <.button
+                  :if={@editing_event.status != "archived" && @editing_event.whatsapp_sales_enabled}
+                  id={"edit-disable-whatsapp-sales-#{@editing_event.id}"}
+                  type="button"
+                  phx-click="disable_whatsapp_sales"
+                  phx-value-event_id={@editing_event.id}
+                  variant="bordered"
+                  color="warning"
+                  size="small"
+                >
+                  Disable
+                </.button>
+
+                <.link
+                  :if={@editing_event.status != "archived"}
+                  id={"edit-manage-whatsapp-offers-#{@editing_event.id}"}
+                  navigate={~p"/dashboard/events/#{@editing_event.id}/whatsapp-offers"}
+                  class="inline-flex"
+                >
+                  <.button type="button" variant="bordered" color="natural" size="small">
+                    Manage WhatsApp tickets
+                  </.button>
+                </.link>
               </div>
             </div>
 
-            <div :if={@edit_revealed_secret} class="space-y-2">
-              <div class="flex flex-wrap items-center gap-2">
-                <input
-                  type={if(@edit_reveal_show_plain, do: "text", else: "password")}
-                  readonly
-                  class="input w-full max-w-md flex-1 font-mono text-sm"
-                  value={@edit_revealed_secret}
-                  id="edit-revealed-secret-display"
-                />
-                <.button
-                  type="button"
-                  phx-click="toggle_edit_reveal_secret_plain"
-                  variant="bordered"
-                  color="natural"
-                  size="small"
-                >
-                  {if @edit_reveal_show_plain, do: "Mask", else: "Show"}
-                </.button>
-                <.clipboard
-                  text={@edit_revealed_secret}
-                  id={"edit-copy-scanner-secret-#{@editing_event_id}"}
-                >
-                  <:trigger>
-                    <.button type="button" color="primary" variant="shadow" size="small">
-                      Copy
-                    </.button>
-                  </:trigger>
-                </.clipboard>
-                <.button
-                  id="edit-reveal-hide-value"
-                  type="button"
-                  phx-click="clear_edit_revealed_secret"
-                  variant="bordered"
-                  color="natural"
-                  size="small"
-                >
-                  Hide
-                </.button>
-              </div>
-            </div>
-          </div>
-
-          <div
-            :if={@editing_event}
-            id={"edit-whatsapp-sales-section-#{@editing_event.id}"}
-            class="mb-4 space-y-3 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
-          >
-            <p class="text-sm font-semibold text-fc-text-primary">WhatsApp ticket sales</p>
-            <p class="text-sm text-fc-text-secondary">
-              Status:
-              <span class={
-                if(@editing_event.whatsapp_sales_enabled && @editing_event.status != "archived",
-                  do: "font-semibold text-success-dark",
-                  else: "font-semibold text-fc-text-muted"
-                )
-              }>
-                {if @editing_event.whatsapp_sales_enabled && @editing_event.status != "archived",
-                  do: "Enabled",
-                  else: "Disabled"}
-              </span>
-            </p>
-            <p class="text-xs text-fc-text-muted">
-              Disabled events will not appear in WhatsApp ticket-buying menus.
-            </p>
-            <p class="text-xs text-fc-text-muted">
-              Enabling WhatsApp sales does not make the event available until it has an active sellable WhatsApp ticket offer.
-            </p>
-
-            <.button
-              :if={@editing_event.status != "archived" && !@editing_event.whatsapp_sales_enabled}
-              id={"edit-enable-whatsapp-sales-#{@editing_event.id}"}
-              type="button"
-              phx-click="enable_whatsapp_sales"
-              phx-value-event_id={@editing_event.id}
-              variant="bordered"
-              color="success"
-              size="small"
+            <section
+              id="edit-event-section-integrations"
+              class="space-y-4 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
             >
-              Enable
-            </.button>
+              <h3 class="text-sm font-semibold text-fc-text-primary">Integrations / Advanced</h3>
+              <p class="text-xs text-fc-text-muted">
+                Tickera connection settings. API keys are stored encrypted; only the last four characters are shown.
+              </p>
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:tickera_site_url]}
+                type="url"
+                label="Tickera site URL"
+                value={
+                  edit_form_value(
+                    @edit_form,
+                    :tickera_site_url,
+                    @editing_event && (@editing_event.tickera_site_url || @editing_event.site_url)
+                  )
+                }
+                required
+              />
 
-            <.button
-              :if={@editing_event.status != "archived" && @editing_event.whatsapp_sales_enabled}
-              id={"edit-disable-whatsapp-sales-#{@editing_event.id}"}
-              type="button"
-              phx-click="disable_whatsapp_sales"
-              phx-value-event_id={@editing_event.id}
-              variant="bordered"
-              color="warning"
-              size="small"
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:tickera_api_key_last4]}
+                type="text"
+                label="API key (last 4)"
+                value={
+                  edit_form_value(
+                    @edit_form,
+                    :tickera_api_key_last4,
+                    @editing_event && @editing_event.tickera_api_key_last4
+                  )
+                }
+                disabled
+              />
+
+              <.card variant="bordered" color="warning" rounded="large" padding="medium">
+                <.card_content>
+                  <p class="text-sm">
+                    To rotate the API key, provide a new one. Leave empty to keep the current key.
+                  </p>
+                  <.input
+                    form="edit-event-form"
+                    id="edit-event-new-api-key"
+                    name="event[tickera_api_key_encrypted]"
+                    type="password"
+                    label="New API key (optional)"
+                    value=""
+                    autocomplete="new-password"
+                  />
+                </.card_content>
+              </.card>
+            </section>
+
+            <.form
+              id="edit-event-form"
+              for={@edit_form}
+              phx-submit="update_event"
+              class="pt-1 grid gap-2 sm:grid-cols-2"
             >
-              Disable
-            </.button>
-          </div>
-
-          <.form
-            :if={@edit_form}
-            id="edit-event-form"
-            for={@edit_form}
-            phx-submit="update_event"
-            class="space-y-4"
-          >
-            <.input
-              field={@edit_form[:name]}
-              type="text"
-              label="Event name"
-              value={edit_form_value(@edit_form, :name, @editing_event && @editing_event.name)}
-              required
-            />
-            <.input
-              field={@edit_form[:shortname]}
-              type="text"
-              label="Event shortname (optional)"
-              value={
-                edit_form_value(@edit_form, :shortname, @editing_event && @editing_event.shortname)
-              }
-            />
-            <.input
-              field={@edit_form[:tickera_site_url]}
-              type="url"
-              label="Tickera site URL"
-              value={
-                edit_form_value(
-                  @edit_form,
-                  :tickera_site_url,
-                  @editing_event && (@editing_event.tickera_site_url || @editing_event.site_url)
-                )
-              }
-              required
-            />
-
-            <.input
-              field={@edit_form[:tickera_api_key_last4]}
-              type="text"
-              label="API key (last 4)"
-              value={
-                edit_form_value(
-                  @edit_form,
-                  :tickera_api_key_last4,
-                  @editing_event && @editing_event.tickera_api_key_last4
-                )
-              }
-              disabled
-            />
-
-            <.input
-              field={@edit_form[:scanner_login_code]}
-              type="text"
-              label="Scanner event code"
-              value={
-                edit_form_value(
-                  @edit_form,
-                  :scanner_login_code,
-                  @editing_event && event_scanner_code_value(@editing_event)
-                )
-              }
-              disabled
-            />
-
-            <.card variant="bordered" color="warning" rounded="large" padding="medium">
-              <.card_content>
-                <p class="text-sm">
-                  To rotate the API key, provide a new one. Leave empty to keep the current key.
-                </p>
-                <.input
-                  id="edit-event-new-api-key"
-                  name="event[tickera_api_key_encrypted]"
-                  type="password"
-                  label="New API key (optional)"
-                  value=""
-                  autocomplete="new-password"
-                />
-              </.card_content>
-            </.card>
-
-            <.input
-              field={@edit_form[:mobile_access_code]}
-              type="password"
-              label="Mobile access code"
-              value={edit_form_value(@edit_form, :mobile_access_code, "")}
-              placeholder="Enter new code to change"
-            />
-            <p class="-mt-3 text-xs text-fc-text-muted">
-              Leave blank to keep the current scanner login code.
-            </p>
-
-            <.input
-              field={@edit_form[:location]}
-              type="text"
-              label="Location"
-              value={
-                edit_form_value(@edit_form, :location, @editing_event && @editing_event.location)
-              }
-            />
-            <.input
-              field={@edit_form[:entrance_name]}
-              type="text"
-              label="Entrance name"
-              value={
-                edit_form_value(
-                  @edit_form,
-                  :entrance_name,
-                  @editing_event && @editing_event.entrance_name
-                )
-              }
-            />
-
-            <div class="pt-3 grid gap-2 sm:grid-cols-2">
               <.button
                 id="save-event-button"
                 type="submit"
@@ -1849,8 +1893,8 @@ defmodule FastCheckWeb.DashboardLive do
               >
                 Cancel
               </.button>
-            </div>
-          </.form>
+            </.form>
+          </div>
         </.modal>
 
         <.modal
@@ -2137,6 +2181,10 @@ defmodule FastCheckWeb.DashboardLive do
     event
     |> Event.changeset(%{})
     |> to_form()
+  end
+
+  defp sanitize_dashboard_edit_event_params(params) when is_map(params) do
+    Map.drop(params, ["scanner_login_code"])
   end
 
   defp parse_event_id(event_id) when is_integer(event_id), do: {:ok, event_id}
