@@ -257,6 +257,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert has_element?(view, "#show-edit-event-#{event.id}", "Edit")
       assert has_element?(view, "#export-attendees-#{event.id}", "Export attendees")
       assert has_element?(view, "#export-checkins-#{event.id}", "Export check-ins")
+      assert has_element?(view, "#event-overview-#{event.id}", "Event overview")
+      assert render(view) =~ "/dashboard/events/#{event.id}/overview"
       refute has_element?(view, "#open-scanner-#{event.id}", "Opening...")
       refute has_element?(view, "#show-sync-history-#{event.id}", "Opening...")
       refute has_element?(view, "#show-edit-event-#{event.id}", "Opening...")

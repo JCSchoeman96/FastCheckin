@@ -1228,6 +1228,14 @@ defmodule FastCheckWeb.DashboardLive do
                     >
                       Manage WhatsApp tickets
                     </.link>
+
+                    <.link
+                      id={"event-overview-#{event.id}"}
+                      navigate={~p"/dashboard/events/#{event.id}/overview"}
+                      class="text-sm font-medium text-primary hover:underline"
+                    >
+                      Event overview
+                    </.link>
                   </div>
 
                   <div :if={!archived_event} class="space-y-3">

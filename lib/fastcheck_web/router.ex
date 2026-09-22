@@ -69,6 +69,7 @@ defmodule FastCheckWeb.Router do
     live "/dashboard/sales/orders/:id", Sales.OrderShowLive, :show
     get "/dashboard/sales/tickets/:ticket_issue_id/pdf", Sales.TicketPdfController, :show
     live "/dashboard/sales/checkout/:event_id", Sales.AdminCheckoutLive, :index
+    live "/dashboard/events/:event_id/overview", Sales.EventOverviewLive, :index
     live "/dashboard/events/:event_id/whatsapp-offers", Sales.WhatsAppOfferLive, :index
 
     live "/dashboard/sales/internal-pilot/checkout/:event_id",
