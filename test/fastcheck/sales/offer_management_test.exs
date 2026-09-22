@@ -118,6 +118,55 @@ defmodule FastCheck.Sales.OfferManagementTest do
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
   end
 
+  test "create_offer accepts max_per_order 12 when inventory is 20", %{event: event, actor: actor} do
+    assert {:ok, offer} =
+             OfferManagement.create_offer(actor, event.id, %{
+               "name" => "Double Digit Max",
+               "price" => "100",
+               "initial_quantity" => "20",
+               "max_per_order" => "12"
+             })
+
+    assert offer.max_per_order == 12
+    assert offer.configured_quantity_available == 20
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "update_offer can raise max_per_order to 12 and increments lock_version", %{
+    event: event,
+    actor: actor
+  } do
+    {:ok, offer} =
+      OfferManagement.create_offer(actor, event.id, %{
+        "name" => "Raise Max",
+        "price" => "80",
+        "initial_quantity" => "20",
+        "max_per_order" => "2"
+      })
+
+    assert {:ok, updated} =
+             OfferManagement.update_offer(actor, event.id, offer.id, %{
+               "name" => "Raise Max",
+               "price" => "80",
+               "max_per_order" => "12",
+               "lock_version" => to_string(offer.lock_version)
+             })
+
+    assert updated.max_per_order == 12
+    assert updated.lock_version == offer.lock_version + 1
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "max_per_order above configured inventory is rejected", %{event: event, actor: actor} do
+    assert {:error, :max_per_order_exceeds_inventory} =
+             OfferManagement.create_offer(actor, event.id, %{
+               "name" => "Too High Max",
+               "price" => "50",
+               "initial_quantity" => "10",
+               "max_per_order" => "12"
+             })
+  end
+
   test "update_offer edits allowed fields without changing configured quantity", %{
     event: event,
     actor: actor

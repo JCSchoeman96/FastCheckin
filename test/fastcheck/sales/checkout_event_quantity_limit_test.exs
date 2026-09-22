@@ -42,6 +42,54 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
     assert before == availability_snapshot!(offer.id)
   end
 
+  test "fresh WhatsApp checkout succeeds at double-digit effective cap" do
+    event = create_event(%{name: "Double digit cap success"})
+    assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    offer =
+      Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 12)
+
+    on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
+
+    input =
+      Fixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        quantity: 12,
+        source_channel: "whatsapp",
+        event_name: event.name,
+        idempotency_key: "double-digit-cap-ok-#{System.unique_integer([:positive])}"
+      })
+
+    assert {:ok, %{order: order}} =
+             Checkout.start_checkout(input, Fixtures.customer_session_actor([event.id]))
+
+    assert order.event_id == event.id
+
+    assert [%{quantity: 12}] =
+             OrderLine
+             |> Ash.Query.for_read(:list_for_order, %{sales_order_id: order.id})
+             |> Ash.read!(authorize?: false)
+
+    over =
+      Fixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        quantity: 13,
+        source_channel: "whatsapp",
+        event_name: event.name,
+        idempotency_key: "double-digit-cap-fail-#{System.unique_integer([:positive])}"
+      })
+
+    before = availability_snapshot!(offer.id)
+
+    assert {:error, :max_per_order_exceeded} =
+             Checkout.start_checkout(over, Fixtures.customer_session_actor([event.id]))
+
+    assert before == availability_snapshot!(offer.id)
+  end
+
   test "fresh WhatsApp checkout succeeds within the event cap" do
     event = create_event(%{name: "Event cap success"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)

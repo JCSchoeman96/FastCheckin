@@ -3,8 +3,11 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
 
   import Phoenix.LiveViewTest
 
+  import Ecto.Query
+
   alias Ash.Changeset
   alias FastCheck.Events
+  alias FastCheck.Repo
   alias FastCheck.Sales.TicketOffer
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheckWeb.SalesWebFixtures, as: Fixtures
@@ -106,6 +109,19 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
     assert html =~ ~s|value="9"| or html =~ "9"
   end
 
+  test "admin can change event cap from 9 to 12", %{conn: conn, event: event} do
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "12"}
+    })
+    |> render_submit()
+
+    assert render(view) =~ "Event WhatsApp order limit updated."
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 12
+  end
+
   test "admin can change event cap from 9 to 3", %{conn: conn, event: event} do
     assert {:ok, view, _html} = mount_offers(conn, event.id)
 
@@ -128,21 +144,88 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
     })
     |> render_submit()
 
-    assert render(view) =~ "1 to 9"
+    assert render(view) =~ "positive whole number"
     assert Events.whatsapp_max_tickets_per_order(event.id) == 9
   end
 
-  test "admin UI refuses event cap above 9", %{conn: conn, event: event} do
+  test "forms do not advertise a temporary 1-9 quantity ceiling", %{conn: conn, event: event} do
+    assert {:ok, _view, html} = mount_offers(conn, event.id)
+
+    refute html =~ "(1-9)"
+    refute html =~ ~s|max="9"|
+  end
+
+  test "create form accepts double-digit max per order within inventory", %{
+    conn: conn,
+    event: event
+  } do
     assert {:ok, view, _html} = mount_offers(conn, event.id)
 
     view
-    |> form("#event-quantity-cap-form", %{
-      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "12"}
+    |> form("#whatsapp-offer-create-form", %{
+      "offer_create" => %{
+        "name" => "Double Digit Max",
+        "price" => "100",
+        "regular_price" => "",
+        "initial_quantity" => "20",
+        "max_per_order" => "12"
+      }
     })
     |> render_submit()
 
-    assert render(view) =~ "1 to 9"
-    assert Events.whatsapp_max_tickets_per_order(event.id) == 9
+    html = render(view)
+    assert html =~ "Double Digit Max"
+
+    offer =
+      Repo.one!(
+        from(o in "sales_ticket_offers",
+          where: o.event_id == ^event.id and o.name == "Double Digit Max",
+          select: map(o, [:id, :max_per_order, :configured_quantity_available])
+        )
+      )
+
+    assert offer.max_per_order == 12
+    assert offer.configured_quantity_available == 20
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer[:id]) end)
+  end
+
+  test "edit form persists double-digit max per order when inventory allows", %{
+    conn: conn,
+    event: event
+  } do
+    offer =
+      SalesFixtures.insert_offer!(
+        event_id: event.id,
+        name: "Raise Max",
+        configured_quantity_available: 20,
+        initial_quantity: 20,
+        max_per_order: 2
+      )
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#offer-form-#{offer.id}", %{
+      "offer" => %{
+        "name" => "Raise Max",
+        "price" => "100",
+        "regular_price" => "",
+        "max_per_order" => "12",
+        "lock_version" => to_string(offer.lock_version)
+      },
+      "offer_id" => to_string(offer.id)
+    })
+    |> render_submit()
+
+    reloaded =
+      TicketOffer
+      |> Ash.Query.for_read(:get_by_id, %{id: offer.id})
+      |> Ash.read_one!(authorize?: false)
+
+    assert reloaded.max_per_order == 12
+    assert render(view) =~ "Raise Max"
   end
 
   test "archived event shows event cap read-only", %{conn: conn, event: event} do

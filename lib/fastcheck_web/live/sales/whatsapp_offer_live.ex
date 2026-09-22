@@ -12,7 +12,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
   alias FastCheck.Sales.MoneyInput
   alias FastCheck.Sales.OfferManagement
 
-  @ui_quantity_cap_max 9
+  @max_postgres_integer 2_147_483_647
 
   @impl true
   def mount(%{"event_id" => event_id_param}, session, socket) do
@@ -233,9 +233,9 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
               <.input
                 field={@quantity_cap_form[:whatsapp_max_tickets_per_order]}
                 type="number"
-                label="Event max tickets per WhatsApp order (1-9)"
+                label="Event max tickets per WhatsApp order"
                 min="1"
-                max="9"
+                step="1"
                 required
               />
               <.button type="submit" variant="solid" color="primary" size="small">
@@ -357,9 +357,9 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
                 <.input
                   field={@edit_forms[offer.id][:max_per_order]}
                   type="number"
-                  label="Max per order (1-9)"
+                  label="Max per order"
                   min="1"
-                  max="9"
+                  step="1"
                   required
                 />
                 <.button type="submit" variant="solid" color="primary" size="small">
@@ -401,9 +401,9 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
               <.input
                 field={@create_form[:max_per_order]}
                 type="number"
-                label="Max per order (1-9)"
+                label="Max per order"
                 min="1"
-                max="9"
+                step="1"
                 required
               />
               <.input
@@ -511,9 +511,13 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
   end
 
   defp parse_ui_quantity_cap(value) when is_binary(value) do
-    case Integer.parse(String.trim(value)) do
-      {limit, ""} when limit >= 1 and limit <= @ui_quantity_cap_max -> {:ok, limit}
-      {limit, ""} when limit > @ui_quantity_cap_max -> {:error, :ui_quantity_cap_exceeded}
+    trimmed = String.trim(value)
+
+    with true <- Regex.match?(~r/^[1-9][0-9]*$/, trimmed),
+         {limit, ""} <- Integer.parse(trimmed),
+         true <- limit <= @max_postgres_integer do
+      {:ok, limit}
+    else
       _ -> {:error, :invalid_limit}
     end
   end
@@ -521,10 +525,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
   defp parse_ui_quantity_cap(_), do: {:error, :invalid_limit}
 
   defp quantity_cap_error_message(:invalid_limit),
-    do: "Enter a whole number from 1 to #{@ui_quantity_cap_max}."
-
-  defp quantity_cap_error_message(:ui_quantity_cap_exceeded),
-    do: "The admin form currently accepts 1 to #{@ui_quantity_cap_max} only."
+    do: "Enter a positive whole number."
 
   defp quantity_cap_error_message(:event_archived),
     do: "Archived events cannot change the order limit."

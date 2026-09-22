@@ -18,6 +18,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   alias FastCheck.Sales.DeliveryAttempt
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
+  alias FastCheck.Sales.OrderLine
   alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Tickets.Resend.Hash
@@ -1341,18 +1342,177 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute Map.has_key?(rejected.conversation.state_data, "quantity")
   end
 
-  test "double-digit quantity input remains invalid in WH-H06", %{conversation: conversation} do
+  test "event selection treats 10 as menu index not raw event id", %{
+    conversation: conversation,
+    event: event
+  } do
+    at_event =
+      conversation
+      |> progress("hi", "menu-idx-event-1")
+      |> progress("1", "menu-idx-event-2")
+      |> progress("1", "menu-idx-event-3")
+
+    assert at_event.conversation.state == "selecting_event"
+
+    assert {:ok, repeated} = handle(at_event.conversation, "10", "menu-idx-event-4")
+    assert repeated.conversation.state == "selecting_event"
+    refute Map.has_key?(repeated.conversation.state_data, "selected_event_id")
+    refute repeated.conversation.state_data["event_options"]["10"] == event.id
+    assert repeated.response_body =~ "Voelgoed Live"
+  end
+
+  test "ticket type selection treats 10 as menu index not raw offer id", %{
+    conversation: conversation,
+    offer: offer
+  } do
+    at_ticket =
+      conversation
+      |> progress("hi", "menu-idx-offer-1")
+      |> progress("1", "menu-idx-offer-2")
+      |> progress("1", "menu-idx-offer-3")
+      |> progress("1", "menu-idx-offer-4")
+
+    assert at_ticket.conversation.state == "selecting_ticket_type"
+
+    assert {:ok, repeated} = handle(at_ticket.conversation, "10", "menu-idx-offer-5")
+    assert repeated.conversation.state == "selecting_ticket_type"
+    refute Map.get(repeated.conversation.state_data, "selected_offer_id") == offer.id
+    refute repeated.conversation.state_data["offer_options"]["10"] == offer.id
+    assert repeated.response_body =~ "General"
+  end
+
+  test "event cap 12 and offer max 12 accept 9, 10, and 12 and reject 13", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{max_per_order: 12},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: true)
+
     at_quantity =
       conversation
-      |> progress("hi", "double-digit-1")
-      |> progress("1", "double-digit-2")
-      |> progress("1", "double-digit-3")
-      |> progress("1", "double-digit-4")
-      |> progress("1", "double-digit-5")
+      |> progress("hi", "qty-12-cap-1")
+      |> progress("1", "qty-12-cap-2")
+      |> progress("1", "qty-12-cap-3")
+      |> progress("1", "qty-12-cap-4")
+      |> progress("1", "qty-12-cap-5")
 
-    assert {:ok, rejected} = handle(at_quantity.conversation, "10", "double-digit-6")
+    assert {:ok, nine} = handle(at_quantity.conversation, "9", "qty-12-cap-6")
+    assert nine.conversation.state == "collecting_buyer_name"
+    at_quantity = return_to_quantity_collection(nine)
+
+    assert {:ok, ten} = handle(at_quantity.conversation, "10", "qty-12-cap-7")
+    assert ten.conversation.state == "collecting_buyer_name"
+    at_quantity = return_to_quantity_collection(ten)
+
+    assert {:ok, twelve} = handle(at_quantity.conversation, "12", "qty-12-cap-8")
+    assert twelve.conversation.state == "collecting_buyer_name"
+    at_quantity = return_to_quantity_collection(twelve)
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "13", "qty-12-cap-9")
     assert rejected.conversation.state == "collecting_quantity"
-    assert rejected.response_body =~ "Antwoord asseblief"
+  end
+
+  test "event cap 15 and offer max 12 accept 12 and reject 13 by offer ceiling", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 15)
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{max_per_order: 12},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: true)
+
+    at_quantity = quantity_prompt_conversation(conversation)
+
+    assert {:ok, accepted} = handle(at_quantity.conversation, "12", "offer-eff-cap-1")
+    assert accepted.conversation.state == "collecting_buyer_name"
+
+    at_quantity = return_to_quantity_collection(accepted)
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "13", "offer-eff-cap-2")
+    assert rejected.conversation.state == "collecting_quantity"
+  end
+
+  test "event cap 10 and offer max 15 accept 10 and reject 11 by event ceiling", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 10)
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{max_per_order: 15},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: true)
+
+    at_quantity = quantity_prompt_conversation(conversation)
+
+    assert {:ok, accepted} = handle(at_quantity.conversation, "10", "event-eff-cap-1")
+    assert accepted.conversation.state == "collecting_buyer_name"
+
+    at_quantity = return_to_quantity_collection(accepted)
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "11", "event-eff-cap-2")
+    assert rejected.conversation.state == "collecting_quantity"
+  end
+
+  test "double-digit quantity reaches payment_pending with correct order and reservation", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{max_per_order: 12},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: true)
+
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
+    result =
+      conversation
+      |> progress("hi", "dd-checkout-1")
+      |> progress("1", "dd-checkout-2")
+      |> progress("1", "dd-checkout-3")
+      |> progress("1", "dd-checkout-4")
+      |> progress("1", "dd-checkout-5")
+      |> progress("12", "dd-checkout-6")
+      |> progress("Jan Burger", "dd-checkout-7")
+      |> progress("jan@example.com", "dd-checkout-8")
+      |> progress("1", "dd-checkout-9")
+
+    assert result.conversation.state == "payment_pending"
+    assert result.conversation.state_data["quantity"] == 12
+
+    order_id = result.conversation.state_data["sales_order_id"]
+
+    assert [%{quantity: 12, total_amount_cents: 12_000, unit_amount_cents: 1_000}] =
+             OrderLine
+             |> Ash.Query.for_read(:list_for_order, %{sales_order_id: order_id})
+             |> Ash.read!(authorize?: false)
+
+    assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
+    assert availability.reserved_quantity == 12
   end
 
   test "confirmation after event cap decrease returns to quantity collection safely", %{
@@ -1507,6 +1667,23 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert transitioned.state_data["pending_reply"]["provider_message_id"] == provider_message_id
     assert transitioned.state_data["pending_reply"]["status"] == "reply_pending"
     assert is_nil(transitioned.state_data["pending_reply"]["ciphertext"])
+  end
+
+  defp quantity_prompt_conversation(conversation) do
+    conversation
+    |> progress("hi", "qty-prompt-1")
+    |> progress("1", "qty-prompt-2")
+    |> progress("1", "qty-prompt-3")
+    |> progress("1", "qty-prompt-4")
+    |> progress("1", "qty-prompt-5")
+  end
+
+  defp return_to_quantity_collection(%{conversation: conversation}) do
+    suffix = System.unique_integer([:positive])
+
+    assert {:ok, result} = handle(conversation, "0", "back-to-qty-#{suffix}")
+    assert result.conversation.state == "collecting_quantity"
+    result
   end
 
   defp progress(%{conversation: conversation}, text, suffix),
