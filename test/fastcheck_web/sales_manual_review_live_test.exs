@@ -192,6 +192,8 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
   end
 
   defp insert_review_case! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(91_002)
+
     %{rows: [[order_id]]} =
       Repo.query!(
         """

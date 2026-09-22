@@ -8,6 +8,11 @@ defmodule FastCheck.Sales.OrderStateTransitionTest do
 
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
 
+  setup do
+    Fixtures.ensure_event_for_sales!(Fixtures.event_id())
+    :ok
+  end
+
   test "state transitions are appended for order status changes" do
     actor = Fixtures.system_actor()
 

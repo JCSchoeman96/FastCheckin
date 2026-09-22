@@ -6,6 +6,7 @@ defmodule FastCheck.EventsMobileAccessTest do
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  alias FastCheck.Fixtures
   alias FastCheck.Repo
 
   test "update_event/2 rotates mobile access code when provided" do
@@ -81,6 +82,7 @@ defmodule FastCheck.EventsMobileAccessTest do
       tickera_api_key_encrypted: encrypted_api_key,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
       mobile_access_secret_encrypted: encrypted_mobile_secret,
+      scanner_login_code: Fixtures.unique_scanner_login_code(),
       status: "active",
       entrance_name: "Main Entrance"
     })

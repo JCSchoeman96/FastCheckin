@@ -1,5 +1,5 @@
 defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   import Ecto.Query
 

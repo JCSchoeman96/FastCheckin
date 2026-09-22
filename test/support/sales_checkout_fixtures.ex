@@ -139,7 +139,20 @@ defmodule FastCheck.SalesCheckoutFixtures do
     offer
   end
 
+  @doc false
+  def ensure_event_for_sales!(event_id) when is_integer(event_id) and event_id > 0 do
+    ensure_legacy_event!(event_id)
+  end
+
   defp ensure_legacy_event!(event_id) do
+    if Repo.get(Event, event_id) do
+      :ok
+    else
+      do_insert_legacy_event!(event_id)
+    end
+  end
+
+  defp do_insert_legacy_event!(event_id) do
     %Event{id: event_id}
     |> Event.changeset(%{
       name: "Checkout Fixture Event #{event_id}",
@@ -149,9 +162,12 @@ defmodule FastCheck.SalesCheckoutFixtures do
       mobile_access_secret_encrypted: "checkout-fixture-mobile-secret",
       scanner_login_code:
         "#{rem(event_id, 100_000) |> Integer.to_string() |> String.pad_leading(5, "0")}A",
-      status: "active"
+      status: "active",
+      whatsapp_max_tickets_per_order: 10
     })
-    |> Repo.insert!()
+    |> Repo.insert!(on_conflict: :nothing)
+
+    :ok
   end
 
   def with_redis_stopped(fun) when is_function(fun, 0) do

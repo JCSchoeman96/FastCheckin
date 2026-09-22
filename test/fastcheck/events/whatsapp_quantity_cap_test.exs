@@ -1,15 +1,19 @@
 defmodule FastCheck.Events.WhatsAppQuantityCapTest do
   use FastCheck.DataCase, async: false
 
+  @moduletag skip_sales_event_anchors: true
+
   import Ecto.Query
 
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Events
+  alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
   alias FastCheck.Repo
 
   setup do
+    _ = Cache.invalidate_events_list_cache()
     _ = CacheManager.reset()
     EtsLayer.flush_all()
 
@@ -92,6 +96,8 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
   end
 
   test "real cap changes invalidate per-event and list caches" do
+    Repo.delete_all(Event)
+    _ = Cache.invalidate_events_list_cache()
     event = create_event(%{name: "Quantity cache"})
     assert :ok = FastCheck.Events.Cache.persist_event_cache(event)
     assert [_event] = Events.list_events()

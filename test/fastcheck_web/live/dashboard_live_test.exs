@@ -421,7 +421,82 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert has_element?(view, "#enable-whatsapp-sales-#{event.id}", "Enable")
       refute Events.get_event!(event.id).whatsapp_sales_enabled
     end
+  end
 
+  describe "archived event permanent removal" do
+    test "archived empty event shows Remove permanently and removes card", %{conn: conn} do
+      event = insert_event!(%{name: "Removable Archived"})
+      assert {:ok, _} = Events.archive_event(event.id)
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#events-tab-archived") |> render_click()
+
+      assert has_element?(view, "#remove-archived-event-#{event.id}", "Remove permanently")
+
+      view
+      |> element("#remove-archived-event-#{event.id}")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Archived event removed permanently."
+      refute html =~ "Removable Archived"
+      assert Repo.get(Event, event.id) == nil
+    end
+
+    test "active events do not show Remove permanently", %{conn: conn} do
+      event = insert_event!(%{name: "Active No Remove"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      refute has_element?(view, "#remove-archived-event-#{event.id}")
+    end
+
+    test "forged remove_archived_event on active event is rejected server-side", %{conn: conn} do
+      event = insert_event!(%{name: "Forged Active Remove"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      render_click(view, "remove_archived_event", %{"event_id" => "#{event.id}"})
+
+      assert render(view) =~ "Only archived events can be removed."
+      assert Repo.get!(Event, event.id)
+    end
+
+    test "blocked archived event stays visible with understandable copy", %{conn: conn} do
+      event = insert_event!(%{name: "Blocked Archived"})
+      _attendee = FastCheck.Fixtures.create_attendee(event)
+      assert {:ok, _} = Events.archive_event(event.id)
+
+      {:ok, view, _html} = mount_dashboard(conn)
+      view |> element("#events-tab-archived") |> render_click()
+
+      view
+      |> element("#remove-archived-event-#{event.id}")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Cannot remove this event because related data exists:"
+      assert html =~ "attendees"
+      refute html =~ "john.doe@example.com"
+      assert has_element?(view, "#remove-archived-event-#{event.id}")
+    end
+
+    test "unarchive event still works alongside removal control", %{conn: conn} do
+      event = insert_event!(%{name: "Unarchive Still Works"})
+      assert {:ok, _} = Events.archive_event(event.id)
+
+      {:ok, view, _html} = mount_dashboard(conn)
+      view |> element("#events-tab-archived") |> render_click()
+
+      view |> element("#unarchive-event-#{event.id}") |> render_click()
+
+      assert render(view) =~ "Event unarchived successfully"
+      assert Events.get_event!(event.id).status == "active"
+    end
+  end
+
+  describe "WhatsApp sales gate on dashboard" do
     test "archived events never show an enable WhatsApp Sales action", %{conn: conn} do
       event = insert_event!(%{name: "Archived WhatsApp Gate Event"})
       assert {:ok, _event} = Events.enable_whatsapp_sales(event.id)

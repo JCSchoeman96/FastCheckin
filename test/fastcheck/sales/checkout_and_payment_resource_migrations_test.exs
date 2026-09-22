@@ -1,5 +1,5 @@
 defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   @sales_tables [
     "sales_checkout_sessions",

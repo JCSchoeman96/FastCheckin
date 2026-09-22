@@ -142,15 +142,12 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
       refute_error_inspect_leaks(error, [token, ticket_code])
     end
 
-    test "missing event returns ticket_not_ready without payload" do
-      %{token: token, order_id: order_id, ticket_code: ticket_code} = issued_ticket_fixture()
+    test "missing event cannot be represented on persisted orders (FK integrity)" do
+      %{order_id: order_id} = issued_ticket_fixture()
 
-      Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
-
-      assert {:error, %ArtifactError{state: :ticket_not_ready} = error} =
-               ArtifactResolver.resolve_from_delivery_token(token)
-
-      refute_error_inspect_leaks(error, [token, ticket_code])
+      assert_raise Postgrex.Error, ~r/foreign_key/, fn ->
+        Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
+      end
     end
 
     test "archived event returns ticket_not_ready without payload" do
@@ -330,18 +327,11 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
 
       refute_error_inspect_leaks(attendee_error, [attendee_missing_id, attendee_missing_code])
 
-      %{ticket_issue_id: event_missing_id, order_id: order_id, ticket_code: event_missing_code} =
-        issued_ticket_fixture()
+      %{order_id: order_id} = issued_ticket_fixture()
 
-      Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [
-        999_999_999,
-        order_id
-      ])
-
-      assert {:error, %ArtifactError{state: :ticket_not_ready} = event_error} =
-               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), event_missing_id)
-
-      refute_error_inspect_leaks(event_error, [event_missing_id, event_missing_code])
+      assert_raise Postgrex.Error, ~r/foreign_key/, fn ->
+        Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
+      end
     end
 
     test "archived event and not-scannable attendee are rejected" do

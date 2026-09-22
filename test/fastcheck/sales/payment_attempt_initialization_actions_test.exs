@@ -97,6 +97,10 @@ defmodule FastCheck.Sales.PaymentAttemptInitializationActionsTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(
+      FastCheck.SalesCheckoutFixtures.event_id()
+    )
+
     result =
       FastCheck.Repo.query!(
         """

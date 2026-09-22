@@ -254,6 +254,7 @@ defmodule FastCheck.Sales.Vs01fPolicyTest do
   end
 
   defp insert_sales_graph!(event_id) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
     offer_id = insert_ticket_offer!(event_id)
     conversation_id = insert_conversation!()
     order_id = insert_order!(event_id, conversation_id)

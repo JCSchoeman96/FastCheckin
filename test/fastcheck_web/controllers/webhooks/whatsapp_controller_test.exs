@@ -580,6 +580,8 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
   end
 
   defp insert_provider_accepted_attempt!(provider_message_id) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(90_001)
+
     %{rows: [[order_id]]} =
       Repo.query!(
         """

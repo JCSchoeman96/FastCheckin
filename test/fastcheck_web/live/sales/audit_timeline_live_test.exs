@@ -37,6 +37,8 @@ defmodule FastCheckWeb.Sales.AuditTimelineLiveTest do
   end
 
   defp insert_order_with_transition! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(21_023)
+
     %{rows: [[order_id]]} =
       Repo.query!(
         """

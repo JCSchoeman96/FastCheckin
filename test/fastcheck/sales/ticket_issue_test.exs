@@ -1,5 +1,5 @@
 defmodule FastCheck.Sales.TicketIssueTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   import Ecto.Query
 
