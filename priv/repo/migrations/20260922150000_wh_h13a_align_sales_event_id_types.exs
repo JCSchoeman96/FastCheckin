@@ -7,11 +7,17 @@ defmodule FastCheck.Repo.Migrations.WhH13aAlignSalesEventIdTypes do
   index rebuild behavior, and maintenance-window approval are **not** inferable from CI;
   treat this migration as requiring an explicit ops sign-off before production apply.
 
+  The DDL uses a transaction-local 5-second `lock_timeout`; failure to acquire a
+  required lock within that period aborts the migration. Operators must drain
+  conflicting readers and writers rather than repeatedly increasing the timeout.
+  Production backup and maintenance-window approval remain required.
+
   Orphan `event_id` values must be resolved before this migration runs.
   """
   use Ecto.Migration
 
   def up do
+    repo().query!("SET LOCAL lock_timeout = '5s'")
     assert_no_orphan_sales_event_ids!()
 
     execute("""
@@ -26,6 +32,7 @@ defmodule FastCheck.Repo.Migrations.WhH13aAlignSalesEventIdTypes do
   end
 
   def down do
+    repo().query!("SET LOCAL lock_timeout = '5s'")
     assert_sales_event_ids_fit_integer!()
 
     execute("""
