@@ -70,8 +70,26 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       refute body =~ "202"
     end
 
+    test "renders quantity prompt with localized range and navigation" do
+      english = MenuRenderer.quantity_prompt("en", 12)
+
+      assert english =~ "How many tickets do you want to buy?"
+      assert english =~ "send a number from 1 to 12"
+      assert english =~ "0. Back"
+      assert english =~ "#. Back to main menu"
+      refute english =~ "selected_offer"
+      refute english =~ "whatsapp_max"
+
+      afrikaans = MenuRenderer.quantity_prompt("af", 12)
+
+      assert afrikaans =~ "Hoeveel kaartjies wil jy koop?"
+      assert afrikaans =~ "1 tot 12"
+      assert afrikaans =~ "0. Terug"
+      assert afrikaans =~ "#. Terug na hoof kieslys"
+    end
+
     test "renders active flow prompts with back and restart navigation" do
-      quantity = MenuRenderer.quantity_prompt("af")
+      quantity = MenuRenderer.quantity_prompt("af", 4)
       buyer_name = MenuRenderer.buyer_name_prompt("af")
       email = MenuRenderer.email_prompt("af")
       resend_name = MenuRenderer.resend_name_prompt("af")

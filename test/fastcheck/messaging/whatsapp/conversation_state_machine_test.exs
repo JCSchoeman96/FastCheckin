@@ -89,6 +89,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-5")
     assert result.conversation.state == "collecting_quantity"
+    assert result.response_body =~ "1 tot 4"
 
     assert {:ok, result} = handle(result.conversation, "2", "wamid.flow-6")
     assert result.conversation.state == "collecting_buyer_name"
@@ -1289,6 +1290,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert {:ok, rejected} = handle(at_quantity.conversation, "3", "event-cap-2-7")
     assert rejected.conversation.state == "collecting_quantity"
     assert rejected.response_body =~ "Antwoord asseblief"
+    assert rejected.response_body =~ "1 tot 2"
+    refute rejected.response_body =~ "1 tot 4"
   end
 
   test "event cap 4 and offer max 2 accept 2 and reject 3", %{
@@ -1319,6 +1322,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     assert {:ok, rejected} = handle(at_quantity.conversation, "3", "offer-cap-2-7")
     assert rejected.conversation.state == "collecting_quantity"
+    assert rejected.response_body =~ "1 tot 2"
+    refute rejected.response_body =~ "1 tot 4"
   end
 
   test "lowering event cap before quantity entry rejects stale quantity immediately", %{
@@ -1404,6 +1409,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("1", "qty-12-cap-4")
       |> progress("1", "qty-12-cap-5")
 
+    assert at_quantity.response_body =~ "1 tot 12"
+
     assert {:ok, nine} = handle(at_quantity.conversation, "9", "qty-12-cap-6")
     assert nine.conversation.state == "collecting_buyer_name"
     at_quantity = return_to_quantity_collection(nine)
@@ -1436,14 +1443,18 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     |> Ash.update!(authorize?: true)
 
     at_quantity = quantity_prompt_conversation(conversation)
+    assert at_quantity.response_body =~ "1 tot 12"
+    refute at_quantity.response_body =~ "1 tot 15"
 
     assert {:ok, accepted} = handle(at_quantity.conversation, "12", "offer-eff-cap-1")
     assert accepted.conversation.state == "collecting_buyer_name"
 
     at_quantity = return_to_quantity_collection(accepted)
+    assert at_quantity.response_body =~ "1 tot 12"
 
     assert {:ok, rejected} = handle(at_quantity.conversation, "13", "offer-eff-cap-2")
     assert rejected.conversation.state == "collecting_quantity"
+    assert rejected.response_body =~ "1 tot 12"
   end
 
   test "event cap 10 and offer max 15 accept 10 and reject 11 by event ceiling", %{
@@ -1462,14 +1473,51 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     |> Ash.update!(authorize?: true)
 
     at_quantity = quantity_prompt_conversation(conversation)
+    assert at_quantity.response_body =~ "1 tot 10"
+    refute at_quantity.response_body =~ "1 tot 15"
 
     assert {:ok, accepted} = handle(at_quantity.conversation, "10", "event-eff-cap-1")
     assert accepted.conversation.state == "collecting_buyer_name"
 
     at_quantity = return_to_quantity_collection(accepted)
+    assert at_quantity.response_body =~ "1 tot 10"
 
     assert {:ok, rejected} = handle(at_quantity.conversation, "11", "event-eff-cap-2")
     assert rejected.conversation.state == "collecting_quantity"
+    assert rejected.response_body =~ "1 tot 10"
+  end
+
+  test "back from buyer name re-renders quantity prompt with fresh event cap", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{max_per_order: 12},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: true)
+
+    at_buyer_name =
+      conversation
+      |> progress("hi", "fresh-cap-back-1")
+      |> progress("1", "fresh-cap-back-2")
+      |> progress("1", "fresh-cap-back-3")
+      |> progress("1", "fresh-cap-back-4")
+      |> progress("1", "fresh-cap-back-5")
+      |> progress("2", "fresh-cap-back-6")
+
+    assert at_buyer_name.conversation.state == "collecting_buyer_name"
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 6)
+
+    assert {:ok, at_quantity} = handle(at_buyer_name.conversation, "0", "fresh-cap-back-7")
+    assert at_quantity.conversation.state == "collecting_quantity"
+    assert at_quantity.response_body =~ "1 tot 6"
+    refute at_quantity.response_body =~ "1 tot 12"
   end
 
   test "double-digit quantity reaches payment_pending with correct order and reservation", %{
@@ -1552,6 +1600,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert result.conversation.state == "collecting_quantity"
     assert result.response_body =~ "Antwoord asseblief"
     assert result.response_body =~ "Hoeveel kaartjies"
+    assert result.response_body =~ "1 tot 12"
     refute result.response_body =~ "order_total_too_large"
 
     data = result.conversation.state_data
@@ -1608,6 +1657,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert result.conversation.state == "collecting_quantity"
     assert result.response_body =~ "Antwoord asseblief"
     assert result.response_body =~ "Hoeveel kaartjies"
+    assert result.response_body =~ "1 tot 2"
+    refute result.response_body =~ "1 tot 4"
 
     data = result.conversation.state_data
     assert data["selected_event_id"] == event.id
