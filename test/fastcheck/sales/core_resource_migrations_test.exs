@@ -147,6 +147,8 @@ defmodule FastCheck.Sales.CoreResourceMigrationsTest do
   end
 
   test "database constraints reject unsafe skeleton data" do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     assert_db_error(~r/sales_ticket_offers_price_cents_non_negative/, fn ->
       Repo.query!(
         """

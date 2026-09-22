@@ -3,6 +3,7 @@ defmodule FastCheckWeb.ExportControllerTest do
 
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
+  alias FastCheck.Fixtures
   alias FastCheck.Repo
 
   describe "GET /export/check-ins/:event_id" do
@@ -41,6 +42,7 @@ defmodule FastCheckWeb.ExportControllerTest do
       tickera_api_key_encrypted: encrypted_api_key,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
       mobile_access_secret_encrypted: encrypted_mobile_secret,
+      scanner_login_code: Fixtures.unique_scanner_login_code(),
       status: "active",
       entrance_name: "Main Gate",
       location: "Main Venue"

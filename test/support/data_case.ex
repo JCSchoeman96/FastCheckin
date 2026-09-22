@@ -16,10 +16,6 @@ defmodule FastCheck.DataCase do
 
   use ExUnit.CaseTemplate
 
-  alias FastCheck.SalesCheckoutFixtures
-
-  @sales_event_anchor_ids [1, 90_001, 91_001, 91_002, 21_022, 21_023]
-
   using do
     quote do
       alias FastCheck.Repo
@@ -34,13 +30,6 @@ defmodule FastCheck.DataCase do
 
   setup tags do
     FastCheck.DataCase.setup_sandbox(tags)
-
-    if tags[:async] == false and tags[:skip_sales_event_anchors] != true do
-      for event_id <- @sales_event_anchor_ids do
-        SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
-      end
-    end
-
     :ok
   end
 

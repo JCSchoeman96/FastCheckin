@@ -1,8 +1,6 @@
 defmodule FastCheck.Events.WhatsAppSalesGateTest do
   use FastCheck.DataCase, async: false
 
-  @moduletag skip_sales_event_anchors: true
-
   import Ecto.Query
 
   alias FastCheck.Cache.CacheManager

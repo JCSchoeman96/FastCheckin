@@ -148,6 +148,62 @@ defmodule FastCheck.Events.ArchivedEventRemovalTest do
     assert Repo.one!(from(l in "sales_order_lines", where: l.id == ^line_id, select: l.id))
   end
 
+  test "blocks when durable scan persistence jobs are queued for the event" do
+    event = Fixtures.create_event()
+    archived = archive!(event)
+
+    {:ok, _job} =
+      FastCheck.Scans.Jobs.PersistScanBatchJob.new(%{
+        "results" => [
+          %{
+            "event_id" => event.id,
+            "idempotency_key" => "persist-#{System.unique_integer([:positive])}",
+            "ticket_code" => "SCAN-1",
+            "direction" => "in",
+            "status" => "success"
+          }
+        ]
+      })
+      |> Oban.insert()
+
+    assert {:error, {:dependencies_present, %{pending_scan_persistence_jobs: 1}}} =
+             Events.remove_archived_event(archived.id)
+
+    assert Repo.get!(FastCheck.Events.Event, archived.id)
+  end
+
+  test "ticket offer on archived event blocks removal; checkout cannot create orphan orders" do
+    alias FastCheck.Sales.Checkout
+
+    event = Fixtures.create_event(%{name: "H04 removal guard"})
+    offer = SalesFixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
+    assert {:ok, _} = Events.archive_event(event.id)
+
+    assert {:error, {:dependencies_present, %{sales_ticket_offers: 1}}} =
+             Events.remove_archived_event(event.id)
+
+    assert Repo.get!(FastCheck.Events.Event, event.id)
+
+    input =
+      SalesFixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        source_channel: "whatsapp"
+      })
+
+    assert {:error, :whatsapp_sales_disabled} =
+             Checkout.start_checkout(input, SalesFixtures.customer_session_actor([event.id]))
+
+    assert 0 ==
+             Repo.aggregate(
+               from(o in "sales_orders", where: o.event_id == ^event.id),
+               :count
+             )
+  end
+
   test "does not delete child rows to satisfy removal" do
     event = Fixtures.create_event()
     attendee = Fixtures.create_attendee(event)

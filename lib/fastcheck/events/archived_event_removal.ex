@@ -23,6 +23,10 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
   alias FastCheck.Ticketing.Gate
   alias FastCheck.Ticketing.SyncCursor
 
+  @persist_scan_batch_worker "FastCheck.Scans.Jobs.PersistScanBatchJob"
+  # Durable queue states only; completed/discarded/cancelled jobs are not active persistence work.
+  @active_oban_states ~w(available scheduled executing retryable)
+
   @type blocker_map :: %{atom() => pos_integer()}
 
   @blocker_sources [
@@ -84,13 +88,19 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
   @doc false
   @spec dependency_blockers(pos_integer()) :: blocker_map()
   def dependency_blockers(event_id) when is_integer(event_id) and event_id > 0 do
-    @blocker_sources
-    |> Enum.reduce(%{}, fn {source, key}, acc ->
-      case count_for_event(source, event_id) do
-        0 -> acc
-        count -> Map.put(acc, key, count)
-      end
-    end)
+    table_blockers =
+      @blocker_sources
+      |> Enum.reduce(%{}, fn {source, key}, acc ->
+        case count_for_event(source, event_id) do
+          0 -> acc
+          count -> Map.put(acc, key, count)
+        end
+      end)
+
+    case count_pending_scan_persistence_jobs(event_id) do
+      0 -> table_blockers
+      count -> Map.put(table_blockers, :pending_scan_persistence_jobs, count)
+    end
   end
 
   defp lock_event(event_id) do
@@ -119,7 +129,7 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
         if fk_constraint_violation?(changeset) do
           {:error, :integrity_conflict}
         else
-          {:error, :integrity_conflict}
+          {:error, changeset}
         end
     end
   rescue
@@ -129,6 +139,26 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
       else
         reraise error, __STACKTRACE__
       end
+  end
+
+  defp count_pending_scan_persistence_jobs(event_id) do
+    %{rows: [[count]]} =
+      Repo.query!(
+        """
+        SELECT COUNT(*)::bigint
+        FROM oban_jobs AS j
+        WHERE j.worker = $1
+          AND j.state::text = ANY($2::text[])
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(j.args->'results') AS elem
+            WHERE (elem->>'event_id')::bigint = $3
+          )
+        """,
+        [@persist_scan_batch_worker, @active_oban_states, event_id]
+      )
+
+    count
   end
 
   defp fk_constraint_violation?(%Ecto.Changeset{errors: errors}) do

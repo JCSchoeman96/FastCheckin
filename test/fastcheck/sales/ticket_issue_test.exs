@@ -114,6 +114,8 @@ defmodule FastCheck.Sales.TicketIssueTest do
   end
 
   defp insert_ticket_offer! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     %{rows: [[id]]} =
       Repo.query!(
         """
@@ -133,6 +135,8 @@ defmodule FastCheck.Sales.TicketIssueTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     %{rows: [[id]]} =
       Repo.query!(
         """

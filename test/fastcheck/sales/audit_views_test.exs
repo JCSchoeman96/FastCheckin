@@ -159,6 +159,8 @@ defmodule FastCheck.Sales.AuditViewsTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(21_022)
+
     %{rows: [[id]]} =
       Repo.query!(
         """
@@ -184,6 +186,8 @@ defmodule FastCheck.Sales.AuditViewsTest do
   end
 
   defp insert_offer! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(21_022)
+
     %{rows: [[id]]} =
       Repo.query!(
         """

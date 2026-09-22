@@ -135,6 +135,8 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     result =
       Repo.query!(
         """

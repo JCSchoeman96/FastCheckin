@@ -75,6 +75,8 @@ defmodule FastCheck.Tickets.TicketTokenIndexesTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     [[id]] =
       Repo.query!(
         """
@@ -112,6 +114,8 @@ defmodule FastCheck.Tickets.TicketTokenIndexesTest do
   end
 
   defp insert_ticket_offer! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     [[id]] =
       Repo.query!(
         """

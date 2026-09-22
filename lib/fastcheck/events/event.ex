@@ -13,6 +13,7 @@ defmodule FastCheck.Events.Event do
 
   @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
   @scanner_code_length 6
+  @scanner_code_space 1_073_741_824
   @scanner_code_regex ~r/^[0-9A-HJKMNP-TV-Z]{6}$/
   @shortname_regex ~r/^[A-Za-z0-9][A-Za-z0-9 _-]*$/
 
@@ -223,10 +224,22 @@ defmodule FastCheck.Events.Event do
   defp normalize_shortname(_value), do: nil
 
   defp generate_scanner_login_code do
-    for <<byte <- :crypto.strong_rand_bytes(@scanner_code_length)>> do
-      <<Enum.at(@scanner_code_alphabet, rem(byte, 32))>>
-    end
+    System.unique_integer([:positive, :monotonic])
+    |> rem(@scanner_code_space)
+    |> encode_scanner_code([])
     |> IO.iodata_to_binary()
+    |> String.pad_leading(@scanner_code_length, "0")
+  end
+
+  defp encode_scanner_code(value, acc) when value < 32 do
+    [<<Enum.at(@scanner_code_alphabet, value)>> | acc]
+  end
+
+  defp encode_scanner_code(value, acc) do
+    remainder = rem(value, 32)
+    quotient = div(value, 32)
+
+    encode_scanner_code(quotient, [<<Enum.at(@scanner_code_alphabet, remainder)>> | acc])
   end
 
   defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""

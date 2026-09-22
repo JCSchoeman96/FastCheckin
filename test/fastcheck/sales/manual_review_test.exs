@@ -281,6 +281,8 @@ defmodule FastCheck.Sales.ManualReviewTest do
   end
 
   defp insert_review_order!(opts \\ []) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(91_001)
+
     status = Keyword.get(opts, :status, "manual_review")
     seconds_ago = Keyword.get(opts, :seconds_ago, 0)
 
@@ -350,6 +352,8 @@ defmodule FastCheck.Sales.ManualReviewTest do
   end
 
   defp insert_ticket_issue!(order_id, opts \\ []) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(91_001)
+
     seconds_ago = Keyword.get(opts, :seconds_ago, 0)
     offer_name = "Manual Offer #{System.unique_integer([:positive])}"
 
