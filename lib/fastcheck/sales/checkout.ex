@@ -36,6 +36,7 @@ defmodule FastCheck.Sales.Checkout do
         }
 
   @checkout_actor_types [:system, :admin, :customer_session]
+  @max_postgres_integer 2_147_483_647
 
   @spec start_checkout(checkout_input(), map(), keyword()) ::
           {:ok, %{order: struct(), checkout_session: struct()}}
@@ -57,7 +58,8 @@ defmodule FastCheck.Sales.Checkout do
             with :ok <- validate_whatsapp_sales_gate(input, context),
                  {:ok, offer} <- validate_offer(input, opts, context),
                  :ok <- validate_quantity_against_offer(input, offer),
-                 :ok <- validate_quantity_against_event_cap(input, context) do
+                 :ok <- validate_quantity_against_event_cap(input, context),
+                 :ok <- validate_order_total_storage(input, offer) do
               create_checkout(offer, input, actor, context)
             end
           end
@@ -125,6 +127,19 @@ defmodule FastCheck.Sales.Checkout do
   end
 
   defp validate_quantity_against_event_cap(_input, _context), do: :ok
+
+  defp validate_order_total_storage(%{quantity: quantity}, %{price_cents: price_cents})
+       when is_integer(quantity) and is_integer(price_cents) do
+    total_cents = price_cents * quantity
+
+    if total_cents <= @max_postgres_integer do
+      :ok
+    else
+      {:error, :order_total_too_large}
+    end
+  end
+
+  defp validate_order_total_storage(_input, _offer), do: {:error, :order_total_too_large}
 
   defp validate_offer_lock_version(input, offer, %{effective_sales_channel: "whatsapp"}) do
     validate_required_whatsapp_offer_lock_version(input, offer)

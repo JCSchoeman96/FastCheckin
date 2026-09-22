@@ -632,6 +632,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       {:error, :event_max_per_order_exceeded} ->
         return_to_quantity_collection_after_event_cap_change(command, conversation)
 
+      {:error, :order_total_too_large} ->
+        return_to_quantity_collection_after_event_cap_change(command, conversation)
+
       result ->
         result
     end

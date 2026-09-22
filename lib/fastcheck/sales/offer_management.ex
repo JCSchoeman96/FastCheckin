@@ -18,7 +18,6 @@ defmodule FastCheck.Sales.OfferManagement do
   alias FastCheck.Sales.MoneyInput
   alias FastCheck.Sales.TicketOffer
 
-  @max_per_order_limit 9
   @currency "ZAR"
 
   @type dashboard_user :: %{required(:username) => String.t(), optional(:id) => String.t()}
@@ -133,7 +132,8 @@ defmodule FastCheck.Sales.OfferManagement do
   def safe_error_message(:invalid_quantity),
     do: "Initial inventory must be a positive whole number."
 
-  def safe_error_message(:invalid_max_per_order), do: "Max per order must be between 1 and 9."
+  def safe_error_message(:invalid_max_per_order),
+    do: "Max per order must be a positive whole number."
 
   def safe_error_message(:max_per_order_exceeds_inventory),
     do: "Max per order cannot exceed inventory."
@@ -354,15 +354,10 @@ defmodule FastCheck.Sales.OfferManagement do
   defp parse_max_per_order(params, configured_quantity) do
     with {:ok, max_per_order} <-
            parse_positive_int(params, "max_per_order", :invalid_max_per_order) do
-      cond do
-        max_per_order > @max_per_order_limit ->
-          {:error, :invalid_max_per_order}
-
-        max_per_order > configured_quantity ->
-          {:error, :max_per_order_exceeds_inventory}
-
-        true ->
-          {:ok, max_per_order}
+      if max_per_order > configured_quantity do
+        {:error, :max_per_order_exceeds_inventory}
+      else
+        {:ok, max_per_order}
       end
     end
   end

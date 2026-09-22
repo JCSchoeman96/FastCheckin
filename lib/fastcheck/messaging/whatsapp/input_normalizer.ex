@@ -4,9 +4,10 @@ defmodule FastCheck.Messaging.WhatsApp.InputNormalizer do
   """
 
   @max_text_length 256
+  @canonical_positive_integer ~r/^[1-9][0-9]*$/
 
   @type normalized ::
-          {:number, 1..9}
+          {:number, pos_integer()}
           | :back
           | :restart
           | :help
@@ -24,9 +25,6 @@ defmodule FastCheck.Messaging.WhatsApp.InputNormalizer do
       String.length(trimmed) > @max_text_length ->
         {:error, :too_long}
 
-      trimmed in ~w(1 2 3 4 5 6 7 8 9) ->
-        {:ok, {:number, String.to_integer(trimmed)}}
-
       trimmed == "0" ->
         {:ok, :back}
 
@@ -41,6 +39,9 @@ defmodule FastCheck.Messaging.WhatsApp.InputNormalizer do
 
       String.downcase(trimmed) == "stop" ->
         {:ok, :stop}
+
+      Regex.match?(@canonical_positive_integer, trimmed) ->
+        {:ok, {:number, String.to_integer(trimmed)}}
 
       Regex.match?(~r/^\d+$/, trimmed) ->
         {:error, :invalid}
