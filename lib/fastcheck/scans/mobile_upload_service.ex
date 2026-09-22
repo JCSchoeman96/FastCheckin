@@ -119,8 +119,6 @@ defmodule FastCheck.Scans.MobileUploadService do
   end
 
   defp do_enqueue_durability_jobs(event_id, results, chunk_size) do
-    config = ingestion_config()
-
     jobs =
       results
       |> Enum.chunk_every(chunk_size)
@@ -138,7 +136,7 @@ defmodule FastCheck.Scans.MobileUploadService do
           Repo.rollback(:event_missing_for_durability_enqueue)
       end
 
-      run_durability_enqueue_barrier(config)
+      :ok = maybe_test_durability_enqueue_barrier()
 
       Enum.reduce_while(jobs, [], fn job, acc ->
         case Oban.insert(job) do
@@ -167,11 +165,16 @@ defmodule FastCheck.Scans.MobileUploadService do
     end
   end
 
-  defp run_durability_enqueue_barrier(config) do
-    case Map.get(config, :durability_enqueue_barrier) do
-      fun when is_function(fun, 0) -> fun.()
-      _ -> :ok
+  if Mix.env() == :test do
+    defp maybe_test_durability_enqueue_barrier do
+      case Application.get_env(:fastcheck, :mobile_scan_ingestion, [])
+           |> Keyword.get(:durability_enqueue_barrier) do
+        fun when is_function(fun, 0) -> fun.()
+        _ -> :ok
+      end
     end
+  else
+    defp maybe_test_durability_enqueue_barrier, do: :ok
   end
 
   defp durability_enqueue_failed_error(detail) do
@@ -254,8 +257,7 @@ defmodule FastCheck.Scans.MobileUploadService do
       chunk_size: Keyword.get(config, :chunk_size, 100),
       live_namespace: Keyword.get(config, :live_namespace, "live"),
       store: Keyword.get(config, :store, FastCheck.Scans.HotState.RedisStore),
-      force_enqueue_failure: Keyword.get(config, :force_enqueue_failure, false),
-      durability_enqueue_barrier: Keyword.get(config, :durability_enqueue_barrier)
+      force_enqueue_failure: Keyword.get(config, :force_enqueue_failure, false)
     }
   end
 end
