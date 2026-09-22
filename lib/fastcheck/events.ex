@@ -355,6 +355,81 @@ defmodule FastCheck.Events do
 
   def whatsapp_sales_enabled?(_event_id), do: false
 
+  @doc """
+  Sets the durable per-order WhatsApp ticket quantity ceiling for an event.
+
+  Operator-owned configuration; does not alter WhatsApp sales enablement or offers.
+  """
+  @spec set_whatsapp_max_tickets_per_order(integer(), integer()) ::
+          {:ok, Event.t()}
+          | {:error, :invalid_event_id | :invalid_limit | :not_found | :event_archived}
+  def set_whatsapp_max_tickets_per_order(event_id, limit)
+      when is_integer(event_id) and event_id > 0 and is_integer(limit) and limit > 0 do
+    now = NaiveDateTime.utc_now()
+
+    updated_count =
+      from(e in Event,
+        where:
+          e.id == ^event_id and e.status != "archived" and
+            e.whatsapp_max_tickets_per_order != ^limit
+      )
+      |> Repo.update_all(set: [whatsapp_max_tickets_per_order: limit, updated_at: now])
+      |> elem(0)
+
+    case updated_count do
+      1 ->
+        event = Repo.get!(Event, event_id)
+        invalidate_whatsapp_sales_caches(event_id)
+
+        Logger.info(
+          "WhatsApp quantity cap event_id=#{event_id} action=set outcome=success limit=#{limit}"
+        )
+
+        {:ok, event}
+
+      0 ->
+        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_max_tickets_per_order]) do
+          nil ->
+            Logger.info("WhatsApp quantity cap event_id=#{event_id} action=set outcome=not_found")
+
+            {:error, :not_found}
+
+          %Event{status: "archived"} ->
+            Logger.info(
+              "WhatsApp quantity cap event_id=#{event_id} action=set outcome=event_archived"
+            )
+
+            {:error, :event_archived}
+
+          %Event{whatsapp_max_tickets_per_order: ^limit} ->
+            {:ok, Repo.get!(Event, event_id)}
+
+          _event ->
+            Logger.info("WhatsApp quantity cap event_id=#{event_id} action=set outcome=not_found")
+
+            {:error, :not_found}
+        end
+    end
+  end
+
+  def set_whatsapp_max_tickets_per_order(_event_id, limit) when is_integer(limit) and limit > 0,
+    do: {:error, :invalid_event_id}
+
+  def set_whatsapp_max_tickets_per_order(_event_id, _limit), do: {:error, :invalid_limit}
+
+  @doc "Reads the durable WhatsApp per-order quantity ceiling directly from PostgreSQL."
+  @spec whatsapp_max_tickets_per_order(integer()) :: integer() | nil
+  def whatsapp_max_tickets_per_order(event_id) when is_integer(event_id) and event_id > 0 do
+    Repo.one(
+      from(e in Event,
+        where: e.id == ^event_id,
+        select: e.whatsapp_max_tickets_per_order
+      )
+    )
+  end
+
+  def whatsapp_max_tickets_per_order(_event_id), do: nil
+
   defp invalidate_whatsapp_sales_caches(event_id) do
     _ = Cache.invalidate_event_cache(event_id)
     _ = Cache.invalidate_events_list_cache()

@@ -1268,6 +1268,144 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute Map.has_key?(backed.conversation.state_data, "selected_offer_id")
   end
 
+  test "event cap 2 and offer max 4 accept 2 and reject 3", %{
+    conversation: conversation,
+    event: event
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    at_quantity =
+      conversation
+      |> progress("hi", "event-cap-2-1")
+      |> progress("1", "event-cap-2-2")
+      |> progress("1", "event-cap-2-3")
+      |> progress("1", "event-cap-2-4")
+      |> progress("1", "event-cap-2-5")
+
+    assert {:ok, accepted} = handle(at_quantity.conversation, "2", "event-cap-2-6")
+    assert accepted.conversation.state == "collecting_buyer_name"
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "3", "event-cap-2-7")
+    assert rejected.conversation.state == "collecting_quantity"
+    assert rejected.response_body =~ "Antwoord asseblief"
+  end
+
+  test "event cap 4 and offer max 2 accept 2 and reject 3", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+
+    offer
+    |> Changeset.for_update(
+      :update_offer,
+      %{max_per_order: 2},
+      actor: SalesFixtures.admin_actor([event.id])
+    )
+    |> Ash.update!(authorize?: true)
+
+    at_quantity =
+      conversation
+      |> progress("hi", "offer-cap-2-1")
+      |> progress("1", "offer-cap-2-2")
+      |> progress("1", "offer-cap-2-3")
+      |> progress("1", "offer-cap-2-4")
+      |> progress("1", "offer-cap-2-5")
+
+    assert {:ok, accepted} = handle(at_quantity.conversation, "2", "offer-cap-2-6")
+    assert accepted.conversation.state == "collecting_buyer_name"
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "3", "offer-cap-2-7")
+    assert rejected.conversation.state == "collecting_quantity"
+  end
+
+  test "lowering event cap before quantity entry rejects stale quantity immediately", %{
+    conversation: conversation,
+    event: event
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+
+    at_quantity =
+      conversation
+      |> progress("hi", "cap-lower-1")
+      |> progress("1", "cap-lower-2")
+      |> progress("1", "cap-lower-3")
+      |> progress("1", "cap-lower-4")
+      |> progress("1", "cap-lower-5")
+
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "3", "cap-lower-6")
+    assert rejected.conversation.state == "collecting_quantity"
+    refute Map.has_key?(rejected.conversation.state_data, "quantity")
+  end
+
+  test "double-digit quantity input remains invalid in WH-H06", %{conversation: conversation} do
+    at_quantity =
+      conversation
+      |> progress("hi", "double-digit-1")
+      |> progress("1", "double-digit-2")
+      |> progress("1", "double-digit-3")
+      |> progress("1", "double-digit-4")
+      |> progress("1", "double-digit-5")
+
+    assert {:ok, rejected} = handle(at_quantity.conversation, "10", "double-digit-6")
+    assert rejected.conversation.state == "collecting_quantity"
+    assert rejected.response_body =~ "Antwoord asseblief"
+  end
+
+  test "confirmation after event cap decrease returns to quantity collection safely", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+
+    confirming =
+      conversation
+      |> progress("hi", "cap-confirm-1")
+      |> progress("1", "cap-confirm-2")
+      |> progress("1", "cap-confirm-3")
+      |> progress("1", "cap-confirm-4")
+      |> progress("1", "cap-confirm-5")
+      |> progress("4", "cap-confirm-6")
+      |> progress("Jan Burger", "cap-confirm-7")
+      |> progress("jan@example.com", "cap-confirm-8")
+
+    assert confirming.conversation.state == "confirming_order"
+    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+    assert {:ok, before_inventory} = ReservationLedger.get_availability(offer.id)
+
+    assert {:ok, result} = handle(confirming.conversation, "1", "cap-confirm-9")
+    assert result.conversation.state == "collecting_quantity"
+    assert result.response_body =~ "Antwoord asseblief"
+    assert result.response_body =~ "Hoeveel kaartjies"
+
+    data = result.conversation.state_data
+    assert data["selected_event_id"] == event.id
+    assert data["selected_offer_id"] == offer.id
+    assert data["selected_offer_lock_version"] == offer.lock_version
+    assert data["selected_event_max_tickets_per_order"] == 2
+    refute Map.has_key?(data, "quantity")
+    refute Map.has_key?(data, "buyer_name")
+    refute Map.has_key?(data, "buyer_email")
+    refute Map.has_key?(data, "sales_order_id")
+    refute Map.has_key?(data, "payment_attempt_id")
+    refute Map.has_key?(data, "order_public_reference")
+
+    assert Repo.aggregate(from(o in "sales_orders"), :count) == 0
+    assert Repo.aggregate(from(l in "sales_order_lines"), :count) == 0
+    assert Repo.aggregate(from(s in "sales_checkout_sessions"), :count) == 0
+    assert Repo.aggregate(from(p in "sales_payment_attempts"), :count) == 0
+    assert {:ok, after_inventory} = ReservationLedger.get_availability(offer.id)
+    assert after_inventory == before_inventory
+    refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
+
+    assert {:ok, resumed} = handle(result.conversation, "2", "cap-confirm-10")
+    assert resumed.conversation.state == "collecting_buyer_name"
+  end
+
   test "invalid input repeats current menu without advancing state", %{conversation: conversation} do
     assert {:ok, result} = handle(conversation, "hi", "wamid.invalid-1")
     assert {:ok, repeated} = handle(result.conversation, "ten", "wamid.invalid-2")

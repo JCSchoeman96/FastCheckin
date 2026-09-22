@@ -77,5 +77,8 @@ Thumbs.db
 # bd worktree
 mobile-scan-ingestion-phase1/
 
+# Local git worktrees
+.worktrees/
+
 # Beads / Dolt files (added by bd init)
 .beads-credential-key

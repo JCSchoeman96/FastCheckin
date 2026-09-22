@@ -8,8 +8,11 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
 
   use FastCheckWeb, :live_view
 
+  alias FastCheck.Events
   alias FastCheck.Sales.MoneyInput
   alias FastCheck.Sales.OfferManagement
+
+  @ui_quantity_cap_max 9
 
   @impl true
   def mount(%{"event_id" => event_id_param}, session, socket) do
@@ -31,7 +34,8 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
            |> assign(:actor, actor)
            |> assign(:offers, offers)
            |> assign(:edit_forms, edit_forms_for(offers))
-           |> assign(:create_form, to_form(default_create_params(), as: :offer_create))}
+           |> assign(:create_form, to_form(default_create_params(), as: :offer_create))
+           |> assign(:quantity_cap_form, quantity_cap_form_for(event))}
 
         {:error, :not_found} ->
           {:ok,
@@ -135,6 +139,30 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
     toggle_offer(socket, offer_id, :disable_offer, "Ticket offer disabled.")
   end
 
+  def handle_event("update_event_quantity_cap", %{"event_quantity_cap" => params}, socket) do
+    if socket.assigns.archived? do
+      {:noreply, put_flash(socket, :error, "Archived events cannot change the order limit.")}
+    else
+      case parse_ui_quantity_cap(params["whatsapp_max_tickets_per_order"]) do
+        {:ok, limit} ->
+          case Events.set_whatsapp_max_tickets_per_order(socket.assigns.event_id, limit) do
+            {:ok, event} ->
+              {:noreply,
+               socket
+               |> assign(:event, event)
+               |> assign(:quantity_cap_form, quantity_cap_form_for(event))
+               |> put_flash(:info, "Event WhatsApp order limit updated.")}
+
+            {:error, reason} ->
+              {:noreply, put_flash(socket, :error, quantity_cap_error_message(reason))}
+          end
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, quantity_cap_error_message(reason))}
+      end
+    end
+  end
+
   def handle_event("retry_inventory", %{"offer_id" => offer_id}, socket) do
     if socket.assigns.archived? do
       {:noreply, put_flash(socket, :error, OfferManagement.safe_error_message(:event_archived))}
@@ -178,6 +206,42 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
             <p :if={@archived?} class="text-sm text-warning-dark">
               This event is archived. Offer management is read-only.
             </p>
+          </.card_content>
+        </.card>
+
+        <.card variant="outline" color="natural" rounded="large" padding="large">
+          <.card_content class="space-y-3">
+            <h2 class="text-lg font-semibold text-fc-text-primary">
+              Event max tickets per WhatsApp order
+            </h2>
+            <p class="text-sm text-fc-text-secondary">
+              The effective customer limit is the lower of this Event maximum and the selected ticket offer's Max per order.
+            </p>
+            <p class="text-sm text-fc-text-secondary">
+              Examples: Event 4 + Offer 6 → effective 4. Event 6 + Offer 2 → effective 2.
+            </p>
+            <p :if={@archived?} class="text-sm text-fc-text-primary">
+              Current limit: <span class="font-medium">{@event.whatsapp_max_tickets_per_order}</span>
+            </p>
+            <.form
+              :if={!@archived?}
+              for={@quantity_cap_form}
+              id="event-quantity-cap-form"
+              phx-submit="update_event_quantity_cap"
+              class="space-y-3"
+            >
+              <.input
+                field={@quantity_cap_form[:whatsapp_max_tickets_per_order]}
+                type="number"
+                label="Event max tickets per WhatsApp order (1-9)"
+                min="1"
+                max="9"
+                required
+              />
+              <.button type="submit" variant="solid" color="primary" size="small">
+                Update order limit
+              </.button>
+            </.form>
           </.card_content>
         </.card>
 
@@ -438,4 +502,33 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
 
   defp gate_status_class(true), do: "text-success-dark"
   defp gate_status_class(_), do: "text-fc-text-muted"
+
+  defp quantity_cap_form_for(event) do
+    to_form(
+      %{"whatsapp_max_tickets_per_order" => to_string(event.whatsapp_max_tickets_per_order)},
+      as: :event_quantity_cap
+    )
+  end
+
+  defp parse_ui_quantity_cap(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {limit, ""} when limit >= 1 and limit <= @ui_quantity_cap_max -> {:ok, limit}
+      {limit, ""} when limit > @ui_quantity_cap_max -> {:error, :ui_quantity_cap_exceeded}
+      _ -> {:error, :invalid_limit}
+    end
+  end
+
+  defp parse_ui_quantity_cap(_), do: {:error, :invalid_limit}
+
+  defp quantity_cap_error_message(:invalid_limit),
+    do: "Enter a whole number from 1 to #{@ui_quantity_cap_max}."
+
+  defp quantity_cap_error_message(:ui_quantity_cap_exceeded),
+    do: "The admin form currently accepts 1 to #{@ui_quantity_cap_max} only."
+
+  defp quantity_cap_error_message(:event_archived),
+    do: "Archived events cannot change the order limit."
+
+  defp quantity_cap_error_message(:not_found), do: "Event not found."
+  defp quantity_cap_error_message(_), do: "Could not update the order limit."
 end
