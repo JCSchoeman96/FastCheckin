@@ -31,6 +31,7 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:search_query, "")
      |> assign(:selected_event_id, nil)
      |> assign(:show_new_event_form, false)
+     |> assign(:create_enable_whatsapp_sales_checked, false)
      |> assign(:editing_event_id, nil)
      |> assign(:editing_event, nil)
      |> assign(:edit_form, nil)
@@ -62,7 +63,10 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("show_new_event_form", _params, socket) do
-    {:noreply, assign(socket, :show_new_event_form, true)}
+    {:noreply,
+     socket
+     |> assign(:show_new_event_form, true)
+     |> assign(:create_enable_whatsapp_sales_checked, false)}
   end
 
   @impl true
@@ -73,12 +77,19 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("create_event", %{"event" => event_params}, socket) do
     socket = clear_stale_sync_runtime(socket)
+    {enable_whatsapp_sales?, create_params} = pop_create_enable_whatsapp_sales(event_params)
 
-    case Events.create_event(event_params) do
+    case Events.create_event(create_params) do
       {:ok, %Event{} = event} ->
+        {event, whatsapp_enable_warning} =
+          maybe_enable_whatsapp_sales_after_create(event, enable_whatsapp_sales?)
+
         refreshed_events = Events.list_events()
         scanner_code = event_scanner_code(event)
-        created_status = "Event created: ID #{event.id}, scanner code #{scanner_code}."
+
+        created_status =
+          "Event created: ID #{event.id}, scanner code #{scanner_code}." <>
+            whatsapp_enable_warning
 
         socket_after_create =
           socket
@@ -88,6 +99,7 @@ defmodule FastCheckWeb.DashboardLive do
             filter_events(refreshed_events, socket.assigns.search_query)
           )
           |> assign(:show_new_event_form, false)
+          |> assign(:create_enable_whatsapp_sales_checked, false)
           |> assign(:form, empty_event_form(socket.assigns.default_tickera_site_url))
 
         if sync_task_running?(socket_after_create) do
@@ -124,15 +136,17 @@ defmodule FastCheckWeb.DashboardLive do
         {:noreply,
          socket
          |> assign(:sync_status, "Unable to create event: #{format_error(changeset)}")
+         |> assign(:create_enable_whatsapp_sales_checked, enable_whatsapp_sales?)
          |> assign(:form, to_form(changeset))}
 
       {:error, reason} ->
         {:noreply,
          socket
          |> assign(:sync_status, "Unable to create event: #{format_error(reason)}")
+         |> assign(:create_enable_whatsapp_sales_checked, enable_whatsapp_sales?)
          |> assign(
            :form,
-           sticky_event_form(event_params, socket.assigns.default_tickera_site_url)
+           sticky_create_event_form(event_params, socket.assigns.default_tickera_site_url)
          )}
     end
   end
@@ -959,6 +973,27 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
               </details>
 
+              <div class="md:col-span-2 space-y-2 rounded-xl border border-fc-border-default dark:border-glass-border p-4">
+                <.input
+                  id="create-event-enable-whatsapp-sales"
+                  name="event[enable_whatsapp_sales]"
+                  type="checkbox"
+                  label="Enable WhatsApp sales for this event"
+                  value="true"
+                  checked={
+                    @create_enable_whatsapp_sales_checked ||
+                      create_enable_whatsapp_sales_checked?(@form)
+                  }
+                  errors={[]}
+                />
+                <p class="text-xs text-fc-text-muted">
+                  Disabled events will not appear in WhatsApp ticket-buying menus.
+                </p>
+                <p class="text-xs text-fc-text-muted">
+                  Enabling WhatsApp sales does not make the event available until it has an active sellable WhatsApp ticket offer.
+                </p>
+              </div>
+
               <div class="md:col-span-2 flex flex-wrap items-center gap-3">
                 <.button
                   id="create-event-button"
@@ -1620,6 +1655,59 @@ defmodule FastCheckWeb.DashboardLive do
             </div>
           </div>
 
+          <div
+            :if={@editing_event}
+            id={"edit-whatsapp-sales-section-#{@editing_event.id}"}
+            class="mb-4 space-y-3 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
+          >
+            <p class="text-sm font-semibold text-fc-text-primary">WhatsApp ticket sales</p>
+            <p class="text-sm text-fc-text-secondary">
+              Status:
+              <span class={
+                if(@editing_event.whatsapp_sales_enabled && @editing_event.status != "archived",
+                  do: "font-semibold text-success-dark",
+                  else: "font-semibold text-fc-text-muted"
+                )
+              }>
+                {if @editing_event.whatsapp_sales_enabled && @editing_event.status != "archived",
+                  do: "Enabled",
+                  else: "Disabled"}
+              </span>
+            </p>
+            <p class="text-xs text-fc-text-muted">
+              Disabled events will not appear in WhatsApp ticket-buying menus.
+            </p>
+            <p class="text-xs text-fc-text-muted">
+              Enabling WhatsApp sales does not make the event available until it has an active sellable WhatsApp ticket offer.
+            </p>
+
+            <.button
+              :if={@editing_event.status != "archived" && !@editing_event.whatsapp_sales_enabled}
+              id={"edit-enable-whatsapp-sales-#{@editing_event.id}"}
+              type="button"
+              phx-click="enable_whatsapp_sales"
+              phx-value-event_id={@editing_event.id}
+              variant="bordered"
+              color="success"
+              size="small"
+            >
+              Enable
+            </.button>
+
+            <.button
+              :if={@editing_event.status != "archived" && @editing_event.whatsapp_sales_enabled}
+              id={"edit-disable-whatsapp-sales-#{@editing_event.id}"}
+              type="button"
+              phx-click="disable_whatsapp_sales"
+              phx-value-event_id={@editing_event.id}
+              variant="bordered"
+              color="warning"
+              size="small"
+            >
+              Disable
+            </.button>
+          </div>
+
           <.form
             :if={@edit_form}
             id="edit-event-form"
@@ -1978,16 +2066,64 @@ defmodule FastCheckWeb.DashboardLive do
     |> to_form(as: :event)
   end
 
-  defp sticky_event_form(params, default_site_url)
+  defp sticky_create_event_form(params, default_site_url)
        when is_map(params) and is_binary(default_site_url) do
     params =
       default_create_event_params(default_site_url)
       |> Map.merge(stringify_form_keys(params))
+      |> Map.drop(["enable_whatsapp_sales"])
+      |> maybe_put_enable_whatsapp_sales_form_param(params)
 
     to_form(params, as: :event)
   end
 
-  defp sticky_event_form(_params, default_site_url), do: empty_event_form(default_site_url)
+  defp pop_create_enable_whatsapp_sales(params) when is_map(params) do
+    enable? = create_enable_whatsapp_sales_requested?(params)
+    create_params = Map.drop(params, ["enable_whatsapp_sales"])
+    {enable?, create_params}
+  end
+
+  defp create_enable_whatsapp_sales_requested?(params) when is_map(params) do
+    case Map.get(params, "enable_whatsapp_sales") do
+      true -> true
+      "true" -> true
+      "on" -> true
+      _ -> false
+    end
+  end
+
+  defp create_enable_whatsapp_sales_checked?(form) do
+    case safe_form_value(form, :enable_whatsapp_sales) do
+      true -> true
+      "true" -> true
+      "on" -> true
+      _ -> false
+    end
+  end
+
+  defp maybe_put_enable_whatsapp_sales_form_param(form_params, source_params)
+       when is_map(form_params) and is_map(source_params) do
+    if create_enable_whatsapp_sales_requested?(source_params) do
+      Map.put(form_params, "enable_whatsapp_sales", "true")
+    else
+      form_params
+    end
+  end
+
+  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, false), do: {event, ""}
+
+  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, true) do
+    case Events.enable_whatsapp_sales(event.id) do
+      {:ok, enabled_event} ->
+        {enabled_event, ""}
+
+      {:error, reason} ->
+        warning =
+          " Warning: this event was created, but WhatsApp sales could not be enabled and remain disabled (#{whatsapp_sales_error_message(reason)})."
+
+        {event, warning}
+    end
+  end
 
   defp build_edit_form(%Event{} = event) do
     event
@@ -2629,10 +2765,26 @@ defmodule FastCheckWeb.DashboardLive do
   defp refresh_events(socket, status) do
     refreshed_events = Events.list_events()
 
-    socket
-    |> assign(:events, refreshed_events)
-    |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-    |> assign(:sync_status, status)
+    socket =
+      socket
+      |> assign(:events, refreshed_events)
+      |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+      |> assign(:sync_status, status)
+
+    refresh_editing_event(socket, refreshed_events)
+  end
+
+  defp refresh_editing_event(socket, refreshed_events) when is_list(refreshed_events) do
+    case socket.assigns.editing_event_id do
+      nil ->
+        socket
+
+      event_id ->
+        case Enum.find(refreshed_events, &(&1.id == event_id)) do
+          %Event{} = event -> assign(socket, :editing_event, event)
+          _ -> socket
+        end
+    end
   end
 
   defp filter_events(events, query) when is_binary(query) do

@@ -36,6 +36,75 @@ defmodule FastCheckWeb.DashboardLiveTest do
     :ok
   end
 
+  describe "edit event modal WhatsApp sales" do
+    test "edit modal toggles WhatsApp sales without closing and uses distinct control ids", %{
+      conn: conn
+    } do
+      event = insert_event!(%{name: "Edit Modal WhatsApp Gate"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      assert has_element?(view, "#edit-event-modal")
+      assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}")
+
+      assert has_element?(
+               view,
+               "#edit-whatsapp-sales-section-#{event.id}",
+               "WhatsApp ticket sales"
+             )
+
+      assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}", "Disabled")
+      assert has_element?(view, "#edit-enable-whatsapp-sales-#{event.id}", "Enable")
+      refute has_element?(view, "#edit-disable-whatsapp-sales-#{event.id}")
+      refute has_element?(view, "#edit-event-form input[name='event[whatsapp_sales_enabled]']")
+
+      view |> element("#edit-enable-whatsapp-sales-#{event.id}") |> render_click()
+
+      assert has_element?(view, "#edit-event-modal")
+      assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}", "Enabled")
+      assert has_element?(view, "#edit-disable-whatsapp-sales-#{event.id}", "Disable")
+      refute has_element?(view, "#edit-enable-whatsapp-sales-#{event.id}")
+      assert Events.get_event!(event.id).whatsapp_sales_enabled
+      assert has_element?(view, "#disable-whatsapp-sales-#{event.id}")
+      assert has_element?(view, "#edit-disable-whatsapp-sales-#{event.id}")
+      refute has_element?(view, "#edit-enable-whatsapp-sales-#{event.id}")
+
+      view |> element("#edit-disable-whatsapp-sales-#{event.id}") |> render_click()
+
+      assert has_element?(view, "#edit-event-modal")
+      assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}", "Disabled")
+      assert has_element?(view, "#edit-enable-whatsapp-sales-#{event.id}", "Enable")
+      refute Events.get_event!(event.id).whatsapp_sales_enabled
+    end
+
+    test "ordinary update_event submission does not change WhatsApp sales gate", %{conn: conn} do
+      event = insert_event!(%{name: "Gate Stable On Edit"})
+      assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      view
+      |> form("#edit-event-form", %{
+        "event" => %{
+          "name" => "Gate Stable On Edit Renamed",
+          "shortname" => "",
+          "tickera_site_url" => event.tickera_site_url,
+          "mobile_access_code" => "",
+          "location" => event.location || "",
+          "entrance_name" => event.entrance_name || ""
+        }
+      })
+      |> render_submit()
+
+      assert Events.get_event!(event.id).whatsapp_sales_enabled
+      assert Events.get_event!(event.id).name == "Gate Stable On Edit Renamed"
+    end
+  end
+
   describe "edit event modal" do
     test "opens edit modal with existing values prefilled", %{conn: conn} do
       event =
@@ -331,6 +400,23 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert has_element?(view, "#create-event-advanced")
       refute has_element?(view, "#create-event-advanced[open]")
 
+      assert has_element?(view, "#create-event-enable-whatsapp-sales")
+
+      checkbox_html =
+        view
+        |> element("#create-event-enable-whatsapp-sales")
+        |> render()
+
+      refute checkbox_html =~ ~s(checked="checked")
+      refute checkbox_html =~ ~s(checked="true")
+
+      html = render(view)
+      assert html =~ "Enable WhatsApp sales for this event"
+      assert html =~ "Disabled events will not appear in WhatsApp ticket-buying menus."
+
+      assert html =~
+               "Enabling WhatsApp sales does not make the event available until it has an active sellable WhatsApp ticket offer."
+
       site_url_input_html =
         view
         |> element("#create-event-form input[name='event[tickera_site_url]']")
@@ -386,6 +472,82 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute has_element?(view, "#create-event-form")
 
       assert_sync_finishes(view)
+      refute Events.get_event!(created.id).whatsapp_sales_enabled
+    end
+
+    test "create with WhatsApp sales checkbox enables gate after event creation", %{conn: conn} do
+      mock_tickera_requests(
+        %{
+          "event_name" => "WhatsApp Enabled Create Event",
+          "event_date_time" => "2026-02-19T19:00:00Z",
+          "event_location" => "Gate Venue",
+          "sold_tickets" => 12,
+          "checked_tickets" => 0,
+          "pass" => true
+        },
+        ticket_delay_ms: 250
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#show-new-event-form-button")
+      |> render_click()
+
+      view
+      |> form("#create-event-form", %{
+        "event" => %{
+          "tickera_api_key_encrypted" => "live-api-key-whatsapp",
+          "mobile_access_code" => "door-secret-wa",
+          "tickera_site_url" => "https://voelgoed.co.za",
+          "location" => "",
+          "entrance_name" => "",
+          "enable_whatsapp_sales" => "true"
+        }
+      })
+      |> render_submit()
+
+      created =
+        Events.list_events()
+        |> Enum.find(&(&1.name == "WhatsApp Enabled Create Event"))
+
+      assert %Event{} = created
+      assert Events.get_event!(created.id).whatsapp_sales_enabled
+      assert render(view) =~ "Starting full attendee sync"
+      assert_sync_finishes(view)
+    end
+
+    test "failed create keeps WhatsApp sales checkbox selection sticky", %{conn: conn} do
+      Application.put_env(:fastcheck, :tickera_request_fun, fn _req ->
+        {:ok, %Response{status: 200, body: %{"pass" => false}}}
+      end)
+
+      {:ok, view, _html} = mount_dashboard(conn)
+
+      view
+      |> element("#show-new-event-form-button")
+      |> render_click()
+
+      view
+      |> form("#create-event-form", %{
+        "event" => %{
+          "tickera_api_key_encrypted" => "bad-key",
+          "mobile_access_code" => "door-secret",
+          "tickera_site_url" => "https://voelgoed.co.za",
+          "enable_whatsapp_sales" => "true"
+        }
+      })
+      |> render_submit()
+
+      assert render(view) =~ "Unable to create event"
+      assert has_element?(view, "#create-event-form")
+
+      checkbox_html =
+        view
+        |> element("#create-event-enable-whatsapp-sales")
+        |> render()
+
+      assert checkbox_html =~ "checked"
     end
 
     test "create flow warns when another sync is already running", %{conn: conn} do
