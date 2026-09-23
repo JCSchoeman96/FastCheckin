@@ -9,6 +9,7 @@ import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
 import za.co.voelgoed.fastcheck.data.repository.EventBucketRepository
 import za.co.voelgoed.fastcheck.data.local.EventLocalBucketState
 import za.co.voelgoed.fastcheck.data.mapper.toMetadata
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 
 @Singleton
@@ -66,7 +67,8 @@ class AuthenticatedSessionTransitionCoordinator @Inject constructor(
             expiresInSeconds = ((context.expiresAtEpochMillis - context.authenticatedAtEpochMillis) / 1000).toInt(),
             authenticatedAtEpochMillis = context.authenticatedAtEpochMillis,
             expiresAtEpochMillis = context.expiresAtEpochMillis,
-            sessionGeneration = context.sessionGeneration
+            sessionGeneration = context.sessionGeneration,
+            admissionMode = EventAdmissionMode.fromApiValue(cached?.admissionMode)
         )
         if (bucket?.state != EventLocalBucketState.ACTIVE) {
             bucketRepository.activate(session.eventId, session.eventName, session.eventShortname)

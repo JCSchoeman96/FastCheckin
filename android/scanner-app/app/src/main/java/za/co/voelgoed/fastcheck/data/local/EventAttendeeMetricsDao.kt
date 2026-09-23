@@ -12,6 +12,7 @@ interface EventAttendeeMetricsDao {
             COUNT(*) AS cachedAttendeeCount,
             COALESCE(SUM(
                 CASE
+                    WHEN overlay.id IS NOT NULL AND overlay.admissionMode = 'turnstile' THEN 0
                     WHEN overlay.id IS NOT NULL THEN 1
                     WHEN attendee.isCurrentlyInside = 1 THEN 1
                     ELSE 0
@@ -21,7 +22,18 @@ interface EventAttendeeMetricsDao {
                 CASE
                     WHEN overlay.id IS NOT NULL THEN
                         CASE
-                            WHEN attendee.checkinsRemaining > 0 THEN 1
+                            WHEN attendee.checkinsRemaining > (
+                                SELECT COUNT(*)
+                                FROM local_admission_overlays remaining_overlay
+                                WHERE remaining_overlay.eventId = attendee.eventId
+                                    AND remaining_overlay.attendeeId = attendee.id
+                                    AND remaining_overlay.state IN (
+                                        'PENDING_LOCAL',
+                                        'CONFIRMED_LOCAL_UNSYNCED',
+                                        'CONFLICT_DUPLICATE',
+                                        'CONFLICT_REJECTED'
+                                    )
+                            ) THEN 1
                             ELSE 0
                         END
                     WHEN attendee.checkinsRemaining > 0 THEN 1

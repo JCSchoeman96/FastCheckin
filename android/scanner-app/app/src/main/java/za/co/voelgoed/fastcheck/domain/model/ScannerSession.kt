@@ -7,5 +7,6 @@ data class ScannerSession(
     val expiresInSeconds: Int,
     val authenticatedAtEpochMillis: Long,
     val expiresAtEpochMillis: Long,
-    val sessionGeneration: Long? = null
+    val sessionGeneration: Long? = null,
+    val admissionMode: EventAdmissionMode = EventAdmissionMode.SESSION
 )

@@ -16,6 +16,7 @@ data class MobileLoginPayload(
     val event_id: Long,
     val event_name: String,
     val event_shortname: String? = null,
+    val admission_mode: String = "session",
     val expires_in: Int
 )
 
@@ -33,7 +34,8 @@ data class MobileSyncPayload(
     val sync_type: String,
     val next_cursor: String?,
     val invalidations_checkpoint: Long = 0L,
-    val event_sync_version: Long = 0L
+    val event_sync_version: Long = 0L,
+    val admission_mode: String = "session"
 )
 
 data class AttendeeInvalidationDto(

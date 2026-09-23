@@ -180,6 +180,8 @@ object TestRepositoryModule {
             object : SessionAuthGateway {
                 override suspend fun currentEventId(): Long = 5
                 override suspend fun currentOperatorName(): String = "Test Operator"
+                override suspend fun currentAdmissionMode() =
+                    za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode.SESSION
             }
         }
 

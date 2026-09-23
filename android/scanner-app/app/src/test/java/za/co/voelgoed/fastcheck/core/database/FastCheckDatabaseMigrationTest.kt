@@ -74,7 +74,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -99,7 +100,7 @@ class FastCheckDatabaseMigrationTest {
     fun migration11To12PreservesCompleteDurableEvidenceAndClearsOnlyUnattributedEphemeralRows() = runTest {
         createVersion11SchemaWithDurableEvidence(databaseFile)
         val database = Room.databaseBuilder(context, FastCheckDatabase::class.java, databaseFile.absolutePath)
-            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_11_12)
+            .addMigrations(FastCheckDatabaseMigrations.MIGRATION_11_12, FastCheckDatabaseMigrations.MIGRATION_12_13)
             .addCallback(FastCheckDatabaseInvariantCallback)
             .allowMainThreadQueries()
             .build()
@@ -126,6 +127,7 @@ class FastCheckDatabaseMigrationTest {
                 "2026-08-03T09:00:01Z", 0, "Operator", "North", "capacity", "Full"
             )
         )
+        assertThat(dao.loadActiveOverlaysForEvent(41L).single().admissionMode).isEqualTo("session")
         assertThat(dao.loadLatestQuarantinedScanForEvent(41L)).isEqualTo(
             za.co.voelgoed.fastcheck.data.local.QuarantinedScanEntity(
                 401, 101, 41, "X-41", "quarantine-41", 1400,
@@ -173,7 +175,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -256,7 +259,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -295,7 +299,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -357,7 +362,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -386,7 +392,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -416,7 +423,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -447,7 +455,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -498,7 +507,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -531,7 +541,8 @@ class FastCheckDatabaseMigrationTest {
                     FastCheckDatabaseMigrations.MIGRATION_8_9,
                     FastCheckDatabaseMigrations.MIGRATION_9_10,
                     FastCheckDatabaseMigrations.MIGRATION_10_11,
-                    FastCheckDatabaseMigrations.MIGRATION_11_12
+                    FastCheckDatabaseMigrations.MIGRATION_11_12,
+                    FastCheckDatabaseMigrations.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()

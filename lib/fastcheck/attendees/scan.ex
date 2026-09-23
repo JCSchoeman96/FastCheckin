@@ -13,6 +13,7 @@ defmodule FastCheck.Attendees.Scan do
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Events
+  alias FastCheck.Events.AdmissionMode
   alias FastCheck.Events.Event
   alias FastCheck.Events.Stats
   alias FastCheck.Repo
@@ -401,6 +402,13 @@ defmodule FastCheck.Attendees.Scan do
       checkins_remaining: new_remaining
     }
 
+    attrs =
+      if AdmissionMode.turnstile?(event_id) do
+        Map.put(attrs, :is_currently_inside, false)
+      else
+        attrs
+      end
+
     case Attendee.changeset(attendee, attrs) |> Repo.update() do
       {:ok, updated} ->
         finalize_basic_check_in_success(
@@ -437,7 +445,11 @@ defmodule FastCheck.Attendees.Scan do
          started_at
        ) do
     invalidate_check_in_caches(updated, event_id, sanitized_code)
-    refresh_event_occupancy(event_id)
+
+    unless AdmissionMode.turnstile?(event_id) do
+      refresh_event_occupancy(event_id)
+    end
+
     record_check_in(updated, event_id, "success", sanitized_entrance, operator_name)
 
     log_check_in(:success, %{
@@ -537,16 +549,31 @@ defmodule FastCheck.Attendees.Scan do
   end
 
   defp finalize_advanced_check_in(updated, event_id, check_in_type, entrance_name, operator) do
-    case upsert_active_session(updated, entrance_name) do
-      {:ok, _session} ->
+    turnstile? = AdmissionMode.turnstile?(event_id)
+
+    case maybe_upsert_turnstile_session(updated, entrance_name, turnstile?) do
+      {:ok, _session_or_skip} ->
         normalized_type = String.downcase(check_in_type)
 
         record_check_in(updated, event_id, normalized_type, entrance_name, operator)
-        maybe_increment_occupancy(event_id, normalized_type)
+
+        unless turnstile? do
+          maybe_increment_occupancy(event_id, normalized_type)
+        end
+
         %{attendee: updated, message: "SUCCESS"}
 
       {:error, session_reason} ->
         Repo.rollback(session_reason)
+    end
+  end
+
+  defp maybe_upsert_turnstile_session(_attendee, _entrance_name, true), do: {:ok, :skipped}
+
+  defp maybe_upsert_turnstile_session(attendee, entrance_name, false) do
+    case upsert_active_session(attendee, entrance_name) do
+      {:ok, session} -> {:ok, session}
+      {:error, session_reason} -> {:error, session_reason}
     end
   end
 
@@ -1146,12 +1173,14 @@ defmodule FastCheck.Attendees.Scan do
   defp maybe_apply_ticket_limits(attendee, _config), do: attendee
 
   defp ensure_can_check_in(%Attendee{} = attendee) do
+    turnstile? = AdmissionMode.turnstile?(attendee.event_id)
+
     cond do
       not payment_status_valid?(attendee.payment_status) ->
         Logger.warning("Attendee #{attendee.id} has non-completed order status")
         {:error, "PAYMENT_INVALID", payment_rejection_message(attendee.payment_status)}
 
-      attendee.is_currently_inside ->
+      not turnstile? and attendee.is_currently_inside ->
         Logger.warning("Attendee #{attendee.id} already inside")
         {:error, "ALREADY_INSIDE", "Attendee already inside"}
 
@@ -1171,8 +1200,9 @@ defmodule FastCheck.Attendees.Scan do
   defp build_check_in_attributes(%Attendee{} = attendee, entrance_name) do
     now = current_timestamp()
     today = Date.utc_today()
+    turnstile? = AdmissionMode.turnstile?(attendee.event_id)
 
-    %{
+    base = %{
       checked_in_at: attendee.checked_in_at || now,
       last_checked_in_at: now,
       last_checked_in_date: today,
@@ -1180,10 +1210,14 @@ defmodule FastCheck.Attendees.Scan do
       weekly_scan_count: increment_counter(attendee.weekly_scan_count),
       monthly_scan_count: increment_counter(attendee.monthly_scan_count),
       checkins_remaining: max(remaining_checkins(attendee) - 1, 0),
-      is_currently_inside: true,
-      checked_out_at: nil,
       last_entrance: entrance_name
     }
+
+    if turnstile? do
+      Map.merge(base, %{is_currently_inside: false})
+    else
+      Map.merge(base, %{is_currently_inside: true, checked_out_at: nil})
+    end
   end
 
   defp current_timestamp do
@@ -1287,6 +1321,7 @@ defmodule FastCheck.Attendees.Scan do
          event_id,
          broadcast?
        ) do
+    if AdmissionMode.turnstile?(event_id), do: purge_local_occupancy_breakdown(event_id)
     if broadcast? and not occupancy_tasks_disabled?(), do: broadcast_occupancy_breakdown(event_id)
     {:ok, attendee, message}
   end

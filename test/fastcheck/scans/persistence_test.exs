@@ -4,6 +4,7 @@ defmodule FastCheck.Scans.PersistenceTest do
   import Ecto.Query
 
   alias FastCheck.Attendees.{Attendee, CheckIn, CheckInSession}
+  alias FastCheck.Events.Event
   alias FastCheck.Scans.{Persistence, ScanAttempt}
 
   test "persist_batch is retry-safe for successful authoritative results" do
@@ -57,6 +58,53 @@ defmodule FastCheck.Scans.PersistenceTest do
     persisted_attendee = Repo.get!(Attendee, attendee.id)
     assert persisted_attendee.checkins_remaining == 0
     assert persisted_attendee.checked_in_at == now
+  end
+
+  test "turnstile mobile entries keep inside false and skip visit sessions" do
+    event =
+      create_event()
+      |> Event.changeset(%{admission_mode: "turnstile"})
+      |> Repo.update!()
+
+    attendee =
+      create_attendee(event, %{
+        ticket_code: "PERSISTTURNSTILE001",
+        allowed_checkins: 5,
+        checkins_remaining: 5,
+        is_currently_inside: true,
+        payment_status: "completed"
+      })
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    result =
+      success_result(event.id, attendee.id, attendee.ticket_code, "persist-turnstile-1", now)
+      |> put_in([:metadata, "remaining_after"], 4)
+
+    assert :ok = Persistence.persist_batch([result])
+
+    assert Repo.aggregate(
+             from(check_in in CheckIn,
+               where:
+                 check_in.event_id == ^event.id and
+                   check_in.ticket_code == ^attendee.ticket_code and
+                   check_in.status == "success"
+             ),
+             :count,
+             :id
+           ) == 1
+
+    assert Repo.aggregate(
+             from(session in CheckInSession,
+               where: session.event_id == ^event.id and session.attendee_id == ^attendee.id
+             ),
+             :count,
+             :id
+           ) == 0
+
+    persisted_attendee = Repo.get!(Attendee, attendee.id)
+    assert persisted_attendee.is_currently_inside == false
+    assert persisted_attendee.checkins_remaining == 4
   end
 
   test "persist_batch does not create duplicate audit rows for replayed duplicate results" do

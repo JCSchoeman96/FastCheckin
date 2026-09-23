@@ -106,6 +106,30 @@ defmodule FastCheckWeb.DashboardLiveTest do
   end
 
   describe "edit event modal" do
+    test "operator can set an event to turnstile admission", %{conn: conn} do
+      event = insert_event!(%{name: "Turnstile Dashboard Event"})
+
+      {:ok, view, _html} = mount_dashboard(conn)
+      view |> element("#show-edit-event-#{event.id}") |> render_click()
+
+      assert has_element?(view, "select[name='event[admission_mode]']")
+
+      view
+      |> form("#edit-event-form", %{
+        "event" => %{
+          "name" => event.name,
+          "tickera_site_url" => event.tickera_site_url,
+          "mobile_access_code" => "",
+          "location" => event.location || "",
+          "entrance_name" => event.entrance_name || "",
+          "admission_mode" => "turnstile"
+        }
+      })
+      |> render_submit()
+
+      assert Events.get_event!(event.id).admission_mode == "turnstile"
+    end
+
     test "opens edit modal with existing values prefilled", %{conn: conn} do
       event =
         insert_event!(%{

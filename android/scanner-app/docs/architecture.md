@@ -19,6 +19,10 @@ Android is local-first, and gate decisions use local operational truth.
 
 - Android makes immediate gate decisions from the synced attendee cache plus
   unresolved local admission overlays.
+- The event's `admission_mode` comes from mobile login and refreshes on each
+  successful attendee sync. `session` blocks entry while the attendee is inside;
+  `turnstile` skips that check while payment and remaining-entry checks still
+  apply.
 - Accepted local admissions update only the overlay layer and queue an upload
   for background reconciliation.
 - Auto-flush is the normal upload path; manual flush remains fallback/debug.
@@ -80,7 +84,8 @@ Repo/runtime mode truth must stay explicit:
   enqueued.
 - JWT auth is isolated behind `SessionRepository`, `SessionAuthGateway`, the
   authoritative `AuthenticatedEventContextStore`, and the session transition
-  coordinator. DataStore session metadata is display-only.
+  coordinator. DataStore holds non-secret session metadata and the server-issued
+  admission mode used by local scan decisions.
 - The backend request path remains:
   `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
 - No per-scan durable Postgres mutation belongs in the request path before

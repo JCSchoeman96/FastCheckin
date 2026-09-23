@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import za.co.voelgoed.fastcheck.data.repository.MobileScanRepository
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.model.FlushReport
 import za.co.voelgoed.fastcheck.domain.model.PendingScan
 import za.co.voelgoed.fastcheck.domain.model.QueueCreationResult
@@ -147,5 +148,7 @@ class DefaultQueueCapturedScanUseCaseTest {
         override suspend fun currentEventId(): Long? = eventId
 
         override suspend fun currentOperatorName(): String? = operatorName
+
+        override suspend fun currentAdmissionMode(): EventAdmissionMode = EventAdmissionMode.SESSION
     }
 }

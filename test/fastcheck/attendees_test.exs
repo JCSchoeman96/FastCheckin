@@ -6,6 +6,8 @@ defmodule FastCheck.AttendeesTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.CheckIn
+  alias FastCheck.Attendees.CheckInSession
   alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.TickeraClient
@@ -419,6 +421,89 @@ defmodule FastCheck.AttendeesTest do
 
       assert Enum.count(attempts, &match?({:ok, %Attendee{}, "SUCCESS"}, &1)) == 1
       assert Enum.count(attempts, &match?({:error, "ALREADY_INSIDE", _}, &1)) == 1
+    end
+
+    test "turnstile admission allows consecutive entry scans without checkout" do
+      event = insert_event!("Turnstile")
+
+      event =
+        event
+        |> Ecto.Changeset.change(%{admission_mode: "turnstile"})
+        |> Repo.update!()
+
+      attendee =
+        create_attendee_record(event, %{
+          allowed_checkins: 5,
+          checkins_remaining: 5,
+          is_currently_inside: true
+        })
+
+      assert {:ok, first, "SUCCESS"} =
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "entry",
+                 "Gate A",
+                 "Ops"
+               )
+
+      assert first.is_currently_inside == false
+      assert first.checkins_remaining == 4
+
+      assert {:ok, second, "SUCCESS"} =
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "entry",
+                 "Gate A",
+                 "Ops"
+               )
+
+      assert second.is_currently_inside == false
+      assert second.checkins_remaining == 3
+
+      assert Repo.aggregate(
+               from(check_in in CheckIn,
+                 where:
+                   check_in.event_id == ^event.id and
+                     check_in.ticket_code == ^attendee.ticket_code and
+                     check_in.status == "entry"
+               ),
+               :count,
+               :id
+             ) == 2
+
+      assert Repo.aggregate(
+               from(session in CheckInSession,
+                 where: session.event_id == ^event.id and session.attendee_id == ^attendee.id
+               ),
+               :count,
+               :id
+             ) == 0
+    end
+
+    test "turnstile admission still rejects exhausted entry allowances" do
+      event = insert_event!("Turnstile Limit")
+
+      event
+      |> Ecto.Changeset.change(%{admission_mode: "turnstile"})
+      |> Repo.update!()
+
+      attendee =
+        create_attendee_record(event, %{
+          allowed_checkins: 1,
+          checkins_remaining: 0,
+          is_currently_inside: true
+        })
+
+      assert {:error, "LIMIT_EXCEEDED", _message} =
+               Attendees.check_in_advanced(
+                 event.id,
+                 attendee.ticket_code,
+                 "entry",
+                 "Gate A",
+                 "Ops"
+               )
     end
 
     test "respects allowed_checkins limit across reentries" do
