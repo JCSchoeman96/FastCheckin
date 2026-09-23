@@ -36,6 +36,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
   require Logger
 
   alias FastCheck.Events
+  alias FastCheck.Events.AdmissionMode
   alias FastCheck.Mobile.Token
 
   @doc """
@@ -154,6 +155,7 @@ defmodule FastCheckWeb.Mobile.AuthController do
                   event_id: event.id,
                   event_name: event.name,
                   event_shortname: event.shortname,
+                  admission_mode: AdmissionMode.normalize(event.admission_mode),
                   expires_in: Token.token_ttl_seconds()
                 },
                 error: nil

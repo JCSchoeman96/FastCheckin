@@ -30,6 +30,7 @@ import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.PaymentStatusRuleMapper
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.model.AttendeeDetailRecord
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSearchRecord
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
@@ -380,6 +381,27 @@ class DefaultAdmitScanUseCaseTest {
     }
 
     @Test
+    fun turnstileAdmissionAllowsAlreadyInside() = runTest {
+        val dao = FakeScannerDao()
+        val useCase =
+            buildUseCase(
+                lookup = FakeAttendeeLookupRepository(baseAttendee(isInside = true)),
+                scannerDao = dao,
+                session =
+                    FakeSessionAuthGateway(
+                        eventId = 5L,
+                        operatorName = "Op",
+                        admissionMode = EventAdmissionMode.TURNSTILE
+                    )
+            )
+
+        val decision = useCase.admit("VG-100", ScanDirection.IN, "Op", "Main")
+
+        assertThat(decision).isInstanceOf(LocalAdmissionDecision.Accepted::class.java)
+        assertThat(dao.lastOverlay?.admissionMode).isEqualTo("turnstile")
+    }
+
+    @Test
     fun rejectsNoCheckinsRemaining() = runTest {
         val useCase =
             buildUseCase(
@@ -495,11 +517,14 @@ class DefaultAdmitScanUseCaseTest {
 
     private class FakeSessionAuthGateway(
         private val eventId: Long?,
-        private val operatorName: String?
+        private val operatorName: String?,
+        private val admissionMode: EventAdmissionMode = EventAdmissionMode.SESSION
     ) : SessionAuthGateway {
         override suspend fun currentEventId(): Long? = eventId
 
         override suspend fun currentOperatorName(): String? = operatorName
+
+        override suspend fun currentAdmissionMode(): EventAdmissionMode = admissionMode
     }
 
     private class NoopOrchestrator : AttendeeSyncOrchestrator {

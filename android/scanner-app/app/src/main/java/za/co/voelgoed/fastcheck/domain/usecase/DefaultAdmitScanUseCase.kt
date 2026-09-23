@@ -18,6 +18,7 @@ import za.co.voelgoed.fastcheck.data.repository.AttendeeLookupRepository
 import za.co.voelgoed.fastcheck.data.repository.PaymentStatusRuleMapper
 import za.co.voelgoed.fastcheck.data.repository.SessionAuthGateway
 import za.co.voelgoed.fastcheck.data.repository.SyncRepository
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionDecision
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionRejectReason
@@ -170,7 +171,9 @@ class DefaultAdmitScanUseCase @Inject constructor(
             attendeeSyncOrchestrator.notifyStaleScanRefreshAdvisory()
         }
 
-        if (attendee.isCurrentlyInside) {
+        val admissionMode = sessionAuthGateway.currentAdmissionMode()
+
+        if (attendee.isCurrentlyInside && admissionMode != EventAdmissionMode.TURNSTILE) {
             return LocalAdmissionDecision.Rejected(
                 reason = LocalAdmissionRejectReason.AlreadyInside,
                 displayMessage = "Invalid scan. This attendee is already inside.",
@@ -259,7 +262,8 @@ class DefaultAdmitScanUseCase @Inject constructor(
                         overlayScannedAt = scannedAt,
                         expectedRemainingAfterOverlay = expectedRemainingAfterOverlay,
                         operatorName = effectiveOperator,
-                        entranceName = entranceName
+                        entranceName = entranceName,
+                        admissionMode = admissionMode.name.lowercase()
                     )
             )
 

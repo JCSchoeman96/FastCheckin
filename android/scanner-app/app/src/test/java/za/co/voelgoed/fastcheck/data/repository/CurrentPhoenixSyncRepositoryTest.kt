@@ -27,6 +27,8 @@ import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 import za.co.voelgoed.fastcheck.core.network.PhoenixMobileApi
 import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncBootstrapStateHub
+import za.co.voelgoed.fastcheck.core.datastore.SessionMetadata
+import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.core.concurrency.DefaultEventOperationMutexRegistry
@@ -328,6 +330,83 @@ class CurrentPhoenixSyncRepositoryTest {
         assertThat(metadata).isNotNull()
         assertThat(metadata?.eventId).isEqualTo(5)
         assertThat(metadata?.attendeeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun successfulSyncRefreshesAdmissionModeInSessionMetadata() = runTest {
+        val metadataStore = InMemorySessionMetadataStore(sessionMetadata(eventId = 5L, admissionMode = "session"))
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:31:00Z",
+                        attendees = emptyList(),
+                        count = 0,
+                        sync_type = "full",
+                        next_cursor = null,
+                        admission_mode = "turnstile"
+                    ),
+                error = null,
+                message = null
+            )
+        repository = buildRepository(fixedSessionRepository(), metadataStore)
+
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+
+        assertThat(metadataStore.load()?.admissionMode).isEqualTo("turnstile")
+    }
+
+    @Test
+    fun syncDoesNotOverwriteAdmissionModeForAnotherEventSession() = runTest {
+        val metadataStore = InMemorySessionMetadataStore(sessionMetadata(eventId = 6L, admissionMode = "turnstile"))
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:32:00Z",
+                        attendees = emptyList(),
+                        count = 0,
+                        sync_type = "full",
+                        next_cursor = null,
+                        admission_mode = "session"
+                    ),
+                error = null,
+                message = null
+            )
+        repository = buildRepository(fixedSessionRepository(), metadataStore)
+
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+
+        assertThat(metadataStore.load()?.eventId).isEqualTo(6L)
+        assertThat(metadataStore.load()?.admissionMode).isEqualTo("turnstile")
+    }
+
+    @Test
+    fun syncDoesNotOverwriteAdmissionModeForANewerSessionOfTheSameEvent() = runTest {
+        val metadataStore =
+            InMemorySessionMetadataStore(
+                sessionMetadata(eventId = 5L, admissionMode = "turnstile", sessionGeneration = 2L)
+            )
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T08:33:00Z",
+                        attendees = emptyList(),
+                        count = 0,
+                        sync_type = "full",
+                        next_cursor = null,
+                        admission_mode = "session"
+                    ),
+                error = null,
+                message = null
+            )
+        repository = buildRepository(fixedSessionRepository(), metadataStore)
+
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+
+        assertThat(metadataStore.load()?.sessionGeneration).isEqualTo(2L)
+        assertThat(metadataStore.load()?.admissionMode).isEqualTo("turnstile")
     }
 
     @Test
@@ -832,6 +911,7 @@ class CurrentPhoenixSyncRepositoryTest {
                     ),
                 scannerDao = database.scannerDao(),
                 contextStore = contextStore(fixedSessionRepository()),
+                metadataStore = NoOpSessionMetadataStore,
                 operationMutexRegistry = DefaultEventOperationMutexRegistry(),
                 eventBucketRepository = NoOpEventBucketRepository,
                 clock = Clock.systemUTC(),
@@ -884,6 +964,7 @@ class CurrentPhoenixSyncRepositoryTest {
                     ),
                 scannerDao = database.scannerDao(),
                 contextStore = contextStore(fixedSessionRepository()),
+                metadataStore = NoOpSessionMetadataStore,
                 operationMutexRegistry = DefaultEventOperationMutexRegistry(),
                 eventBucketRepository = NoOpEventBucketRepository,
                 clock = Clock.systemUTC(),
@@ -959,6 +1040,7 @@ class CurrentPhoenixSyncRepositoryTest {
                     ),
                 scannerDao = database.scannerDao(),
                 contextStore = contextStore(fixedSessionRepository()),
+                metadataStore = NoOpSessionMetadataStore,
                 operationMutexRegistry = DefaultEventOperationMutexRegistry(),
                 eventBucketRepository = NoOpEventBucketRepository,
                 clock = Clock.systemUTC(),
@@ -1047,6 +1129,75 @@ class CurrentPhoenixSyncRepositoryTest {
         repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
 
         assertThat(database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-catch-10")).isNull()
+    }
+
+    @Test
+    fun turnstileSyncRemovesConfirmedOverlayWhenServerKeepsAttendeeOutside() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendeeEntity(
+                    id = 12,
+                    eventId = 5,
+                    ticketCode = "VG-TURNSTILE-CATCH-12",
+                    firstName = "Turnstile",
+                    updatedAt = "2026-03-13T09:00:00Z"
+                )
+            )
+        )
+        database.scannerDao().upsertLocalAdmissionOverlay(
+            LocalAdmissionOverlayEntity(
+                eventId = 5,
+                attendeeId = 12L,
+                ticketCode = "VG-TURNSTILE-CATCH-12",
+                idempotencyKey = "idem-turnstile-catch-12",
+                state = LocalAdmissionOverlayState.CONFIRMED_LOCAL_UNSYNCED.name,
+                createdAtEpochMillis = 1_000L,
+                overlayScannedAt = "2026-03-13T10:00:00Z",
+                expectedRemainingAfterOverlay = 0,
+                operatorName = "Op",
+                entranceName = "Main",
+                admissionMode = "turnstile"
+            )
+        )
+
+        api.syncResponse =
+            MobileSyncResponse(
+                data =
+                    MobileSyncPayload(
+                        server_time = "2026-03-13T10:30:00Z",
+                        attendees =
+                            listOf(
+                                AttendeeDto(
+                                    id = 12,
+                                    event_id = 5,
+                                    ticket_code = "VG-TURNSTILE-CATCH-12",
+                                    first_name = "Turnstile",
+                                    last_name = "Guest",
+                                    email = "turnstile@example.com",
+                                    ticket_type = "VIP",
+                                    allowed_checkins = 1,
+                                    checkins_remaining = 0,
+                                    payment_status = "completed",
+                                    is_currently_inside = false,
+                                    checked_in_at = "2026-03-13T10:00:30Z",
+                                    checked_out_at = null,
+                                    updated_at = "2026-03-13T10:30:00Z"
+                                )
+                            ),
+                        count = 1,
+                        sync_type = "incremental",
+                        next_cursor = null,
+                        admission_mode = "turnstile"
+                    ),
+                error = null,
+                message = null
+            )
+
+        repository.syncAttendees(AttendeeSyncMode.INCREMENTAL)
+
+        assertThat(
+            database.scannerDao().findLocalAdmissionOverlayByIdempotencyKey("idem-turnstile-catch-12")
+        ).isNull()
     }
 
     @Test
@@ -1212,11 +1363,15 @@ class CurrentPhoenixSyncRepositoryTest {
             integrityFailuresInForegroundSession = 0
         )
 
-    private fun buildRepository(sessionRepository: SessionRepository): CurrentPhoenixSyncRepository =
+    private fun buildRepository(
+        sessionRepository: SessionRepository,
+        metadataStore: SessionMetadataStore = NoOpSessionMetadataStore
+    ): CurrentPhoenixSyncRepository =
         CurrentPhoenixSyncRepository(
             remoteDataSource = PhoenixMobileRemoteDataSource(api),
             scannerDao = database.scannerDao(),
             contextStore = contextStore(sessionRepository),
+            metadataStore = metadataStore,
             operationMutexRegistry = DefaultEventOperationMutexRegistry(),
             eventBucketRepository = NoOpEventBucketRepository,
             clock = Clock.systemUTC(),
@@ -1261,6 +1416,7 @@ class CurrentPhoenixSyncRepositoryTest {
             remoteDataSource = PhoenixMobileRemoteDataSource(rateLimitedApi),
             scannerDao = database.scannerDao(),
             contextStore = contextStore(fixedSessionRepository()),
+            metadataStore = NoOpSessionMetadataStore,
             operationMutexRegistry = DefaultEventOperationMutexRegistry(),
             eventBucketRepository = NoOpEventBucketRepository,
             clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC),
@@ -1468,4 +1624,42 @@ class CurrentPhoenixSyncRepositoryTest {
     }
 
     private fun writableDatabase(): SupportSQLiteDatabase = database.openHelper.writableDatabase
+
+    private fun sessionMetadata(
+        eventId: Long,
+        admissionMode: String,
+        sessionGeneration: Long = 1L
+    ): SessionMetadata =
+        SessionMetadata(
+            eventId = eventId,
+            eventName = "Event $eventId",
+            eventShortname = null,
+            expiresInSeconds = 3_600,
+            authenticatedAtEpochMillis = 1L,
+            expiresAtEpochMillis = 3_601_000L,
+            sessionGeneration = sessionGeneration,
+            admissionMode = admissionMode
+        )
+
+    private class InMemorySessionMetadataStore(
+        private var metadata: SessionMetadata?
+    ) : SessionMetadataStore {
+        override suspend fun load(): SessionMetadata? = metadata
+
+        override suspend fun save(metadata: SessionMetadata) {
+            this.metadata = metadata
+        }
+
+        override suspend fun clear() {
+            metadata = null
+        }
+    }
+
+    private object NoOpSessionMetadataStore : SessionMetadataStore {
+        override suspend fun load(): SessionMetadata? = null
+
+        override suspend fun save(metadata: SessionMetadata) = Unit
+
+        override suspend fun clear() = Unit
+    }
 }

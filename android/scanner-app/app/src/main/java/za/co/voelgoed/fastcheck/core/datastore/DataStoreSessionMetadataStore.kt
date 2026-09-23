@@ -21,6 +21,7 @@ class DataStoreSessionMetadataStore(
             eventId = eventId,
             eventName = eventName,
             eventShortname = preferences[EVENT_SHORTNAME].toNullableValue(),
+            admissionMode = preferences[ADMISSION_MODE] ?: "session",
             expiresInSeconds = expiresInSeconds,
             authenticatedAtEpochMillis = preferences[AUTHENTICATED_AT] ?: return null,
             expiresAtEpochMillis = preferences[EXPIRES_AT] ?: return null,
@@ -33,6 +34,7 @@ class DataStoreSessionMetadataStore(
             preferences[EVENT_ID] = metadata.eventId
             preferences[EVENT_NAME] = metadata.eventName
             preferences[EVENT_SHORTNAME] = metadata.eventShortname.orEmpty()
+            preferences[ADMISSION_MODE] = metadata.admissionMode
             preferences[EXPIRES_IN] = metadata.expiresInSeconds
             preferences[AUTHENTICATED_AT] = metadata.authenticatedAtEpochMillis
             preferences[EXPIRES_AT] = metadata.expiresAtEpochMillis
@@ -50,6 +52,7 @@ class DataStoreSessionMetadataStore(
         val EVENT_ID = longPreferencesKey("session_event_id")
         val EVENT_NAME = stringPreferencesKey("session_event_name")
         val EVENT_SHORTNAME = stringPreferencesKey("session_event_shortname")
+        val ADMISSION_MODE = stringPreferencesKey("session_admission_mode")
         val EXPIRES_IN = intPreferencesKey("session_expires_in")
         val AUTHENTICATED_AT = longPreferencesKey("session_authenticated_at_epoch_millis")
         val EXPIRES_AT = longPreferencesKey("session_expires_at_epoch_millis")

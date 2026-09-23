@@ -5,12 +5,14 @@ import java.time.Instant
 import javax.inject.Inject
 import za.co.voelgoed.fastcheck.data.local.AttendeeEntity
 import za.co.voelgoed.fastcheck.data.local.LocalAdmissionOverlayEntity
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.policy.AdmissionRuntimePolicy
 
 class OverlayCatchUpPolicy @Inject constructor() {
     fun hasSyncedBaseCaughtUp(
         attendee: AttendeeEntity,
-        overlay: LocalAdmissionOverlayEntity
+        overlay: LocalAdmissionOverlayEntity,
+        admissionMode: EventAdmissionMode
     ): Boolean {
         if (attendee.eventId != overlay.eventId) {
             return false
@@ -24,7 +26,7 @@ class OverlayCatchUpPolicy @Inject constructor() {
             return false
         }
 
-        if (!attendee.isCurrentlyInside) {
+        if (!attendee.isCurrentlyInside && admissionMode != EventAdmissionMode.TURNSTILE) {
             return false
         }
 

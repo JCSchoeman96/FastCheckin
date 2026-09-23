@@ -1609,7 +1609,28 @@ defmodule FastCheckWeb.DashboardLive do
                 generated scanner code is for reference only and is not the current login identifier.
                 Browser scanner login also requires an operator name.
               </p>
-
+              <.input
+                form="edit-event-form"
+                field={@edit_form[:admission_mode]}
+                type="select"
+                label="Admission mode"
+                options={[
+                  {"Session (in/out, track inside)", "session"},
+                  {"Turnstile (count entries only)", "turnstile"}
+                ]}
+                value={
+                  edit_form_value(
+                    @edit_form,
+                    :admission_mode,
+                    (@editing_event && @editing_event.admission_mode) || "session"
+                  )
+                }
+              />
+              <p class="text-xs text-fc-text-muted">
+                Turnstile allows repeat entry scans without an exit scan on web and Android. Set high
+                or unlimited Tickera check-in limits. Occupancy and inside-now counts do not reflect
+                attendance in turnstile mode.
+              </p>
               <div class="space-y-3 border-t border-fc-border-default dark:border-glass-border pt-3">
                 <p class="text-sm font-semibold text-fc-text-primary">Scanner password</p>
 

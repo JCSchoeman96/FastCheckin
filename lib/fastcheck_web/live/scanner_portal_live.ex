@@ -161,7 +161,11 @@ defmodule FastCheckWeb.ScannerPortalLive do
           |> assign(:check_in_type, normalized_type)
           |> assign(
             :search_results,
-            apply_mode_filter(socket.assigns.search_raw_results, normalized_type)
+            apply_mode_filter(
+              socket.assigns.search_raw_results,
+              normalized_type,
+              socket.assigns.event.admission_mode
+            )
           )
           |> assign(:search_row_actions, %{})
 
@@ -335,7 +339,12 @@ defmodule FastCheckWeb.ScannerPortalLive do
       %{rows: raw_results, truncated?: truncated?} =
         Attendees.search_event_attendees_with_meta(socket.assigns.event_id, query, 50)
 
-      results = apply_mode_filter(raw_results, socket.assigns.check_in_type)
+      results =
+        apply_mode_filter(
+          raw_results,
+          socket.assigns.check_in_type,
+          socket.assigns.event.admission_mode
+        )
 
       {:noreply,
        socket
@@ -376,10 +385,22 @@ defmodule FastCheckWeb.ScannerPortalLive do
     socket =
       case current_action do
         %{ref: ^ref, state: :just_succeeded} = action ->
-          assign(socket, :search_row_actions, %{
-            socket.assigns.search_row_actions
-            | ticket_code => %{action | state: :settled_non_actionable}
-          })
+          attendee =
+            Enum.find(socket.assigns.search_results, &(Map.get(&1, :ticket_code) == ticket_code))
+
+          if attendee &&
+               attendee_actionable?(
+                 attendee,
+                 action.mode,
+                 socket.assigns.event.admission_mode
+               ) do
+            clear_search_row_action(socket, ticket_code)
+          else
+            assign(socket, :search_row_actions, %{
+              socket.assigns.search_row_actions
+              | ticket_code => %{action | state: :settled_non_actionable}
+            })
+          end
 
         _ ->
           socket
@@ -558,7 +579,8 @@ defmodule FastCheckWeb.ScannerPortalLive do
                       attendee,
                       @check_in_type,
                       row_action,
-                      @scans_disabled?
+                      @scans_disabled?,
+                      @event.admission_mode
                     )
                   }
                   data-test={"manual-check-in-#{attendee.ticket_code}"}
@@ -568,7 +590,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
                     name={manual_action_icon(row_action)}
                     class="size-4"
                   />
-                  {manual_action_label(@check_in_type, row_action)}
+                  {manual_action_label(@check_in_type, row_action, attendee, @event.admission_mode)}
                 </.button>
               </div>
             </div>
@@ -1050,7 +1072,7 @@ defmodule FastCheckWeb.ScannerPortalLive do
     results =
       Enum.map(socket.assigns.search_results, fn result ->
         if Map.get(result, :ticket_code) == ticket_code do
-          apply_attendee_scan_state(result, attendee, mode)
+          apply_attendee_scan_state(result, attendee, mode, socket.assigns.event.admission_mode)
         else
           result
         end
@@ -1059,18 +1081,22 @@ defmodule FastCheckWeb.ScannerPortalLive do
     assign(socket, :search_results, results)
   end
 
-  defp apply_attendee_scan_state(result, attendee, "exit") do
+  defp apply_attendee_scan_state(result, attendee, "exit", _admission_mode) do
     %{result | is_currently_inside: false, checked_out_at: Map.get(attendee, :checked_out_at)}
   end
 
-  defp apply_attendee_scan_state(result, attendee, _mode) do
+  defp apply_attendee_scan_state(result, attendee, _mode, admission_mode) do
     checkins_remaining =
       case Map.get(attendee, :checkins_remaining) do
         value when is_integer(value) -> value
         _ -> max(current_checkins_remaining(result) - 1, 0)
       end
 
-    %{result | is_currently_inside: true, checkins_remaining: checkins_remaining}
+    %{
+      result
+      | is_currently_inside: admission_mode != "turnstile",
+        checkins_remaining: checkins_remaining
+    }
   end
 
   defp refresh_stats(socket) do
@@ -1195,15 +1221,15 @@ defmodule FastCheckWeb.ScannerPortalLive do
     end
   end
 
-  defp apply_mode_filter(results, "exit") do
+  defp apply_mode_filter(results, "exit", _admission_mode) do
     results
     |> Enum.filter(&exit_actionable?/1)
     |> Enum.sort_by(fn attendee -> attendee_sort_key(attendee, false) end)
   end
 
-  defp apply_mode_filter(results, _mode) do
+  defp apply_mode_filter(results, _mode, admission_mode) do
     Enum.sort_by(results, fn attendee ->
-      attendee_sort_key(attendee, entry_actionable?(attendee))
+      attendee_sort_key(attendee, entry_actionable?(attendee, admission_mode))
     end)
   end
 
@@ -1216,11 +1242,14 @@ defmodule FastCheckWeb.ScannerPortalLive do
     }
   end
 
-  defp attendee_actionable?(attendee, "exit"), do: exit_actionable?(attendee)
-  defp attendee_actionable?(attendee, _), do: entry_actionable?(attendee)
+  defp attendee_actionable?(attendee, "exit", _admission_mode), do: exit_actionable?(attendee)
 
-  defp entry_actionable?(attendee) do
-    current_checkins_remaining(attendee) > 0 and Map.get(attendee, :is_currently_inside) != true
+  defp attendee_actionable?(attendee, _mode, admission_mode),
+    do: entry_actionable?(attendee, admission_mode)
+
+  defp entry_actionable?(attendee, admission_mode) do
+    current_checkins_remaining(attendee) > 0 and
+      (admission_mode == "turnstile" or Map.get(attendee, :is_currently_inside) != true)
   end
 
   defp exit_actionable?(attendee), do: Map.get(attendee, :is_currently_inside) == true
@@ -1243,14 +1272,31 @@ defmodule FastCheckWeb.ScannerPortalLive do
     end
   end
 
-  defp manual_action_label("exit", %{state: :pending}), do: "Checking out..."
-  defp manual_action_label("exit", %{state: :just_succeeded}), do: "Checked out"
-  defp manual_action_label("exit", %{state: :settled_non_actionable}), do: "Not inside"
-  defp manual_action_label("exit", _action), do: "Check out"
-  defp manual_action_label(_mode, %{state: :pending}), do: "Checking in..."
-  defp manual_action_label(_mode, %{state: :just_succeeded}), do: "Checked in"
-  defp manual_action_label(_mode, %{state: :settled_non_actionable}), do: "Already inside"
-  defp manual_action_label(_mode, _action), do: "Check in"
+  defp manual_action_label("exit", %{state: :pending}, _attendee, _admission_mode),
+    do: "Checking out..."
+
+  defp manual_action_label("exit", %{state: :just_succeeded}, _attendee, _admission_mode),
+    do: "Checked out"
+
+  defp manual_action_label("exit", %{state: :settled_non_actionable}, _attendee, _admission_mode),
+    do: "Not inside"
+
+  defp manual_action_label("exit", _action, _attendee, _admission_mode), do: "Check out"
+
+  defp manual_action_label(_mode, %{state: :pending}, _attendee, _admission_mode),
+    do: "Checking in..."
+
+  defp manual_action_label(_mode, %{state: :just_succeeded}, _attendee, _admission_mode),
+    do: "Checked in"
+
+  defp manual_action_label(_mode, %{state: :settled_non_actionable}, attendee, "turnstile") do
+    if current_checkins_remaining(attendee) <= 0, do: "No check-ins remain", else: "Unavailable"
+  end
+
+  defp manual_action_label(_mode, %{state: :settled_non_actionable}, _attendee, _admission_mode),
+    do: "Already inside"
+
+  defp manual_action_label(_mode, _action, _attendee, _admission_mode), do: "Check in"
 
   defp no_actionable_search_results_copy("exit"),
     do: "Matching attendees were found, but none can be checked out right now."
@@ -1285,12 +1331,18 @@ defmodule FastCheckWeb.ScannerPortalLive do
   defp manual_action_icon(%{state: :just_succeeded}), do: "hero-check-circle"
   defp manual_action_icon(_action), do: nil
 
-  defp manual_action_disabled?(_attendee, _mode, %{state: state}, _scans_disabled?)
+  defp manual_action_disabled?(
+         _attendee,
+         _mode,
+         %{state: state},
+         _scans_disabled?,
+         _admission_mode
+       )
        when state in [:pending, :just_succeeded, :settled_non_actionable],
        do: true
 
-  defp manual_action_disabled?(attendee, mode, _action, scans_disabled?) do
-    scans_disabled? or not attendee_actionable?(attendee, mode)
+  defp manual_action_disabled?(attendee, mode, _action, scans_disabled?, admission_mode) do
+    scans_disabled? or not attendee_actionable?(attendee, mode, admission_mode)
   end
 
   defp default_camera_permission, do: @default_camera_permission
@@ -1547,13 +1599,20 @@ defmodule FastCheckWeb.ScannerPortalLive do
     pending = Map.get(current_stats, :pending, 0)
     current_occupancy = socket.assigns.current_occupancy || 0
     successful_scan_count = (socket.assigns.successful_scan_count || 0) + 1
+    turnstile? = socket.assigns.event.admission_mode == "turnstile"
 
     {updated_checked_in, updated_pending, updated_occupancy} =
-      case mode do
-        "exit" ->
+      case {mode, turnstile?} do
+        {"exit", true} ->
+          {checked_in, pending, current_occupancy}
+
+        {"exit", false} ->
           {checked_in, pending, max(current_occupancy - 1, 0)}
 
-        _ ->
+        {_, true} ->
+          {min(checked_in + 1, total), max(pending - 1, 0), current_occupancy}
+
+        {_, false} ->
           {min(checked_in + 1, total), max(pending - 1, 0), current_occupancy + 1}
       end
 

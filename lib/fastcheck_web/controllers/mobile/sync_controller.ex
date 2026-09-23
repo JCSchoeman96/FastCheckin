@@ -16,6 +16,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
   import Ecto.Query
 
   alias FastCheck.Attendees.{Attendee, AttendeeInvalidationEvent}
+  alias FastCheck.Events.AdmissionMode
   alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Scans.MobileUploadService
@@ -53,6 +54,7 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
       server_time = DateTime.utc_now() |> DateTime.truncate(:second)
       sync_type = if since_timestamp, do: "incremental", else: "full"
+      admission_mode = event_admission_mode(event_id)
 
       Logger.info("Mobile sync down completed",
         event_id: event_id,
@@ -74,7 +76,8 @@ defmodule FastCheckWeb.Mobile.SyncController do
           sync_type: sync_type,
           next_cursor: next_cursor,
           invalidations_checkpoint: invalidations_checkpoint,
-          event_sync_version: event_sync_version
+          event_sync_version: event_sync_version,
+          admission_mode: admission_mode
         },
         error: nil
       })
@@ -463,6 +466,13 @@ defmodule FastCheckWeb.Mobile.SyncController do
 
   defp normalize_attendee_timestamp(nil), do: nil
   defp normalize_attendee_timestamp(%DateTime{} = datetime), do: DateTime.to_naive(datetime)
+
+  defp event_admission_mode(event_id) do
+    case Repo.get(Event, event_id) do
+      %Event{} = event -> AdmissionMode.normalize(event.admission_mode)
+      _ -> AdmissionMode.normalize(nil)
+    end
+  end
 
   defp get_peer_ip(conn) do
     case get_req_header(conn, "x-forwarded-for") do

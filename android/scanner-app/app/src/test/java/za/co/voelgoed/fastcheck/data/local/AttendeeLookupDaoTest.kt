@@ -151,13 +151,53 @@ class AttendeeLookupDaoTest {
         assertThat(attendee?.activeOverlayConflictMessage).contains("another device")
     }
 
+    @Test
+    fun mergedLookupSubtractsEveryActiveOverlayFromRemainingCheckins() = runTest {
+        database.scannerDao().upsertAttendees(
+            listOf(
+                attendee(
+                    id = 1,
+                    ticketCode = "VG-100",
+                    firstName = "Jane",
+                    lastName = "Doe",
+                    email = "jane@example.com",
+                    checkinsRemaining = 2
+                )
+            )
+        )
+        database.scannerDao().upsertLocalAdmissionOverlays(
+            listOf(
+                overlay(idempotencyKey = "idem-100-1", createdAtEpochMillis = 1_000L),
+                overlay(idempotencyKey = "idem-100-2", createdAtEpochMillis = 2_000L)
+            )
+        )
+
+        val attendee = attendeeLookupDao.observeAttendeeById(5, 1).first()
+
+        assertThat(attendee?.mergedCheckinsRemaining).isEqualTo(0)
+    }
+
+    @Test
+    fun turnstileOverlayDoesNotProjectInsideOrCountLocalOccupancy() = runTest {
+        database.scannerDao().upsertLocalAdmissionOverlay(
+            overlay(idempotencyKey = "idem-turnstile", admissionMode = "turnstile")
+        )
+
+        val attendee = attendeeLookupDao.observeAttendeeById(5, 1).first()
+        val metrics = database.eventAttendeeMetricsDao().observeMetrics(5).first()
+
+        assertThat(attendee?.mergedIsCurrentlyInside).isFalse()
+        assertThat(metrics.currentlyInsideCount).isEqualTo(0)
+    }
+
     private fun attendee(
         id: Long,
         eventId: Long = 5,
         ticketCode: String,
         firstName: String?,
         lastName: String?,
-        email: String?
+        email: String?,
+        checkinsRemaining: Int = 1
     ): AttendeeEntity =
         AttendeeEntity(
             id = id,
@@ -168,11 +208,30 @@ class AttendeeLookupDaoTest {
             email = email,
             ticketType = "VIP",
             allowedCheckins = 2,
-            checkinsRemaining = 1,
+            checkinsRemaining = checkinsRemaining,
             paymentStatus = "completed",
             isCurrentlyInside = false,
             checkedInAt = null,
             checkedOutAt = null,
             updatedAt = "2026-03-28T10:00:00Z"
+        )
+
+    private fun overlay(
+        idempotencyKey: String,
+        createdAtEpochMillis: Long = 1_000L,
+        admissionMode: String = "session"
+    ): LocalAdmissionOverlayEntity =
+        LocalAdmissionOverlayEntity(
+            eventId = 5,
+            attendeeId = 1,
+            ticketCode = "VG-100",
+            idempotencyKey = idempotencyKey,
+            state = LocalAdmissionOverlayState.PENDING_LOCAL.name,
+            createdAtEpochMillis = createdAtEpochMillis,
+            overlayScannedAt = "2026-03-28T10:05:00Z",
+            expectedRemainingAfterOverlay = 1,
+            operatorName = "Op",
+            entranceName = "Main",
+            admissionMode = admissionMode
         )
 }

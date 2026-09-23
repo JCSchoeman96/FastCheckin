@@ -1,7 +1,9 @@
 defmodule FastCheckWeb.CheckInControllerTest do
   use FastCheckWeb.ConnCase
 
+  alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.CheckIn
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
@@ -32,6 +34,38 @@ defmodule FastCheckWeb.CheckInControllerTest do
       assert data["status"] == "SUCCESS"
       assert data["ticket_code"] == attendee.ticket_code
       assert data["attendee_id"] == attendee.id
+    end
+
+    test "turnstile legacy check-in records an entry without marking inside", %{
+      conn: conn,
+      event: event,
+      attendee: attendee
+    } do
+      attendee =
+        attendee
+        |> Attendee.changeset(%{
+          allowed_checkins: 2,
+          checkins_remaining: 2,
+          checked_in_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          is_currently_inside: true
+        })
+        |> Repo.update!()
+
+      event =
+        event
+        |> Event.changeset(%{admission_mode: "turnstile"})
+        |> Repo.update!()
+
+      conn =
+        post(conn, ~p"/api/v1/check-in", %{
+          "ticket_code" => attendee.ticket_code,
+          "entrance_name" => "Gate A"
+        })
+
+      assert json_response(conn, 200)["data"]["status"] == "SUCCESS"
+      assert Repo.get!(Attendee, attendee.id).is_currently_inside == false
+      assert Repo.get_by!(CheckIn, attendee_id: attendee.id, status: "success")
+      assert Attendees.get_occupancy_breakdown(event.id).currently_inside == 0
     end
 
     test "rejects unauthenticated requests", %{conn: conn} do

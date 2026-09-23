@@ -3,7 +3,9 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias FastCheck.Attendees
   alias FastCheck.Attendees.Attendee
+  alias FastCheck.Attendees.CheckIn
   alias FastCheck.Attendees.CheckInSession
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
@@ -221,6 +223,50 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
 
       send(view.pid, {:settle_search_action, attendee.ticket_code, 1})
       assert render(view) =~ "Already inside"
+    end
+
+    test "turnstile search permits repeated entries and keeps the attendee outside", %{
+      conn: conn,
+      event: event
+    } do
+      event
+      |> Event.changeset(%{admission_mode: "turnstile"})
+      |> Repo.update!()
+
+      attendee =
+        insert_attendee(event, %{
+          ticket_code: "TURNSTILE-SEARCH-001",
+          first_name: "Turnstile",
+          last_name: "Guest",
+          allowed_checkins: 3,
+          checkins_remaining: 2,
+          checked_in_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          is_currently_inside: true
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+
+      view
+      |> element("#scanner-portal-search-form")
+      |> render_change(%{"query" => attendee.ticket_code})
+
+      button = "[data-test=\"manual-check-in-#{attendee.ticket_code}\"]"
+      assert has_element?(view, "#{button}:not([disabled])")
+
+      view |> element(button) |> render_click()
+      assert Repo.get!(Attendee, attendee.id).is_currently_inside == false
+
+      send(view.pid, {:settle_search_action, attendee.ticket_code, 1})
+      assert has_element?(view, "#{button}:not([disabled])")
+
+      view |> element(button) |> render_click()
+
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert refreshed.is_currently_inside == false
+      assert refreshed.checkins_remaining == 0
+      assert Repo.aggregate(CheckIn, :count, :id) == 2
+      assert Repo.aggregate(CheckInSession, :count, :id) == 0
+      assert Attendees.get_occupancy_breakdown(event.id).currently_inside == 0
     end
 
     test "checks attendee out from primary search when exit mode is selected", %{

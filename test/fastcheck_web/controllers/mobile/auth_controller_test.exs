@@ -28,6 +28,20 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
   end
 
   describe "POST /api/v1/mobile/login" do
+    test "returns the event admission mode in the login payload", %{conn: conn, event: event} do
+      event
+      |> Event.changeset(%{admission_mode: "turnstile"})
+      |> Repo.update!()
+
+      conn =
+        post(conn, ~p"/api/v1/mobile/login", %{
+          "event_id" => event.id,
+          "credential" => @credential
+        })
+
+      assert %{"data" => %{"admission_mode" => "turnstile"}} = json_response(conn, 200)
+    end
+
     test "successfully issues a token for a valid event_id", %{conn: conn, event: event} do
       conn =
         post(conn, ~p"/api/v1/mobile/login", %{
@@ -41,6 +55,7 @@ defmodule FastCheckWeb.Mobile.AuthControllerTest do
                  "event_id" => event_id,
                  "event_name" => event_name,
                  "event_shortname" => event_shortname,
+                 "admission_mode" => "session",
                  "expires_in" => expires_in
                },
                "error" => nil
