@@ -47,7 +47,7 @@ defmodule FastCheck.Tickets.IssuerMobileSyncTest do
       assert Repo.get!(Order, order_id).status == "paid_verified"
     end
 
-    test "mobile sync returns issued sales attendees and unchanged response shape", %{conn: conn} do
+    test "mobile sync returns admission mode and issued sales attendees", %{conn: conn} do
       %{event: event, order_id: order_id} = paid_order_fixture(quantity: 2)
 
       assert {:ok, %{status: :ticket_issued}} = Issuer.issue_order(order_id)
@@ -72,9 +72,11 @@ defmodule FastCheck.Tickets.IssuerMobileSyncTest do
                  "sync_type",
                  "next_cursor",
                  "invalidations_checkpoint",
+                 "admission_mode",
                  "event_sync_version"
                ])
 
+      assert data["admission_mode"] == "session"
       assert data["event_sync_version"] == 1
 
       sales_ticket_codes = sales_ticket_codes(order_id)
