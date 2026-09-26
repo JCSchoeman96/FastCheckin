@@ -60,6 +60,8 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert html =~ event.name
       assert html =~ attendee.first_name
       assert html =~ ticket_code
+      assert html =~ "Download PDF"
+      assert html =~ ~s(href="/t/#{token}/pdf")
     end
 
     test "invalid token omits ticket code from HTML", %{conn: conn} do
@@ -69,6 +71,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       html = conn |> get(~p"/t/#{unknown}") |> html_response(404)
 
       refute html =~ ticket_code
+      refute html =~ "Download PDF"
     end
 
     test "expired token omits ticket code from HTML", %{conn: conn} do
@@ -78,6 +81,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       html = conn |> get(~p"/t/#{token}") |> html_response(410)
 
       refute html =~ ticket_code
+      refute html =~ "Download PDF"
     end
 
     test "revoked ticket omits ticket code from HTML", %{conn: conn} do
@@ -87,6 +91,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       html = conn |> get(~p"/t/#{token}") |> html_response(200)
 
       refute html =~ ticket_code
+      refute html =~ "Download PDF"
     end
 
     test "not-ready ticket omits ticket code from HTML", %{conn: conn} do
@@ -95,6 +100,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       html = conn |> get(~p"/t/#{token}") |> html_response(200)
 
       refute html =~ ticket_code
+      refute html =~ "Download PDF"
     end
 
     test "not_scannable attendee omits ticket code from HTML", %{conn: conn} do
@@ -107,6 +113,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       html = conn |> get(~p"/t/#{token}") |> html_response(200)
 
       refute html =~ ticket_code
+      refute html =~ "Download PDF"
     end
 
     test "sets no-store private and noindex headers", %{conn: conn} do
@@ -117,6 +124,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert {"cache-control", "no-store, private"} in conn.resp_headers
       assert {"pragma", "no-cache"} in conn.resp_headers
       assert {"x-robots-tag", "noindex, nofollow"} in conn.resp_headers
+      assert {"referrer-policy", "no-referrer"} in conn.resp_headers
     end
 
     test "burst invalid-token requests from same IP eventually return 429", %{conn: conn} do

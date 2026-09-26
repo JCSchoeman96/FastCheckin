@@ -1,0 +1,64 @@
+{
+  "pack_id": "0050_VS-24C",
+  "slice": "VS-24C",
+  "name": "Customer PDF Access Completion",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "github_issue": 440,
+  "repository_path": "docs/fastcheck_sales/feature_packs/0050_VS-24C_customer-pdf-access-completion",
+  "goal": "Allow a customer with a valid secure-ticket delivery token to download a fresh PDF from the secure ticket page.",
+  "dependencies": [
+    "VS-24A Ticket Artifact Domain Contract",
+    "VS-24B PDF Ticket Generation",
+    "VS-11 Secure Ticket Page",
+    "#446 Admin PDF Download",
+    "#447 Verified WhatsApp Ticket Resend"
+  ],
+  "files_created": [
+    "lib/fastcheck_web/controllers/secure_ticket_pdf_controller.ex",
+    "test/fastcheck_web/controllers/secure_ticket_pdf_controller_test.exs",
+    "docs/fastcheck_sales/feature_packs/0050_VS-24C_customer-pdf-access-completion/VS-24C-FEATURE_PACK.md",
+    "docs/fastcheck_sales/feature_packs/0050_VS-24C_customer-pdf-access-completion/pack.json"
+  ],
+  "files_updated": [
+    "lib/fastcheck_web/router.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_controller.ex",
+    "lib/fastcheck_web/controllers/secure_ticket_html/show.html.heex",
+    "test/fastcheck_web/controllers/secure_ticket_controller_test.exs"
+  ],
+  "route": {
+    "method": "GET",
+    "path": "/t/:token/pdf",
+    "pipeline": "browser",
+    "authority": "existing secure-ticket delivery bearer token"
+  },
+  "validity": {
+    "resolver": "FastCheck.Tickets.ArtifactResolver.resolve_from_delivery_token/1",
+    "renderer": "FastCheck.Tickets.PdfTicket.generate/1",
+    "revalidate_on_every_download": true,
+    "persist_pdf_state": false,
+    "persist_generated_pdf": false
+  },
+  "customer_delivery": {
+    "whatsapp_payload": "secure ticket-page link",
+    "whatsapp_pdf_attachment": false,
+    "admin_manual_download": "implemented by #446 / PR #448",
+    "verified_resend": "implemented by #447"
+  },
+  "cache_strategy": "none",
+  "privacy_headers": [
+    "Cache-Control: no-store, private",
+    "Pragma: no-cache",
+    "X-Robots-Tag: noindex, nofollow",
+    "Referrer-Policy: no-referrer"
+  ],
+  "verification_commands": [
+    "mix test test/fastcheck_web/controllers/secure_ticket_pdf_controller_test.exs",
+    "mix test test/fastcheck_web/controllers/secure_ticket_controller_test.exs",
+    "mix precommit",
+    "mix sobelow --exit --compact",
+    "git diff --check"
+  ]
+}
