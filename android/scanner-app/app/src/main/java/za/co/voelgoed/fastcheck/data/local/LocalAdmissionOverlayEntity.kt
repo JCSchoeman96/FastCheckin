@@ -27,5 +27,6 @@ data class LocalAdmissionOverlayEntity(
     val operatorName: String,
     val entranceName: String,
     val conflictReasonCode: String? = null,
-    val conflictMessage: String? = null
+    val conflictMessage: String? = null,
+    val admissionMode: String = "session"
 )

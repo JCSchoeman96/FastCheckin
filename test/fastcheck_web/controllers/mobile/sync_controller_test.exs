@@ -124,6 +124,23 @@ defmodule FastCheckWeb.Mobile.SyncControllerTest do
   end
 
   describe "GET /api/v1/mobile/attendees - sync down" do
+    test "returns the admission mode for the authenticated event", %{
+      conn: conn,
+      token: token,
+      event: event
+    } do
+      event
+      |> Event.changeset(%{admission_mode: "turnstile"})
+      |> Repo.update!()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get(~p"/api/v1/mobile/attendees?limit=50")
+
+      assert %{"data" => %{"admission_mode" => "turnstile"}} = json_response(conn, 200)
+    end
+
     test "requires authentication (401 without token)", %{conn: conn} do
       conn = get(conn, ~p"/api/v1/mobile/attendees")
       assert json_response(conn, 401)["error"] == "missing_authorization_header"

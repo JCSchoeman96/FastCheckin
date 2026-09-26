@@ -6,6 +6,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import org.junit.Test
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 
 class SessionMappersTest {
     private val clock = Clock.fixed(Instant.parse("2026-03-13T08:00:00Z"), ZoneOffset.UTC)
@@ -32,5 +33,25 @@ class SessionMappersTest {
         assertThat(metadata.expiresInSeconds).isEqualTo(3600)
         assertThat(metadata.eventShortname).isEqualTo("VG Live")
         assertThat(metadata.expiresAtEpochMillis).isEqualTo(session.expiresAtEpochMillis)
+        assertThat(session.admissionMode).isEqualTo(EventAdmissionMode.SESSION)
+        assertThat(metadata.admissionMode).isEqualTo("session")
+    }
+
+    @Test
+    fun mapsTurnstileAdmissionModeFromLoginIntoSessionAndMetadata() {
+        val payload =
+            MobileLoginPayload(
+                token = "jwt-token",
+                event_id = 123,
+                event_name = "Voelgoed Live",
+                admission_mode = "turnstile",
+                expires_in = 3600
+            )
+
+        val session = payload.toDomain(clock)
+        val metadata = session.toMetadata()
+
+        assertThat(session.admissionMode).isEqualTo(EventAdmissionMode.TURNSTILE)
+        assertThat(metadata.admissionMode).isEqualTo("turnstile")
     }
 }

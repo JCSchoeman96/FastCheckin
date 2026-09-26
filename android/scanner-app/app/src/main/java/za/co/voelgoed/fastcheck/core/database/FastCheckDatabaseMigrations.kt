@@ -314,6 +314,15 @@ object FastCheckDatabaseMigrations {
             }
         }
 
+    val MIGRATION_12_13: Migration =
+        object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE local_admission_overlays ADD COLUMN admissionMode TEXT NOT NULL DEFAULT 'session'"
+                )
+            }
+        }
+
     val MIGRATION_7_8: Migration =
         object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {

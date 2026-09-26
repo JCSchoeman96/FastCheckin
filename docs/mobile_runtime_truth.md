@@ -51,9 +51,17 @@ Successful login responses include both:
 
 - `event_name` (canonical full event title)
 - `event_shortname` (optional compact label; additive field)
+- `admission_mode` (`session` by default, or `turnstile`)
 
 Android should prefer `event_shortname` for compact UI surfaces when present,
 and fall back to `event_name` when it is `null` or blank.
+
+`admission_mode` is event-scoped. Both browser and Android scans still require a
+valid ticket, valid payment, and remaining check-in allowance. In `session`
+mode, a ticket marked inside blocks another entry. In `turnstile` mode, entry
+scans do not use inside state or create visit sessions, but each accepted entry
+still decrements `checkins_remaining` and writes its audit record. Android saves
+the mode from login and refreshes it after each successful attendee sync.
 
 ## Attendee sync down (`GET /api/v1/mobile/attendees`)
 
@@ -74,7 +82,7 @@ Single atomic JSON per successful response. The client keeps **three** checkpoin
 | `since_invalidation_id` | No | Non-negative integer; default **0** (last `invalidations_checkpoint`). |
 | `cursor` | No | Opaque; pages **attendees** only. |
 
-**Successful JSON `data` fields** include `server_time`, `attendees`, `invalidations`, `invalidations_checkpoint`, `event_sync_version`, `next_cursor`, `sync_type`, `count`.
+**Successful JSON `data` fields** include `server_time`, `attendees`, `invalidations`, `invalidations_checkpoint`, `event_sync_version`, `admission_mode`, `next_cursor`, `sync_type`, `count`.
 
 **HTTP 400 — exact `error.code` values** (envelope: `data: null`, `error: { code, message }`)
 
@@ -98,6 +106,11 @@ Do not infer ticket removal from incremental attendee pages alone; apply **`inva
 For `POST /api/v1/mobile/scans`, the authoritative path is:
 
 `validate -> hot-state decision -> enqueue durability -> promote results -> respond`
+
+Successful mobile entry results are projected to Postgres asynchronously. In
+`turnstile` mode, that projection keeps `is_currently_inside` false and skips
+active visit-session creation while retaining the scan attempt and check-in
+audit rows.
 
 Operationally that means:
 

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import za.co.voelgoed.fastcheck.core.concurrency.EventOperationMutexRegistry
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContext
+import za.co.voelgoed.fastcheck.core.datastore.SessionMetadataStore
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventContextStore
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedEventIdentity
 import za.co.voelgoed.fastcheck.core.session.AuthenticatedSessionTransitionCoordinator
@@ -28,6 +29,7 @@ import za.co.voelgoed.fastcheck.data.remote.MobileSyncPayload
 import za.co.voelgoed.fastcheck.data.remote.PhoenixMobileRemoteDataSource
 import za.co.voelgoed.fastcheck.core.sync.AttendeeSyncBootstrapStateHub
 import za.co.voelgoed.fastcheck.domain.model.AttendeeSyncStatus
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.model.LocalAdmissionOverlayState
 
 @Singleton
@@ -38,6 +40,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     private val bootstrapStateHub: AttendeeSyncBootstrapStateHub,
     private val overlayCatchUpPolicy: OverlayCatchUpPolicy = OverlayCatchUpPolicy(),
     private val contextStore: AuthenticatedEventContextStore,
+    private val metadataStore: SessionMetadataStore,
     private val operationMutexRegistry: EventOperationMutexRegistry,
     private val eventBucketRepository: EventBucketRepository,
     private val transitionCoordinator: AuthenticatedSessionTransitionCoordinator? = null
@@ -102,6 +105,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
         return try {
             runPagedSync(
                 eventId = eventId,
+                sessionGeneration = context.sessionGeneration,
                 authorization = "Bearer ${context.bearerToken}",
                 sinceForFirstPage = sinceForFirstPage,
                 previousBeforeLoop = previousSnapshot,
@@ -144,6 +148,7 @@ class CurrentPhoenixSyncRepository @Inject constructor(
 
     private suspend fun runPagedSync(
         eventId: Long,
+        sessionGeneration: Long,
         authorization: String,
         sinceForFirstPage: String?,
         previousBeforeLoop: SyncMetadataEntity?,
@@ -226,9 +231,26 @@ class CurrentPhoenixSyncRepository @Inject constructor(
             )
 
         scannerDao.upsertSyncMetadata(metadata)
-        resolveConfirmedAdmissionOverlays(eventId)
+        resolveConfirmedAdmissionOverlays(
+            eventId,
+            EventAdmissionMode.fromApiValue(finalPayload.admission_mode)
+        )
+        persistAdmissionModeFromSync(eventId, sessionGeneration, finalPayload)
 
         return metadata.toDomain()
+    }
+
+    private suspend fun persistAdmissionModeFromSync(
+        eventId: Long,
+        sessionGeneration: Long,
+        payload: MobileSyncPayload
+    ) {
+        val cached =
+            metadataStore.load()?.takeIf {
+                it.eventId == eventId && it.sessionGeneration == sessionGeneration
+            } ?: return
+        val admissionMode = EventAdmissionMode.fromApiValue(payload.admission_mode).name.lowercase()
+        metadataStore.save(cached.copy(admissionMode = admissionMode))
     }
 
     private fun buildSuccessMetadata(
@@ -293,7 +315,10 @@ class CurrentPhoenixSyncRepository @Inject constructor(
     override fun observeLastSyncedStatus(identity: AuthenticatedEventIdentity): Flow<AttendeeSyncStatus?> =
         scannerDao.observeSyncMetadataForEvent(identity.eventId).map { it?.toDomain() }
 
-    private suspend fun resolveConfirmedAdmissionOverlays(eventId: Long) {
+    private suspend fun resolveConfirmedAdmissionOverlays(
+        eventId: Long,
+        admissionMode: EventAdmissionMode
+    ) {
         val overlays =
             scannerDao.loadOverlaysForEventByState(
                 eventId = eventId,
@@ -305,7 +330,10 @@ class CurrentPhoenixSyncRepository @Inject constructor(
                 scannerDao.findAttendeeById(eventId, overlay.attendeeId)
                     ?: scannerDao.findAttendee(eventId, overlay.ticketCode)
 
-            if (attendee != null && overlayCatchUpPolicy.hasSyncedBaseCaughtUp(attendee, overlay)) {
+            if (
+                attendee != null &&
+                    overlayCatchUpPolicy.hasSyncedBaseCaughtUp(attendee, overlay, admissionMode)
+            ) {
                 scannerDao.deleteLocalAdmissionOverlayById(overlay.id)
             }
         }

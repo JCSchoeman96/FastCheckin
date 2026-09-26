@@ -4,6 +4,7 @@ import java.time.Clock
 import java.time.Instant
 import za.co.voelgoed.fastcheck.core.datastore.SessionMetadata
 import za.co.voelgoed.fastcheck.data.remote.MobileLoginPayload
+import za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode
 import za.co.voelgoed.fastcheck.domain.model.ScannerSession
 
 fun MobileLoginPayload.toDomain(clock: Clock): ScannerSession {
@@ -16,7 +17,8 @@ fun MobileLoginPayload.toDomain(clock: Clock): ScannerSession {
         eventShortname = event_shortname.toNullableValue(),
         expiresInSeconds = expires_in,
         authenticatedAtEpochMillis = authenticatedAt.toEpochMilli(),
-        expiresAtEpochMillis = expiresAt.toEpochMilli()
+        expiresAtEpochMillis = expiresAt.toEpochMilli(),
+        admissionMode = EventAdmissionMode.fromApiValue(admission_mode)
     )
 }
 
@@ -28,7 +30,8 @@ fun ScannerSession.toMetadata(): SessionMetadata =
         expiresInSeconds = expiresInSeconds,
         authenticatedAtEpochMillis = authenticatedAtEpochMillis,
         expiresAtEpochMillis = expiresAtEpochMillis,
-        sessionGeneration = sessionGeneration
+        sessionGeneration = sessionGeneration,
+        admissionMode = admissionMode.name.lowercase()
     )
 
 private fun String?.toNullableValue(): String? =

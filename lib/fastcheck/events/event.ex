@@ -9,6 +9,7 @@ defmodule FastCheck.Events.Event do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias FastCheck.Events.AdmissionMode
   alias FastCheck.Security.Sanitizer
 
   @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -33,6 +34,7 @@ defmodule FastCheck.Events.Event do
           status: String.t() | nil,
           whatsapp_sales_enabled: boolean(),
           whatsapp_max_tickets_per_order: integer(),
+          admission_mode: String.t(),
           total_tickets: integer() | nil,
           checked_in_count: integer(),
           attendee_count: integer() | nil,
@@ -74,6 +76,8 @@ defmodule FastCheck.Events.Event do
     field :whatsapp_sales_enabled, :boolean, default: false
     # Operator-controlled per-order WhatsApp quantity ceiling (independent of offer max).
     field :whatsapp_max_tickets_per_order, :integer, default: 9
+    # session = inside tracking; turnstile = entry counts only (no inside gate)
+    field :admission_mode, :string, default: "session"
     # Total number of tickets made available for the event
     field :total_tickets, :integer
     # Local checked-in total derived from attendee check-in timestamps
@@ -134,8 +138,10 @@ defmodule FastCheck.Events.Event do
       :event_time,
       :location,
       :last_sync_at,
-      :last_soft_sync_at
+      :last_soft_sync_at,
+      :admission_mode
     ])
+    |> validate_inclusion(:admission_mode, AdmissionMode.valid_modes())
     |> sanitize_string_fields()
     |> synchronize_site_urls()
     |> maybe_put_scanner_login_code()

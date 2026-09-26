@@ -109,6 +109,9 @@ class CurrentPhoenixMobileScanRepositoryTest {
                         override suspend fun currentEventId(): Long = 5L
 
                         override suspend fun currentOperatorName(): String? = "Scanner 1"
+
+                        override suspend fun currentAdmissionMode() =
+                            za.co.voelgoed.fastcheck.domain.model.EventAdmissionMode.SESSION
                     },
                 clock = clock
             )

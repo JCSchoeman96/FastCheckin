@@ -7,6 +7,7 @@ defmodule FastCheck.Scans.Persistence do
   import Ecto.Query, only: [from: 2]
 
   alias FastCheck.Attendees.{Attendee, CheckIn, CheckInSession}
+  alias FastCheck.Events.AdmissionMode
   alias FastCheck.Repo
   alias FastCheck.Scans.ScanAttempt
 
@@ -53,17 +54,20 @@ defmodule FastCheck.Scans.Persistence do
        )
        when is_integer(attendee_id) do
     attendee = Repo.get!(Attendee, attendee_id)
+    turnstile? = AdmissionMode.turnstile?(attrs.event_id)
 
-    attendee_attrs = %{
-      checked_in_at: parse_datetime(attrs.metadata["checked_in_at"]) || attrs.processed_at,
-      last_checked_in_at: attrs.processed_at,
-      checkins_remaining: attrs.metadata["remaining_after"]
-    }
+    attendee_attrs =
+      %{
+        checked_in_at: parse_datetime(attrs.metadata["checked_in_at"]) || attrs.processed_at,
+        last_checked_in_at: attrs.processed_at,
+        checkins_remaining: attrs.metadata["remaining_after"]
+      }
+      |> maybe_turnstile_attendee_attrs(turnstile?)
 
     with {:ok, updated_attendee} <-
            attendee |> Attendee.changeset(attendee_attrs) |> Repo.update(),
          {:ok, _check_in} <- insert_check_in(updated_attendee, attrs, "success"),
-         {:ok, _session} <- upsert_active_session(updated_attendee, attrs) do
+         :ok <- maybe_upsert_turnstile_session(updated_attendee, attrs, turnstile?) do
       :ok
     else
       {:error, reason} -> Repo.rollback(reason)
@@ -81,6 +85,20 @@ defmodule FastCheck.Scans.Persistence do
   end
 
   defp project_legacy_state(_attrs), do: :ok
+
+  defp maybe_turnstile_attendee_attrs(attrs, true),
+    do: Map.put(attrs, :is_currently_inside, false)
+
+  defp maybe_turnstile_attendee_attrs(attrs, false), do: attrs
+
+  defp maybe_upsert_turnstile_session(_attendee, _attrs, true), do: :ok
+
+  defp maybe_upsert_turnstile_session(attendee, attrs, false) do
+    case upsert_active_session(attendee, attrs) do
+      {:ok, _session} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp insert_check_in(attendee, attrs, status) do
     %CheckIn{}

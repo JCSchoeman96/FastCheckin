@@ -39,7 +39,8 @@ object DatabaseModule {
                 FastCheckDatabaseMigrations.MIGRATION_8_9,
                 FastCheckDatabaseMigrations.MIGRATION_9_10,
                 FastCheckDatabaseMigrations.MIGRATION_10_11,
-                FastCheckDatabaseMigrations.MIGRATION_11_12
+                FastCheckDatabaseMigrations.MIGRATION_11_12,
+                FastCheckDatabaseMigrations.MIGRATION_12_13
             )
             .addCallback(FastCheckDatabaseInvariantCallback)
             .build()

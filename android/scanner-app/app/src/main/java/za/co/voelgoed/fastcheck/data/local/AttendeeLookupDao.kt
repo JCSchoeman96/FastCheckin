@@ -22,12 +22,35 @@ interface AttendeeLookupDao {
             CASE
                 WHEN overlay.id IS NOT NULL THEN
                     CASE
-                        WHEN attendee.checkinsRemaining > 0 THEN attendee.checkinsRemaining - 1
+                        WHEN attendee.checkinsRemaining > (
+                            SELECT COUNT(*)
+                            FROM local_admission_overlays remaining_overlay
+                            WHERE remaining_overlay.eventId = attendee.eventId
+                                AND remaining_overlay.attendeeId = attendee.id
+                                AND remaining_overlay.state IN (
+                                    'PENDING_LOCAL',
+                                    'CONFIRMED_LOCAL_UNSYNCED',
+                                    'CONFLICT_DUPLICATE',
+                                    'CONFLICT_REJECTED'
+                                )
+                        ) THEN attendee.checkinsRemaining - (
+                            SELECT COUNT(*)
+                            FROM local_admission_overlays remaining_overlay
+                            WHERE remaining_overlay.eventId = attendee.eventId
+                                AND remaining_overlay.attendeeId = attendee.id
+                                AND remaining_overlay.state IN (
+                                    'PENDING_LOCAL',
+                                    'CONFIRMED_LOCAL_UNSYNCED',
+                                    'CONFLICT_DUPLICATE',
+                                    'CONFLICT_REJECTED'
+                                )
+                        )
                         ELSE 0
                     END
                 ELSE attendee.checkinsRemaining
             END AS mergedCheckinsRemaining,
             CASE
+                WHEN overlay.id IS NOT NULL AND overlay.admissionMode = 'turnstile' THEN 0
                 WHEN overlay.id IS NOT NULL THEN 1
                 ELSE attendee.isCurrentlyInside
             END AS mergedIsCurrentlyInside,
@@ -82,12 +105,35 @@ interface AttendeeLookupDao {
             CASE
                 WHEN overlay.id IS NOT NULL THEN
                     CASE
-                        WHEN attendee.checkinsRemaining > 0 THEN attendee.checkinsRemaining - 1
+                        WHEN attendee.checkinsRemaining > (
+                            SELECT COUNT(*)
+                            FROM local_admission_overlays remaining_overlay
+                            WHERE remaining_overlay.eventId = attendee.eventId
+                                AND remaining_overlay.attendeeId = attendee.id
+                                AND remaining_overlay.state IN (
+                                    'PENDING_LOCAL',
+                                    'CONFIRMED_LOCAL_UNSYNCED',
+                                    'CONFLICT_DUPLICATE',
+                                    'CONFLICT_REJECTED'
+                                )
+                        ) THEN attendee.checkinsRemaining - (
+                            SELECT COUNT(*)
+                            FROM local_admission_overlays remaining_overlay
+                            WHERE remaining_overlay.eventId = attendee.eventId
+                                AND remaining_overlay.attendeeId = attendee.id
+                                AND remaining_overlay.state IN (
+                                    'PENDING_LOCAL',
+                                    'CONFIRMED_LOCAL_UNSYNCED',
+                                    'CONFLICT_DUPLICATE',
+                                    'CONFLICT_REJECTED'
+                                )
+                        )
                         ELSE 0
                     END
                 ELSE attendee.checkinsRemaining
             END AS mergedCheckinsRemaining,
             CASE
+                WHEN overlay.id IS NOT NULL AND overlay.admissionMode = 'turnstile' THEN 0
                 WHEN overlay.id IS NOT NULL THEN 1
                 ELSE attendee.isCurrentlyInside
             END AS mergedIsCurrentlyInside,
@@ -145,12 +191,35 @@ interface AttendeeLookupDao {
             CASE
                 WHEN overlay.id IS NOT NULL THEN
                     CASE
-                        WHEN attendee.checkinsRemaining > 0 THEN attendee.checkinsRemaining - 1
+                        WHEN attendee.checkinsRemaining > (
+                            SELECT COUNT(*)
+                            FROM local_admission_overlays remaining_overlay
+                            WHERE remaining_overlay.eventId = attendee.eventId
+                                AND remaining_overlay.attendeeId = attendee.id
+                                AND remaining_overlay.state IN (
+                                    'PENDING_LOCAL',
+                                    'CONFIRMED_LOCAL_UNSYNCED',
+                                    'CONFLICT_DUPLICATE',
+                                    'CONFLICT_REJECTED'
+                                )
+                        ) THEN attendee.checkinsRemaining - (
+                            SELECT COUNT(*)
+                            FROM local_admission_overlays remaining_overlay
+                            WHERE remaining_overlay.eventId = attendee.eventId
+                                AND remaining_overlay.attendeeId = attendee.id
+                                AND remaining_overlay.state IN (
+                                    'PENDING_LOCAL',
+                                    'CONFIRMED_LOCAL_UNSYNCED',
+                                    'CONFLICT_DUPLICATE',
+                                    'CONFLICT_REJECTED'
+                                )
+                        )
                         ELSE 0
                     END
                 ELSE attendee.checkinsRemaining
             END AS mergedCheckinsRemaining,
             CASE
+                WHEN overlay.id IS NOT NULL AND overlay.admissionMode = 'turnstile' THEN 0
                 WHEN overlay.id IS NOT NULL THEN 1
                 ELSE attendee.isCurrentlyInside
             END AS mergedIsCurrentlyInside,
