@@ -3,12 +3,16 @@ defmodule FastCheck.Sales.TicketOfferPolicyTest do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Repo
   alias FastCheck.Sales.TicketOffer
+  alias FastCheck.SalesCheckoutFixtures
 
   @event_id 44_001
   @other_event_id 44_002
 
   setup do
+    SalesCheckoutFixtures.ensure_event_for_sales!(@event_id)
+    SalesCheckoutFixtures.ensure_event_for_sales!(@other_event_id)
     offer_id = insert_offer!(@event_id)
     {:ok, offer_id: offer_id}
   end
@@ -118,6 +122,8 @@ defmodule FastCheck.Sales.TicketOfferPolicyTest do
   end
 
   defp insert_offer!(event_id) do
+    SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
+
     result =
       Repo.query!(
         """

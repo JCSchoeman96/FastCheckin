@@ -159,11 +159,11 @@ defmodule FastCheckWeb.Sales.TicketPdfControllerTest do
 
     assert_failure(conn, missing_attendee_id, 409)
 
-    %{ticket_issue_id: missing_event_id, order_id: order_id} = issued_ticket_fixture()
+    %{order_id: order_id} = issued_ticket_fixture()
 
-    Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
-
-    assert_failure(conn, missing_event_id, 409)
+    assert_raise Postgrex.Error, ~r/foreign_key/, fn ->
+      Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
+    end
 
     %{ticket_issue_id: malformed_id, ticket_code: ticket_code} = issued_ticket_fixture()
 

@@ -6,6 +6,9 @@ defmodule FastCheck.Scans.MobileUploadService do
 
   require Logger
 
+  import Ecto.Query, warn: false
+
+  alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
   alias FastCheck.Scans.Result
@@ -26,7 +29,12 @@ defmodule FastCheck.Scans.MobileUploadService do
     with {:ok, processed} <- process_authoritative_batch(event_id, scans, config),
          {:ok, to_enqueue} <- enqueue_candidates(processed),
          :ok <-
-           enqueue_all_required_jobs(to_enqueue, config.chunk_size, config.force_enqueue_failure),
+           enqueue_all_required_jobs(
+             event_id,
+             to_enqueue,
+             config.chunk_size,
+             config.force_enqueue_failure
+           ),
          :ok <- promote_results(store, to_enqueue, config.live_namespace) do
       {:ok,
        Enum.map(processed, fn
@@ -90,9 +98,9 @@ defmodule FastCheck.Scans.MobileUploadService do
     {:ok, results}
   end
 
-  defp enqueue_all_required_jobs([], _chunk_size, _force_enqueue_failure), do: :ok
+  defp enqueue_all_required_jobs(_event_id, [], _chunk_size, _force_enqueue_failure), do: :ok
 
-  defp enqueue_all_required_jobs(_results, _chunk_size, true) do
+  defp enqueue_all_required_jobs(_event_id, _results, _chunk_size, true) do
     {:error,
      %{
        status: :service_unavailable,
@@ -101,7 +109,16 @@ defmodule FastCheck.Scans.MobileUploadService do
      }}
   end
 
-  defp enqueue_all_required_jobs(results, chunk_size, false) do
+  defp enqueue_all_required_jobs(event_id, results, chunk_size, false)
+       when is_integer(event_id) and event_id > 0 do
+    if Enum.all?(results, &(&1.event_id == event_id)) do
+      do_enqueue_durability_jobs(event_id, results, chunk_size)
+    else
+      {:error, durability_enqueue_failed_error("scan batch spans multiple events")}
+    end
+  end
+
+  defp do_enqueue_durability_jobs(event_id, results, chunk_size) do
     jobs =
       results
       |> Enum.chunk_every(chunk_size)
@@ -111,6 +128,16 @@ defmodule FastCheck.Scans.MobileUploadService do
       end)
 
     Repo.transaction(fn ->
+      case lock_event_for_durability_enqueue(event_id) do
+        :ok ->
+          :ok
+
+        :missing ->
+          Repo.rollback(:event_missing_for_durability_enqueue)
+      end
+
+      :ok = maybe_test_durability_enqueue_barrier()
+
       Enum.reduce_while(jobs, [], fn job, acc ->
         case Oban.insert(job) do
           {:ok, inserted_job} -> {:cont, [inserted_job | acc]}
@@ -122,14 +149,40 @@ defmodule FastCheck.Scans.MobileUploadService do
       {:ok, _jobs} ->
         :ok
 
+      {:error, :event_missing_for_durability_enqueue} ->
+        {:error, durability_enqueue_failed_error("event no longer exists")}
+
       {:error, reason} ->
-        {:error,
-         %{
-           status: :service_unavailable,
-           code: "durability_enqueue_failed",
-           message: "Unable to queue scan durability handoff: #{inspect(reason)}"
-         }}
+        {:error, durability_enqueue_failed_error(inspect(reason))}
     end
+  end
+
+  defp lock_event_for_durability_enqueue(event_id) do
+    case from(e in Event, where: e.id == ^event_id, lock: "FOR KEY SHARE", select: e.id)
+         |> Repo.one() do
+      nil -> :missing
+      _event_id -> :ok
+    end
+  end
+
+  if Mix.env() == :test do
+    defp maybe_test_durability_enqueue_barrier do
+      case Application.get_env(:fastcheck, :mobile_scan_ingestion, [])
+           |> Keyword.get(:durability_enqueue_barrier) do
+        fun when is_function(fun, 0) -> fun.()
+        _ -> :ok
+      end
+    end
+  else
+    defp maybe_test_durability_enqueue_barrier, do: :ok
+  end
+
+  defp durability_enqueue_failed_error(detail) do
+    %{
+      status: :service_unavailable,
+      code: "durability_enqueue_failed",
+      message: "Unable to queue scan durability handoff: #{detail}"
+    }
   end
 
   defp serialize_result(%Result{} = result) do

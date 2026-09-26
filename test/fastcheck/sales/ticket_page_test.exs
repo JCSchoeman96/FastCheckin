@@ -153,15 +153,12 @@ defmodule FastCheck.Sales.TicketPageTest do
       assert result.qr_payload == nil
     end
 
-    test "missing event returns ticket_not_ready without crash" do
-      %{token: token, order_id: order_id} = issued_ticket_fixture()
+    test "missing event cannot be represented on persisted orders (FK integrity)" do
+      %{order_id: order_id} = issued_ticket_fixture()
 
-      Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
-
-      result = TicketPage.resolve(token)
-
-      assert result.state == :ticket_not_ready
-      assert result.qr_payload == nil
+      assert_raise Postgrex.Error, ~r/foreign_key/, fn ->
+        Repo.query!("UPDATE sales_orders SET event_id = $1 WHERE id = $2", [999_999_999, order_id])
+      end
     end
 
     test "archived event returns ticket_not_ready without payload" do

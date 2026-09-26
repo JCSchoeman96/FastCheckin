@@ -5,8 +5,14 @@ defmodule FastCheck.Sales.TicketOfferTest do
   alias Ash.Query
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketOffer
+  alias FastCheck.SalesCheckoutFixtures
 
   @event_id 12_001
+
+  setup do
+    SalesCheckoutFixtures.ensure_event_for_sales!(@event_id)
+    :ok
+  end
 
   test "admin can create and update offers through named actions" do
     actor = admin_actor([@event_id])
@@ -237,6 +243,8 @@ defmodule FastCheck.Sales.TicketOfferTest do
   end
 
   defp valid_offer_attrs(event_id, overrides \\ %{}) do
+    SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
+
     base = %{
       event_id: event_id,
       name: "VIP",
@@ -257,6 +265,7 @@ defmodule FastCheck.Sales.TicketOfferTest do
 
   defp insert_offer!(opts) do
     event_id = Keyword.fetch!(opts, :event_id)
+    SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
     sales_channel = Keyword.get(opts, :sales_channel, "whatsapp")
     sales_enabled = Keyword.get(opts, :sales_enabled, true)
     starts_at = Keyword.get(opts, :starts_at)

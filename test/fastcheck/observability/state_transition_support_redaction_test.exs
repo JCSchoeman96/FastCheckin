@@ -8,6 +8,11 @@ defmodule FastCheck.Observability.StateTransitionSupportRedactionTest do
   alias FastCheck.Sales.StateTransitionSupport
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
 
+  setup do
+    Fixtures.ensure_event_for_sales!(Fixtures.event_id())
+    :ok
+  end
+
   test "metadata drops PII, tokens, and idempotency_key while top-level idempotency_key persists" do
     actor = Fixtures.system_actor()
     idempotency_key = "idem-#{System.unique_integer([:positive])}"

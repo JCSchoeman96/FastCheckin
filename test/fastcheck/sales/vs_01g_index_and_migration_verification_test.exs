@@ -1,5 +1,5 @@
 defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   @sales_tables [
     "sales_checkout_sessions",
@@ -582,6 +582,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
 
   defp insert_ticket_offer!(opts) do
     event_id = Keyword.fetch!(opts, :event_id)
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
     name = Keyword.fetch!(opts, :name)
     archived_at = if Keyword.get(opts, :archived?, false), do: "now()", else: "NULL"
 
@@ -605,6 +606,8 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
   end
 
   defp insert_order!(opts \\ []) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     public_reference =
       Keyword.get(opts, :public_reference, "FC-VS01G-#{System.unique_integer([:positive])}")
 

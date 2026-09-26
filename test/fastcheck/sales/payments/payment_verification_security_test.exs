@@ -130,6 +130,8 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationSecurityTest do
   end
 
   defp insert_order_for_event!(event_id) do
+    Fixtures.ensure_event_for_sales!(event_id)
+
     {:ok, order} =
       FastCheck.Sales.Order
       |> Changeset.for_create(

@@ -110,7 +110,17 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
   test "concurrent duplicate reconciliation commits one evidence row" do
     {attempt_id, order_id} =
       Sandbox.unboxed_run(Repo, fn ->
-        order_id = insert_order!("concurrent-duplicate")
+        event =
+          FastCheck.Fixtures.create_event(%{
+            name: "Concurrent Reconcile Event #{System.unique_integer([:positive])}",
+            scanner_login_code: FastCheck.Fixtures.unique_scanner_login_code()
+          })
+
+        order_id =
+          insert_order!("concurrent-duplicate",
+            event_id: event.id,
+            skip_event_ensure: true
+          )
 
         attempt_id =
           insert_attempt!(
@@ -472,7 +482,12 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
   defp timestamp(offset), do: DateTime.from_unix!(@base_timestamp + offset)
 
   defp insert_order!(suffix, opts \\ []) do
+    unless Keyword.get(opts, :skip_event_ensure, false) do
+      FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(90_001)
+    end
+
     status = Keyword.get(opts, :status, "awaiting_payment")
+    event_id = Keyword.get(opts, :event_id, 90_001)
 
     %{rows: [[id]]} =
       Repo.query!(
@@ -480,10 +495,10 @@ defmodule FastCheck.Messaging.WhatsApp.DeliveryStatusReconcilerTest do
         INSERT INTO sales_orders
           (public_reference, event_id, source_channel, status, total_amount_cents, currency,
            inserted_at, updated_at)
-        VALUES ($1, 90001, 'whatsapp', $2, 100, 'ZAR', now(), now())
+        VALUES ($1, $3, 'whatsapp', $2, 100, 'ZAR', now(), now())
         RETURNING id
         """,
-        ["FC-STATUS-#{suffix}-#{System.unique_integer([:positive])}", status]
+        ["FC-STATUS-#{suffix}-#{System.unique_integer([:positive])}", status, event_id]
       )
 
     id

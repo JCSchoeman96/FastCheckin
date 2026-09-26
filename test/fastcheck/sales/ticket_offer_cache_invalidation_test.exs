@@ -7,6 +7,11 @@ defmodule FastCheck.Sales.TicketOfferCacheInvalidationTest do
 
   @event_id 77_001
 
+  setup do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(@event_id)
+    :ok
+  end
+
   test "offer mutations invalidate centralized event offer cache keys" do
     key = "sales:event:#{@event_id}:offers:active"
     assert {:ok, true} = CacheManager.put(key, %{cached: true}, ttl: :timer.minutes(10))

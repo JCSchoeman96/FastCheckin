@@ -87,6 +87,7 @@ defmodule FastCheck.Sales.Payments.PaymentPolicyTest do
   end
 
   defp insert_order_for_event!(event_id) do
+    Fixtures.ensure_event_for_sales!(event_id)
     alias FastCheck.Sales.Order
 
     Order

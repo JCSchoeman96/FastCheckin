@@ -1,5 +1,5 @@
 defmodule FastCheck.Tickets.TicketTokenIndexesTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   test "VS-08 token hash and expiry indexes exist with expected predicates" do
     assert_index("sales_ticket_issues_qr_token_hash_uidx")
@@ -75,6 +75,8 @@ defmodule FastCheck.Tickets.TicketTokenIndexesTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     [[id]] =
       Repo.query!(
         """
@@ -112,6 +114,8 @@ defmodule FastCheck.Tickets.TicketTokenIndexesTest do
   end
 
   defp insert_ticket_offer! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     [[id]] =
       Repo.query!(
         """

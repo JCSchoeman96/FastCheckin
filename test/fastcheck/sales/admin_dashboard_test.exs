@@ -145,6 +145,8 @@ defmodule FastCheck.Sales.AdminDashboardTest do
   end
 
   defp insert_offer!(event_id) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
+
     %{rows: [[id]]} =
       Repo.query!(
         """
@@ -165,6 +167,7 @@ defmodule FastCheck.Sales.AdminDashboardTest do
   end
 
   defp insert_sales_order!(event_id, public_reference, status, opts) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
     days_ago = Keyword.fetch!(opts, :days_ago)
     reason = if status == "manual_review", do: "payment_state_conflict", else: nil
 

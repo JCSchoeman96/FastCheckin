@@ -1,5 +1,5 @@
 defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   @sales_tables [
     "sales_checkout_sessions",
@@ -233,6 +233,8 @@ defmodule FastCheck.Sales.CheckoutAndPaymentResourceMigrationsTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     result =
       Repo.query!(
         """

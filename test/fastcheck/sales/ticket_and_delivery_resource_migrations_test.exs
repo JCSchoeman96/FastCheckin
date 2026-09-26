@@ -1,5 +1,5 @@
 defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
-  use FastCheck.DataCase, async: true
+  use FastCheck.DataCase, async: false
 
   import Ecto.Query
 
@@ -380,6 +380,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
   end
 
   defp insert_ticket_offer! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     result =
       Repo.query!(
         """
@@ -400,6 +402,8 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
   end
 
   defp insert_order! do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(1)
+
     result =
       Repo.query!(
         """

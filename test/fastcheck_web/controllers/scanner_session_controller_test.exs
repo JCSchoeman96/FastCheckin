@@ -3,6 +3,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
 
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
+  alias FastCheck.Fixtures
   alias FastCheck.Repo
 
   @credential "scanner-password"
@@ -222,6 +223,7 @@ defmodule FastCheckWeb.ScannerSessionControllerTest do
       tickera_api_key_encrypted: encrypted_key,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
       mobile_access_secret_encrypted: encrypted_secret,
+      scanner_login_code: Fixtures.unique_scanner_login_code(),
       status: "active",
       entrance_name: "Main Entrance"
     }

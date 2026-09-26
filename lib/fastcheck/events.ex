@@ -671,6 +671,24 @@ defmodule FastCheck.Events do
   def unarchive_event(_), do: {:error, :invalid_event_id}
 
   @doc """
+  Permanently removes an archived event when it has no durable dependencies.
+
+  See `FastCheck.Events.ArchivedEventRemoval` for blocker policy and transaction semantics.
+  """
+  @spec remove_archived_event(integer()) ::
+          {:ok, %{id: integer(), name: String.t()}}
+          | {:error, :invalid_event_id}
+          | {:error, :not_found}
+          | {:error, :event_not_archived}
+          | {:error, {:dependencies_present, map()}}
+          | {:error, :integrity_conflict}
+  def remove_archived_event(event_id) when is_integer(event_id) and event_id > 0 do
+    FastCheck.Events.ArchivedEventRemoval.remove(event_id)
+  end
+
+  def remove_archived_event(_), do: {:error, :invalid_event_id}
+
+  @doc """
   Updates an existing event with new attributes.
 
   Only updates fields that are provided. API key validation is only performed

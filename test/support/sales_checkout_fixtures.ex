@@ -139,7 +139,24 @@ defmodule FastCheck.SalesCheckoutFixtures do
     offer
   end
 
+  @doc false
+  def ensure_event_for_sales!(event_id) when is_integer(event_id) and event_id > 0 do
+    ensure_legacy_event!(event_id)
+  end
+
   defp ensure_legacy_event!(event_id) do
+    case Repo.get(Event, event_id) do
+      %Event{} ->
+        :ok
+
+      nil ->
+        do_insert_legacy_event!(event_id)
+        Repo.get!(Event, event_id)
+        :ok
+    end
+  end
+
+  defp do_insert_legacy_event!(event_id) do
     %Event{id: event_id}
     |> Event.changeset(%{
       name: "Checkout Fixture Event #{event_id}",
@@ -147,11 +164,22 @@ defmodule FastCheck.SalesCheckoutFixtures do
       tickera_site_url: "https://checkout-fixture.example.com",
       tickera_api_key_encrypted: "checkout-fixture-api-key",
       mobile_access_secret_encrypted: "checkout-fixture-mobile-secret",
-      scanner_login_code:
-        "#{rem(event_id, 100_000) |> Integer.to_string() |> String.pad_leading(5, "0")}A",
-      status: "active"
+      scanner_login_code: legacy_scanner_login_code(event_id),
+      status: "active",
+      whatsapp_max_tickets_per_order: 10
     })
     |> Repo.insert!()
+  end
+
+  defp legacy_scanner_login_code(event_id) do
+    suffix = rem(abs(event_id), 100_000) |> Integer.to_string() |> String.pad_leading(5, "0")
+    code = suffix <> "A"
+
+    if String.length(code) == 6 do
+      code
+    else
+      String.slice(code, 0, 6) |> String.pad_leading(6, "0")
+    end
   end
 
   def with_redis_stopped(fun) when is_function(fun, 0) do

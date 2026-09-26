@@ -6,10 +6,12 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Events
+  alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
   alias FastCheck.Repo
 
   setup do
+    _ = Cache.invalidate_events_list_cache()
     _ = CacheManager.reset()
     EtsLayer.flush_all()
 
@@ -118,8 +120,9 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
   end
 
   test "gate operations invalidate the per-event and list caches" do
+    isolate_events_for_list_cache_test!()
     event = create_event(%{name: "Gate cache"})
-    assert :ok = FastCheck.Events.Cache.persist_event_cache(event)
+    assert :ok = Cache.persist_event_cache(event)
     assert [_event] = Events.list_events()
     assert {:ok, _events} = CacheManager.get("events:all")
 
@@ -128,7 +131,7 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
     assert {:ok, nil} = CacheManager.get("event_config:#{event.id}")
     assert {:ok, nil} = CacheManager.get("events:all")
 
-    assert :ok = FastCheck.Events.Cache.persist_event_cache(event)
+    assert :ok = Cache.persist_event_cache(event)
     assert [_event] = Events.list_events()
     assert {:ok, _events} = CacheManager.get("events:all")
 
@@ -179,5 +182,12 @@ defmodule FastCheck.Events.WhatsAppSalesGateTest do
                from(e in Event, where: e.id == ^event_id),
                set: [updated_at: timestamp]
              )
+  end
+
+  defp isolate_events_for_list_cache_test! do
+    Repo.delete_all(Event)
+    _ = Cache.invalidate_events_list_cache()
+    _ = CacheManager.reset()
+    EtsLayer.flush_all()
   end
 end

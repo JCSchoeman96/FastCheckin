@@ -264,6 +264,59 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("remove_archived_event", %{"event_id" => event_id_param}, socket) do
+    with {:ok, event_id} <- parse_event_id(event_id_param),
+         result <- Events.remove_archived_event(event_id) do
+      case result do
+        {:ok, _removed} ->
+          refreshed_events = Events.list_events()
+
+          {:noreply,
+           socket
+           |> assign(:events, refreshed_events)
+           |> assign(
+             :filtered_events,
+             filter_events(refreshed_events, socket.assigns.search_query)
+           )
+           |> assign(:events_tab, "archived")
+           |> assign(:sync_status, "Archived event removed permanently.")}
+
+        {:error, :event_not_archived} ->
+          {:noreply, assign(socket, :sync_status, "Only archived events can be removed.")}
+
+        {:error, {:dependencies_present, blockers}} ->
+          {:noreply,
+           assign(
+             socket,
+             :sync_status,
+             "Cannot remove this event because related data exists: #{format_removal_blockers(blockers)}."
+           )}
+
+        {:error, :integrity_conflict} ->
+          {:noreply,
+           assign(
+             socket,
+             :sync_status,
+             "Cannot remove this event because related data was created while removal was being checked. Refresh and try again."
+           )}
+
+        {:error, :not_found} ->
+          {:noreply, assign(socket, :sync_status, "Event not found.")}
+
+        {:error, :invalid_event_id} ->
+          {:noreply, assign(socket, :sync_status, "Invalid event identifier.")}
+      end
+    else
+      {:error, reason} ->
+        {:noreply, assign(socket, :sync_status, reason)}
+    end
+  end
+
+  def handle_event("remove_archived_event", _params, socket) do
+    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+  end
+
+  @impl true
   def handle_event("enable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
          {:ok, _event} <- Events.enable_whatsapp_sales(event_id) do
@@ -1452,6 +1505,19 @@ defmodule FastCheckWeb.DashboardLive do
                       full_width
                     >
                       Unarchive event
+                    </.button>
+
+                    <.button
+                      id={"remove-archived-event-#{event.id}"}
+                      type="button"
+                      phx-click="remove_archived_event"
+                      phx-value-event_id={event.id}
+                      variant="bordered"
+                      color="danger"
+                      full_width
+                      data-confirm="Permanently remove this archived event? This only succeeds when no attendee, scan, sales, or audit data is linked to it. This cannot be undone."
+                    >
+                      Remove permanently
                     </.button>
 
                     <p class="text-xs text-danger-light dark:text-danger-dark">
@@ -2816,6 +2882,30 @@ defmodule FastCheckWeb.DashboardLive do
   defp lifecycle_label(:upcoming), do: "Upcoming"
   defp lifecycle_label(:unknown), do: "Status unknown"
   defp lifecycle_label(_), do: "Active"
+
+  defp format_removal_blockers(blockers) when is_map(blockers) do
+    blockers
+    |> Enum.sort_by(fn {_key, count} -> count end, :desc)
+    |> Enum.map_join(", ", fn {key, count} ->
+      "#{count} #{removal_blocker_label(key)}"
+    end)
+  end
+
+  defp removal_blocker_label(:attendees), do: "attendees"
+  defp removal_blocker_label(:check_ins), do: "check-ins"
+  defp removal_blocker_label(:check_in_sessions), do: "check-in sessions"
+  defp removal_blocker_label(:scan_attempts), do: "scan attempts"
+  defp removal_blocker_label(:mobile_idempotency_log), do: "mobile scan records"
+  defp removal_blocker_label(:attendee_invalidation_events), do: "invalidation events"
+  defp removal_blocker_label(:sync_logs), do: "sync logs"
+  defp removal_blocker_label(:check_in_configurations), do: "check-in configurations"
+  defp removal_blocker_label(:gates), do: "gates"
+  defp removal_blocker_label(:offline_event_packages), do: "offline packages"
+  defp removal_blocker_label(:device_sessions), do: "device sessions"
+  defp removal_blocker_label(:sync_cursors), do: "sync cursors"
+  defp removal_blocker_label(:sales_ticket_offers), do: "ticket offers"
+  defp removal_blocker_label(:sales_orders), do: "orders"
+  defp removal_blocker_label(key), do: to_string(key)
 
   defp format_error(%Changeset{} = changeset) do
     changeset

@@ -125,6 +125,8 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
   end
 
   defp insert_offer!(event_id) do
+    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(event_id)
+
     %{rows: [[id]]} =
       Repo.query!(
         """

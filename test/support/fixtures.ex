@@ -20,6 +20,7 @@ defmodule FastCheck.Fixtures do
 
     default_attrs = %{
       name: "Test Event #{System.unique_integer([:positive])}",
+      scanner_login_code: unique_scanner_login_code_for_event(),
       tickera_site_url: "https://test.example.com",
       tickera_api_key_encrypted: encrypted,
       tickera_api_key_last4: String.slice(api_key, -4, 4),
@@ -122,6 +123,20 @@ defmodule FastCheck.Fixtures do
         "results_count" => total_count
       }
     }
+  end
+
+  @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+  @doc false
+  def unique_scanner_login_code do
+    for <<byte <- :crypto.strong_rand_bytes(6)>> do
+      <<Enum.at(@scanner_code_alphabet, rem(byte, 32))>>
+    end
+    |> IO.iodata_to_binary()
+  end
+
+  defp unique_scanner_login_code_for_event do
+    unique_scanner_login_code()
   end
 
   @doc """

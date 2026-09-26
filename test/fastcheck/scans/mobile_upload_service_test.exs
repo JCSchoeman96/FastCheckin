@@ -2,9 +2,14 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
   use FastCheck.DataCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  import Ecto.Query, only: [from: 2]
+
+  alias Ecto.Adapters.SQL.Sandbox
+
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Attendees.{CheckIn, CheckInSession}
   alias FastCheck.Crypto
+  alias FastCheck.Events
   alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
@@ -235,6 +240,93 @@ defmodule FastCheck.Scans.MobileUploadServiceTest do
            } = InMemoryStore.idempotency_entry(namespace, event.id, "idem-promotion-fail")
 
     assert Repo.get_by(ScanAttempt, event_id: event.id, idempotency_key: "idem-promotion-fail") ==
+             nil
+  end
+
+  test "H13B Case A: durability enqueue holds event row lock until H13 removal waits", %{
+    event: event
+  } do
+    parent = self()
+    namespace = unique_namespace("h13b-case-a")
+
+    assert {:ok, _} = Events.archive_event(event.id)
+
+    barrier = fn ->
+      send(parent, {:durability_barrier, self()})
+
+      receive do
+        :release_durability_barrier -> :ok
+      end
+    end
+
+    configure_ingestion(live_namespace: namespace, durability_enqueue_barrier: barrier)
+
+    scan = valid_scan("idem-h13b-case-a", "TEST001")
+    event_id = event.id
+
+    upload_task =
+      Task.async(fn ->
+        Sandbox.allow(Repo, parent, self())
+        MobileUploadService.upload_batch(event_id, [scan])
+      end)
+
+    assert_receive {:durability_barrier, upload_pid}
+
+    removal_task =
+      Task.async(fn ->
+        Sandbox.allow(Repo, parent, self())
+        result = Events.remove_archived_event(event_id)
+        send(parent, {:removal_done, result})
+        result
+      end)
+
+    refute_receive {:removal_done, _}, 0
+
+    send(upload_pid, :release_durability_barrier)
+
+    assert {:ok, [%{status: "success"}]} = Task.await(upload_task, 5_000)
+
+    assert {:error, {:dependencies_present, blockers}} =
+             Task.await(removal_task, 5_000)
+
+    assert blockers.pending_scan_persistence_jobs == 1
+    assert Repo.get!(Event, event_id)
+
+    assert [%{args: %{"results" => [%{"idempotency_key" => "idem-h13b-case-a"}]}}] =
+             all_enqueued(worker: PersistScanBatchJob)
+  end
+
+  test "H13B Case B: upload does not promote or enqueue after event was removed", %{
+    event: event
+  } do
+    namespace = unique_namespace("h13b-case-b")
+    configure_ingestion(live_namespace: namespace)
+
+    scan = valid_scan("idem-h13b-case-b", "TEST001")
+    event_id = event.id
+
+    assert {:ok, command} = FastCheck.Scans.Validator.validate(event_id, scan)
+
+    assert {:ok, %FastCheck.Scans.Result{delivery_state: :new_staged}} =
+             InMemoryStore.process_scan(command, namespace)
+
+    assert {:ok, _} = Events.archive_event(event_id)
+    Repo.delete_all(from(a in Attendee, where: a.event_id == ^event_id))
+    assert {:ok, _} = Events.remove_archived_event(event_id)
+    assert Repo.get(Event, event_id) == nil
+
+    assert {:error, %{code: "durability_enqueue_failed", message: message}} =
+             MobileUploadService.upload_batch(event_id, [scan])
+
+    assert message =~ "event no longer exists"
+    assert all_enqueued(worker: PersistScanBatchJob) == []
+
+    assert %{
+             stage: :pending_durability,
+             result: %{idempotency_key: "idem-h13b-case-b", ticket_code: "TEST001"}
+           } = InMemoryStore.idempotency_entry(namespace, event_id, "idem-h13b-case-b")
+
+    assert Repo.get_by(ScanAttempt, event_id: event_id, idempotency_key: "idem-h13b-case-b") ==
              nil
   end
 
