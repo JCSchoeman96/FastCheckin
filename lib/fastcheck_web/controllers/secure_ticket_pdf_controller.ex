@@ -24,7 +24,6 @@ defmodule FastCheckWeb.SecureTicketPdfController do
       {:error, %ArtifactError{} = error} -> send_failure(conn, artifact_error_status(error))
       {:error, %PdfError{}} -> send_failure(conn, 500)
       {:error, :invalid_artifact} -> send_failure(conn, 500)
-      {:error, _reason} -> send_failure(conn, 500)
     end
   end
 
