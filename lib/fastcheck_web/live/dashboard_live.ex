@@ -305,10 +305,6 @@ defmodule FastCheckWeb.DashboardLive do
 
         {:error, :invalid_event_id} ->
           {:noreply, assign(socket, :sync_status, "Invalid event identifier.")}
-
-        {:error, reason} ->
-          {:noreply,
-           assign(socket, :sync_status, "Failed to remove event: #{format_error(reason)}")}
       end
     else
       {:error, reason} ->

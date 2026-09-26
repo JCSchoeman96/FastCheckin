@@ -133,6 +133,13 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
         end
     end
   rescue
+    error in [Ecto.ConstraintError] ->
+      if error.type == :foreign_key do
+        {:error, :integrity_conflict}
+      else
+        reraise error, __STACKTRACE__
+      end
+
     error in [Postgrex.Error] ->
       if postgrex_fk_violation?(error) do
         {:error, :integrity_conflict}

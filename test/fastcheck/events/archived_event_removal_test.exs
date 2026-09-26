@@ -40,6 +40,25 @@ defmodule FastCheck.Events.ArchivedEventRemovalTest do
     assert {:error, :not_found} = Events.remove_archived_event(99_999_991)
   end
 
+  test "returns integrity_conflict when an untracked foreign key prevents deletion" do
+    event = Fixtures.create_event()
+    archived = archive!(event)
+
+    Repo.query!("""
+    CREATE TABLE h13_untracked_event_fk_test (
+      event_id bigint NOT NULL REFERENCES events(id)
+    )
+    """)
+
+    Repo.query!(
+      "INSERT INTO h13_untracked_event_fk_test (event_id) VALUES ($1)",
+      [archived.id]
+    )
+
+    assert {:error, :integrity_conflict} = Events.remove_archived_event(archived.id)
+    assert Repo.get!(FastCheck.Events.Event, archived.id)
+  end
+
   test "blocks when attendees exist and preserves child rows" do
     event = Fixtures.create_event()
     attendee = Fixtures.create_attendee(event)
