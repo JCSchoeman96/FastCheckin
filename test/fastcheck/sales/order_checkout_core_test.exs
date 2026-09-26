@@ -7,9 +7,7 @@ defmodule FastCheck.Sales.OrderCheckoutCoreTest do
 
   alias Ash.Query
   alias FastCheck.Sales.Checkout
-  alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Inventory.ReservationLedger
-  alias FastCheck.Sales.Order
   alias FastCheck.Sales.OrderLine
   alias FastCheck.Sales.StateTransition
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
@@ -151,10 +149,39 @@ defmodule FastCheck.Sales.OrderCheckoutCoreTest do
              Checkout.start_checkout(input, Fixtures.system_actor(),
                effective_sales_channel: "whatsapp"
              )
+
+    assert_no_checkout_rows!()
   end
 
-  test "checkout does not create awaiting_payment order when reserve fails", %{offer: offer} do
+  test "checkout leaves no durable rows when Redis is unavailable", %{offer: offer} do
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        idempotency_key: "redis-unavailable-#{System.unique_integer([:positive])}"
+      })
+
+    assert {:ok, before} = ReservationLedger.get_availability(offer.id)
+    redix_pid = Process.whereis(FastCheck.Redix)
+    assert is_pid(redix_pid)
+    assert Process.unregister(FastCheck.Redix)
+
+    try do
+      assert {:error, :inventory_unavailable} =
+               Checkout.start_checkout(input, Fixtures.system_actor(),
+                 effective_sales_channel: "whatsapp"
+               )
+    after
+      restore_redix_name!(redix_pid)
+    end
+
+    assert_no_checkout_rows!()
+    assert {:ok, after_failure} = ReservationLedger.get_availability(offer.id)
+    assert before == after_failure
+  end
+
+  test "checkout creates no durable rows when inventory reservation fails", %{offer: offer} do
     :ok = ReservationLedger.initialize_offer(offer.id, 0)
+    assert {:ok, before} = ReservationLedger.get_availability(offer.id)
 
     input =
       Fixtures.checkout_input(%{
@@ -167,13 +194,9 @@ defmodule FastCheck.Sales.OrderCheckoutCoreTest do
                effective_sales_channel: "whatsapp"
              )
 
-    refute Order
-           |> Query.filter(status == "awaiting_payment")
-           |> Ash.exists?(authorize?: false)
-
-    refute CheckoutSession
-           |> Query.filter(status == "hold_attached")
-           |> Ash.exists?(authorize?: false)
+    assert_no_checkout_rows!()
+    assert {:ok, after_reserve_failure} = ReservationLedger.get_availability(offer.id)
+    assert before == after_reserve_failure
   end
 
   test "checkout logs do not include PII or tokens", %{offer: offer} do
@@ -196,5 +219,21 @@ defmodule FastCheck.Sales.OrderCheckoutCoreTest do
     refute log =~ "Secret Name"
     refute log =~ "secret@example.com"
     refute log =~ input.idempotency_key
+  end
+
+  defp assert_no_checkout_rows! do
+    assert Repo.aggregate("sales_orders", :count, :id) == 0
+    assert Repo.aggregate("sales_order_lines", :count, :id) == 0
+    assert Repo.aggregate("sales_checkout_sessions", :count, :id) == 0
+    assert Repo.aggregate("sales_payment_attempts", :count, :id) == 0
+    assert Repo.aggregate("oban_jobs", :count, :id) == 0
+  end
+
+  defp restore_redix_name!(redix_pid) do
+    case Process.whereis(FastCheck.Redix) do
+      nil -> Process.register(redix_pid, FastCheck.Redix)
+      ^redix_pid -> :ok
+      other -> flunk("expected original Redis process, got: #{inspect(other)}")
+    end
   end
 end

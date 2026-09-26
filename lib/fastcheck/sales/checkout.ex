@@ -15,6 +15,7 @@ defmodule FastCheck.Sales.Checkout do
   alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Events
+  alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
@@ -45,7 +46,8 @@ defmodule FastCheck.Sales.Checkout do
     input = Map.new(input)
     context = build_context(actor, input, opts)
 
-    with :ok <- validate_quantity(input),
+    with :ok <- validate_checkout_request(input),
+         :ok <- validate_quantity(input),
          {:ok, existing_order} <- lookup_idempotent_order(input) do
       if existing_order && not idempotent_inputs_match?(existing_order, input, opts) do
         {:error, :duplicate_idempotency_conflict}
@@ -106,6 +108,21 @@ defmodule FastCheck.Sales.Checkout do
     do: :ok
 
   defp validate_quantity(_), do: {:error, :invalid_quantity}
+
+  defp validate_checkout_request(%{
+         event_id: event_id,
+         ticket_offer_id: ticket_offer_id,
+         source_channel: source_channel,
+         idempotency_key: idempotency_key,
+         event_name: event_name
+       })
+       when is_integer(event_id) and event_id > 0 and is_integer(ticket_offer_id) and
+              ticket_offer_id > 0 and is_binary(source_channel) and byte_size(source_channel) > 0 and
+              is_binary(idempotency_key) and byte_size(idempotency_key) > 0 and
+              is_binary(event_name),
+       do: :ok
+
+  defp validate_checkout_request(_input), do: {:error, :invalid_checkout_request}
 
   defp validate_quantity_against_offer(%{quantity: quantity}, %{max_per_order: max}) do
     if quantity > max, do: {:error, :max_per_order_exceeded}, else: :ok
@@ -326,37 +343,64 @@ defmodule FastCheck.Sales.Checkout do
     expires_at =
       DateTime.add(DateTime.utc_now(), ttl_seconds, :second) |> DateTime.truncate(:second)
 
-    with {:ok, order} <-
-           create_draft_order(
+    with {:ok, hold} <- reserve_inventory(offer, public_reference, input, ttl_seconds) do
+      case persist_reserved_checkout(
              offer,
              input,
              public_reference,
              total_cents,
              expires_at,
+             hold,
              actor,
              context
-           ),
-         {:ok, _line} <- create_order_line(offer, order, input, actor, context),
-         :ok <- confirm_order_checkout(order, actor, context),
-         {:ok, session} <- create_checkout_session(order, actor, context),
-         {:ok, hold} <- reserve_inventory(offer, order, input, ttl_seconds),
-         {:ok, session} <- attach_hold(session, order, offer, hold, actor, context),
-         {:ok, order} <- mark_order_awaiting_payment(order, offer, expires_at, actor, context) do
-      log_checkout_success(order, offer)
-      {:ok, %{order: order, checkout_session: sanitize_session(session)}}
-    else
-      {:error, :inventory_unavailable} = error ->
-        error
+           ) do
+        {:ok, %{order: order, checkout_session: session} = checkout} ->
+          log_checkout_success(order, offer)
+          {:ok, %{checkout | checkout_session: sanitize_session(session)}}
 
-      {:error, :insufficient_inventory} = error ->
-        error
-
-      {:error, _} = error ->
-        error
-
-      {:error, atom, _meta} when is_atom(atom) ->
-        {:error, atom}
+        {:error, reason} ->
+          case compensate_after_reserve_failure(offer.id, public_reference, context) do
+            :ok -> {:error, reason}
+            {:error, :inventory_unavailable} -> {:error, :inventory_unavailable}
+          end
+      end
     end
+  end
+
+  defp persist_reserved_checkout(
+         offer,
+         input,
+         public_reference,
+         total_cents,
+         expires_at,
+         hold,
+         actor,
+         context
+       ) do
+    Repo.transaction(fn ->
+      with {:ok, order} <-
+             create_draft_order(
+               offer,
+               input,
+               public_reference,
+               total_cents,
+               expires_at,
+               actor,
+               context
+             ),
+           {:ok, _line} <- create_order_line(offer, order, input, actor, context),
+           :ok <- confirm_order_checkout(order, actor, context),
+           {:ok, session} <- create_checkout_session(order, actor, context),
+           {:ok, session} <- attach_hold(session, public_reference, hold, actor, context),
+           {:ok, order} <- mark_order_awaiting_payment(order, expires_at, actor, context) do
+        %{order: order, checkout_session: session}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+        {:error, atom, _meta} when is_atom(atom) -> Repo.rollback(atom)
+      end
+    end)
+  rescue
+    _exception -> {:error, :inventory_unavailable}
   end
 
   defp create_draft_order(offer, input, public_reference, total_cents, expires_at, actor, context) do
@@ -418,10 +462,10 @@ defmodule FastCheck.Sales.Checkout do
     |> Ash.create(authorize?: false, context: context)
   end
 
-  defp reserve_inventory(offer, order, input, ttl_seconds) do
+  defp reserve_inventory(offer, public_reference, input, ttl_seconds) do
     case ReservationLedger.reserve(
            offer.id,
-           order.public_reference,
+           public_reference,
            Map.fetch!(input, :quantity),
            ttl_seconds,
            Map.fetch!(input, :idempotency_key)
@@ -437,7 +481,7 @@ defmodule FastCheck.Sales.Checkout do
     end
   end
 
-  defp attach_hold(session, order, offer, hold, actor, context) do
+  defp attach_hold(session, public_reference, hold, actor, context) do
     hold_token_hash = hash_hold_token(:crypto.strong_rand_bytes(32))
     expires_at = ms_to_datetime(hold.expires_at)
 
@@ -445,7 +489,7 @@ defmodule FastCheck.Sales.Checkout do
     |> Changeset.for_update(
       :attach_inventory_hold,
       %{
-        redis_hold_key: ReservationLedger.hold_key(order.public_reference),
+        redis_hold_key: ReservationLedger.hold_key(public_reference),
         hold_token: hold_token_hash,
         hold_quantity: hold.quantity,
         expires_at: expires_at
@@ -453,63 +497,51 @@ defmodule FastCheck.Sales.Checkout do
       actor: actor
     )
     |> Ash.update(authorize?: false, context: context)
-    |> case do
-      {:ok, updated} ->
-        {:ok, updated}
-
-      {:error, _} = error ->
-        _ = compensate_after_reserve_failure(order, offer.id, actor, context)
-        error
-    end
   end
 
-  defp mark_order_awaiting_payment(order, offer, expires_at, actor, context) do
+  defp mark_order_awaiting_payment(order, expires_at, actor, context) do
     order
     |> Changeset.for_update(:mark_awaiting_payment, %{expires_at: expires_at}, actor: actor)
     |> Ash.update(authorize?: false, context: context)
-    |> case do
-      {:ok, updated} ->
-        {:ok, updated}
-
-      {:error, _} = error ->
-        _ = compensate_after_reserve_failure(order, offer.id, actor, context)
-        error
-    end
   end
 
-  defp compensate_after_reserve_failure(order, offer_id, actor, context) do
-    release_key = "release-#{order.public_reference}"
-
-    case ReservationLedger.release(offer_id, order.public_reference, release_key) do
+  defp compensate_after_reserve_failure(offer_id, public_reference, context) do
+    case ReservationLedger.release(
+           offer_id,
+           public_reference,
+           compensation_release_key(public_reference)
+         ) do
       {:ok, _} ->
         :ok
 
       {:error, _, _} ->
-        move_to_manual_review(order, actor, context, "inventory_release_failed")
+        _ =
+          ReservationLedger.mark_offer_health(
+            offer_id,
+            :reconciliation_required,
+            "checkout_release_failed"
+          )
+
+        emit_inventory_reconciliation_required(offer_id, public_reference, context)
+        {:error, :inventory_unavailable}
     end
   end
 
-  defp move_to_manual_review(order, actor, context, reason) do
-    _ =
-      order
-      |> Changeset.for_update(:mark_manual_review, %{last_error_code: reason},
-        reason: reason,
-        actor: actor
-      )
-      |> Ash.update(authorize?: false, context: context)
+  defp compensation_release_key(public_reference),
+    do: "checkout-compensate-release-#{public_reference}"
 
-    case load_checkout_session(order) do
-      {:ok, session} when not is_nil(session) ->
-        _ =
-          session
-          |> Changeset.for_update(:mark_manual_review, %{}, reason: reason, actor: actor)
-          |> Ash.update(authorize?: false, context: context)
-
-      _ ->
-        :ok
-    end
-
-    :ok
+  defp emit_inventory_reconciliation_required(offer_id, public_reference, context) do
+    :telemetry.execute(
+      [:fastcheck, :sales, :inventory, :manual_review_required],
+      %{count: 1},
+      %{
+        offer_id: offer_id,
+        public_reference: public_reference,
+        correlation_id: Map.get(context, :correlation_id),
+        reason_code: :checkout_inventory_release_failed,
+        manual_review_required: true
+      }
+    )
   end
 
   defp hash_hold_token(opaque_token) when is_binary(opaque_token) do
