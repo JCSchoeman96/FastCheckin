@@ -67,21 +67,24 @@ defmodule FastCheck.Repo.Migrations.WhH13aAlignSalesEventIdTypes do
     end
   end
 
+  @int32_min -2_147_483_648
+  @int32_max 2_147_483_647
+
   defp assert_sales_event_ids_fit_integer! do
-    max_order =
-      repo().query!("SELECT COALESCE(MAX(event_id), 0) FROM sales_orders").rows
-      |> List.first()
-      |> List.first()
+    %{rows: [[min_value, max_value]]} =
+      repo().query!("""
+      SELECT
+        COALESCE(MIN(event_id), 0),
+        COALESCE(MAX(event_id), 0)
+      FROM (
+        SELECT event_id FROM sales_orders
+        UNION ALL
+        SELECT event_id FROM sales_ticket_offers
+      ) AS sales_event_ids
+      """)
 
-    max_offer =
-      repo().query!("SELECT COALESCE(MAX(event_id), 0) FROM sales_ticket_offers").rows
-      |> List.first()
-      |> List.first()
-
-    max_value = max(max_order, max_offer)
-
-    if max_value > 2_147_483_647 do
-      raise "WH-H13A down blocked: sales event_id #{max_value} exceeds integer range"
+    if min_value < @int32_min or max_value > @int32_max do
+      raise "WH-H13A down blocked: sales event_id outside integer range (min=#{min_value}, max=#{max_value})"
     end
   end
 end
