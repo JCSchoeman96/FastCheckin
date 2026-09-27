@@ -9,6 +9,7 @@ defmodule FastCheck.Sales.E2E.AdminAssistedSalesTest do
   alias FastCheck.SalesCheckoutFixtures
   alias FastCheck.SalesE2EFixtures, as: E2E
   alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   @moduletag :e2e
   @moduletag :sales
@@ -78,12 +79,20 @@ defmodule FastCheck.Sales.E2E.AdminAssistedSalesTest do
 
     assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
 
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
     assert :ok =
-             perform_job(IssueTicketsWorker, %{
-               "sales_order_id" => order.id,
-               "correlation_id" => E2E.e2e_id("issue-admin"),
-               "idempotency_key" => E2E.e2e_id("issue-admin")
+             perform_job(PaidOrderFulfillmentWorker, %{
+               "payment_attempt_id" => attempt.id
              })
+
+    assert E2E.reload_order!(order.id).status == "fulfillment_queued"
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
+    assert [%{args: issuer_args}] = all_enqueued(worker: IssueTicketsWorker)
+    assert :ok = perform_job(IssueTicketsWorker, issuer_args)
 
     assert E2E.reload_order!(order.id).status == "ticket_issued"
 

@@ -1,16 +1,19 @@
 defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
   use FastCheck.DataCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   require Ash.Query
 
   alias Ash.Query
   alias FastCheck.Sales.CheckoutSession
+  alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.PaymentAttempt
   alias FastCheck.Sales.Payments.PaymentVerification
   alias FastCheck.Sales.Payments.TestSupport
   alias FastCheck.Sales.StateTransition
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   setup do
     paystack_cleanup = TestSupport.setup_paystack!()
@@ -37,6 +40,14 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
 
     assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
 
+    assert {:ok, %{reserved_quantity: 1, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(offer.id)
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
     {flunk_fun, counter} = TestSupport.flunk_paystack_request_fun()
     Application.put_env(:fastcheck, :paystack_request_fun, flunk_fun)
 
@@ -46,10 +57,20 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
         processing_status: "processing_started"
       })
 
+    FastCheck.Repo.query!(
+      "DELETE FROM oban_jobs WHERE worker = $1 AND args->>'payment_attempt_id' = $2",
+      [to_string(PaidOrderFulfillmentWorker), Integer.to_string(attempt.id)]
+    )
+
     assert {:ok, :idempotent} =
              PaymentVerification.verify_attempt(attempt.id, payment_event_id: event.id)
 
     assert :counters.get(counter, 1) == 0
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
 
     order =
       Order
@@ -101,11 +122,17 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
       })
       |> Ash.read!(authorize?: false)
 
+    assert {:ok, %{reserved_quantity: 1, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(offer.id)
+
     {flunk_fun, counter} = TestSupport.flunk_paystack_request_fun()
     Application.put_env(:fastcheck, :paystack_request_fun, flunk_fun)
 
     assert {:ok, :idempotent} = PaymentVerification.verify_attempt(attempt.id)
     assert :counters.get(counter, 1) == 0
+
+    assert {:ok, %{reserved_quantity: 1, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(offer.id)
 
     order =
       Order
@@ -119,6 +146,20 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
 
     assert order.status == "paid_verified"
     assert session.status == "paid"
+
+    assert [job] =
+             all_enqueued(
+               worker: PaidOrderFulfillmentWorker,
+               args: %{"payment_attempt_id" => attempt.id}
+             )
+
+    assert job.args["payment_attempt_id"] == attempt.id
+
+    assert :ok =
+             perform_job(PaidOrderFulfillmentWorker, %{"payment_attempt_id" => attempt.id})
+
+    assert {:ok, %{reserved_quantity: 0, consumed_quantity: 1}} =
+             ReservationLedger.get_availability(offer.id)
 
     transitions_after =
       StateTransition

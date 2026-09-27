@@ -30,7 +30,6 @@ defmodule FastCheck.Tickets.Issuer do
   @payment_status_completed "completed"
   @scan_eligibility_active "active"
   @allowed_order_states [
-    "paid_verified",
     "fulfillment_queued",
     "partially_issued",
     "issuance_retry_queued",
@@ -73,6 +72,7 @@ defmodule FastCheck.Tickets.Issuer do
 
       with {:ok, order} <- load_order(order_id),
            :ok <- require_allowed_order_state(order),
+           :ok <- require_fulfillment_boundary(order),
            {:ok, order_lines} <- load_order_lines(order.id),
            {:ok, payment_attempts} <- load_payment_attempts(order.id),
            :ok <- require_verified_payment(payment_attempts, order),
@@ -116,6 +116,11 @@ defmodule FastCheck.Tickets.Issuer do
 
   defp require_allowed_order_state(%Order{status: status}),
     do: {:error, {:invalid_order_state, status}}
+
+  defp require_fulfillment_boundary(%Order{fulfillment_queued_at: %DateTime{}}), do: :ok
+
+  defp require_fulfillment_boundary(%Order{}),
+    do: {:error, {:invalid_fulfillment_boundary, :missing_timestamp}}
 
   defp load_order_lines(order_id) do
     case OrderLine

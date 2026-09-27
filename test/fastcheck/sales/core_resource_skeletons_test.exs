@@ -20,8 +20,7 @@ defmodule FastCheck.Sales.CoreResourceSkeletonsTest do
     :destroy,
     :upsert,
     :update_status,
-    :update_state,
-    :queue_fulfillment
+    :update_state
   ]
 
   @order_expected_actions [
@@ -31,6 +30,7 @@ defmodule FastCheck.Sales.CoreResourceSkeletonsTest do
     :mark_payment_pending,
     :mark_paid_unverified,
     :mark_paid_verified,
+    :queue_fulfillment,
     :mark_ticket_issued,
     :expire_order,
     :cancel_order,

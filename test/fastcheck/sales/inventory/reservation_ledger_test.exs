@@ -49,6 +49,180 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
     assert consumed_replay.idempotent == true
   end
 
+  test "consume rejects missing or mismatched hold identity before inventory mutation", %{
+    run_id: run_id
+  } do
+    mutations = [
+      {"offer_id", :delete},
+      {"offer_id", Integer.to_string(@offer_id + 1)},
+      {"order_public_reference", :delete},
+      {"order_public_reference", "ORD-WRONG-IDENTITY"}
+    ]
+
+    mutations
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{field, value}, index} ->
+      order_ref = "ORD-IDENTITY-#{run_id}-#{index}"
+
+      assert {:ok, _} =
+               ReservationLedger.reserve(
+                 @offer_id,
+                 order_ref,
+                 1,
+                 120,
+                 idem("reserve-identity-#{index}", run_id)
+               )
+
+      case value do
+        :delete ->
+          assert {:ok, 1} =
+                   Redix.command(FastCheck.Redix, [
+                     "HDEL",
+                     ReservationLedger.hold_key(order_ref),
+                     field
+                   ])
+
+        replacement ->
+          assert {:ok, 0} =
+                   Redix.command(FastCheck.Redix, [
+                     "HSET",
+                     ReservationLedger.hold_key(order_ref),
+                     field,
+                     replacement
+                   ])
+      end
+
+      assert {:error, :hold_identity_mismatch, _} =
+               ReservationLedger.consume(
+                 @offer_id,
+                 order_ref,
+                 1,
+                 idem("consume-identity-#{index}", run_id)
+               )
+
+      assert {:ok, availability} = ReservationLedger.get_availability(@offer_id)
+      assert availability.available_quantity == @base_quantity - index
+      assert availability.reserved_quantity == index
+      assert availability.consumed_quantity == 0
+    end)
+  end
+
+  test "release validates hold identity and exact quantity before changing inventory", %{
+    run_id: run_id
+  } do
+    order_ref = "ORD-RELEASE-IDENTITY-#{run_id}"
+
+    assert {:ok, _} =
+             ReservationLedger.reserve(
+               @offer_id,
+               order_ref,
+               1,
+               120,
+               idem("release-identity-reserve", run_id)
+             )
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, [
+               "HSET",
+               ReservationLedger.hold_key(order_ref),
+               "offer_id",
+               Integer.to_string(@offer_id + 1)
+             ])
+
+    assert {:error, :hold_identity_mismatch, _} =
+             ReservationLedger.release(
+               @offer_id,
+               order_ref,
+               idem("release-identity-release", run_id)
+             )
+
+    assert {:ok, %{available_quantity: 9, reserved_quantity: 1, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(@offer_id)
+
+    assert {:ok, _} =
+             Redix.command(FastCheck.Redix, [
+               "HSET",
+               ReservationLedger.hold_key(order_ref),
+               "offer_id",
+               Integer.to_string(@offer_id),
+               "quantity",
+               "1junk"
+             ])
+
+    assert {:ok, %{quantity: nil}} =
+             ReservationLedger.get_hold_detail(@offer_id, order_ref)
+
+    assert {:error, :invalid_quantity, _} =
+             ReservationLedger.release(
+               @offer_id,
+               order_ref,
+               idem("release-malformed-quantity", run_id)
+             )
+
+    assert {:ok, %{available_quantity: 9, reserved_quantity: 1, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(@offer_id)
+  end
+
+  test "release idempotency replay still validates the persisted hold", %{run_id: run_id} do
+    mutations = [
+      {"offer_id", Integer.to_string(@offer_id + 1), :hold_identity_mismatch},
+      {"quantity", "1junk", :invalid_quantity}
+    ]
+
+    mutations
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{field, value, error}, index} ->
+      order_ref = "ORD-RELEASE-REPLAY-#{run_id}-#{index}"
+      reserve_key = idem("release-replay-reserve-#{index}", run_id)
+      release_key = idem("release-replay-release-#{index}", run_id)
+
+      assert {:ok, _} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+
+      assert {:ok, %{status: :released}} =
+               ReservationLedger.release(@offer_id, order_ref, release_key)
+
+      assert {:ok, _} =
+               Redix.command(FastCheck.Redix, [
+                 "HSET",
+                 ReservationLedger.hold_key(order_ref),
+                 field,
+                 value
+               ])
+
+      assert {:error, ^error, _} = ReservationLedger.release(@offer_id, order_ref, release_key)
+    end)
+
+    assert {:ok, %{available_quantity: 10, reserved_quantity: 0, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(@offer_id)
+  end
+
+  test "late payment reserve recognizes a legacy release with its matching release key", %{
+    run_id: run_id
+  } do
+    order_ref = "ORD-LATE-LEGACY-RELEASE-#{run_id}"
+    reserve_key = idem("late-legacy-reserve", run_id)
+    release_key = idem("late-legacy-release", run_id)
+
+    assert {:ok, %{status: :held}} =
+             ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+
+    assert {:ok, %{status: :released}} =
+             ReservationLedger.release(@offer_id, order_ref, release_key)
+
+    assert {:ok, %{status: :held, quantity: 1}} =
+             ReservationLedger.reserve_for_late_payment_recovery(
+               @offer_id,
+               order_ref,
+               1,
+               120,
+               reserve_key,
+               release_key
+             )
+
+    assert {:ok, %{available_quantity: 9, reserved_quantity: 1, consumed_quantity: 0}} =
+             ReservationLedger.get_availability(@offer_id)
+  end
+
   test "duplicate idempotency key with conflicting args returns invalid_idempotency_key", %{
     run_id: run_id
   } do

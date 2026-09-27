@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
   alias FastCheck.SalesE2EFixtures, as: E2E
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
   alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   @moduletag :e2e
   @moduletag :sales
@@ -57,12 +58,24 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
                    "payment_attempt_id" => attempt.id
                  })
 
+        assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
+        assert E2E.reload_order!(order.id).status == "paid_verified"
+
+        assert_enqueued(
+          worker: PaidOrderFulfillmentWorker,
+          args: %{"payment_attempt_id" => attempt.id}
+        )
+
         assert :ok =
-                 perform_job(IssueTicketsWorker, %{
-                   "sales_order_id" => order.id,
-                   "correlation_id" => E2E.e2e_id("issue"),
-                   "idempotency_key" => E2E.e2e_id("issue")
+                 perform_job(PaidOrderFulfillmentWorker, %{
+                   "payment_attempt_id" => attempt.id
                  })
+
+        assert E2E.reload_order!(order.id).status == "fulfillment_queued"
+        assert %{reserved_quantity: 0, consumed_quantity: 1} = E2E.inventory_snapshot!(offer.id)
+        assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
+        assert [%{args: issuer_args}] = all_enqueued(worker: IssueTicketsWorker)
+        assert :ok = perform_job(IssueTicketsWorker, issuer_args)
 
         order = E2E.reload_order!(order.id)
         session = E2E.reload_session!(session.id)
@@ -72,6 +85,8 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
         assert order.status == "ticket_issued"
         assert session.status == "paid"
         assert attempt.status == "verified_success"
+        assert E2E.inventory_snapshot!(offer.id).reserved_quantity == 0
+        assert E2E.inventory_snapshot!(offer.id).consumed_quantity == 1
 
         assert E2E.sales_counts(order.id) == %{
                  attendees: 1,
@@ -159,17 +174,29 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
                "payment_attempt_id" => attempt.id
              })
 
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
+    assert E2E.reload_order!(order.id).status == "paid_verified"
+
     assert :ok =
              perform_job(VerifyPaymentWorker, %{
                "payment_event_id" => webhook.event.id,
                "payment_attempt_id" => attempt.id
              })
 
-    issue_args = %{
-      "sales_order_id" => order.id,
-      "correlation_id" => E2E.e2e_id("issue"),
-      "idempotency_key" => "issue-#{order.id}"
-    }
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
+    assert :ok =
+             perform_job(PaidOrderFulfillmentWorker, %{
+               "payment_attempt_id" => attempt.id
+             })
+
+    assert E2E.reload_order!(order.id).status == "fulfillment_queued"
+    assert %{reserved_quantity: 0, consumed_quantity: 2} = E2E.inventory_snapshot!(offer.id)
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
+    assert [%{args: issue_args}] = all_enqueued(worker: IssueTicketsWorker)
 
     assert :ok = perform_job(IssueTicketsWorker, issue_args)
     assert :ok = perform_job(IssueTicketsWorker, issue_args)
@@ -184,6 +211,6 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
            }
 
     assert E2E.order_transition_count(order.id, "ticket_issued") == 1
-    assert E2E.inventory_snapshot!(offer.id).reserved_quantity == 2
+    assert %{reserved_quantity: 0, consumed_quantity: 2} = E2E.inventory_snapshot!(offer.id)
   end
 end

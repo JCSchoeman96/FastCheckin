@@ -9,6 +9,15 @@ Merge commit: `3123071f3f0da488cb0eb29eb954ebf463052a47`
 Merged at: 2026-06-18T18:20:10Z  
 Branch: `vs-07c-payment-failure-mismatch-handling`
 
+## Current lifecycle update (P0-B)
+
+P0-B supersedes the original late-payment `reserve -> paid -> consume` ordering
+described below. Late-payment recovery now reserves or re-establishes a held
+inventory reservation only. Payment verification commits the paid state,
+PaymentEvent finalization, and `PaidOrderFulfillmentWorker` handoff together;
+that worker performs final inventory consumption after commit. A failed paid
+transaction therefore leaves inventory held and retryable.
+
 ## What Changed
 
 VS-07C added a centralized payment outcome layer on top of merged VS-07B
@@ -19,9 +28,9 @@ safe transitions via `PaymentOutcomeHandler`.
 Mismatches move order and checkout session into `manual_review` with stable reason
 codes. Expired checkout with a verified Paystack success attempts late-payment
 inventory recovery through `LatePaymentRecovery` (`reserve` → Postgres paid
-transitions → `consume`) with hold release on DB failure and
-`reconciliation_required` marking when consume fails after pay. Recovery success
-reaches `paid_verified` / session `paid` without ticket issuance.
+transitions). `PaidOrderFulfillmentWorker` consumes inventory only after those
+transitions and its durable handoff commit. Recovery success reaches
+`paid_verified` / session `paid` without directly issuing tickets.
 
 Duplicate payments on already-settled orders mark the second `PaymentAttempt`
 `duplicate`. `PaystackWebhookWorker` short-circuits `duplicate`/`processed`
@@ -39,8 +48,8 @@ scanner/mobile, or WhatsApp flows. No new migrations.
   classification; no Ash, Paystack HTTP, or Redis.
 - `lib/fastcheck/sales/payments/payment_outcome_handler.ex` — applies classified
   outcomes through named Ash actions, telemetry, and best-effort PubSub.
-- `lib/fastcheck/sales/payments/late_payment_recovery.ex` — compensation-safe
-  late-payment inventory sequence (reserve → paid → consume).
+- `lib/fastcheck/sales/payments/late_payment_recovery.ex` — retry-safe
+  late-payment inventory reservation before durable paid-state commit.
 - `lib/fastcheck/sales/payments/outcome_broadcast.ex` — sanitized, best-effort
   PubSub on approved topics only.
 - `lib/fastcheck/sales/payments/payment_verification.ex` — slim orchestrator;

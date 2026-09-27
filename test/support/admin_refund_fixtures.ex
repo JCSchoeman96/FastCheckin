@@ -3,8 +3,10 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
 
   import Ecto.Query
 
+  alias Ash.Changeset
   alias FastCheck.Fixtures
   alias FastCheck.Repo
+  alias FastCheck.Sales.Order
   alias FastCheck.Tickets.Issuer
 
   @dashboard_password "fastcheck"
@@ -55,6 +57,7 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
     line_id = insert_order_line!(order_id, offer_id, quantity, unit_amount, total)
     insert_checkout_session!(order_id, "paid", quantity)
     insert_payment_attempt!(order_id, "verified_success", total)
+    queue_fulfillment!(order_id)
 
     case Issuer.issue_order(order_id) do
       {:ok, %{status: :ticket_issued}} -> :ok
@@ -99,6 +102,15 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
             st.to_state == ^to_state,
         select: count(st.id)
     )
+  end
+
+  defp queue_fulfillment!(order_id) do
+    actor = %{actor_type: :system, actor_id: "admin_refund_fixture"}
+
+    Order
+    |> Ash.get!(order_id, authorize?: false)
+    |> Changeset.for_update(:queue_fulfillment, %{}, actor: actor)
+    |> Ash.update!(authorize?: true)
   end
 
   defp insert_offer!(event_id, price_cents) do

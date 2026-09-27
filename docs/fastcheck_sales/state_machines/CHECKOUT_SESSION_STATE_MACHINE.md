@@ -27,6 +27,8 @@
 | `failed` | `manual_review` | `review_failed_session` | `admin/system` | Failure may be recoverable. | Record recovery reason. | yes | Existing review remains. | no |
 | `manual_review` | approved target | `resolve_session_review_to_target` | `admin/system` | Target and reason approved by policy. | Run target side effects. | yes | Resolution idempotent by review id. | target-dependent |
 
+| `expired` | `paid` | `recover_expired_paid_session_to_paid` | `system` | Server-side verification succeeds and late recovery has re-established the exact inventory hold. | Commit with `PaymentAttempt = verified_success`, `Order = paid_verified`, finalized `PaymentEvent`, and `PaidOrderFulfillmentWorker`; the fulfillment worker consumes only after commit. | yes | Same recovery reservation key is idempotent; verification retry reuses the held inventory. | yes |
+
 ## Rules
 
 - `paid`, `released`, and `expired` are terminal unless explicit recovery exists.

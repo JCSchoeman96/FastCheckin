@@ -7,6 +7,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
   alias FastCheck.Repo
   alias FastCheck.Sales.Payments.VerifyPaymentWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
   alias FastCheckWeb.SalesWebFixtures, as: Fixtures
 
   @raw_email "manual.live@example.com"
@@ -49,8 +50,61 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
     assert detail =~ "Queue payment retry"
     assert detail =~ "Close no fulfillment"
     assert detail =~ "Return to fulfillment queue"
+    refute detail =~ "Retry paid fulfillment"
     refute_unsafe_html(detail)
     refute_forbidden_controls(detail)
+  end
+
+  test "eligible paid pre-fulfillment review exposes its retry action", %{conn: conn} do
+    order_id = insert_review_case!()
+
+    attempt_id =
+      Repo.one!(
+        from p in "sales_payment_attempts",
+          where: p.sales_order_id == ^order_id,
+          select: p.id
+      )
+
+    Repo.query!(
+      "UPDATE sales_orders SET manual_review_reason = 'paid_order_fulfillment_retry_exhausted' WHERE id = $1",
+      [order_id]
+    )
+
+    Repo.query!("UPDATE sales_checkout_sessions SET status = 'paid' WHERE sales_order_id = $1", [
+      order_id
+    ])
+
+    Repo.query!(
+      "UPDATE sales_payment_attempts SET status = 'verified_success' WHERE sales_order_id = $1",
+      [
+        order_id
+      ]
+    )
+
+    {:ok, view, _html} =
+      conn
+      |> Fixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/reviews")
+
+    detail =
+      render_click(view, "select_subject", %{
+        "subject-type" => "order",
+        "subject-id" => to_string(order_id)
+      })
+
+    assert detail =~ "Retry paid fulfillment"
+
+    render_click(view, "retry_paid_order_fulfillment", %{"order-id" => to_string(order_id)})
+
+    assert Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.status) ==
+             "paid_verified"
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt_id}
+    )
+
+    refute_unsafe_html(detail)
   end
 
   test "authenticated user can add a note through ManualReview boundary", %{conn: conn} do
@@ -278,6 +332,15 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
   defp insert_returnable_review_case! do
     order_id = insert_review_case!()
+
+    Repo.query!(
+      """
+      UPDATE sales_orders
+      SET fulfillment_queued_at = now() AT TIME ZONE 'utc', updated_at = now() AT TIME ZONE 'utc'
+      WHERE id = $1
+      """,
+      [order_id]
+    )
 
     Repo.query!(
       """

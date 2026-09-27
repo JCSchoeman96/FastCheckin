@@ -343,7 +343,7 @@ defmodule FastCheck.Tickets.RevocationTest do
     unit_amount = 12_500
     total = quantity * unit_amount
     offer_id = insert_offer!(event.id, unit_amount)
-    order_id = insert_order!(event.id, "paid_verified", total)
+    order_id = insert_order!(event.id, "fulfillment_queued", total)
     line_id = insert_order_line!(order_id, offer_id, quantity, unit_amount, total)
     insert_checkout_session!(order_id, "paid", quantity)
     insert_payment_attempt!(order_id, "verified_success", total)
@@ -450,10 +450,12 @@ defmodule FastCheck.Tickets.RevocationTest do
         """
         INSERT INTO sales_orders
           (public_reference, event_id, buyer_name, buyer_phone, buyer_email, source_channel,
-           status, total_amount_cents, currency, paid_at, lock_version, inserted_at, updated_at)
+           status, total_amount_cents, currency, paid_at, fulfillment_queued_at,
+           lock_version, inserted_at, updated_at)
         VALUES
           ($1, $2, 'Buyer Name', '+27123456789', 'buyer@example.com', 'test',
-           $3, $4, 'ZAR', now(), 1, now(), now())
+           $3, $4, 'ZAR', now(), CASE WHEN $3::varchar = 'fulfillment_queued' THEN now() ELSE NULL END,
+           1, now(), now())
         RETURNING id
         """,
         ["ORD-#{System.unique_integer([:positive])}", event_id, status, total_amount_cents]

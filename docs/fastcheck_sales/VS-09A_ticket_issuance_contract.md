@@ -151,10 +151,15 @@ Issuance is allowed only when **all** sections below pass. The issuer must not r
 ### 6.1 Order preconditions
 
 - Order exists
-- Status is `paid_verified` or `fulfillment_queued` (approved state matrix)
+- Status is `fulfillment_queued`, `partially_issued`,
+  `issuance_retry_queued`, or `ticket_issued`
+- `fulfillment_queued_at` is present as durable evidence that the Order passed
+  the inventory-consumed boundary
 - At least one `OrderLine`
 - `total_amount_cents` and `currency` already verified at payment time
-- Not cancelled, expired (without approved late-payment recovery), refunded, or terminal manual-review
+- Not cancelled, expired, refunded, or in terminal manual review. An approved
+  late-payment recovery must first restore the paid CheckoutSession and complete
+  the P0-B inventory-consumed fulfillment boundary.
 - `source_channel` is server-set approved channel
 - Order `event_id` matches all loaded offers and lines (event-scoped-first)
 
@@ -168,10 +173,12 @@ Issuance is allowed only when **all** sections below pass. The issuer must not r
 
 ### 6.3 Checkout / inventory preconditions
 
-- `CheckoutSession` is `paid` or approved post-verification fulfillment state
-- Inventory hold consumed, **or** VS-07C/VS-14 late-payment inventory recovery recorded success
+- `CheckoutSession` is `paid`
+- The exact OrderLine inventory hold is `consumed`; late-payment recovery does
+  not authorize issuance until `PaidOrderFulfillment` consumes the hold
 - Issuer must **not** mutate Redis keys
-- Issuer must **not** issue after expired checkout without VS-07C late-payment/manual-review decision
+- Issuer must **not** issue after expired checkout without verified payment,
+  a paid CheckoutSession, and the same inventory-consumed fulfillment boundary
 
 ### 6.4 Attendee protection preconditions (VS-02)
 

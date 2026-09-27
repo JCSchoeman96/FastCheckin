@@ -3,8 +3,9 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
   Applies Sales payment outcomes after Paystack verification classification.
 
   Mutates PaymentAttempt, Order, CheckoutSession, and PaymentEvent through named
-  Ash actions only. Late-payment inventory recovery uses ReservationLedger with
-  explicit compensation when Postgres transitions fail after Redis reserve.
+  Ash actions only. Late-payment inventory recovery releases a reserved hold
+  when the paid-state transaction fails before payment is recorded. Once payment
+  is authoritative, consume failures preserve the hold and require reconciliation.
   """
 
   require Ash.Query
@@ -12,6 +13,8 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
   alias Ash.Changeset
   alias Ash.Query
   alias FastCheck.Observability.Correlation
+  alias FastCheck.Repo
+  alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.OrderLine
   alias FastCheck.Sales.PaymentAttempt
@@ -20,6 +23,7 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
   alias FastCheck.Sales.Payments.OutcomeBroadcast
   alias FastCheck.Sales.Payments.PaymentFailureReason, as: Reasons
   alias FastCheck.Sales.Payments.PaymentOutcomes
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   @type apply_result ::
           :verified
@@ -104,31 +108,60 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
           CheckoutSession.t(),
           PaymentEvent.t() | nil,
           map()
-        ) :: {:ok, :idempotent}
+        ) :: {:ok, :idempotent} | {:error, term()}
   def apply_idempotent_verified(attempt, order, session, event, context) do
-    _ = finalize_event_processed(event, context)
+    result =
+      Repo.transaction(fn ->
+        Repo.query!("SELECT pg_advisory_xact_lock($1)", [order.id])
 
-    emit_payment_telemetry(:verified, %{
-      idempotent: true,
-      payment_attempt_id: attempt.id,
-      order_id: order.id,
-      checkout_session_id: session.id
-    })
+        fresh_attempt = reload_attempt!(attempt.id)
+        fresh_order = reload_order!(order.id)
+        fresh_session = reload_session!(session.id)
+        fresh_event = reload_event(event)
 
-    OutcomeBroadcast.broadcast(:duplicate_ignored, %{
-      payment_attempt_id: attempt.id,
-      order_id: order.id,
-      checkout_session_id: session.id,
-      reason_code: Reasons.payment_duplicate_suspicious(),
-      correlation_id: context.correlation_id
-    })
+        if eligible_for_fulfillment_handoff?(fresh_attempt, fresh_order, fresh_session) do
+          case enqueue_fulfillment(fresh_attempt, context) do
+            :ok -> :ok
+            {:error, _reason} -> Repo.rollback(:fulfillment_handoff_enqueue_failed)
+          end
+        end
 
-    {:ok, :idempotent}
+        case finalize_event_processed(fresh_event, context) do
+          :ok -> :ok
+          {:error, _reason} -> Repo.rollback(:payment_event_finalize_failed)
+        end
+
+        :idempotent
+      end)
+
+    case result do
+      {:ok, :idempotent} ->
+        emit_payment_telemetry(:verified, %{
+          idempotent: true,
+          payment_attempt_id: attempt.id,
+          order_id: order.id,
+          checkout_session_id: session.id
+        })
+
+        OutcomeBroadcast.broadcast(:duplicate_ignored, %{
+          payment_attempt_id: attempt.id,
+          order_id: order.id,
+          checkout_session_id: session.id,
+          reason_code: Reasons.payment_duplicate_suspicious(),
+          correlation_id: context.correlation_id
+        })
+
+        {:ok, :idempotent}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp apply_verified_active(attempt, order, session, event, attrs, context, metadata) do
     with {:ok, _attempt} <- update_attempt(attempt, :mark_verified_success, attrs, context),
          {:ok, _} <- mark_order_and_session_paid(order, session, context),
+         :ok <- enqueue_fulfillment(attempt, context),
          :ok <- finalize_event_processed(event, context) do
       emit_payment_telemetry(:verified, Map.put(metadata, :paid, true))
       {:ok, :verified}
@@ -149,6 +182,7 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
            ),
          mark_paid_fn = fn -> mark_late_recovery_paid_inner(order, session, context) end,
          {:ok, _recovered} <- LatePaymentRecovery.recover(recovery_ctx, mark_paid_fn),
+         :ok <- enqueue_fulfillment(attempt, context),
          :ok <- finalize_event_processed(event, context) do
       emit_payment_telemetry(:verified, Map.put(metadata, :paid, true))
       OutcomeBroadcast.broadcast(:late_payment_recovered, metadata)
@@ -165,29 +199,8 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
           metadata
         )
 
-      {:error, :paid_reconciliation_required, reason_code, _paid_result} ->
-        apply_late_payment_paid_reconciliation(event, reason_code, context, metadata)
-
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  defp apply_late_payment_paid_reconciliation(event, reason_code, context, metadata) do
-    with :ok <- finalize_event_processed(event, context) do
-      emit_payment_telemetry(:verified, Map.put(metadata, :paid, true))
-
-      emit_manual_review_telemetry(
-        Map.put(metadata, :inventory_reconciliation, true),
-        reason_code
-      )
-
-      OutcomeBroadcast.broadcast(
-        :late_payment_recovered,
-        Map.put(metadata, :reason_code, reason_code)
-      )
-
-      {:ok, :late_payment_recovered}
     end
   end
 
@@ -220,6 +233,30 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
       )
 
       {:ok, :late_payment_manual_review}
+    end
+  end
+
+  defp apply_duplicate(
+         %PaymentAttempt{status: "verified_success"} = attempt,
+         order,
+         session,
+         event,
+         _attrs,
+         context,
+         metadata
+       ) do
+    handoff_result =
+      if eligible_for_fulfillment_handoff?(attempt, order, session) do
+        enqueue_fulfillment(attempt, context)
+      else
+        :ok
+      end
+
+    with :ok <- handoff_result,
+         :ok <- maybe_mark_event_processed_or_duplicate(event, context) do
+      emit_payment_telemetry(:verified, Map.put(metadata, :idempotent, true))
+      OutcomeBroadcast.broadcast(:duplicate_ignored, metadata)
+      {:ok, :idempotent}
     end
   end
 
@@ -316,6 +353,52 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
            |> ash_update(context) do
       {:ok, {order, session}}
     end
+  end
+
+  defp enqueue_fulfillment(attempt, context) do
+    PaidOrderFulfillmentWorker.new(%{
+      "payment_attempt_id" => attempt.id,
+      "correlation_id" => context.correlation_id
+    })
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  rescue
+    _error -> {:error, :fulfillment_handoff_enqueue_failed}
+  end
+
+  defp eligible_for_fulfillment_handoff?(attempt, order, session) do
+    attempt.status == "verified_success" and order.status == "paid_verified" and
+      session.status == "paid" and attempt.amount_cents == order.total_amount_cents and
+      attempt.currency == order.currency
+  end
+
+  defp reload_attempt!(id) do
+    PaymentAttempt
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp reload_order!(id) do
+    Order
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp reload_session!(id) do
+    CheckoutSession
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp reload_event(nil), do: nil
+
+  defp reload_event(event) do
+    PaymentEvent
+    |> Query.for_read(:get_by_id, %{id: event.id})
+    |> Ash.read_one!(authorize?: false)
   end
 
   defp mark_late_recovery_paid_inner(order, session, context) do

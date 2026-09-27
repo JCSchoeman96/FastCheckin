@@ -179,7 +179,7 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
     quantity = Keyword.get(opts, :quantity, 1)
     unit_amount = Keyword.get(opts, :unit_amount_cents, 12_500)
     total = quantity * unit_amount
-    order_status = Keyword.get(opts, :order_status, "paid_verified")
+    order_status = Keyword.get(opts, :order_status, "fulfillment_queued")
     payment_status = Keyword.get(opts, :payment_status, "verified_success")
     checkout_status = Keyword.get(opts, :checkout_status, "paid")
 
@@ -217,10 +217,12 @@ defmodule FastCheck.Tickets.IssuerAttendeeBridgeTest do
         """
         INSERT INTO sales_orders
           (public_reference, event_id, buyer_name, buyer_phone, buyer_email, source_channel,
-           status, total_amount_cents, currency, paid_at, lock_version, inserted_at, updated_at)
+           status, total_amount_cents, currency, paid_at, fulfillment_queued_at,
+           lock_version, inserted_at, updated_at)
         VALUES
           ($1, $2, 'Buyer Name', '+27123456789', 'buyer@example.com', 'test',
-           $3, $4, 'ZAR', now(), 1, now(), now())
+           $3, $4, 'ZAR', now(), CASE WHEN $3::varchar = 'fulfillment_queued' THEN now() ELSE NULL END,
+           1, now(), now())
         RETURNING id
         """,
         ["ORD-#{System.unique_integer([:positive])}", event_id, status, total_amount_cents]

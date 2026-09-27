@@ -91,31 +91,78 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   @spec reserve(integer(), String.t(), integer(), integer(), String.t()) ::
           {:ok, map()} | {:error, atom(), map()}
   def reserve(offer_id, order_public_reference, quantity, ttl_seconds, idempotency_key) do
+    do_reserve(offer_id, order_public_reference, quantity, ttl_seconds, idempotency_key, nil)
+  end
+
+  @doc false
+  @spec reserve_for_late_payment_recovery(
+          integer(),
+          String.t(),
+          integer(),
+          integer(),
+          String.t(),
+          String.t()
+        ) :: {:ok, map()} | {:error, atom(), map()}
+  def reserve_for_late_payment_recovery(
+        offer_id,
+        order_public_reference,
+        quantity,
+        ttl_seconds,
+        reserve_key,
+        release_key
+      ) do
+    do_reserve(offer_id, order_public_reference, quantity, ttl_seconds, reserve_key, release_key)
+  end
+
+  defp do_reserve(
+         offer_id,
+         order_public_reference,
+         quantity,
+         ttl_seconds,
+         idempotency_key,
+         release_key
+       ) do
     with :ok <- validate_positive(quantity, :invalid_quantity, offer_id),
          :ok <- validate_ttl(ttl_seconds, offer_id),
          :ok <- validate_idempotency(idempotency_key, offer_id) do
       now = now_ms()
 
+      keys = [
+        inventory_key(offer_id),
+        holds_key(offer_id),
+        hold_key(order_public_reference),
+        dedupe_key(:reserve, idempotency_key),
+        order_lock_key(order_public_reference)
+      ]
+
+      keys =
+        if is_binary(release_key),
+          do: keys ++ [dedupe_key(:release, release_key)],
+          else: keys
+
+      args = [
+        Integer.to_string(offer_id),
+        order_public_reference,
+        Integer.to_string(quantity),
+        Integer.to_string(ttl_seconds),
+        idempotency_key,
+        Integer.to_string(now),
+        args_sig("reserve", [offer_id, order_public_reference, quantity, ttl_seconds]),
+        Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
+        Integer.to_string(RedisScripts.order_lock_ttl_ms()),
+        if(is_binary(release_key), do: "1", else: "0"),
+        if(is_binary(release_key), do: "1", else: "0"),
+        if(
+          is_binary(release_key),
+          do: args_sig("release", [offer_id, order_public_reference]),
+          else: ""
+        )
+      ]
+
       RedisScripts.reserve(
         offer_id: offer_id,
-        keys: [
-          inventory_key(offer_id),
-          holds_key(offer_id),
-          hold_key(order_public_reference),
-          dedupe_key(:reserve, idempotency_key),
-          order_lock_key(order_public_reference)
-        ],
-        argv: [
-          Integer.to_string(offer_id),
-          order_public_reference,
-          Integer.to_string(quantity),
-          Integer.to_string(ttl_seconds),
-          idempotency_key,
-          Integer.to_string(now),
-          args_sig("reserve", [offer_id, order_public_reference, quantity, ttl_seconds]),
-          Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
-          Integer.to_string(RedisScripts.order_lock_ttl_ms())
-        ]
+        keys: keys,
+        argv: args
       )
       |> map_hold_snapshot(offer_id, order_public_reference, quantity)
     end
@@ -136,6 +183,7 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
           order_lock_key(order_public_reference)
         ],
         argv: [
+          Integer.to_string(offer_id),
           order_public_reference,
           Integer.to_string(quantity),
           Integer.to_string(now_ms()),
@@ -165,7 +213,58 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
           Integer.to_string(now_ms()),
           args_sig("release", [offer_id, order_public_reference]),
           Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
-          Integer.to_string(RedisScripts.order_lock_ttl_ms())
+          Integer.to_string(RedisScripts.order_lock_ttl_ms()),
+          Integer.to_string(offer_id),
+          "0",
+          "0"
+        ]
+      )
+      |> map_release_snapshot(offer_id, order_public_reference)
+    end
+  end
+
+  @doc false
+  @spec release_late_payment_reservation(
+          integer(),
+          String.t(),
+          integer(),
+          String.t(),
+          String.t()
+        ) :: {:ok, map()} | {:error, atom(), map()}
+  def release_late_payment_reservation(
+        offer_id,
+        order_public_reference,
+        quantity,
+        reserve_key,
+        release_key
+      ) do
+    with :ok <- validate_positive(quantity, :invalid_quantity, offer_id),
+         :ok <- validate_idempotency(reserve_key, offer_id),
+         :ok <- validate_idempotency(release_key, offer_id) do
+      RedisScripts.release(
+        offer_id: offer_id,
+        keys: [
+          inventory_key(offer_id),
+          holds_key(offer_id),
+          hold_key(order_public_reference),
+          dedupe_key(:release, release_key),
+          order_lock_key(order_public_reference),
+          dedupe_key(:reserve, reserve_key)
+        ],
+        argv: [
+          order_public_reference,
+          Integer.to_string(now_ms()),
+          args_sig("late_payment_recovery_release", [
+            offer_id,
+            order_public_reference,
+            quantity,
+            reserve_key
+          ]),
+          Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
+          Integer.to_string(RedisScripts.order_lock_ttl_ms()),
+          Integer.to_string(offer_id),
+          Integer.to_string(quantity),
+          "1"
         ]
       )
       |> map_release_snapshot(offer_id, order_public_reference)
@@ -314,9 +413,9 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   end
 
   @type hold_detail :: %{
-          offer_id: integer(),
-          order_public_reference: String.t(),
-          quantity: integer(),
+          offer_id: integer() | nil,
+          order_public_reference: String.t() | nil,
+          quantity: integer() | nil,
           status: atom(),
           expires_at: integer() | nil,
           hash_present?: boolean()
@@ -344,11 +443,11 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
       {:ok, [offer_id_raw, order_ref, quantity, status, expires_at]} ->
         {:ok,
          %{
-           offer_id: parse_int(offer_id_raw) |> then(&if(&1 == 0, do: offer_id, else: &1)),
-           order_public_reference: order_ref || order_public_reference,
-           quantity: parse_int(quantity),
+           offer_id: parse_exact_int(offer_id_raw),
+           order_public_reference: order_ref,
+           quantity: parse_exact_int(quantity),
            status: parse_hold_status(status),
-           expires_at: parse_optional_int(expires_at),
+           expires_at: parse_exact_int(expires_at),
            hash_present?: true
          }}
 
@@ -656,14 +755,14 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
     end
   end
 
-  defp parse_optional_int(nil), do: nil
-
-  defp parse_optional_int(value) when is_binary(value) do
+  defp parse_exact_int(value) when is_binary(value) do
     case Integer.parse(value) do
-      {int, _} -> int
-      :error -> nil
+      {int, ""} -> int
+      _ -> nil
     end
   end
+
+  defp parse_exact_int(_), do: nil
 
   defp parse_hold_status("held"), do: :held
   defp parse_hold_status("consumed"), do: :consumed
