@@ -131,6 +131,254 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
              ReservationLedger.release(@offer_id, "ORD-5", idem("idem-rel-5", run_id))
   end
 
+  test "checkout compensation releases and clears matching reserve dedupe atomically", %{
+    run_id: run_id
+  } do
+    order_ref = "ORD-COMPENSATE-#{run_id}"
+    reserve_key = idem("idem-checkout-comp", run_id)
+    compensation_key = "checkout-compensate-#{order_ref}"
+    reserve_dedupe_key = reserve_dedupe_key(reserve_key)
+
+    assert {:ok, held} = ReservationLedger.reserve(@offer_id, order_ref, 2, 120, reserve_key)
+    assert held.status == :held
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_dedupe_key])
+
+    assert {:ok, released} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               order_ref,
+               2,
+               120,
+               reserve_key,
+               compensation_key
+             )
+
+    assert released.status == :released
+    assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_dedupe_key])
+
+    assert {:ok, replayed_compensation} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               order_ref,
+               2,
+               120,
+               reserve_key,
+               compensation_key
+             )
+
+    assert replayed_compensation.idempotent
+    assert replayed_compensation.status == :released
+    assert replayed_compensation == Map.put(released, :idempotent, true)
+
+    assert {:ok, retried_hold} =
+             ReservationLedger.reserve(
+               @offer_id,
+               "ORD-COMPENSATE-RETRY-#{run_id}",
+               2,
+               120,
+               reserve_key
+             )
+
+    assert retried_hold.status == :held
+    assert {:ok, snapshot} = ReservationLedger.get_availability(@offer_id)
+    assert snapshot.available_quantity == 8
+    assert snapshot.reserved_quantity == 2
+  end
+
+  test "checkout compensation supports an existing hold without ttl metadata", %{run_id: run_id} do
+    order_ref = "ORD-COMPENSATE-LEGACY-#{run_id}"
+    reserve_key = idem("idem-checkout-legacy", run_id)
+
+    assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+
+    assert {:ok, _} =
+             Redix.command(FastCheck.Redix, [
+               "HDEL",
+               ReservationLedger.hold_key(order_ref),
+               "ttl_seconds"
+             ])
+
+    assert {:ok, nil} =
+             Redix.command(FastCheck.Redix, [
+               "HGET",
+               ReservationLedger.hold_key(order_ref),
+               "ttl_seconds"
+             ])
+
+    assert {:ok, %{status: :released}} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               order_ref,
+               1,
+               120,
+               reserve_key,
+               "checkout-compensate-legacy-#{run_id}"
+             )
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, ["EXISTS", reserve_dedupe_key(reserve_key)])
+  end
+
+  test "checkout compensation preserves malformed reserve dedupe state", %{run_id: run_id} do
+    order_ref = "ORD-COMPENSATE-MALFORMED-#{run_id}"
+    reserve_key = idem("idem-checkout-malformed", run_id)
+    reserve_key_name = reserve_dedupe_key(reserve_key)
+
+    assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["HDEL", reserve_key_name, "args_sig"])
+    before = availability!()
+
+    assert {:error, :checkout_reservation_mismatch, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               order_ref,
+               1,
+               120,
+               reserve_key,
+               "checkout-compensate-malformed-#{run_id}"
+             )
+
+    assert availability!() == before
+    assert {:ok, %{status: :held}} = ReservationLedger.get_hold_detail(@offer_id, order_ref)
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_key_name])
+    assert {:ok, nil} = Redix.command(FastCheck.Redix, ["HGET", reserve_key_name, "args_sig"])
+  end
+
+  test "checkout compensation rejects a different checkout idempotency key", %{run_id: run_id} do
+    order_ref = "ORD-COMPENSATE-OWNER-#{run_id}"
+    reserve_key = idem("idem-checkout-owner", run_id)
+    reserve_dedupe_key = reserve_dedupe_key(reserve_key)
+
+    assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+    before = availability!()
+
+    assert {:error, :checkout_reservation_mismatch, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               order_ref,
+               1,
+               120,
+               idem("idem-checkout-wrong-owner", run_id),
+               "checkout-compensate-wrong-owner-#{run_id}"
+             )
+
+    assert availability!() == before
+    assert {:ok, %{status: :held}} = ReservationLedger.get_hold_detail(@offer_id, order_ref)
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_dedupe_key])
+  end
+
+  test "checkout compensation cannot clear a reserve from another reference or offer", %{
+    run_id: run_id
+  } do
+    order_ref = "ORD-COMPENSATE-SCOPE-#{run_id}"
+    reserve_key = idem("idem-checkout-scope", run_id)
+    compensation_key = "checkout-compensate-scope-#{run_id}"
+    reserve_dedupe_key = reserve_dedupe_key(reserve_key)
+    other_offer_id = @offer_id + 1
+
+    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", inventory_key(other_offer_id)])
+    :ok = ReservationLedger.initialize_offer(other_offer_id, 5)
+    on_exit(fn -> Redix.command(FastCheck.Redix, ["DEL", inventory_key(other_offer_id)]) end)
+
+    assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+    before = availability!()
+
+    assert {:error, :hold_not_found, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               "ORD-COMPENSATE-UNRELATED-#{run_id}",
+               1,
+               120,
+               reserve_key,
+               compensation_key
+             )
+
+    assert {:error, :checkout_reservation_mismatch, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               other_offer_id,
+               order_ref,
+               1,
+               120,
+               reserve_key,
+               compensation_key
+             )
+
+    assert availability!() == before
+    assert {:ok, %{status: :held}} = ReservationLedger.get_hold_detail(@offer_id, order_ref)
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_dedupe_key])
+    assert {:ok, other_snapshot} = ReservationLedger.get_availability(other_offer_id)
+    assert other_snapshot.available_quantity == 5
+    assert other_snapshot.reserved_quantity == 0
+  end
+
+  test "checkout compensation fails closed for consumed released and expired holds", %{
+    run_id: run_id
+  } do
+    consumed_ref = "ORD-COMPENSATE-CONSUMED-#{run_id}"
+    consumed_key = idem("idem-checkout-consumed", run_id)
+
+    assert {:ok, _} = ReservationLedger.reserve(@offer_id, consumed_ref, 1, 120, consumed_key)
+
+    assert {:ok, _} =
+             ReservationLedger.consume(
+               @offer_id,
+               consumed_ref,
+               1,
+               idem("idem-checkout-consume", run_id)
+             )
+
+    assert {:error, :already_consumed, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               consumed_ref,
+               1,
+               120,
+               consumed_key,
+               "checkout-compensate-consumed-#{run_id}"
+             )
+
+    released_ref = "ORD-COMPENSATE-RELEASED-#{run_id}"
+    released_key = idem("idem-checkout-released", run_id)
+
+    assert {:ok, _} = ReservationLedger.reserve(@offer_id, released_ref, 1, 120, released_key)
+
+    assert {:ok, _} =
+             ReservationLedger.release(
+               @offer_id,
+               released_ref,
+               idem("idem-checkout-normal-release", run_id)
+             )
+
+    assert {:error, :already_released, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               released_ref,
+               1,
+               120,
+               released_key,
+               "checkout-compensate-released-#{run_id}"
+             )
+
+    expired_ref = "ORD-COMPENSATE-EXPIRED-#{run_id}"
+    expired_key = idem("idem-checkout-expired", run_id)
+
+    assert {:ok, _} = ReservationLedger.reserve(@offer_id, expired_ref, 1, 1, expired_key)
+    Process.sleep(1_100)
+
+    assert {:ok, %{expired_count: 1, errors: []}} =
+             ReservationLedger.expire_due_holds(System.system_time(:millisecond))
+
+    assert {:error, :hold_expired, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               expired_ref,
+               1,
+               1,
+               expired_key,
+               "checkout-compensate-expired-#{run_id}"
+             )
+  end
+
   test "fresh release against expired hold returns hold_expired", %{run_id: run_id} do
     assert {:ok, _held} =
              ReservationLedger.reserve(@offer_id, "ORD-EXP", 1, 1, idem("idem-exp-rel", run_id))
@@ -217,5 +465,14 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
   defp holds_key(offer_id), do: "sales:offer:#{offer_id}:holds"
   defp event_trail_key(offer_id), do: "sales:inventory:events:#{offer_id}"
   defp order_lock_key(order_ref), do: "sales:order:#{order_ref}:lock"
+
+  defp reserve_dedupe_key(idempotency_key),
+    do: "sales:inventory:dedupe:reserve:#{idempotency_key}"
+
+  defp availability! do
+    assert {:ok, snapshot} = ReservationLedger.get_availability(@offer_id)
+    snapshot
+  end
+
   defp idem(base, run_id), do: "#{base}-#{run_id}"
 end

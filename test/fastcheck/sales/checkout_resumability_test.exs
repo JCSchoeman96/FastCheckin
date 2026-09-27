@@ -133,45 +133,76 @@ defmodule FastCheck.Sales.CheckoutResumabilityTest do
     assert snapshot.reserved_quantity == 1
   end
 
-  test "database failure after reserve rolls back rows and releases the hold", %{offer: offer} do
+  test "database failure releases the hold and permits same-key retry", %{offer: offer} do
+    input =
+      Fixtures.checkout_input(%{
+        ticket_offer_id: offer.id,
+        idempotency_key: "saga-db-failure-#{System.unique_integer([:positive])}"
+      })
+
     install_hold_update_failure!()
 
-    try do
-      input =
-        Fixtures.checkout_input(%{
-          ticket_offer_id: offer.id,
-          idempotency_key: "saga-db-failure-#{System.unique_integer([:positive])}"
-        })
+    order_reference =
+      try do
+        task =
+          Task.async(fn ->
+            Checkout.start_checkout(input, Fixtures.system_actor(),
+              effective_sales_channel: "whatsapp"
+            )
+          end)
 
-      task =
-        Task.async(fn ->
-          Checkout.start_checkout(input, Fixtures.system_actor(),
-            effective_sales_channel: "whatsapp"
-          )
-        end)
+        order_reference = await_single_hold!(offer.id)
+        assert {:error, _reason} = Task.await(task, 10_000)
 
-      order_reference = await_single_hold!(offer.id)
-      assert {:error, _reason} = Task.await(task, 10_000)
+        assert_zero_checkout_rows!()
 
-      assert_zero_checkout_rows!()
+        assert {:ok, %{status: :released}} =
+                 ReservationLedger.get_hold_detail(offer.id, order_reference)
 
-      assert {:ok, %{status: :released}} =
-               ReservationLedger.get_hold_detail(offer.id, order_reference)
+        assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
+        assert snapshot.available_quantity == 100
+        assert snapshot.reserved_quantity == 0
 
-      assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
-      assert snapshot.available_quantity == 100
-      assert snapshot.reserved_quantity == 0
+        compensation_key = compensation_idempotency_key(order_reference)
 
-      release_key = compensation_release_key(order_reference)
+        assert {:ok, %{idempotent: true}} =
+                 ReservationLedger.compensate_checkout_reservation(
+                   offer.id,
+                   order_reference,
+                   input.quantity,
+                   Application.get_env(:fastcheck, :sales_checkout_hold_ttl_seconds, 600),
+                   input.idempotency_key,
+                   compensation_key
+                 )
 
-      assert {:ok, %{idempotent: true}} =
-               ReservationLedger.release(offer.id, order_reference, release_key)
-    after
-      remove_hold_update_failure!()
-    end
+        order_reference
+      after
+        remove_hold_update_failure!()
+      end
+
+    assert {:ok, retried} =
+             Checkout.start_checkout(input, Fixtures.system_actor(),
+               effective_sales_channel: "whatsapp"
+             )
+
+    assert retried.order.status == "awaiting_payment"
+    assert retried.checkout_session.status == "hold_attached"
+    refute retried.order.public_reference == order_reference
+    assert_checkout_row_counts!(1)
+
+    assert {:ok, %{status: :held}} =
+             ReservationLedger.get_hold_detail(offer.id, retried.order.public_reference)
+
+    assert {:ok, [new_reference]} = ReservationLedger.list_hold_refs(offer.id)
+    assert new_reference == retried.order.public_reference
+
+    assert {:ok, snapshot} = ReservationLedger.get_availability(offer.id)
+    assert snapshot.available_quantity == 99
+    assert snapshot.reserved_quantity == 1
+    assert snapshot.consumed_quantity == 0
   end
 
-  test "failed compensation leaves a bounded orphan hold and emits reconciliation signal", %{
+  test "failed compensation fails closed and emits a reconciliation signal", %{
     offer: offer
   } do
     install_hold_update_failure!()
@@ -310,6 +341,6 @@ defmodule FastCheck.Sales.CheckoutResumabilityTest do
     Repo.query!("DROP FUNCTION IF EXISTS p0_a_fail_checkout_hold_update()")
   end
 
-  defp compensation_release_key(order_reference),
+  defp compensation_idempotency_key(order_reference),
     do: "checkout-compensate-release-#{order_reference}"
 end

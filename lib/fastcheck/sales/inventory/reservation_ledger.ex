@@ -172,6 +172,59 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
     end
   end
 
+  @spec compensate_checkout_reservation(
+          integer(),
+          String.t(),
+          pos_integer(),
+          pos_integer(),
+          String.t(),
+          String.t()
+        ) ::
+          {:ok, map()} | {:error, atom(), map()}
+  def compensate_checkout_reservation(
+        offer_id,
+        order_public_reference,
+        quantity,
+        ttl_seconds,
+        checkout_idempotency_key,
+        compensation_idempotency_key
+      ) do
+    with :ok <- validate_positive(quantity, :invalid_quantity, offer_id),
+         :ok <- validate_ttl(ttl_seconds, offer_id),
+         :ok <- validate_idempotency(checkout_idempotency_key, offer_id),
+         :ok <- validate_idempotency(compensation_idempotency_key, offer_id) do
+      RedisScripts.compensate_checkout_reservation(
+        offer_id: offer_id,
+        keys: [
+          inventory_key(offer_id),
+          holds_key(offer_id),
+          hold_key(order_public_reference),
+          dedupe_key(:reserve, checkout_idempotency_key),
+          dedupe_key(:checkout_compensation, compensation_idempotency_key),
+          order_lock_key(order_public_reference)
+        ],
+        argv: [
+          Integer.to_string(offer_id),
+          order_public_reference,
+          checkout_idempotency_key,
+          Integer.to_string(now_ms()),
+          args_sig("checkout_compensate", [
+            offer_id,
+            order_public_reference,
+            quantity,
+            ttl_seconds,
+            checkout_idempotency_key
+          ]),
+          Integer.to_string(quantity),
+          args_sig("reserve", [offer_id, order_public_reference, quantity, ttl_seconds]),
+          Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
+          Integer.to_string(RedisScripts.order_lock_ttl_ms())
+        ]
+      )
+      |> map_release_snapshot(offer_id, order_public_reference)
+    end
+  end
+
   @spec expire_due_holds(integer()) ::
           {:ok,
            %{expired_count: non_neg_integer(), skipped_count: non_neg_integer(), errors: list()}}

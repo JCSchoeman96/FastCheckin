@@ -470,6 +470,173 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   return {"OK", "released", tostring(available_after), tostring(reserved_after), tostring(consumed), tostring(revision)}
   """
 
+  @checkout_compensation_script """
+  local inventory_key = KEYS[1]
+  local holds_key = KEYS[2]
+  local hold_key = KEYS[3]
+  local reserve_dedupe_key = KEYS[4]
+  local compensation_dedupe_key = KEYS[5]
+  local lock_key = KEYS[6]
+
+  local offer_id = ARGV[1]
+  local order_ref = ARGV[2]
+  local checkout_idempotency_key = ARGV[3]
+  local now_ms = ARGV[4]
+  local args_sig = ARGV[5]
+  local expected_quantity = tonumber(ARGV[6])
+  local expected_reserve_sig = ARGV[7]
+  local dedupe_ttl = tonumber(ARGV[8])
+  local lock_ttl_ms = tonumber(ARGV[9])
+
+  local existing_sig = redis.call("HGET", compensation_dedupe_key, "args_sig")
+  if existing_sig then
+    if existing_sig ~= args_sig then
+      return {"DUPLICATE_CONFLICT"}
+    end
+
+    return {
+      "IDEMPOTENT",
+      redis.call("HGET", compensation_dedupe_key, "status"),
+      redis.call("HGET", compensation_dedupe_key, "available_after"),
+      redis.call("HGET", compensation_dedupe_key, "reserved_after"),
+      redis.call("HGET", compensation_dedupe_key, "consumed_after"),
+      redis.call("HGET", compensation_dedupe_key, "revision")
+    }
+  end
+
+  if redis.call("EXISTS", inventory_key) == 0 then
+    return {"RECONCILIATION_REQUIRED"}
+  end
+
+  local ledger_state = redis.call("HGET", inventory_key, "ledger_state")
+  if not ledger_state or ledger_state == "" then
+    return {"RECONCILIATION_REQUIRED"}
+  end
+
+  if ledger_state == "degraded" then
+    return {"LEDGER_DEGRADED"}
+  end
+
+  if ledger_state == "reconciliation_required" or ledger_state == "closed" or ledger_state == "rebuilding" then
+    return {"RECONCILIATION_REQUIRED"}
+  end
+
+  if redis.call("SET", lock_key, "1", "NX", "PX", lock_ttl_ms) == false then
+    return {"LOCK_TIMEOUT"}
+  end
+
+  if redis.call("EXISTS", hold_key) == 0 then
+    redis.call("DEL", lock_key)
+    return {"HOLD_NOT_FOUND"}
+  end
+
+  local hold_offer_id = redis.call("HGET", hold_key, "offer_id")
+  local hold_order_ref = redis.call("HGET", hold_key, "order_public_reference")
+  local hold_idempotency_key = redis.call("HGET", hold_key, "idempotency_key")
+
+  if hold_offer_id ~= offer_id or hold_order_ref ~= order_ref or
+     hold_idempotency_key ~= checkout_idempotency_key then
+    redis.call("DEL", lock_key)
+    return {"CHECKOUT_RESERVATION_MISMATCH"}
+  end
+
+  local hold_status = redis.call("HGET", hold_key, "status")
+  if hold_status == "consumed" then
+    redis.call("DEL", lock_key)
+    return {"ALREADY_CONSUMED"}
+  end
+
+  if hold_status == "released" then
+    redis.call("DEL", lock_key)
+    return {"ALREADY_RELEASED"}
+  end
+
+  if hold_status == "expired" then
+    redis.call("DEL", lock_key)
+    return {"ALREADY_EXPIRED"}
+  end
+
+  if hold_status ~= "held" then
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
+  if quantity <= 0 or quantity ~= expected_quantity then
+    redis.call("DEL", lock_key)
+    return {"CHECKOUT_RESERVATION_MISMATCH"}
+  end
+
+  if redis.call("EXISTS", reserve_dedupe_key) == 1 then
+    local reserve_dedupe_type = redis.call("TYPE", reserve_dedupe_key).ok
+    if reserve_dedupe_type ~= "hash" then
+      redis.call("DEL", lock_key)
+      return {"CHECKOUT_RESERVATION_MISMATCH"}
+    end
+
+    local reserve_sig = redis.call("HGET", reserve_dedupe_key, "args_sig")
+    if not reserve_sig or reserve_sig ~= expected_reserve_sig then
+      redis.call("DEL", lock_key)
+      return {"CHECKOUT_RESERVATION_MISMATCH"}
+    end
+  end
+
+  local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "-1")
+  local reserved = tonumber(redis.call("HGET", inventory_key, "reserved_quantity") or "-1")
+  local consumed = tonumber(redis.call("HGET", inventory_key, "consumed_quantity") or "-1")
+  local revision = tonumber(redis.call("HGET", inventory_key, "revision") or "-1") + 1
+  if available < 0 or reserved < quantity or consumed < 0 or revision <= 0 then
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local available_after = available + quantity
+  local reserved_after = reserved - quantity
+
+  redis.call(
+    "HSET",
+    inventory_key,
+    "available_quantity", tostring(available_after),
+    "reserved_quantity", tostring(reserved_after),
+    "consumed_quantity", tostring(consumed),
+    "revision", tostring(revision),
+    "updated_at", now_ms
+  )
+
+  redis.call(
+    "HSET",
+    hold_key,
+    "status", "released",
+    "released_at", now_ms,
+    "revision", tostring(revision)
+  )
+
+  redis.call("ZREM", holds_key, order_ref)
+  redis.call("DEL", reserve_dedupe_key)
+
+  redis.call(
+    "HSET",
+    compensation_dedupe_key,
+    "args_sig", args_sig,
+    "status", "released",
+    "available_after", tostring(available_after),
+    "reserved_after", tostring(reserved_after),
+    "consumed_after", tostring(consumed),
+    "revision", tostring(revision)
+  )
+  redis.call("EXPIRE", compensation_dedupe_key, dedupe_ttl)
+  redis.call("DEL", lock_key)
+
+  return {
+    "OK",
+    "released",
+    tostring(available_after),
+    tostring(reserved_after),
+    tostring(consumed),
+    tostring(revision)
+  }
+  """
+
   @expire_one_script """
   local inventory_key = KEYS[1]
   local holds_key = KEYS[2]
@@ -567,6 +734,10 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   @spec release(keyword()) :: {:ok, map()} | {:error, atom(), map()}
   def release(opts), do: eval_script(@release_script, opts)
 
+  @spec compensate_checkout_reservation(keyword()) :: {:ok, map()} | {:error, atom(), map()}
+  def compensate_checkout_reservation(opts),
+    do: eval_script(@checkout_compensation_script, opts)
+
   @spec expire_one(keyword()) :: {:ok, map()} | {:error, atom(), map()}
   def expire_one(opts), do: eval_script(@expire_one_script, opts)
 
@@ -656,6 +827,9 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
 
   defp decode_response(["ALREADY_RELEASED"], offer_id),
     do: {:error, :already_released, %{offer_id: offer_id}}
+
+  defp decode_response(["CHECKOUT_RESERVATION_MISMATCH"], offer_id),
+    do: {:error, :checkout_reservation_mismatch, %{offer_id: offer_id}}
 
   defp decode_response(["ALREADY_EXPIRED"], offer_id),
     do: {:error, :hold_expired, %{offer_id: offer_id}}

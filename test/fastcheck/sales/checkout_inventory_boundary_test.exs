@@ -22,7 +22,7 @@ defmodule FastCheck.Sales.CheckoutInventoryBoundaryTest do
   test "checkout delegates inventory to ReservationLedger" do
     source = File.read!("lib/fastcheck/sales/checkout.ex")
     assert source =~ "ReservationLedger.reserve"
-    assert source =~ "ReservationLedger.release"
+    assert source =~ "ReservationLedger.compensate_checkout_reservation"
     assert source =~ "ReservationLedger.hold_key"
   end
 

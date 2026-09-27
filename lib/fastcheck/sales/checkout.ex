@@ -359,7 +359,14 @@ defmodule FastCheck.Sales.Checkout do
           {:ok, %{checkout | checkout_session: sanitize_session(session)}}
 
         {:error, reason} ->
-          case compensate_after_reserve_failure(offer.id, public_reference, context) do
+          case compensate_after_reserve_failure(
+                 offer.id,
+                 public_reference,
+                 Map.fetch!(input, :quantity),
+                 ttl_seconds,
+                 Map.fetch!(input, :idempotency_key),
+                 context
+               ) do
             :ok -> {:error, reason}
             {:error, :inventory_unavailable} -> {:error, :inventory_unavailable}
           end
@@ -505,11 +512,21 @@ defmodule FastCheck.Sales.Checkout do
     |> Ash.update(authorize?: false, context: context)
   end
 
-  defp compensate_after_reserve_failure(offer_id, public_reference, context) do
-    case ReservationLedger.release(
+  defp compensate_after_reserve_failure(
+         offer_id,
+         public_reference,
+         quantity,
+         ttl_seconds,
+         checkout_idempotency_key,
+         context
+       ) do
+    case ReservationLedger.compensate_checkout_reservation(
            offer_id,
            public_reference,
-           compensation_release_key(public_reference)
+           quantity,
+           ttl_seconds,
+           checkout_idempotency_key,
+           compensation_idempotency_key(public_reference)
          ) do
       {:ok, _} ->
         :ok
@@ -527,7 +544,7 @@ defmodule FastCheck.Sales.Checkout do
     end
   end
 
-  defp compensation_release_key(public_reference),
+  defp compensation_idempotency_key(public_reference),
     do: "checkout-compensate-release-#{public_reference}"
 
   defp emit_inventory_reconciliation_required(offer_id, public_reference, context) do
