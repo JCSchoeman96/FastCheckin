@@ -364,6 +364,29 @@ defmodule FastCheck.Sales.ManualReviewTest do
     assert_order_status(order_id, "fulfillment_queued")
     assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
 
+    assert [%{args: issuer_args}] =
+             all_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+
+    assert :ok = perform_job(IssueTicketsWorker, issuer_args)
+    assert :ok = perform_job(IssueTicketsWorker, issuer_args)
+    assert_order_status(order_id, "ticket_issued")
+
+    assert Repo.one!(
+             from issue in "sales_ticket_issues",
+               where: issue.sales_order_id == ^order_id,
+               select: count(issue.id)
+           ) == 1
+
+    assert Repo.one!(
+             from transition in "sales_state_transitions",
+               where:
+                 transition.entity_type == "Order" and
+                   transition.entity_id == ^to_string(order_id) and
+                   transition.from_state == "fulfillment_queued" and
+                   transition.to_state == "ticket_issued",
+               select: count(transition.id)
+           ) == 1
+
     assert {:ok, %{reserved_quantity: 0, consumed_quantity: 1}} =
              ReservationLedger.get_availability(offer_id)
   end
