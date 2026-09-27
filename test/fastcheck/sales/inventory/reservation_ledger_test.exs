@@ -244,6 +244,39 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
     assert {:ok, nil} = Redix.command(FastCheck.Redix, ["HGET", reserve_key_name, "args_sig"])
   end
 
+  test "checkout compensation fails before mutation when the holds index has the wrong type", %{
+    run_id: run_id
+  } do
+    order_ref = "ORD-COMPENSATE-BAD-INDEX-#{run_id}"
+    reserve_key = idem("idem-checkout-bad-index", run_id)
+    compensation_key = "checkout-compensate-bad-index-#{run_id}"
+    reserve_key_name = reserve_dedupe_key(reserve_key)
+    compensation_key_name = "sales:inventory:dedupe:checkout_compensation:#{compensation_key}"
+
+    assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["DEL", holds_key(@offer_id)])
+
+    assert {:ok, "OK"} =
+             Redix.command(FastCheck.Redix, ["SET", holds_key(@offer_id), "wrong-type"])
+
+    before = availability!()
+
+    assert {:error, :unexpected_redis_response, _meta} =
+             ReservationLedger.compensate_checkout_reservation(
+               @offer_id,
+               order_ref,
+               1,
+               120,
+               reserve_key,
+               compensation_key
+             )
+
+    assert availability!() == before
+    assert {:ok, %{status: :held}} = ReservationLedger.get_hold_detail(@offer_id, order_ref)
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_key_name])
+    assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", compensation_key_name])
+  end
+
   test "checkout compensation rejects a different checkout idempotency key", %{run_id: run_id} do
     order_ref = "ORD-COMPENSATE-OWNER-#{run_id}"
     reserve_key = idem("idem-checkout-owner", run_id)
@@ -274,11 +307,11 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
     reserve_key = idem("idem-checkout-scope", run_id)
     compensation_key = "checkout-compensate-scope-#{run_id}"
     reserve_dedupe_key = reserve_dedupe_key(reserve_key)
-    other_offer_id = @offer_id + 1
+    other_offer_id = 45_000 + run_id
 
-    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", inventory_key(other_offer_id)])
+    :ok = flush_offer_inventory(other_offer_id)
     :ok = ReservationLedger.initialize_offer(other_offer_id, 5)
-    on_exit(fn -> Redix.command(FastCheck.Redix, ["DEL", inventory_key(other_offer_id)]) end)
+    on_exit(fn -> flush_offer_inventory(other_offer_id) end)
 
     assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
     before = availability!()
@@ -472,6 +505,18 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
   defp availability! do
     assert {:ok, snapshot} = ReservationLedger.get_availability(@offer_id)
     snapshot
+  end
+
+  defp flush_offer_inventory(offer_id) do
+    _ =
+      Redix.command(FastCheck.Redix, [
+        "DEL",
+        inventory_key(offer_id),
+        holds_key(offer_id),
+        event_trail_key(offer_id)
+      ])
+
+    :ok
   end
 
   defp idem(base, run_id), do: "#{base}-#{run_id}"

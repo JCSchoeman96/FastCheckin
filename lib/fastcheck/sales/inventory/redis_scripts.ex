@@ -530,6 +530,18 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"HOLD_NOT_FOUND"}
   end
 
+  local hold_type = redis.call("TYPE", hold_key).ok
+  if hold_type ~= "hash" then
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local holds_type = redis.call("TYPE", holds_key).ok
+  if holds_type ~= "none" and holds_type ~= "zset" then
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
   local hold_offer_id = redis.call("HGET", hold_key, "offer_id")
   local hold_order_ref = redis.call("HGET", hold_key, "order_public_reference")
   local hold_idempotency_key = redis.call("HGET", hold_key, "idempotency_key")
