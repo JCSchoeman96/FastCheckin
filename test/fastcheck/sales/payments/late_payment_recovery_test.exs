@@ -13,7 +13,6 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
     on_exit(fn ->
       Fixtures.flush_inventory_keys(offer.id)
       Application.delete_env(:fastcheck, :late_payment_recovery_mark_paid_fun)
-      Application.delete_env(:fastcheck, :late_payment_recovery_consume_fun)
     end)
 
     {:ok, offer: offer}
@@ -67,10 +66,10 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
 
     assert {:ok, :paid} = LatePaymentRecovery.recover(ctx, fn -> {:ok, :paid} end)
 
-    assert {:ok, %{status: :consumed, quantity: 1}} =
+    assert {:ok, %{status: :held, quantity: 1}} =
              ReservationLedger.get_hold_detail(offer.id, order_ref)
 
-    assert {:ok, %{available_quantity: 1, reserved_quantity: 0, consumed_quantity: 1}} =
+    assert {:ok, %{available_quantity: 1, reserved_quantity: 1, consumed_quantity: 0}} =
              ReservationLedger.get_availability(offer.id)
   end
 
@@ -131,29 +130,14 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
              ReservationLedger.get_availability(offer.id)
   end
 
-  test "marks reconciliation and keeps paid result when consume fails after paid transition", %{
-    offer: offer
-  } do
-    ctx =
-      LatePaymentRecovery.build_ctx(102, offer.id, "ORD-LATE-2", 1)
-
+  test "successful recovery leaves its hold for PaidOrderFulfillment", %{offer: offer} do
+    ctx = LatePaymentRecovery.build_ctx(102, offer.id, "ORD-LATE-2", 1)
     paid_result = %{order_id: 55, session_id: 66}
 
-    Application.put_env(
-      :fastcheck,
-      :late_payment_recovery_consume_fun,
-      fn _ctx ->
-        {:error, :hold_not_found, %{offer_id: offer.id}}
-      end
-    )
-
-    assert {:error, :paid_reconciliation_required, reason, ^paid_result} =
-             LatePaymentRecovery.recover(ctx, fn -> {:ok, paid_result} end)
-
-    assert reason == PaymentFailureReason.late_payment_inventory_ledger_unhealthy()
+    assert {:ok, ^paid_result} = LatePaymentRecovery.recover(ctx, fn -> {:ok, paid_result} end)
 
     assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
-    assert availability.ledger_state == :reconciliation_required
+    assert availability.ledger_state == :healthy
     assert availability.available_quantity == 1
     assert availability.reserved_quantity == 1
     assert availability.consumed_quantity == 0
@@ -162,20 +146,10 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
              ReservationLedger.get_hold_detail(offer.id, "ORD-LATE-2")
   end
 
-  test "lock contention after payment remains retryable without degrading the offer", %{
-    offer: offer
-  } do
+  test "successful recovery has no inventory-consume retry stage", %{offer: offer} do
     ctx = LatePaymentRecovery.build_ctx(104, offer.id, "ORD-LATE-4", 1)
-    paid_result = %{order_id: 57, session_id: 68}
 
-    Application.put_env(
-      :fastcheck,
-      :late_payment_recovery_consume_fun,
-      fn _ctx -> {:error, :lock_timeout, %{offer_id: offer.id}} end
-    )
-
-    assert {:error, :paid_retryable, :lock_timeout, ^paid_result} =
-             LatePaymentRecovery.recover(ctx, fn -> {:ok, paid_result} end)
+    assert {:ok, :paid} = LatePaymentRecovery.recover(ctx, fn -> {:ok, :paid} end)
 
     assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
     assert availability.ledger_state == :healthy
@@ -193,26 +167,17 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
     order_ref = "ORD-LATE-CONSUMED-REPLAY"
     ctx = LatePaymentRecovery.build_ctx(107, offer.id, order_ref, 1)
 
-    Application.put_env(
-      :fastcheck,
-      :late_payment_recovery_consume_fun,
-      fn recovery_ctx ->
-        assert {:ok, _consumed} =
-                 ReservationLedger.consume(
-                   recovery_ctx.offer_id,
-                   recovery_ctx.order_ref,
-                   recovery_ctx.quantity,
-                   recovery_ctx.consume_key
-                 )
+    assert {:ok, _held} =
+             ReservationLedger.reserve(
+               offer.id,
+               order_ref,
+               1,
+               ctx.ttl_seconds,
+               ctx.reserve_key
+             )
 
-        {:error, :lock_timeout, %{offer_id: recovery_ctx.offer_id}}
-      end
-    )
-
-    assert {:error, :paid_retryable, :lock_timeout, :paid} =
-             LatePaymentRecovery.recover(ctx, fn -> {:ok, :paid} end)
-
-    Application.delete_env(:fastcheck, :late_payment_recovery_consume_fun)
+    assert {:ok, _consumed} =
+             ReservationLedger.consume(offer.id, order_ref, 1, ctx.consume_key)
 
     assert {:ok, :paid} = LatePaymentRecovery.recover(ctx, fn -> {:ok, :paid} end)
 
@@ -223,7 +188,7 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
              ReservationLedger.get_hold_detail(offer.id, order_ref)
   end
 
-  test "successful recovery consumes inventory without leaving unpaid order state", %{
+  test "successful recovery keeps the reservation for the fulfillment worker", %{
     offer: offer
   } do
     ctx =
@@ -234,6 +199,7 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
 
     assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
     assert availability.available_quantity == 1
-    assert availability.consumed_quantity == 1
+    assert availability.reserved_quantity == 1
+    assert availability.consumed_quantity == 0
   end
 end

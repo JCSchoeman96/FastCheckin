@@ -2,7 +2,7 @@
   "pack_id": "0051_P0-B",
   "slice": "P0-B",
   "name": "Paid Order Fulfillment and Inventory Consumption",
-  "version": "1.0",
+  "version": "1.1",
   "status": "implemented",
   "repository": "JCSchoeman96/FastCheckin",
   "default_branch": "main",
@@ -18,7 +18,11 @@
   "files_created": [
     "lib/fastcheck/sales/paid_order_fulfillment.ex",
     "lib/fastcheck/workers/paid_order_fulfillment_worker.ex",
+    "lib/fastcheck/sales/payments/late_payment_recovery.ex",
+    "lib/fastcheck/sales/manual_review.ex",
+    "priv/repo/migrations/20260927143000_allow_retry_paid_order_fulfillment_action.exs",
     "test/fastcheck/sales/paid_order_fulfillment_test.exs",
+    "test/fastcheck/sales/manual_review_test.exs",
     "test/fastcheck/sales/paid_order_fulfillment_boundary_test.exs",
     "docs/fastcheck_sales/feature_packs/0051_P0-B_paid-order-fulfillment/0051_P0-B-FEATURE_PACK.md",
     "docs/fastcheck_sales/feature_packs/0051_P0-B_paid-order-fulfillment/pack.json"
@@ -33,15 +37,18 @@
     "coordinator": "FastCheck.Sales.PaidOrderFulfillment",
     "consume_key": "paid_order_fulfillment:consume:<payment_attempt_id>",
     "redis_consume_inside_postgres_transaction": false,
-    "already_consumed": "accept only exact offer, order reference, quantity, and consumed status"
+    "already_consumed": "accept only exact offer, order reference, quantity, and consumed status",
+    "late_payment_recovery": "reserve or re-establish held inventory; final consume occurs only in PaidOrderFulfillment after paid-state commit"
   },
   "durable_fulfillment": {
     "order_action": "queue_fulfillment",
     "issuer_job": "FastCheck.Workers.IssueTicketsWorker",
     "transition_and_job_insert": "same Postgres transaction under order advisory lock",
-    "direct_paid_verified_issuance": false
+    "direct_paid_verified_issuance": false,
+    "pre_fulfillment_manual_review_recovery": "audited manual_review to paid_verified transition and PaidOrderFulfillmentWorker insert in one Postgres transaction"
   },
-  "migration_required": false,
+  "migration_required": true,
+  "migration_scope": "Add retry_paid_order_fulfillment to sales_manual_review_actions_action_valid only",
   "verification_commands": [
     "mix test test/fastcheck/sales/payments/payment_verification_test.exs",
     "mix test test/fastcheck/sales/payments/payment_verification_idempotency_test.exs",

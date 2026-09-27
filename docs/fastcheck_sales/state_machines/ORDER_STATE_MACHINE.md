@@ -36,7 +36,10 @@
 | `partially_issued` | `refunded` | `refund_partially_issued_order` | `admin/system` | Refund/revocation policy approves. | Revoke issued artifacts and update scanner visibility. | yes | Duplicate refund returns refunded. | yes |
 | `ticket_issued` | `refunded` | `refund_issued_order` | `admin/system` | Refund/revocation policy approves and audit reason exists. | Revoke tickets, invalidate tokens, enqueue scanner sync. | yes | Duplicate refund returns refunded. | yes |
 | `ticket_issued` | `manual_review` | `flag_issued_order_review` | `admin/system` | Support issue requires review without invalidating issued ticket yet. | Record reason; do not mutate scanner validity unless explicit revocation. | yes | Duplicate review preserves issued evidence. | no |
+| `manual_review` | `paid_verified` | `retry_paid_fulfillment` | `admin/system` | No prior fulfillment boundary; allowed pre-fulfillment inventory failure reason; one exact verified-success attempt, matching amount/currency, paid CheckoutSession, one OrderLine, and no issued TicketIssue. | Preserve `paid_at`, clear the current failure markers, record `retry_paid_order_fulfillment`, and insert `PaidOrderFulfillmentWorker` in the same Postgres transaction. | yes | State transition prevents a second operator retry; worker remains independently idempotent. | no |
 | `manual_review` | approved target | `resolve_manual_review_to_target` | `admin/system` | Target is explicitly allowed by policy and reason exists. | Record recovery metadata and target side effects. | yes | Same resolution idempotent by review id. | target-dependent |
+
+| `expired` | `paid_verified` | `recover_expired_paid_order` | `system` | Server-side payment verification succeeds; late recovery re-establishes the exact valid hold; amount, currency, paid session, and one OrderLine match. | Record `paid_at` and insert `PaidOrderFulfillmentWorker` with paid-state and PaymentEvent updates in the same Postgres transaction. Keep inventory held until the worker consumes after commit. | yes | Same recovery key reuses the exact held reservation; duplicate verification restores only a missing worker handoff. | no |
 
 ## Forbidden Transitions
 
@@ -56,7 +59,11 @@ For an active checkout, successful Paystack verification commits
 Postgres transaction. This transaction does not call Redis or enqueue
 `IssueTicketsWorker` directly. Repeated verification can restore the handoff
 while the Order remains eligible. The established late-payment recovery path
-retains its own Redis consume before inserting the same fulfillment handoff.
+re-establishes a valid held reservation but does not consume it. Late payment
+commits the verified attempt, paid Order, paid CheckoutSession, finalized
+PaymentEvent, and fulfillment-worker job in one Postgres transaction, just like
+an active checkout. If that transaction rolls back, inventory remains held and
+can be reused by a verification retry.
 
 `FastCheck.Sales.PaidOrderFulfillment` reloads the attempt and its authoritative
 Order, checkout, and single OrderLine. It consumes the hold through
@@ -79,7 +86,13 @@ the exact consumed hold and completes the database transaction. Process loss
 after that transaction leaves both `fulfillment_queued` and the issuer job
 durable. Manual issuance retry and return-to-queue actions also require
 `fulfillment_queued_at`; the return operation inserts its issuer job in the
-same transaction as its state transition.
+same transaction as its state transition. If fulfillment retry exhaustion moves
+an eligible verified-paid Order to `manual_review`, an operator can use the
+audited `retry_paid_order_fulfillment` action to validate authority again and
+queue the fulfillment worker in the same transaction as the recovery state
+transition. This recovery action does not consume Redis inventory itself and
+cannot be used for payment mismatches, unverified attempts, or Orders that
+already crossed the fulfillment boundary.
 
 ## Customer-Facing Rule
 

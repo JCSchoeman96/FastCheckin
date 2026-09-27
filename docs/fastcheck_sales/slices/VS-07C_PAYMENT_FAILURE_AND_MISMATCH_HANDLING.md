@@ -24,7 +24,7 @@ Centralized payment outcome classification and application on top of VS-07B veri
 - Amount/currency/reference mismatch → dedicated attempt statuses; order and session `manual_review` with stable reason codes
 - Provider terminal failure → attempt failed; order unpaid
 - Duplicate verified success → idempotent; linked event `processed` (not duplicate) when appropriate
-- Expired checkout + provider success → late-payment recovery via `ReservationLedger` (`reserve` + `consume` with compensation on DB failure); success → `paid_verified` / session `paid` without ticket issuance; inventory failure → `manual_review` with `late_payment_inventory_unavailable`
+- Expired checkout + provider success → `LatePaymentRecovery` re-establishes a held reservation; the verification transaction commits `paid_verified`, paid CheckoutSession, finalized PaymentEvent, and `PaidOrderFulfillmentWorker`; that worker consumes after commit. Reservation or ledger failures fail closed to `manual_review` or retry without issuing tickets.
 - Unmatched webhook events retained; retry when matching attempt appears later
 - Telemetry: `[:fastcheck, :sales, :payment, :verified]`, `:mismatch`, `:failed`, `:manual_review` (approved names only)
 - Best-effort PubSub broadcasts for late recovery and duplicate-ignore outcomes (sanitized payloads)

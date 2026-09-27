@@ -43,6 +43,23 @@ defmodule FastCheck.Sales.PaidOrderFulfillment do
 
   def fulfill(_payment_attempt_id, _opts), do: {:error, :invalid_payment_attempt_id}
 
+  @doc false
+  def validate_recovery_authority(payment_attempt_id)
+      when is_integer(payment_attempt_id) and payment_attempt_id > 0 do
+    with {:ok, authority} <- load_authority(payment_attempt_id),
+         :ok <- require_verified_payment(authority.attempt),
+         {:ok, _line} <- validate_fulfillment_authority(authority) do
+      :ok
+    else
+      _ -> {:error, :unsafe_fulfillment_authority}
+    end
+  rescue
+    _error -> {:error, :unsafe_fulfillment_authority}
+  end
+
+  def validate_recovery_authority(_payment_attempt_id),
+    do: {:error, :unsafe_fulfillment_authority}
+
   defp fulfill_authorized(%{order: %{status: status}}, _context, _opts)
        when status in @already_fulfilled_states,
        do: {:ok, :already_fulfilled}

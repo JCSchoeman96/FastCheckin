@@ -2,17 +2,15 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecovery do
   @moduledoc """
   Coordinates late-payment inventory recovery for expired checkout sessions.
 
-  Runs Redis reservation steps in a compensation-safe order: reserve, durable
-  paid-state transitions, then consume. Releases reserved holds when Postgres
-  transitions fail before payment is recorded. Once payment is recorded, consume
-  failures preserve the hold and mark inventory reconciliation.
+  Re-establishes a held reservation before applying the caller's paid-state
+  transition. Final inventory consumption belongs to PaidOrderFulfillment, after
+  the transaction containing the verified-paid state and durable worker handoff
+  has committed.
   """
 
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Payments.PaymentFailureReason, as: Reasons
   alias FastCheck.Sales.Payments.PaymentOutcomes
-
-  @retryable_consume_errors [:ledger_unavailable, :lock_timeout]
 
   @type ctx :: %{
           offer_id: integer(),
@@ -22,37 +20,30 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecovery do
           reserve_key: String.t(),
           consume_key: String.t(),
           release_key: String.t(),
-          stage: :none | :reserved | :paid | :consumed | :released
+          stage: :none | :reserved | :released
         }
 
   @type paid_result :: term()
 
   @doc """
-  Reserves inventory, applies the caller's paid-state transition, then consumes.
+  Reserves inventory and applies the caller's paid-state transition.
 
-  Returns `{:ok, paid_result}` on full success.
+  Returns `{:ok, paid_result}` while leaving the hold held for
+  `PaidOrderFulfillment` to consume after the paid-state transaction commits.
 
   On reserve failure returns `{:error, :manual_review, reason_code}`.
 
   On paid-state failure returns `{:error, :manual_review, reason_code}` after
   releasing any reserved hold.
 
-  On consume failure after paid-state success returns
-  `{:error, :paid_reconciliation_required, reason_code, paid_result}` without
-  releasing the hold, because payment is authoritative at that point.
   """
   @spec recover(ctx(), (-> {:ok, paid_result()} | {:error, term()})) ::
           {:ok, paid_result()}
           | {:error, :manual_review, String.t()}
           | {:error, :retryable}
-          | {:error, :paid_reconciliation_required, String.t(), paid_result()}
-          | {:error, :paid_retryable, atom(), paid_result()}
   def recover(ctx, mark_paid_fun) when is_function(mark_paid_fun, 0) do
-    with {:ok, ctx} <- reserve(ctx),
-         {:ok, paid_result, ctx} <- mark_paid(ctx, mark_paid_fun),
-         ctx = %{ctx | stage: :paid},
-         :ok <- consume(ctx, paid_result) do
-      {:ok, paid_result}
+    with {:ok, ctx} <- reserve(ctx) do
+      mark_paid(ctx, mark_paid_fun)
     end
   end
 
@@ -123,7 +114,7 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecovery do
   defp mark_paid(%{stage: :reserved} = ctx, mark_paid_fun) do
     case invoke_mark_paid_fun(mark_paid_fun) do
       {:ok, paid_result} ->
-        {:ok, paid_result, ctx}
+        {:ok, paid_result}
 
       {:error, _reason} ->
         case release_reserved(ctx) do
@@ -145,33 +136,7 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecovery do
     end
   end
 
-  defp consume(%{stage: :paid} = ctx, paid_result) do
-    %{offer_id: offer_id, order_ref: order_ref, quantity: quantity} = ctx
-
-    consume_result =
-      case Application.get_env(:fastcheck, :late_payment_recovery_consume_fun) do
-        fun when is_function(fun, 1) ->
-          fun.(ctx)
-
-        _ ->
-          ReservationLedger.consume(offer_id, order_ref, quantity, ctx.consume_key)
-      end
-
-    case consume_result do
-      {:ok, _consumed} ->
-        :ok
-
-      {:error, error, _meta} when error in @retryable_consume_errors ->
-        {:error, :paid_retryable, error, paid_result}
-
-      {:error, error, _meta} ->
-        _ = mark_reconciliation_required(offer_id, "late_payment_consume_failed")
-
-        {:error, :paid_reconciliation_required, paid_reconciliation_reason(error), paid_result}
-    end
-  end
-
-  defp release_reserved(%{stage: stage} = ctx) when stage in [:reserved, :paid] do
+  defp release_reserved(%{stage: :reserved} = ctx) do
     case ReservationLedger.release_late_payment_reservation(
            ctx.offer_id,
            ctx.order_ref,
@@ -189,8 +154,6 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecovery do
         {:error, error}
     end
   end
-
-  defp release_reserved(_ctx), do: :ok
 
   defp mark_reconciliation_required(offer_id, reason) do
     ReservationLedger.mark_offer_health(offer_id, :reconciliation_required, reason)
@@ -213,15 +176,6 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecovery do
 
   defp manual_review_error(_error) do
     {:error, :manual_review, Reasons.late_payment_recovery_failed()}
-  end
-
-  defp paid_reconciliation_reason(error)
-       when error in [:ledger_unavailable, :reconciliation_required, :ledger_degraded] do
-    Reasons.late_payment_inventory_ledger_unhealthy()
-  end
-
-  defp paid_reconciliation_reason(_error) do
-    Reasons.late_payment_inventory_ledger_unhealthy()
   end
 
   defp invoke_mark_paid_fun(mark_paid_fun) do

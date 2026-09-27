@@ -34,15 +34,13 @@ For active checkouts, Paystack verification commits the verified attempt, paid
 Order, paid CheckoutSession, and fulfillment-worker job in one Postgres
 transaction. That transaction does not call Redis or enqueue
 `IssueTicketsWorker` directly. Repeated verification can restore the handoff
-while the Order remains eligible. Late-payment recovery retains its existing
-Redis reserve and consume before inserting the same fulfillment handoff. A
-temporary Redis reserve failure rolls back the verification transaction so the
-payment verifier can retry. If a pre-paid-state database failure releases a
-late-payment hold, that atomic release clears the matching reserve dedupe entry;
-a later recovery can reserve the same exact hold again. Checkout-expiry
-releases do not set this recovery marker and remain unavailable for late
-re-reservation. A retry after a lost consume response accepts only the exact
-consumed hold and replays the stable late-payment consume key.
+while the Order remains eligible. Late-payment recovery may re-establish a valid
+held reservation, but it does not consume inventory. The paid attempt, paid
+Order, paid CheckoutSession, finalized PaymentEvent, and fulfillment-worker job
+commit in the same Postgres transaction for both active and late payments. If
+that transaction fails, the hold remains held and the same recovery key makes
+the next verification safe. Final consumption occurs only in
+`PaidOrderFulfillment` after the paid-state transaction commits.
 
 ## Failure and crash behavior
 
@@ -63,6 +61,13 @@ consumed hold and replays the stable late-payment consume key.
   job durable.
 - Retry exhaustion moves the paid Order to manual review with a stable reason
   code and emits existing manual-review telemetry.
+- An operator can retry an eligible pre-fulfillment manual-review Order through
+  `retry_paid_order_fulfillment`. The service revalidates verified payment,
+  amount/currency, paid CheckoutSession, one OrderLine, allowed inventory
+  failure reason, no prior fulfillment timestamp, and no issued TicketIssue.
+  The `manual_review -> paid_verified` transition, audit action, and
+  `PaidOrderFulfillmentWorker` insert share one Postgres transaction; the
+  action does not mutate Redis.
 
 ## Issuance and manual-review boundaries
 
@@ -72,6 +77,8 @@ consumed hold and replays the stable late-payment consume key.
   `fulfillment_queued_at != nil`.
 - Returning to fulfillment atomically transitions the Order and inserts a new
   idempotent issuer job. Manual-review actions do not mutate Redis inventory.
+- Pre-fulfillment retry is distinct from issuance retry and cannot enqueue
+  `IssueTicketsWorker` directly.
 - This pack does not add ticket delivery behavior.
 
 ## Verification
@@ -79,5 +86,7 @@ consumed hold and replays the stable late-payment consume key.
 Focused tests cover payment handoff transactionality, deterministic consume,
 already-consumed hold matching, unsafe and transient ledger outcomes, retry
 exhaustion, crash-after-consume recovery, database and issuer-insert rollback,
-issuer authorization, manual-review gates, and the checkout-to-scanner flow.
-No migration, new Redis structure, or new Oban queue is required.
+issuer authorization, manual-review gates and recovery, late-payment database
+rollback with held inventory, and the checkout-to-scanner flow. One narrow
+migration extends only the manual-review action check constraint; no new
+persistence model, Redis structure, index, or Oban queue is required.

@@ -6,6 +6,8 @@ defmodule FastCheck.Sales.PaidOrderFulfillmentBoundaryTest do
   @payment_verification File.read!("lib/fastcheck/sales/payments/payment_verification.ex")
   @issuer File.read!("lib/fastcheck/tickets/issuer.ex")
   @issuer_worker File.read!("lib/fastcheck/workers/issue_tickets_worker.ex")
+  @late_recovery File.read!("lib/fastcheck/sales/payments/late_payment_recovery.ex")
+  @manual_review File.read!("lib/fastcheck/sales/manual_review.ex")
 
   test "fulfillment owns consume and issuer enqueue but not payment or ticket creation" do
     assert @coordinator =~ "ReservationLedger.consume"
@@ -21,6 +23,12 @@ defmodule FastCheck.Sales.PaidOrderFulfillmentBoundaryTest do
     refute @payment_handler =~ "IssueTicketsWorker"
     refute @payment_handler =~ "Issuer.issue_order"
     refute @payment_verification =~ "ReservationLedger"
+  end
+
+  test "late recovery and manual review cannot consume inventory" do
+    refute @late_recovery =~ "ReservationLedger.consume"
+    refute @manual_review =~ "ReservationLedger"
+    assert @manual_review =~ "PaidOrderFulfillmentWorker"
   end
 
   test "issuer does not mutate inventory or call payment providers" do

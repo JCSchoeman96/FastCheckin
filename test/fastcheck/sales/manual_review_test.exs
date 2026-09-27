@@ -5,9 +5,12 @@ defmodule FastCheck.Sales.ManualReviewTest do
   import Ecto.Query
 
   alias FastCheck.Repo
+  alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.ManualReview
   alias FastCheck.Sales.Payments.VerifyPaymentWorker
+  alias FastCheck.SalesCheckoutFixtures, as: CheckoutFixtures
   alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   @raw_email "manual.review@example.com"
   @raw_phone "+27123456789"
@@ -207,6 +210,174 @@ defmodule FastCheck.Sales.ManualReviewTest do
     refute_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
   end
 
+  test "paid fulfillment review retries through its worker and writes one audit" do
+    %{order_id: order_id, payment_attempt_id: attempt_id, paid_at: paid_at} =
+      insert_fulfillment_review_case!()
+
+    assert {:ok, action} =
+             ManualReview.retry_paid_order_fulfillment(
+               order_id,
+               @actor,
+               %{"reason_code" => "retry_paid_order_fulfillment"}
+             )
+
+    assert action.action == "retry_paid_order_fulfillment"
+    assert_order_status(order_id, "paid_verified")
+
+    assert Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.paid_at) ==
+             DateTime.to_naive(paid_at)
+
+    assert state_transition?("Order", order_id, "manual_review", "paid_verified")
+    assert [%{action: "retry_paid_order_fulfillment"}] = review_actions(order_id)
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt_id}
+    )
+
+    refute_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+
+    assert {:error, :unsafe_manual_review_transition} =
+             ManualReview.retry_paid_order_fulfillment(
+               order_id,
+               @actor,
+               %{"reason_code" => "retry_paid_order_fulfillment"}
+             )
+
+    assert [%{action: "retry_paid_order_fulfillment"}] = review_actions(order_id)
+  end
+
+  test "paid fulfillment retry rejects unrelated review reasons and unsafe authority" do
+    invalid_cases = [
+      [manual_review_reason: "payment_amount_mismatch"],
+      [attempt_status: "initialized"],
+      [attempt_amount_cents: 9_000],
+      [attempt_currency: "USD"],
+      [checkout_status: "manual_review"],
+      [fulfillment_queued?: true],
+      [ticket_issue_status: "issued"]
+    ]
+
+    for opts <- invalid_cases do
+      %{order_id: order_id} = insert_fulfillment_review_case!(opts)
+
+      assert {:error, :unsafe_manual_review_transition} =
+               ManualReview.retry_paid_order_fulfillment(
+                 order_id,
+                 @actor,
+                 %{"reason_code" => "retry_paid_order_fulfillment"}
+               )
+
+      assert_order_status(order_id, "manual_review")
+      refute_enqueued(worker: PaidOrderFulfillmentWorker)
+      refute state_transition?("Order", order_id, "manual_review", "paid_verified")
+      assert review_actions(order_id) == []
+    end
+  end
+
+  test "paid fulfillment retry rolls back state and audit when worker insert fails" do
+    %{order_id: order_id, payment_attempt_id: attempt_id} = insert_fulfillment_review_case!()
+    constraint = "manual_review_block_paid_fulfillment_#{order_id}"
+
+    Repo.query!("ALTER TABLE oban_jobs ADD CONSTRAINT #{constraint} CHECK (false) NOT VALID")
+
+    try do
+      assert {:error, _reason} =
+               ManualReview.retry_paid_order_fulfillment(
+                 order_id,
+                 @actor,
+                 %{"reason_code" => "retry_paid_order_fulfillment"}
+               )
+
+      assert_order_status(order_id, "manual_review")
+      refute state_transition?("Order", order_id, "manual_review", "paid_verified")
+      assert review_actions(order_id) == []
+
+      refute_enqueued(
+        worker: PaidOrderFulfillmentWorker,
+        args: %{"payment_attempt_id" => attempt_id}
+      )
+    after
+      Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT #{constraint}")
+    end
+
+    assert {:ok, _action} =
+             ManualReview.retry_paid_order_fulfillment(
+               order_id,
+               @actor,
+               %{"reason_code" => "retry_paid_order_fulfillment"}
+             )
+
+    assert [%{action: "retry_paid_order_fulfillment"}] = review_actions(order_id)
+  end
+
+  test "pre-fulfillment retry exhaustion can be recovered through the coordinator" do
+    %{order_id: order_id, payment_attempt_id: attempt_id, offer_id: offer_id} =
+      insert_fulfillment_review_case!(
+        order_status: "paid_verified",
+        manual_review_reason: nil
+      )
+
+    order_ref =
+      Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.public_reference)
+
+    :ok = ReservationLedger.initialize_offer(offer_id, 1)
+
+    assert {:ok, %{status: :held}} =
+             ReservationLedger.reserve(
+               offer_id,
+               order_ref,
+               1,
+               600,
+               "manual-review-retry-exhaustion:#{attempt_id}"
+             )
+
+    CheckoutFixtures.with_redis_stopped(fn ->
+      assert :ok =
+               PaidOrderFulfillmentWorker.perform(%Oban.Job{
+                 args: %{"payment_attempt_id" => attempt_id},
+                 attempt: 5,
+                 max_attempts: 5
+               })
+    end)
+
+    assert_order_status(order_id, "manual_review")
+
+    assert Repo.one!(
+             from o in "sales_orders", where: o.id == ^order_id, select: o.manual_review_reason
+           ) ==
+             "paid_order_fulfillment_retry_exhausted"
+
+    assert Repo.one!(
+             from o in "sales_orders", where: o.id == ^order_id, select: o.fulfillment_queued_at
+           ) ==
+             nil
+
+    assert {:ok, _action} =
+             ManualReview.retry_paid_order_fulfillment(
+               order_id,
+               @actor,
+               %{"reason_code" => "retry_paid_order_fulfillment"}
+             )
+
+    assert :ok = perform_job(PaidOrderFulfillmentWorker, %{"payment_attempt_id" => attempt_id})
+    assert_order_status(order_id, "fulfillment_queued")
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+
+    assert {:ok, %{reserved_quantity: 0, consumed_quantity: 1}} =
+             ReservationLedger.get_availability(offer_id)
+  end
+
+  test "manual-review context exposes retry only for an eligible pre-fulfillment order" do
+    %{order_id: order_id} = insert_fulfillment_review_case!()
+    assert {:ok, context} = ManualReview.get_context("order", order_id)
+    assert context.can_retry_paid_order_fulfillment?
+
+    ineligible_order_id = insert_review_order!()
+    assert {:ok, ineligible_context} = ManualReview.get_context("order", ineligible_order_id)
+    refute ineligible_context.can_retry_paid_order_fulfillment?
+  end
+
   test "return_to_fulfillment_queue fails closed on unsafe or unknown payment state" do
     order_id = insert_review_order!()
     insert_checkout_session!(order_id, "paid")
@@ -343,9 +514,10 @@ defmodule FastCheck.Sales.ManualReviewTest do
   end
 
   defp insert_review_order!(opts \\ []) do
-    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(91_001)
+    CheckoutFixtures.ensure_event_for_sales!(91_001)
 
     status = Keyword.get(opts, :status, "manual_review")
+    reason = Keyword.get(opts, :manual_review_reason, "payment_state_conflict")
     seconds_ago = Keyword.get(opts, :seconds_ago, 0)
 
     %{rows: [[id]]} =
@@ -357,15 +529,120 @@ defmodule FastCheck.Sales.ManualReviewTest do
            inserted_at, updated_at)
         VALUES
           ($1, 91001, 'Manual Buyer', $2, $3, 'admin', $4, 10000, 'ZAR',
-           'payment_state_conflict', 1,
-           now() AT TIME ZONE 'utc' - ($5 * interval '1 second'),
-           now() AT TIME ZONE 'utc' - ($5 * interval '1 second'))
+           $5, 1,
+           now() AT TIME ZONE 'utc' - ($6 * interval '1 second'),
+           now() AT TIME ZONE 'utc' - ($6 * interval '1 second'))
         RETURNING id
         """,
-        ["MR-#{System.unique_integer([:positive])}", @raw_phone, @raw_email, status, seconds_ago]
+        [
+          "MR-#{System.unique_integer([:positive])}",
+          @raw_phone,
+          @raw_email,
+          status,
+          reason,
+          seconds_ago
+        ]
       )
 
     id
+  end
+
+  defp insert_fulfillment_review_case!(opts \\ []) do
+    order_id =
+      insert_review_order!(
+        status: Keyword.get(opts, :order_status, "manual_review"),
+        manual_review_reason:
+          Keyword.get(opts, :manual_review_reason, "paid_order_fulfillment_retry_exhausted")
+      )
+
+    paid_at = DateTime.utc_now() |> DateTime.truncate(:second)
+    Repo.query!("UPDATE sales_orders SET paid_at = $2 WHERE id = $1", [order_id, paid_at])
+
+    insert_checkout_session!(order_id, Keyword.get(opts, :checkout_status, "paid"))
+
+    payment_attempt_id =
+      insert_payment_attempt!(
+        order_id,
+        Keyword.get(opts, :attempt_status, "verified_success"),
+        amount_cents: Keyword.get(opts, :attempt_amount_cents, 10_000),
+        currency: Keyword.get(opts, :attempt_currency, "ZAR")
+      )
+
+    {offer_id, order_line_id} = insert_order_line!(order_id)
+
+    if Keyword.get(opts, :fulfillment_queued?, false), do: set_fulfillment_queued_at!(order_id)
+
+    if ticket_issue_status = Keyword.get(opts, :ticket_issue_status) do
+      insert_ticket_issue_for_order_line!(order_id, order_line_id, ticket_issue_status)
+    end
+
+    %{
+      order_id: order_id,
+      payment_attempt_id: payment_attempt_id,
+      offer_id: offer_id,
+      order_line_id: order_line_id,
+      paid_at: paid_at
+    }
+  end
+
+  defp insert_order_line!(order_id) do
+    CheckoutFixtures.ensure_event_for_sales!(91_001)
+    offer_name = "Fulfillment Offer #{System.unique_integer([:positive])}"
+
+    %{rows: [[offer_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_ticket_offers
+          (event_id, name, ticket_type, price_cents, currency, configured_quantity_available,
+           initial_quantity, max_per_order, sales_enabled, sales_channel, starts_at, ends_at,
+           lock_version, inserted_at, updated_at)
+        VALUES
+          (91001, $1, 'General', 10000, 'ZAR', 100, 100, 4, true, 'admin',
+           now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc' + interval '30 days',
+           1, now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+        RETURNING id
+        """,
+        [offer_name]
+      )
+
+    %{rows: [[line_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_order_lines
+          (sales_order_id, ticket_offer_id, line_number, ticket_type, offer_name_snapshot,
+           event_name_snapshot, quantity, unit_amount_cents, total_amount_cents, currency,
+           metadata, inserted_at, updated_at)
+        VALUES
+          ($1, $2, 1, 'General', $3, 'Manual Event', 1, 10000, 10000,
+           'ZAR', '{}', now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+        RETURNING id
+        """,
+        [order_id, offer_id, offer_name]
+      )
+
+    {offer_id, line_id}
+  end
+
+  defp insert_ticket_issue_for_order_line!(order_id, order_line_id, status) do
+    Repo.query!(
+      """
+      INSERT INTO sales_ticket_issues
+        (sales_order_id, sales_order_line_id, line_item_sequence, attendee_id, ticket_code,
+         qr_token_hash, delivery_token_hash, status, scanner_status, inserted_at, updated_at)
+      VALUES
+        ($1, $2, 1, $3, $4, $5, $6, $7, 'valid',
+         now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+      """,
+      [
+        order_id,
+        order_line_id,
+        System.unique_integer([:positive]),
+        "TICKET-#{System.unique_integer([:positive])}",
+        "qr-#{System.unique_integer([:positive])}",
+        "delivery-#{System.unique_integer([:positive])}",
+        status
+      ]
+    )
   end
 
   defp set_fulfillment_queued_at!(order_id) do
@@ -386,6 +663,8 @@ defmodule FastCheck.Sales.ManualReviewTest do
   defp insert_payment_attempt!(order_id, status, opts \\ []) do
     reason = Keyword.get(opts, :manual_review_reason)
     seconds_ago = Keyword.get(opts, :seconds_ago, 0)
+    amount_cents = Keyword.get(opts, :amount_cents, 10_000)
+    currency = Keyword.get(opts, :currency, "ZAR")
 
     %{rows: [[id]]} =
       Repo.query!(
@@ -396,10 +675,10 @@ defmodule FastCheck.Sales.ManualReviewTest do
            manual_review_reason, raw_initialize_response, raw_verify_response,
            inserted_at, updated_at)
         VALUES
-          ($1, 'paystack', $2, $3, $4, $5, $6, 10000, 'ZAR', 1, $7,
+          ($1, 'paystack', $2, $3, $4, $5, $6, $7, $8, 1, $9,
            '{"secret":"raw-init"}', '{"secret":"raw-verify"}',
-           now() AT TIME ZONE 'utc' - ($8 * interval '1 second'),
-           now() AT TIME ZONE 'utc' - ($8 * interval '1 second'))
+           now() AT TIME ZONE 'utc' - ($10 * interval '1 second'),
+           now() AT TIME ZONE 'utc' - ($10 * interval '1 second'))
         RETURNING id
         """,
         [
@@ -409,6 +688,8 @@ defmodule FastCheck.Sales.ManualReviewTest do
           @authorization_url,
           @access_code,
           status,
+          amount_cents,
+          currency,
           reason,
           seconds_ago
         ]
@@ -418,7 +699,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
   end
 
   defp insert_ticket_issue!(order_id, opts \\ []) do
-    FastCheck.SalesCheckoutFixtures.ensure_event_for_sales!(91_001)
+    CheckoutFixtures.ensure_event_for_sales!(91_001)
 
     seconds_ago = Keyword.get(opts, :seconds_ago, 0)
     offer_name = "Manual Offer #{System.unique_integer([:positive])}"

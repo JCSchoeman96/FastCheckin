@@ -91,6 +91,14 @@ defmodule FastCheckWeb.SalesManualReviewLive do
     end)
   end
 
+  def handle_event("retry_paid_order_fulfillment", %{"order-id" => order_id}, socket) do
+    run_action(socket, fn ->
+      ManualReview.retry_paid_order_fulfillment(order_id, socket.assigns.actor, %{
+        "reason_code" => "retry_paid_order_fulfillment"
+      })
+    end)
+  end
+
   def handle_event("hold", %{"order-id" => order_id}, socket) do
     run_action(socket, fn ->
       ManualReview.hold_for_investigation(order_id, socket.assigns.actor, %{
@@ -317,6 +325,16 @@ defmodule FastCheckWeb.SalesManualReviewLive do
                     phx-value-order-id={@selected_context.sales_order_id}
                   >
                     Queue issuance retry
+                  </.button>
+                  <.button
+                    :if={@selected_context.can_retry_paid_order_fulfillment?}
+                    type="button"
+                    variant="outline"
+                    color="primary"
+                    phx-click="retry_paid_order_fulfillment"
+                    phx-value-order-id={@selected_context.sales_order_id}
+                  >
+                    Retry paid fulfillment
                   </.button>
                   <.button
                     type="button"

@@ -6,10 +6,12 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.PaymentAttempt
+  alias FastCheck.Sales.PaymentEvent
   alias FastCheck.Sales.Payments.PaymentVerification
   alias FastCheck.Sales.Payments.TestSupport
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
@@ -22,7 +24,6 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
     on_exit(fn ->
       Fixtures.flush_inventory_keys(offer.id)
       paystack_cleanup.()
-      Application.delete_env(:fastcheck, :late_payment_recovery_consume_fun)
       Application.delete_env(:fastcheck, :late_payment_recovery_mark_paid_fun)
     end)
 
@@ -78,7 +79,9 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
     assert order.manual_review_reason == "late_payment_inventory_unavailable"
   end
 
-  test "late payment lock contention durably hands off retryable fulfillment", %{offer: offer} do
+  test "late payment commits the held inventory before the fulfillment worker consumes it", %{
+    offer: offer
+  } do
     %{order: order, session: session, attempt: attempt} = TestSupport.initialized_payment!(offer)
 
     session
@@ -92,12 +95,6 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
         amount: attempt.amount_cents,
         currency: attempt.currency
       )
-    )
-
-    Application.put_env(
-      :fastcheck,
-      :late_payment_recovery_consume_fun,
-      fn _ctx -> {:error, :lock_timeout, %{offer_id: offer.id}} end
     )
 
     assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
@@ -114,7 +111,8 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
     assert {:ok, %{ledger_state: :healthy, reserved_quantity: 1, consumed_quantity: 0}} =
              ReservationLedger.get_availability(offer.id)
 
-    Application.delete_env(:fastcheck, :late_payment_recovery_consume_fun)
+    assert {:ok, %{status: :held, quantity: 1}} =
+             ReservationLedger.get_hold_detail(offer.id, order.public_reference)
 
     assert :ok =
              perform_job(PaidOrderFulfillmentWorker, %{"payment_attempt_id" => attempt.id})
@@ -160,6 +158,128 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
       worker: PaidOrderFulfillmentWorker,
       args: %{"payment_attempt_id" => attempt.id}
     )
+  end
+
+  test "late-payment fulfillment-job insert failure never leaves consumed inventory", %{
+    offer: offer
+  } do
+    %{order: order, session: session, attempt: attempt} = TestSupport.initialized_payment!(offer)
+
+    session
+    |> Changeset.for_update(:expire_session, %{}, actor: Fixtures.system_actor())
+    |> Ash.update!(authorize?: false)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: attempt.amount_cents,
+        currency: attempt.currency
+      )
+    )
+
+    constraint = "block_late_paid_fulfillment_handoff_#{attempt.id}"
+    Repo.query!("ALTER TABLE oban_jobs ADD CONSTRAINT #{constraint} CHECK (false) NOT VALID")
+
+    try do
+      assert {:error, _reason} = PaymentVerification.verify_attempt(attempt.id)
+
+      assert reload_attempt!(attempt.id).status == "verification_started"
+      assert reload_order!(order.id).status == "awaiting_payment"
+      assert reload_session!(session.id).status == "expired"
+
+      assert {:ok, %{reserved_quantity: 1, consumed_quantity: 0}} =
+               ReservationLedger.get_availability(offer.id)
+
+      assert {:ok, %{status: :held, quantity: 1}} =
+               ReservationLedger.get_hold_detail(offer.id, order.public_reference)
+
+      refute_enqueued(
+        worker: PaidOrderFulfillmentWorker,
+        args: %{"payment_attempt_id" => attempt.id}
+      )
+    after
+      Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT #{constraint}")
+    end
+
+    assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
+    assert reload_order!(order.id).status == "paid_verified"
+    assert reload_session!(session.id).status == "paid"
+
+    assert :ok =
+             perform_job(PaidOrderFulfillmentWorker, %{"payment_attempt_id" => attempt.id})
+
+    assert {:ok, %{reserved_quantity: 0, consumed_quantity: 1}} =
+             ReservationLedger.get_availability(offer.id)
+  end
+
+  test "late-payment event-finalization failure leaves the hold retryable", %{offer: offer} do
+    %{order: order, session: session, attempt: attempt} = TestSupport.initialized_payment!(offer)
+
+    session
+    |> Changeset.for_update(:expire_session, %{}, actor: Fixtures.system_actor())
+    |> Ash.update!(authorize?: false)
+
+    event =
+      TestSupport.insert_payment_event!(%{
+        provider_reference: attempt.provider_reference,
+        processing_status: "stored"
+      })
+
+    event
+    |> Changeset.for_update(:mark_processing_started, %{}, actor: Fixtures.system_actor())
+    |> Ash.update!(authorize?: false)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: attempt.amount_cents,
+        currency: attempt.currency
+      )
+    )
+
+    constraint = "block_late_payment_event_finalize_#{event.id}"
+
+    Repo.query!(
+      "ALTER TABLE sales_payment_events ADD CONSTRAINT #{constraint} CHECK (false) NOT VALID"
+    )
+
+    try do
+      assert {:error, _reason} =
+               PaymentVerification.verify_attempt(attempt.id, payment_event_id: event.id)
+
+      assert reload_attempt!(attempt.id).status == "verification_started"
+      assert reload_order!(order.id).status == "awaiting_payment"
+      assert reload_session!(session.id).status == "expired"
+      assert reload_event!(event.id).processing_status == "processing_started"
+
+      assert {:ok, %{reserved_quantity: 1, consumed_quantity: 0}} =
+               ReservationLedger.get_availability(offer.id)
+
+      assert {:ok, %{status: :held, quantity: 1}} =
+               ReservationLedger.get_hold_detail(offer.id, order.public_reference)
+
+      refute_enqueued(
+        worker: PaidOrderFulfillmentWorker,
+        args: %{"payment_attempt_id" => attempt.id}
+      )
+    after
+      Repo.query!("ALTER TABLE sales_payment_events DROP CONSTRAINT #{constraint}")
+    end
+
+    assert {:ok, :verified} =
+             PaymentVerification.verify_attempt(attempt.id, payment_event_id: event.id)
+
+    assert reload_event!(event.id).processing_status == "processed"
+    assert reload_order!(order.id).status == "paid_verified"
+    assert reload_session!(session.id).status == "paid"
+
+    assert :ok =
+             perform_job(PaidOrderFulfillmentWorker, %{"payment_attempt_id" => attempt.id})
+
+    assert {:ok, %{reserved_quantity: 0, consumed_quantity: 1}} =
+             ReservationLedger.get_availability(offer.id)
   end
 
   test "late payment release failure rolls back and can retry", %{offer: offer} do
@@ -224,6 +344,12 @@ defmodule FastCheck.Sales.Payments.PaymentAfterExpiryTest do
 
   defp reload_session!(id) do
     CheckoutSession
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp reload_event!(id) do
+    PaymentEvent
     |> Query.for_read(:get_by_id, %{id: id})
     |> Ash.read_one!(authorize?: false)
   end

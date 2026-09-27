@@ -199,43 +199,8 @@ defmodule FastCheck.Sales.Payments.PaymentOutcomeHandler do
           metadata
         )
 
-      {:error, :paid_reconciliation_required, reason_code, _paid_result} ->
-        apply_late_payment_paid_reconciliation(
-          attempt,
-          event,
-          reason_code,
-          context,
-          metadata
-        )
-
-      {:error, :paid_retryable, _reason, _paid_result} ->
-        apply_late_payment_retryable_handoff(attempt, event, context, metadata)
-
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  defp apply_late_payment_paid_reconciliation(attempt, event, reason_code, context, metadata) do
-    with :ok <- enqueue_fulfillment(attempt, context),
-         :ok <- finalize_event_processed(event, context) do
-      emit_payment_telemetry(:verified, Map.put(metadata, :paid, true))
-
-      OutcomeBroadcast.broadcast(
-        :late_payment_recovered,
-        Map.put(metadata, :reason_code, reason_code)
-      )
-
-      {:ok, :late_payment_recovered}
-    end
-  end
-
-  defp apply_late_payment_retryable_handoff(attempt, event, context, metadata) do
-    with :ok <- enqueue_fulfillment(attempt, context),
-         :ok <- finalize_event_processed(event, context) do
-      emit_payment_telemetry(:verified, Map.put(metadata, :paid, true))
-      OutcomeBroadcast.broadcast(:late_payment_recovered, metadata)
-      {:ok, :late_payment_recovered}
     end
   end
 

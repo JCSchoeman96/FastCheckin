@@ -14,9 +14,11 @@ defmodule FastCheck.Sales.ManualReview do
   alias FastCheck.Repo
   alias FastCheck.Sales.ManualReviewAction
   alias FastCheck.Sales.Order
+  alias FastCheck.Sales.PaidOrderFulfillment
   alias FastCheck.Sales.PaymentAttempt
   alias FastCheck.Sales.Payments.VerifyPaymentWorker
   alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
   alias Phoenix.PubSub
 
   @default_limit 50
@@ -26,6 +28,7 @@ defmodule FastCheck.Sales.ManualReview do
   @state_changing_actions ~w(
     retry_payment_verification
     retry_ticket_issuance
+    retry_paid_order_fulfillment
     hold_for_investigation
     close_no_fulfillment
     return_to_fulfillment_queue
@@ -35,6 +38,15 @@ defmodule FastCheck.Sales.ManualReview do
                   ~w(operator_note operator_assigned operator_unassigned)
 
   @order_queue_statuses ~w(manual_review manual_review_held issuance_retry_queued)
+  @pre_fulfillment_retry_reasons ~w(
+    paid_order_fulfillment_retry_exhausted
+    paid_order_fulfillment_hold_missing
+    paid_order_fulfillment_hold_expired
+    paid_order_fulfillment_hold_released
+    paid_order_fulfillment_quantity_mismatch
+    paid_order_fulfillment_hold_mismatch
+    paid_order_fulfillment_inventory_reconciliation_required
+  )
 
   @doc "Returns a bounded, safe manual-review queue."
   def list_queue(filters \\ %{}, opts \\ []) do
@@ -142,6 +154,39 @@ defmodule FastCheck.Sales.ManualReview do
                  "manual-review:issue:#{order.id}:#{review_action.correlation_id}",
                  review_action.correlation_id
                ) do
+          {:ok, review_action}
+        end
+      end)
+      |> commit_then_broadcast()
+    end
+  end
+
+  def retry_paid_order_fulfillment(order_id, actor, attrs) do
+    with {:ok, reason_code} <- require_reason(attrs, "retry_paid_order_fulfillment"),
+         {:ok, loaded_order} <- load_order(order_id) do
+      run_transaction(fn ->
+        Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
+
+        with {:ok, order} <- load_order(loaded_order.id),
+             {:ok, attempt} <- pre_fulfillment_recovery_authority(order),
+             ash_actor = ash_actor(actor, order.event_id),
+             {:ok, updated_order} <-
+               transition_order(order, :retry_paid_fulfillment, reason_code, ash_actor),
+             {:ok, review_action} <-
+               record_action(%{
+                 subject_type: "order",
+                 subject_id: Integer.to_string(order.id),
+                 sales_order_id: order.id,
+                 payment_attempt_id: attempt.id,
+                 action: "retry_paid_order_fulfillment",
+                 reason_code: reason_code,
+                 actor: actor,
+                 previous_status: order.status,
+                 new_status: updated_order.status,
+                 metadata: %{order_id: order.id, payment_attempt_id: attempt.id}
+               }),
+             {:ok, _job} <-
+               enqueue_paid_order_fulfillment(attempt.id, review_action.correlation_id) do
           {:ok, review_action}
         end
       end)
@@ -344,6 +389,77 @@ defmodule FastCheck.Sales.ManualReview do
     _error -> {:error, :issuer_enqueue_failed}
   end
 
+  defp enqueue_paid_order_fulfillment(payment_attempt_id, correlation_id) do
+    case PaidOrderFulfillmentWorker.new(%{
+           "payment_attempt_id" => payment_attempt_id,
+           "correlation_id" => correlation_id
+         })
+         |> Oban.insert() do
+      {:ok, job} -> {:ok, job}
+      {:error, _reason} -> {:error, :paid_order_fulfillment_enqueue_failed}
+    end
+  rescue
+    _error -> {:error, :paid_order_fulfillment_enqueue_failed}
+  end
+
+  defp pre_fulfillment_recovery_authority(order) do
+    with :ok <- require_status(order.status, ["manual_review"]),
+         :ok <- require_no_prior_fulfillment(order),
+         :ok <- require_not_closed_or_settled(order),
+         :ok <- require_pre_fulfillment_failure_reason(order.manual_review_reason),
+         {:ok, attempt} <- verified_payment_attempt(order.id),
+         :ok <- require_payment_amount(attempt, order),
+         :ok <- require_paid_checkout(order.id),
+         :ok <- require_no_issued_tickets(order.id),
+         :ok <- PaidOrderFulfillment.validate_recovery_authority(attempt.id) do
+      {:ok, attempt}
+    else
+      _ -> {:error, :unsafe_manual_review_transition}
+    end
+  end
+
+  defp require_no_prior_fulfillment(%{fulfillment_queued_at: nil}), do: :ok
+
+  defp require_no_prior_fulfillment(_order),
+    do: {:error, :unsafe_manual_review_transition}
+
+  defp require_not_closed_or_settled(%{
+         status: "manual_review",
+         cancelled_at: nil,
+         refunded_at: nil
+       }),
+       do: :ok
+
+  defp require_not_closed_or_settled(_order),
+    do: {:error, :unsafe_manual_review_transition}
+
+  defp require_pre_fulfillment_failure_reason(reason)
+       when reason in @pre_fulfillment_retry_reasons,
+       do: :ok
+
+  defp require_pre_fulfillment_failure_reason(_reason),
+    do: {:error, :unsafe_manual_review_transition}
+
+  defp verified_payment_attempt(order_id) do
+    attempts =
+      Repo.all(
+        from p in "sales_payment_attempts",
+          where: p.sales_order_id == ^order_id and p.status == "verified_success",
+          order_by: [desc: p.inserted_at, desc: p.id],
+          select: %{
+            id: p.id,
+            status: p.status,
+            amount_cents: p.amount_cents,
+            currency: p.currency
+          }
+      )
+
+    case attempts do
+      [attempt] -> {:ok, attempt}
+      _ -> {:error, :unsafe_manual_review_transition}
+    end
+  end
+
   defp safe_fulfillment_return?(order) do
     with :ok <- require_status(order.status, ["manual_review", "manual_review_held"]),
          :ok <- require_prior_fulfillment(order),
@@ -530,6 +646,11 @@ defmodule FastCheck.Sales.ManualReview do
     |> Map.put(:subject_id, subject_id)
     |> Map.merge(payment_context(order.id))
     |> Map.merge(ticket_review_context(order.id))
+    |> Map.put(
+      :can_retry_paid_order_fulfillment?,
+      subject_type == "order" and
+        match?({:ok, _attempt}, pre_fulfillment_recovery_authority(order))
+    )
     |> Map.put(:timeline, timeline(subject_type, subject_id))
   end
 
