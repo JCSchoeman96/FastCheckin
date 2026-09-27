@@ -10,6 +10,7 @@ defmodule FastCheck.Sales.Inventory.RedisScriptsTest do
     assert function_exported?(RedisScripts, :reserve, 1)
     assert function_exported?(RedisScripts, :consume, 1)
     assert function_exported?(RedisScripts, :release, 1)
+    assert function_exported?(RedisScripts, :compensate_checkout_reservation, 1)
   end
 
   test "script module normalizes redis unavailable errors to ledger_unavailable" do
@@ -36,6 +37,10 @@ defmodule FastCheck.Sales.Inventory.RedisScriptsTest do
 
     assert {:error, :hold_expired, _} = decode_status("ALREADY_EXPIRED")
     assert {:error, :already_released, _} = decode_status("ALREADY_RELEASED")
+
+    assert {:error, :checkout_reservation_mismatch, _} =
+             decode_status("CHECKOUT_RESERVATION_MISMATCH")
+
     assert {:error, :lock_timeout, _} = decode_status("LOCK_TIMEOUT")
   end
 
