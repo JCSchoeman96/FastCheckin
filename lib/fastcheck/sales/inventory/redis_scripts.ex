@@ -52,6 +52,16 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local args_sig = ARGV[7]
   local dedupe_ttl = tonumber(ARGV[8])
   local lock_ttl_ms = tonumber(ARGV[9])
+  local clear_release_dedupe = ARGV[10] == "1"
+  local allow_terminal_replacement = ARGV[11] == "1"
+  local legacy_release_args_sig = ARGV[12]
+  local release_dedupe_key = KEYS[6]
+
+  local function is_legacy_late_payment_release()
+    return allow_terminal_replacement and release_dedupe_key and
+      redis.call("HGET", release_dedupe_key, "status") == "released" and
+      redis.call("HGET", release_dedupe_key, "args_sig") == legacy_release_args_sig
+  end
 
   local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
   if existing_sig then
@@ -59,15 +69,67 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
       return {"DUPLICATE_CONFLICT"}
     end
 
-    return {
-      "IDEMPOTENT",
-      redis.call("HGET", dedupe_key, "status"),
-      redis.call("HGET", dedupe_key, "available_after"),
-      redis.call("HGET", dedupe_key, "reserved_after"),
-      redis.call("HGET", dedupe_key, "consumed_after"),
-      redis.call("HGET", dedupe_key, "revision"),
-      redis.call("HGET", dedupe_key, "expires_at")
-    }
+    if redis.call("EXISTS", hold_key) == 0 then
+      return {"HOLD_NOT_FOUND"}
+    end
+
+    local hold_type = redis.call("TYPE", hold_key).ok
+    if hold_type ~= "hash" then
+      return {"UNEXPECTED_RESPONSE"}
+    end
+
+    if redis.call("HGET", hold_key, "offer_id") ~= offer_id or
+       redis.call("HGET", hold_key, "order_public_reference") ~= order_ref then
+      return {"HOLD_IDENTITY_MISMATCH"}
+    end
+
+    local hold_status = redis.call("HGET", hold_key, "status")
+
+    local hold_quantity_raw = redis.call("HGET", hold_key, "quantity")
+    local hold_quantity = tonumber(hold_quantity_raw or "")
+    if not hold_quantity_raw or not string.match(hold_quantity_raw, "^%d+$") or
+       not hold_quantity or hold_quantity ~= quantity then
+      return {"QUANTITY_MISMATCH"}
+    end
+
+    if hold_status == "held" then
+      if clear_release_dedupe and release_dedupe_key then
+        redis.call("DEL", release_dedupe_key)
+      end
+
+      return {
+        "IDEMPOTENT",
+        redis.call("HGET", dedupe_key, "status"),
+        redis.call("HGET", dedupe_key, "available_after"),
+        redis.call("HGET", dedupe_key, "reserved_after"),
+        redis.call("HGET", dedupe_key, "consumed_after"),
+        redis.call("HGET", dedupe_key, "revision"),
+        redis.call("HGET", dedupe_key, "expires_at")
+      }
+    end
+
+    if hold_status == "consumed" then
+      return {"ALREADY_CONSUMED"}
+    end
+
+    local late_recovery_released =
+      allow_terminal_replacement and
+        (redis.call("HGET", hold_key, "late_payment_recovery_released") == "1" or
+          is_legacy_late_payment_release())
+
+    if hold_status == "released" and not late_recovery_released then
+      return {"ALREADY_RELEASED"}
+    end
+
+    if hold_status == "expired" then
+      return {"ALREADY_EXPIRED"}
+    end
+
+    if hold_status ~= "released" and hold_status ~= "expired" then
+      return {"UNEXPECTED_RESPONSE"}
+    end
+
+    redis.call("DEL", dedupe_key)
   end
 
   if redis.call("EXISTS", inventory_key) == 0 then
@@ -92,15 +154,29 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   end
 
   if redis.call("EXISTS", hold_key) == 1 then
+    local hold_type = redis.call("TYPE", hold_key).ok
+    if hold_type ~= "hash" then
+      redis.call("DEL", lock_key)
+      return {"UNEXPECTED_RESPONSE"}
+    end
+
+    if redis.call("HGET", hold_key, "offer_id") ~= offer_id or
+       redis.call("HGET", hold_key, "order_public_reference") ~= order_ref then
+      redis.call("DEL", lock_key)
+      return {"HOLD_IDENTITY_MISMATCH"}
+    end
+
     local hold_status = redis.call("HGET", hold_key, "status")
-    local hold_quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
+    local hold_quantity_raw = redis.call("HGET", hold_key, "quantity")
+    local hold_quantity = tonumber(hold_quantity_raw or "")
+
+    if not hold_quantity_raw or not string.match(hold_quantity_raw, "^%d+$") or
+       not hold_quantity or hold_quantity ~= quantity then
+      redis.call("DEL", lock_key)
+      return {"QUANTITY_MISMATCH"}
+    end
 
     if hold_status == "held" then
-      if hold_quantity ~= quantity then
-        redis.call("DEL", lock_key)
-        return {"QUANTITY_MISMATCH"}
-      end
-
       local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "0")
       local reserved = tonumber(redis.call("HGET", inventory_key, "reserved_quantity") or "0")
       local consumed = tonumber(redis.call("HGET", inventory_key, "consumed_quantity") or "0")
@@ -119,6 +195,9 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
         "expires_at", expires_at
       )
       redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+      if clear_release_dedupe and release_dedupe_key then
+        redis.call("DEL", release_dedupe_key)
+      end
       redis.call("DEL", lock_key)
 
       return {
@@ -132,12 +211,12 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
       }
     end
 
-    if hold_status == "consumed" then
-      redis.call("DEL", lock_key)
-      return {"ALREADY_CONSUMED"}
-    end
+    local late_recovery_released =
+      allow_terminal_replacement and
+        (redis.call("HGET", hold_key, "late_payment_recovery_released") == "1" or
+          is_legacy_late_payment_release())
 
-    if hold_status == "released" then
+    if hold_status == "released" and not late_recovery_released then
       redis.call("DEL", lock_key)
       return {"ALREADY_RELEASED"}
     end
@@ -147,8 +226,10 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
       return {"ALREADY_EXPIRED"}
     end
 
-    redis.call("DEL", lock_key)
-    return {"UNEXPECTED_RESPONSE"}
+    if hold_status ~= "released" and hold_status ~= "expired" then
+      redis.call("DEL", lock_key)
+      return {"UNEXPECTED_RESPONSE"}
+    end
   end
 
   local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "-1")
@@ -188,6 +269,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     "quantity", tostring(quantity),
     "status", "held",
     "idempotency_key", idempotency_key,
+    "late_payment_recovery_released", "0",
     "created_at", tostring(now_ms),
     "expires_at", tostring(expires_at),
     "revision", tostring(revision)
@@ -207,6 +289,9 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     "expires_at", tostring(expires_at)
   )
   redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+  if clear_release_dedupe and release_dedupe_key then
+    redis.call("DEL", release_dedupe_key)
+  end
   redis.call("DEL", lock_key)
 
   return {"OK", "held", tostring(available_after), tostring(reserved_after), tostring(consumed), tostring(revision), tostring(expires_at)}
@@ -219,27 +304,35 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local dedupe_key = KEYS[4]
   local lock_key = KEYS[5]
 
-  local order_ref = ARGV[1]
-  local quantity = tonumber(ARGV[2])
-  local now_ms = tonumber(ARGV[3])
-  local args_sig = ARGV[4]
-  local dedupe_ttl = tonumber(ARGV[5])
-  local lock_ttl_ms = tonumber(ARGV[6])
+  local offer_id = ARGV[1]
+  local order_ref = ARGV[2]
+  local quantity = tonumber(ARGV[3])
+  local now_ms = tonumber(ARGV[4])
+  local args_sig = ARGV[5]
+  local dedupe_ttl = tonumber(ARGV[6])
+  local lock_ttl_ms = tonumber(ARGV[7])
 
-  local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
-  if existing_sig then
-    if existing_sig ~= args_sig then
-      return {"DUPLICATE_CONFLICT"}
-    end
+  if redis.call("EXISTS", hold_key) == 0 then
+    return {"HOLD_NOT_FOUND"}
+  end
 
-    return {
-      "IDEMPOTENT",
-      redis.call("HGET", dedupe_key, "status"),
-      redis.call("HGET", dedupe_key, "available_after"),
-      redis.call("HGET", dedupe_key, "reserved_after"),
-      redis.call("HGET", dedupe_key, "consumed_after"),
-      redis.call("HGET", dedupe_key, "revision")
-    }
+  local hold_type = redis.call("TYPE", hold_key).ok
+  if hold_type ~= "hash" then
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local hold_offer_id = redis.call("HGET", hold_key, "offer_id")
+  local hold_order_ref = redis.call("HGET", hold_key, "order_public_reference")
+
+  if hold_offer_id ~= offer_id or hold_order_ref ~= order_ref then
+    return {"HOLD_IDENTITY_MISMATCH"}
+  end
+
+  local hold_quantity_raw = redis.call("HGET", hold_key, "quantity")
+  local hold_quantity = tonumber(hold_quantity_raw or "")
+  if not hold_quantity_raw or not string.match(hold_quantity_raw, "^%d+$") or
+     not hold_quantity or hold_quantity ~= quantity then
+    return {"QUANTITY_MISMATCH"}
   end
 
   if redis.call("EXISTS", inventory_key) == 0 then
@@ -259,6 +352,22 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"RECONCILIATION_REQUIRED"}
   end
 
+  local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
+  if existing_sig then
+    if existing_sig ~= args_sig then
+      return {"DUPLICATE_CONFLICT"}
+    end
+
+    return {
+      "IDEMPOTENT",
+      redis.call("HGET", dedupe_key, "status"),
+      redis.call("HGET", dedupe_key, "available_after"),
+      redis.call("HGET", dedupe_key, "reserved_after"),
+      redis.call("HGET", dedupe_key, "consumed_after"),
+      redis.call("HGET", dedupe_key, "revision")
+    }
+  end
+
   if redis.call("SET", lock_key, "1", "NX", "PX", lock_ttl_ms) == false then
     return {"LOCK_TIMEOUT"}
   end
@@ -268,8 +377,28 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"HOLD_NOT_FOUND"}
   end
 
+  local hold_type = redis.call("TYPE", hold_key).ok
+  if hold_type ~= "hash" then
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local hold_offer_id = redis.call("HGET", hold_key, "offer_id")
+  local hold_order_ref = redis.call("HGET", hold_key, "order_public_reference")
+  if hold_offer_id ~= offer_id or hold_order_ref ~= order_ref then
+    redis.call("DEL", lock_key)
+    return {"HOLD_IDENTITY_MISMATCH"}
+  end
+
+  local hold_quantity_raw = redis.call("HGET", hold_key, "quantity")
+  local hold_quantity = tonumber(hold_quantity_raw or "")
+  if not hold_quantity_raw or not string.match(hold_quantity_raw, "^%d+$") or
+     not hold_quantity or hold_quantity ~= quantity then
+    redis.call("DEL", lock_key)
+    return {"QUANTITY_MISMATCH"}
+  end
+
   local hold_status = redis.call("HGET", hold_key, "status")
-  local hold_quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
 
   if hold_status == "consumed" then
     redis.call("DEL", lock_key)
@@ -289,11 +418,6 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   if hold_status ~= "held" then
     redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
-  end
-
-  if hold_quantity ~= quantity then
-    redis.call("DEL", lock_key)
-    return {"QUANTITY_MISMATCH"}
   end
 
   local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "0")
@@ -356,6 +480,37 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local args_sig = ARGV[3]
   local dedupe_ttl = tonumber(ARGV[4])
   local lock_ttl_ms = tonumber(ARGV[5])
+  local expected_offer_id = ARGV[6]
+  local expected_quantity = tonumber(ARGV[7]) or 0
+  local clear_reserve_dedupe = ARGV[8] == "1"
+  local reserve_dedupe_key = KEYS[6]
+
+  -- Idempotent release replay still has to prove that the persisted hold is
+  -- the hold named by this request. Validate before consulting the dedupe
+  -- record so corrupted or conflicting hold data cannot be accepted.
+  if redis.call("EXISTS", hold_key) == 0 then
+    return {"HOLD_NOT_FOUND"}
+  end
+
+  local replay_hold_type = redis.call("TYPE", hold_key).ok
+  if replay_hold_type ~= "hash" then
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local replay_offer_id = redis.call("HGET", hold_key, "offer_id")
+  local replay_order_ref = redis.call("HGET", hold_key, "order_public_reference")
+  local replay_quantity_raw = redis.call("HGET", hold_key, "quantity")
+  local replay_quantity = tonumber(replay_quantity_raw or "")
+
+  if replay_offer_id ~= expected_offer_id or replay_order_ref ~= order_ref then
+    return {"HOLD_IDENTITY_MISMATCH"}
+  end
+
+  if not replay_quantity_raw or not string.match(replay_quantity_raw, "^%d+$") or
+     not replay_quantity or replay_quantity <= 0 or
+     (expected_quantity > 0 and replay_quantity ~= expected_quantity) then
+    return {"QUANTITY_MISMATCH"}
+  end
 
   local existing_sig = redis.call("HGET", dedupe_key, "args_sig")
   if existing_sig then
@@ -399,8 +554,30 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     return {"HOLD_NOT_FOUND"}
   end
 
+  local hold_type = redis.call("TYPE", hold_key).ok
+  if hold_type ~= "hash" then
+    redis.call("DEL", lock_key)
+    return {"UNEXPECTED_RESPONSE"}
+  end
+
+  local hold_offer_id = redis.call("HGET", hold_key, "offer_id")
+  local hold_order_ref = redis.call("HGET", hold_key, "order_public_reference")
+  local hold_quantity_raw = redis.call("HGET", hold_key, "quantity")
+  local hold_quantity = tonumber(hold_quantity_raw or "")
+
+  if hold_offer_id ~= expected_offer_id or hold_order_ref ~= order_ref then
+    redis.call("DEL", lock_key)
+    return {"HOLD_IDENTITY_MISMATCH"}
+  end
+
+  if not hold_quantity_raw or not string.match(hold_quantity_raw, "^%d+$") or
+     not hold_quantity or hold_quantity <= 0 or
+     (expected_quantity > 0 and hold_quantity ~= expected_quantity) then
+    redis.call("DEL", lock_key)
+    return {"QUANTITY_MISMATCH"}
+  end
+
   local hold_status = redis.call("HGET", hold_key, "status")
-  local hold_quantity = tonumber(redis.call("HGET", hold_key, "quantity") or "0")
 
   if hold_status == "consumed" then
     redis.call("DEL", lock_key)
@@ -465,6 +642,10 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
     "revision", tostring(revision)
   )
   redis.call("EXPIRE", dedupe_key, dedupe_ttl)
+  if clear_reserve_dedupe and reserve_dedupe_key then
+    redis.call("DEL", reserve_dedupe_key)
+    redis.call("HSET", hold_key, "late_payment_recovery_released", "1")
+  end
   redis.call("DEL", lock_key)
 
   return {"OK", "released", tostring(available_after), tostring(reserved_after), tostring(consumed), tostring(revision)}
@@ -830,6 +1011,9 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
 
   defp decode_response(["HOLD_NOT_FOUND"], offer_id),
     do: {:error, :hold_not_found, %{offer_id: offer_id}}
+
+  defp decode_response(["HOLD_IDENTITY_MISMATCH"], offer_id),
+    do: {:error, :hold_identity_mismatch, %{offer_id: offer_id}}
 
   defp decode_response(["HOLD_EXPIRED"], offer_id),
     do: {:error, :hold_expired, %{offer_id: offer_id}}

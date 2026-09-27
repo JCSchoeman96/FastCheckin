@@ -52,7 +52,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
       :mark_verification_failed,
       :get_by_provider_reference
     ],
-    FastCheck.Sales.Order => [:mark_paid_verified],
+    FastCheck.Sales.Order => [:mark_paid_verified, :queue_fulfillment],
     FastCheck.Sales.CheckoutSession => [:mark_paid],
     FastCheck.Sales.Conversation => [:confirm_order]
   }

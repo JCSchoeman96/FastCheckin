@@ -1,5 +1,6 @@
 defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
   use FastCheck.DataCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   require Ash.Query
 
@@ -11,6 +12,7 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
   alias FastCheck.Sales.Payments.TestSupport
   alias FastCheck.Sales.StateTransition
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   setup do
     paystack_cleanup = TestSupport.setup_paystack!()
@@ -37,6 +39,11 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
 
     assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
 
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
     {flunk_fun, counter} = TestSupport.flunk_paystack_request_fun()
     Application.put_env(:fastcheck, :paystack_request_fun, flunk_fun)
 
@@ -46,10 +53,20 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationIdempotencyTest do
         processing_status: "processing_started"
       })
 
+    FastCheck.Repo.query!(
+      "DELETE FROM oban_jobs WHERE worker = $1 AND args->>'payment_attempt_id' = $2",
+      [to_string(PaidOrderFulfillmentWorker), Integer.to_string(attempt.id)]
+    )
+
     assert {:ok, :idempotent} =
              PaymentVerification.verify_attempt(attempt.id, payment_event_id: event.id)
 
     assert :counters.get(counter, 1) == 0
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
 
     order =
       Order

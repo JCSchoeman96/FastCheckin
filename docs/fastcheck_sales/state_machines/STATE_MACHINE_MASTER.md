@@ -10,8 +10,8 @@
 - No customer-facing channel may say payment was not received once durable
   verified payment exists.
 - Paystack webhook payload alone never produces verified payment state.
-- Ticket issuance requires verified payment, inventory eligibility, and
-  idempotent issuer behavior.
+- Ticket issuance requires verified payment, a consumed inventory hold, and an
+  Order that passed through `fulfillment_queued`.
 
 ## Actor Types
 
@@ -37,8 +37,8 @@
 | Transition | Required preconditions |
 |---|---|
 | `mark_paid_verified` | Paystack server-side verification success, amount match, currency match, provider reference match, event ownership match. |
-| `queue_fulfillment` | Order is `paid_verified`; inventory consume or re-reserve rule is satisfied. |
-| `mark_ticket_issued` | Attendee rows, `TicketIssue` rows, event sync aggregation enqueue, and idempotent issuance result exist. |
+| `queue_fulfillment` | Verified `PaymentAttempt`, paid `CheckoutSession`, exactly one `OrderLine`, and its exact hold confirmed consumed. Set `fulfillment_queued_at` and insert `IssueTicketsWorker` atomically in Postgres. |
+| `mark_ticket_issued` | Order already passed `fulfillment_queued`; attendee rows, `TicketIssue` rows, event sync aggregation enqueue, and idempotent issuance result exist. |
 | `revoke_issued_ticket` | Revocation reason, scanner visibility update, event sync aggregation enqueue, token invalidation, and audit reason exist. |
 
 ## Future Test Expectations

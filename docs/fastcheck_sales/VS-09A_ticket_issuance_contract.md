@@ -151,7 +151,10 @@ Issuance is allowed only when **all** sections below pass. The issuer must not r
 ### 6.1 Order preconditions
 
 - Order exists
-- Status is `paid_verified` or `fulfillment_queued` (approved state matrix)
+- Status is `fulfillment_queued`, `partially_issued`,
+  `issuance_retry_queued`, or `ticket_issued`
+- `fulfillment_queued_at` is present as durable evidence that the Order passed
+  the inventory-consumed boundary
 - At least one `OrderLine`
 - `total_amount_cents` and `currency` already verified at payment time
 - Not cancelled, expired (without approved late-payment recovery), refunded, or terminal manual-review

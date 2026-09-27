@@ -281,6 +281,15 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     Repo.query!(
       """
+      UPDATE sales_orders
+      SET fulfillment_queued_at = now() AT TIME ZONE 'utc', updated_at = now() AT TIME ZONE 'utc'
+      WHERE id = $1
+      """,
+      [order_id]
+    )
+
+    Repo.query!(
+      """
       UPDATE sales_checkout_sessions
       SET status = 'paid', updated_at = now() AT TIME ZONE 'utc'
       WHERE sales_order_id = $1

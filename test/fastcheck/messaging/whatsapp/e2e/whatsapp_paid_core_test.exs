@@ -16,6 +16,7 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
   alias FastCheck.Sales.Payments.TestSupport, as: PaystackSupport
   alias FastCheck.SalesE2EFixtures, as: E2E
   alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
   alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
   alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
 
@@ -110,12 +111,19 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
 
         assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
 
+        assert_enqueued(
+          worker: PaidOrderFulfillmentWorker,
+          args: %{"payment_attempt_id" => attempt.id}
+        )
+
         assert :ok =
-                 perform_job(IssueTicketsWorker, %{
-                   "sales_order_id" => order_id,
-                   "correlation_id" => E2E.e2e_id("issue-wa"),
-                   "idempotency_key" => E2E.e2e_id("issue-wa")
+                 perform_job(PaidOrderFulfillmentWorker, %{
+                   "payment_attempt_id" => attempt.id
                  })
+
+        assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+        assert [%{args: issuer_args}] = all_enqueued(worker: IssueTicketsWorker)
+        assert :ok = perform_job(IssueTicketsWorker, issuer_args)
 
         issue = E2E.ticket_issue_for_order!(order_id)
         conversation = reload_conversation!(conversation.id)
@@ -191,12 +199,19 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
 
     assert {:ok, :verified} = PaymentVerification.verify_attempt(attempt.id)
 
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
     assert :ok =
-             perform_job(IssueTicketsWorker, %{
-               "sales_order_id" => order.id,
-               "correlation_id" => E2E.e2e_id("issue-wa-template"),
-               "idempotency_key" => E2E.e2e_id("issue-wa-template")
+             perform_job(PaidOrderFulfillmentWorker, %{
+               "payment_attempt_id" => attempt.id
              })
+
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
+    assert [%{args: issuer_args}] = all_enqueued(worker: IssueTicketsWorker)
+    assert :ok = perform_job(IssueTicketsWorker, issuer_args)
 
     issue = E2E.ticket_issue_for_order!(order.id)
 

@@ -1,17 +1,21 @@
 defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
   use FastCheck.DataCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   import ExUnit.CaptureLog
 
   require Ash.Query
 
   alias Ash.Query
+  alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.PaymentAttempt
   alias FastCheck.Sales.Payments.PaymentVerification
   alias FastCheck.Sales.Payments.TestSupport
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+  alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   setup do
     paystack_cleanup = TestSupport.setup_paystack!()
@@ -59,8 +63,46 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
     assert attempt.status == "verified_success"
     assert order.status == "paid_verified"
     assert session.status == "paid"
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
+    refute_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
     refute Map.has_key?(attempt.raw_verify_response || %{}, "email")
     refute Map.has_key?(attempt.raw_verify_response || %{}, "authorization_url")
+  end
+
+  test "paid transitions roll back when the fulfillment handoff cannot be inserted", %{
+    offer: offer
+  } do
+    %{order: order, session: session, attempt: attempt} = TestSupport.initialized_payment!(offer)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: attempt.amount_cents,
+        currency: attempt.currency
+      )
+    )
+
+    constraint = "block_paid_fulfillment_handoff_#{attempt.id}"
+    Repo.query!("ALTER TABLE oban_jobs ADD CONSTRAINT #{constraint} CHECK (false) NOT VALID")
+
+    assert {:error, _reason} = PaymentVerification.verify_attempt(attempt.id)
+
+    assert reload_attempt!(attempt.id).status == "verification_started"
+    assert reload_order!(order.id).status == "awaiting_payment"
+    assert reload_session!(session.id).status == session.status
+
+    refute_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
+    Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT #{constraint}")
   end
 
   test "provider failed status does not mark order paid", %{offer: offer} do
@@ -90,6 +132,24 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
 
     assert attempt.status == "failed"
     assert order.status == "awaiting_payment"
+  end
+
+  defp reload_attempt!(id) do
+    PaymentAttempt
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp reload_order!(id) do
+    Order
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
+  end
+
+  defp reload_session!(id) do
+    CheckoutSession
+    |> Query.for_read(:get_by_id, %{id: id})
+    |> Ash.read_one!(authorize?: false)
   end
 
   test "provider pending status is retryable and does not mark order paid", %{offer: offer} do
@@ -216,6 +276,13 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationTest do
     assert attempt.status == "verified_success"
     assert order.status == "paid_verified"
     assert session.status == "paid"
+
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
+    refute_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
   end
 
   test "provider timeout is retryable", %{offer: offer} do

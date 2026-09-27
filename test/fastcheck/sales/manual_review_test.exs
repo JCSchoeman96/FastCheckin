@@ -119,6 +119,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     order_id = insert_review_order!()
     insert_checkout_session!(order_id, "paid")
     insert_payment_attempt!(order_id, "verified_success")
+    set_fulfillment_queued_at!(order_id)
 
     assert {:ok, _} =
              ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
@@ -128,6 +129,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
 
     assert_order_status(order_id, "fulfillment_queued")
     assert state_transition?("Order", order_id, "manual_review", "fulfillment_queued")
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
   end
 
   test "add_note and assignment actions write manual review audit only" do
@@ -178,6 +180,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     order_id = insert_review_order!()
     insert_checkout_session!(order_id, "paid")
     insert_payment_attempt!(order_id, "verified_success")
+    set_fulfillment_queued_at!(order_id)
 
     assert {:ok, _} =
              ManualReview.retry_ticket_issuance(order_id, @actor, %{
@@ -188,6 +191,20 @@ defmodule FastCheck.Sales.ManualReviewTest do
     assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
     assert [%{action: "retry_ticket_issuance"}] = review_actions(order_id)
     assert state_transition?("Order", order_id, "manual_review", "issuance_retry_queued")
+  end
+
+  test "issuance retry is rejected without a prior fulfillment boundary" do
+    order_id = insert_review_order!()
+    insert_checkout_session!(order_id, "paid")
+    insert_payment_attempt!(order_id, "verified_success")
+
+    assert {:error, :unsafe_manual_review_transition} =
+             ManualReview.retry_ticket_issuance(order_id, @actor, %{
+               "reason_code" => "retry_ticket_issuance"
+             })
+
+    assert_order_status(order_id, "manual_review")
+    refute_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
   end
 
   test "return_to_fulfillment_queue fails closed on unsafe or unknown payment state" do
@@ -203,6 +220,51 @@ defmodule FastCheck.Sales.ManualReviewTest do
 
     assert_order_status(order_id, "manual_review")
     refute state_transition?("Order", order_id, "manual_review", "fulfillment_queued")
+  end
+
+  test "return_to_fulfillment_queue is rejected without a prior fulfillment boundary" do
+    order_id = insert_review_order!()
+    insert_checkout_session!(order_id, "paid")
+    insert_payment_attempt!(order_id, "verified_success")
+
+    assert {:error, :unsafe_manual_review_transition} =
+             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+               "reason_code" => "return_to_fulfillment_queue",
+               "note" => "must have previously fulfilled"
+             })
+
+    assert_order_status(order_id, "manual_review")
+    refute_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+  end
+
+  test "return_to_fulfillment_queue rolls back when issuer enqueue fails" do
+    order_id = insert_review_order!()
+    insert_checkout_session!(order_id, "paid")
+    insert_payment_attempt!(order_id, "verified_success")
+    set_fulfillment_queued_at!(order_id)
+    constraint = "manual_review_block_issue_#{order_id}"
+
+    Repo.query!("ALTER TABLE oban_jobs ADD CONSTRAINT #{constraint} CHECK (false) NOT VALID")
+
+    assert {:error, _reason} =
+             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+               "reason_code" => "return_to_fulfillment_queue",
+               "note" => "safe after review"
+             })
+
+    assert_order_status(order_id, "manual_review")
+    refute state_transition?("Order", order_id, "manual_review", "fulfillment_queued")
+
+    Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT #{constraint}")
+
+    assert {:ok, _} =
+             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+               "reason_code" => "return_to_fulfillment_queue",
+               "note" => "safe after review"
+             })
+
+    assert_order_status(order_id, "fulfillment_queued")
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
   end
 
   test "close_no_fulfillment requires bounded note and reason" do
@@ -304,6 +366,10 @@ defmodule FastCheck.Sales.ManualReviewTest do
       )
 
     id
+  end
+
+  defp set_fulfillment_queued_at!(order_id) do
+    Repo.query!("UPDATE sales_orders SET fulfillment_queued_at = now() WHERE id = $1", [order_id])
   end
 
   defp insert_checkout_session!(order_id, status) do

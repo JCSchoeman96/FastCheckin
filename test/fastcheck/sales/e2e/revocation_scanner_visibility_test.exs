@@ -13,6 +13,7 @@ defmodule FastCheck.Sales.E2E.RevocationScannerVisibilityTest do
   alias FastCheck.Sales.Payments.VerifyPaymentWorker
   alias FastCheck.SalesE2EFixtures, as: E2E
   alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.PaidOrderFulfillmentWorker
 
   @moduletag :e2e
   @moduletag :sales
@@ -58,12 +59,20 @@ defmodule FastCheck.Sales.E2E.RevocationScannerVisibilityTest do
                "payment_attempt_id" => attempt.id
              })
 
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
     assert :ok =
-             perform_job(IssueTicketsWorker, %{
-               "sales_order_id" => order.id,
-               "correlation_id" => E2E.e2e_id("issue"),
-               "idempotency_key" => E2E.e2e_id("issue")
+             perform_job(PaidOrderFulfillmentWorker, %{
+               "payment_attempt_id" => attempt.id
              })
+
+    assert E2E.reload_order!(order.id).status == "fulfillment_queued"
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
+    assert [%{args: issuer_args}] = all_enqueued(worker: IssueTicketsWorker)
+    assert :ok = perform_job(IssueTicketsWorker, issuer_args)
 
     issue = E2E.ticket_issue_for_order!(order.id)
     version_before = E2E.event_sync_version(event.id)
@@ -143,12 +152,20 @@ defmodule FastCheck.Sales.E2E.RevocationScannerVisibilityTest do
     assert {:ok, :verified} =
              FastCheck.Sales.Payments.PaymentVerification.verify_attempt(attempt.id)
 
+    assert_enqueued(
+      worker: PaidOrderFulfillmentWorker,
+      args: %{"payment_attempt_id" => attempt.id}
+    )
+
     assert :ok =
-             perform_job(IssueTicketsWorker, %{
-               "sales_order_id" => order.id,
-               "correlation_id" => E2E.e2e_id("issue"),
-               "idempotency_key" => E2E.e2e_id("issue")
+             perform_job(PaidOrderFulfillmentWorker, %{
+               "payment_attempt_id" => attempt.id
              })
+
+    assert E2E.reload_order!(order.id).status == "fulfillment_queued"
+    assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
+    assert [%{args: issuer_args}] = all_enqueued(worker: IssueTicketsWorker)
+    assert :ok = perform_job(IssueTicketsWorker, issuer_args)
 
     issue = E2E.ticket_issue_for_order!(order.id)
 

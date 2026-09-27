@@ -67,6 +67,14 @@ defmodule FastCheck.Tickets.IssuerTicketIssueLinkingTest do
 
       assert ticket_issue_count(order_id) == 0
     end
+
+    test "paid_verified is not an issuance-authorized state" do
+      %{order_id: order_id} = paid_order_fixture(order_status: "paid_verified")
+
+      assert {:error, {:invalid_order_state, "paid_verified"}} = Issuer.issue_order(order_id)
+      assert attendee_count(order_id) == 0
+      assert ticket_issue_count(order_id) == 0
+    end
   end
 
   defp paid_order_fixture(opts) do
@@ -74,7 +82,7 @@ defmodule FastCheck.Tickets.IssuerTicketIssueLinkingTest do
     quantity = Keyword.get(opts, :quantity, 1)
     unit_amount = Keyword.get(opts, :unit_amount_cents, 12_500)
     total = quantity * unit_amount
-    order_status = Keyword.get(opts, :order_status, "paid_verified")
+    order_status = Keyword.get(opts, :order_status, "fulfillment_queued")
     payment_status = Keyword.get(opts, :payment_status, "verified_success")
     checkout_status = Keyword.get(opts, :checkout_status, "paid")
 
@@ -112,10 +120,12 @@ defmodule FastCheck.Tickets.IssuerTicketIssueLinkingTest do
         """
         INSERT INTO sales_orders
           (public_reference, event_id, buyer_name, buyer_phone, buyer_email, source_channel,
-           status, total_amount_cents, currency, paid_at, lock_version, inserted_at, updated_at)
+           status, total_amount_cents, currency, paid_at, fulfillment_queued_at,
+           lock_version, inserted_at, updated_at)
         VALUES
           ($1, $2, 'Buyer Name', '+27123456789', 'buyer@example.com', 'test',
-           $3, $4, 'ZAR', now(), 1, now(), now())
+           $3, $4, 'ZAR', now(), CASE WHEN $3::varchar = 'fulfillment_queued' THEN now() ELSE NULL END,
+           1, now(), now())
         RETURNING id
         """,
         ["ORD-#{System.unique_integer([:positive])}", event_id, status, total_amount_cents]
@@ -195,6 +205,14 @@ defmodule FastCheck.Tickets.IssuerTicketIssueLinkingTest do
       from t in "sales_ticket_issues",
         where: t.sales_order_id == ^order_id,
         select: count(t.id)
+    )
+  end
+
+  defp attendee_count(order_id) do
+    Repo.one!(
+      from a in Attendee,
+        where: a.sales_order_id == ^order_id,
+        select: count(a.id)
     )
   end
 

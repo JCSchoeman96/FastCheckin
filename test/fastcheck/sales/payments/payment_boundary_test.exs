@@ -26,4 +26,13 @@ defmodule FastCheck.Sales.Payments.PaymentBoundaryTest do
     assert Code.ensure_loaded?(FastCheck.Sales.Payments.OutcomeBroadcast)
     assert Code.ensure_loaded?(FastCheck.Sales.Payments.LatePaymentRecovery)
   end
+
+  test "payment verification hands off fulfillment without consuming inventory or issuing tickets" do
+    assert @handler_source =~ "PaidOrderFulfillmentWorker"
+    refute @handler_source =~ "IssueTicketsWorker"
+    refute @handler_source =~ "Issuer.issue_order"
+
+    refute File.read!("lib/fastcheck/sales/payments/payment_verification.ex") =~
+             "ReservationLedger"
+  end
 end

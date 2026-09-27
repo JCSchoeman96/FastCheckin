@@ -1,0 +1,55 @@
+{
+  "pack_id": "0051_P0-B",
+  "slice": "P0-B",
+  "name": "Paid Order Fulfillment and Inventory Consumption",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0051_P0-B_paid-order-fulfillment",
+  "goal": "Move verified paid orders through exact inventory consumption into a durable fulfillment and ticket-issuance handoff.",
+  "dependencies": [
+    "P0-A Checkout Saga",
+    "VS-04B Atomic Inventory Ledger",
+    "VS-07B Paystack Transaction Verification",
+    "VS-09A Ticket Issuance Contract",
+    "VS-13 Manual Review Operations"
+  ],
+  "files_created": [
+    "lib/fastcheck/sales/paid_order_fulfillment.ex",
+    "lib/fastcheck/workers/paid_order_fulfillment_worker.ex",
+    "test/fastcheck/sales/paid_order_fulfillment_test.exs",
+    "test/fastcheck/sales/paid_order_fulfillment_boundary_test.exs",
+    "docs/fastcheck_sales/feature_packs/0051_P0-B_paid-order-fulfillment/0051_P0-B-FEATURE_PACK.md",
+    "docs/fastcheck_sales/feature_packs/0051_P0-B_paid-order-fulfillment/pack.json"
+  ],
+  "payment_handoff": {
+    "worker": "FastCheck.Workers.PaidOrderFulfillmentWorker",
+    "queue": "sales_inventory",
+    "authoritative_arg": "payment_attempt_id",
+    "payment_state_and_job_insert": "same Postgres transaction"
+  },
+  "inventory": {
+    "coordinator": "FastCheck.Sales.PaidOrderFulfillment",
+    "consume_key": "paid_order_fulfillment:consume:<payment_attempt_id>",
+    "redis_consume_inside_postgres_transaction": false,
+    "already_consumed": "accept only exact offer, order reference, quantity, and consumed status"
+  },
+  "durable_fulfillment": {
+    "order_action": "queue_fulfillment",
+    "issuer_job": "FastCheck.Workers.IssueTicketsWorker",
+    "transition_and_job_insert": "same Postgres transaction under order advisory lock",
+    "direct_paid_verified_issuance": false
+  },
+  "migration_required": false,
+  "verification_commands": [
+    "mix test test/fastcheck/sales/payments/payment_verification_test.exs",
+    "mix test test/fastcheck/sales/payments/payment_verification_idempotency_test.exs",
+    "mix test test/fastcheck/sales/paid_order_fulfillment_test.exs",
+    "mix test test/fastcheck/sales/manual_review_test.exs",
+    "mix test test/fastcheck/sales/e2e/checkout_to_scanner_test.exs",
+    "mix precommit",
+    "mix sobelow --exit --compact",
+    "git diff --check"
+  ]
+}

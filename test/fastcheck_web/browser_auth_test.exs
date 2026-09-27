@@ -1,5 +1,5 @@
 defmodule FastCheckWeb.BrowserAuthTest do
-  use FastCheckWeb.ConnCase, async: true
+  use FastCheckWeb.ConnCase, async: false
 
   alias FastCheckWeb.Plugs.BrowserAuth
 
@@ -7,10 +7,20 @@ defmodule FastCheckWeb.BrowserAuthTest do
   @valid_password "fastcheck"
 
   setup do
+    previous_auth = Application.get_env(:fastcheck, :dashboard_auth)
+
     Application.put_env(:fastcheck, :dashboard_auth, %{
       username: @valid_username,
       password: @valid_password
     })
+
+    on_exit(fn ->
+      if is_nil(previous_auth) do
+        Application.delete_env(:fastcheck, :dashboard_auth)
+      else
+        Application.put_env(:fastcheck, :dashboard_auth, previous_auth)
+      end
+    end)
 
     :ok
   end

@@ -214,6 +214,33 @@ defmodule FastCheck.Sales.Order do
       end)
     end
 
+    update :queue_fulfillment do
+      require_atomic?(false)
+      accept([])
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+
+        if from_state == "fulfillment_queued" do
+          if Changeset.get_data(changeset, :fulfillment_queued_at) do
+            changeset
+          else
+            Changeset.add_error(changeset,
+              field: :fulfillment_queued_at,
+              message: "is required before fulfillment can be queued"
+            )
+          end
+        else
+          transition_status(changeset, context, "fulfillment_queued",
+            allowed_from: ["paid_verified"],
+            extra_attrs: %{
+              fulfillment_queued_at: DateTime.utc_now() |> DateTime.truncate(:second)
+            }
+          )
+        end
+      end)
+    end
+
     update :mark_ticket_issued do
       require_atomic?(false)
       accept([])
@@ -229,7 +256,6 @@ defmodule FastCheck.Sales.Order do
             context,
             "ticket_issued",
             allowed_from: [
-              "paid_verified",
               "fulfillment_queued",
               "partially_issued",
               "issuance_retry_queued"
