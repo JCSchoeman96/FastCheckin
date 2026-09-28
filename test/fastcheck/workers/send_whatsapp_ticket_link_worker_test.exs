@@ -1236,10 +1236,15 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       )
       |> Ash.create(authorize?: false)
 
-    {:ok, _dispatching} =
+    {:ok, dispatching} =
       queued
       |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
       |> Ash.update(authorize?: false)
+
+    Repo.query!(
+      "UPDATE sales_delivery_attempts SET updated_at = now() - interval '5 minutes' WHERE id = $1",
+      [dispatching.id]
+    )
 
     args = %{
       "conversation_id" => conversation_id,
@@ -1259,6 +1264,92 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
                from d in "sales_delivery_attempts",
                  where: d.ticket_issue_id == ^issue_id,
                  select: map(d, [:status, :failure_reason])
+             )
+  end
+
+  test "concurrent duplicate worker leaves the live dispatch intact until provider acceptance" do
+    parent = self()
+    %{ticket_delivery_intent_id: intent_id} = issued_ticket_fixture()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(parent, {:whatsapp_request_started, request})
+
+      receive do
+        :release_provider_response ->
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body: Jason.encode!(%{"messages" => [%{"id" => "wamid.concurrent-accept"}]})
+           }}
+      end
+    end)
+
+    task =
+      Task.async(fn ->
+        send(parent, {:send_worker_ready, self()})
+
+        receive do
+          :start_send_worker ->
+            perform_job(SendWhatsAppTicketLinkWorker, %{"ticket_delivery_intent_id" => intent_id})
+        end
+      end)
+
+    assert_receive {:send_worker_ready, task_pid}
+    assert task_pid == task.pid
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
+    send(task.pid, :start_send_worker)
+
+    case Task.yield(task, 0) do
+      {:ok, result} -> flunk("worker returned before provider call: #{inspect(result)}")
+      {:exit, reason} -> flunk("worker exited before provider call: #{inspect(reason)}")
+      nil -> :ok
+    end
+
+    assert_receive {:whatsapp_request_started, _request}, 5_000
+
+    assert {:error, %{retryable?: true, classification: "dispatch_in_progress"}} =
+             perform_job(SendWhatsAppTicketLinkWorker, %{"ticket_delivery_intent_id" => intent_id})
+
+    assert %{status: "queued"} =
+             Repo.one!(
+               from i in "sales_ticket_delivery_intents",
+                 where: i.id == ^intent_id,
+                 select: map(i, [:status])
+             )
+
+    assert [%{status: "dispatching", attempt_number: 1}] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_delivery_intent_id == ^intent_id,
+                 select: map(d, [:status, :attempt_number])
+             )
+
+    refute_received {:whatsapp_request_started, _duplicate_request}
+
+    assert {:discard, :manual_review} =
+             perform_job(
+               SendWhatsAppTicketLinkWorker,
+               %{"ticket_delivery_intent_id" => intent_id},
+               attempt: 5,
+               max_attempts: 5
+             )
+
+    send(task.pid, :release_provider_response)
+
+    assert :ok = Task.await(task, 5_000)
+
+    assert %{status: "provider_accepted"} =
+             Repo.one!(
+               from i in "sales_ticket_delivery_intents",
+                 where: i.id == ^intent_id,
+                 select: map(i, [:status])
+             )
+
+    assert [%{status: "provider_accepted", attempt_number: 1}] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_delivery_intent_id == ^intent_id,
+                 select: map(d, [:status, :attempt_number])
              )
   end
 

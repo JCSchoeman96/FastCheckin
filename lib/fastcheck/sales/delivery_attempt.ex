@@ -116,6 +116,31 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       change(optimistic_lock(:lock_version))
     end
 
+    update :mark_ticket_provider_accepted do
+      require_atomic?(false)
+      accept([:provider_message_id, :provider_accepted_at])
+      validate(&validate_usable_provider_message_id/2)
+
+      change(fn changeset, _context ->
+        if is_integer(Changeset.get_data(changeset, :ticket_delivery_intent_id)) do
+          transition_provider_status(
+            changeset,
+            "accepted",
+            ["queued", "dispatching", "manual_review"],
+            :provider_accepted_at,
+            "provider_accepted"
+          )
+        else
+          Changeset.add_error(changeset,
+            field: :ticket_delivery_intent_id,
+            message: "is required for ticket provider acceptance"
+          )
+        end
+      end)
+
+      change(optimistic_lock(:lock_version))
+    end
+
     update :mark_delivered do
       require_atomic?(false)
       accept([:delivered_at])

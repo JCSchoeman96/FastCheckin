@@ -33,14 +33,15 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   alias FastCheck.Tickets.DeliveryToken
 
   @intent_terminal_states ["provider_accepted", "fallback_required", "cancelled"]
-  @attempt_acceptance_states ["provider_accepted", "sent", "delivered", "read", "provider_failed"]
+  @attempt_acceptance_states ["provider_accepted", "sent", "delivered", "read"]
+  @dispatch_recovery_window_seconds 30
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"ticket_delivery_intent_id" => id} = args} = job)
       when map_size(args) == 1 do
     with {:ok, intent_id} <- positive_id(id),
          {:ok, _intent} <- load_intent(intent_id),
-         {:ok, prepared} <- prepare_attempt(intent_id),
+         {:ok, prepared} <- prepare_attempt(intent_id, job),
          :ok <- execute_prepared(prepared, job) do
       :ok
     else
@@ -56,31 +57,32 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   # Attempt allocation and intent inspection share one short transaction. The
   # row lock serializes duplicate executions and attempt_number allocation.
   # The transaction is committed before any token rotation or provider call.
-  defp prepare_attempt(intent_id) do
+  defp prepare_attempt(intent_id, job) do
     Repo.transaction(fn ->
       case lock_intent(intent_id) do
         nil -> Repo.rollback(:intent_not_found)
-        locked_intent -> prepare_locked_intent(locked_intent)
+        locked_intent -> prepare_locked_intent(locked_intent, job)
       end
     end)
     |> case do
+      {:ok, {:retry, classification}} -> {:retry, classification}
       {:ok, result} -> {:ok, result}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp prepare_locked_intent(%{status: "provider_accepted", id: id}) do
+  defp prepare_locked_intent(%{status: "provider_accepted", id: id}, _job) do
     case load_intent(id) do
       {:ok, intent} -> {:recover_acceptance, resend_challenge_id(intent)}
       {:error, reason} -> Repo.rollback(reason)
     end
   end
 
-  defp prepare_locked_intent(%{status: status}) when status in @intent_terminal_states do
+  defp prepare_locked_intent(%{status: status}, _job) when status in @intent_terminal_states do
     {:stop, :already_terminal}
   end
 
-  defp prepare_locked_intent(locked_intent) do
+  defp prepare_locked_intent(locked_intent, job) do
     with {:ok, intent} <- load_intent(locked_intent.id),
          {:ok, attempts} <- load_intent_attempts(intent.id) do
       cond do
@@ -92,7 +94,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
         dispatching_attempt =
             Enum.find(attempts, &(whatsapp_meta_attempt?(&1) and &1.status == "dispatching")) ->
-          review_ambiguous_dispatch(intent, dispatching_attempt)
+          resolve_dispatching_attempt(intent, dispatching_attempt, job)
 
         Enum.any?(attempts, &(whatsapp_meta_attempt?(&1) and &1.status == "manual_review")) ->
           review_ambiguous_intent(intent)
@@ -104,6 +106,26 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       {:error, reason} -> Repo.rollback(reason)
     end
   end
+
+  defp resolve_dispatching_attempt(intent, attempt, job) do
+    if max_worker_attempt_reached?(job) or dispatch_recovery_window_expired?(attempt) do
+      review_ambiguous_dispatch(intent, attempt)
+    else
+      {:retry, "dispatch_in_progress"}
+    end
+  end
+
+  defp dispatch_recovery_window_expired?(%{updated_at: %DateTime{} = updated_at}) do
+    DateTime.diff(DateTime.utc_now(), updated_at, :second) >=
+      @dispatch_recovery_window_seconds
+  end
+
+  defp dispatch_recovery_window_expired?(%{updated_at: %NaiveDateTime{} = updated_at}) do
+    NaiveDateTime.diff(NaiveDateTime.utc_now(), updated_at, :second) >=
+      @dispatch_recovery_window_seconds
+  end
+
+  defp dispatch_recovery_window_expired?(_attempt), do: true
 
   defp recover_accepted_intent(intent) do
     case mark_intent_provider_accepted(intent) do
@@ -284,9 +306,11 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   defp persist_acceptance(attempt_id, intent_id, provider_message_id) do
     Repo.transaction(fn ->
+      lock_delivery_attempt_authority!(intent_id, attempt_id)
+
       with {:ok, attempt} <- load_attempt(attempt_id),
            {:ok, intent} <- load_intent(intent_id),
-           {:ok, _attempt} <- mark_provider_accepted(attempt, provider_message_id),
+           {:ok, _attempt} <- mark_ticket_provider_accepted(attempt, provider_message_id),
            :ok <- mark_intent_provider_accepted(intent) do
         :ok
       else
@@ -294,6 +318,28 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       end
     end)
     |> normalize_transaction()
+  end
+
+  defp lock_delivery_attempt_authority!(intent_id, attempt_id) do
+    case Repo.one(
+           from i in "sales_ticket_delivery_intents",
+             where: i.id == ^intent_id,
+             lock: "FOR UPDATE",
+             select: i.id
+         ) do
+      nil -> Repo.rollback(:intent_not_found)
+      _id -> :ok
+    end
+
+    case Repo.one(
+           from d in "sales_delivery_attempts",
+             where: d.id == ^attempt_id and d.ticket_delivery_intent_id == ^intent_id,
+             lock: "FOR UPDATE",
+             select: d.id
+         ) do
+      nil -> Repo.rollback(:delivery_attempt_not_found)
+      _id -> :ok
+    end
   end
 
   defp persist_manual_review(attempt_id, intent_id, reason, opts) do
@@ -481,7 +527,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       from d in "sales_delivery_attempts",
         where: d.ticket_delivery_intent_id == ^intent_id,
         order_by: [asc: d.attempt_number, asc: d.id],
-        select: map(d, [:id, :status, :provider_message_id, :provider, :channel])
+        select: map(d, [:id, :status, :provider_message_id, :provider, :channel, :updated_at])
     )
     |> then(&{:ok, &1})
   end
@@ -526,10 +572,10 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     |> ash_update()
   end
 
-  defp mark_provider_accepted(attempt, provider_message_id) do
+  defp mark_ticket_provider_accepted(attempt, provider_message_id) do
     attempt
     |> Changeset.for_update(
-      :mark_provider_accepted,
+      :mark_ticket_provider_accepted,
       %{
         provider_message_id: provider_message_id,
         provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)

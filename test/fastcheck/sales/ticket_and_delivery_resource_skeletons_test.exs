@@ -95,6 +95,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
                  :mark_dispatching,
                  :mark_sent,
                  :mark_provider_accepted,
+                 :mark_ticket_provider_accepted,
                  :mark_delivered,
                  :mark_read,
                  :mark_failed,
