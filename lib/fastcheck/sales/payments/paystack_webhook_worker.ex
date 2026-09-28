@@ -53,10 +53,10 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
 
   def perform(_job), do: {:error, :invalid_args}
 
-  defp handoff_verification(%{processing_status: "processed"}), do: :ok
-  defp handoff_verification(%{processing_status: "duplicate"}), do: :ok
+  defp handoff_verification(%{signature_valid: true, processing_status: "processed"}), do: :ok
+  defp handoff_verification(%{signature_valid: true, processing_status: "duplicate"}), do: :ok
 
-  defp handoff_verification(event) do
+  defp handoff_verification(%{signature_valid: true} = event) do
     case find_payment_attempt(event) do
       {:ok, attempt} ->
         atomic_handoff_with_attempt(event, attempt)
@@ -68,6 +68,8 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
         {:error, reason}
     end
   end
+
+  defp handoff_verification(_event), do: :ok
 
   defp atomic_handoff_with_attempt(event, attempt) do
     action =

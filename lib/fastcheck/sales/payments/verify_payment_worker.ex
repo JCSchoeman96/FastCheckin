@@ -9,7 +9,7 @@ defmodule FastCheck.Sales.Payments.VerifyPaymentWorker do
   use Oban.Worker,
     queue: :payments,
     max_attempts: 5,
-    unique: [period: 300, fields: [:args], keys: [:payment_attempt_id]]
+    unique: [period: 300, fields: [:args, :queue, :worker], keys: [:payment_attempt_id]]
 
   alias FastCheck.Sales.Payments.PaymentVerification
 

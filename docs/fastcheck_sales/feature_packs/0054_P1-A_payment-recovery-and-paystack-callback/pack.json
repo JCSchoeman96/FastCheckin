@@ -1,0 +1,69 @@
+{
+  "pack_id": "0054_P1-A",
+  "slice": "P1-A",
+  "name": "Payment Recovery and Paystack Callback",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0054_P1-A_payment-recovery-and-paystack-callback",
+  "goal": "Recover unresolved Paystack payments within the checkout lifecycle and provide a safe browser return route without treating callback parameters as payment proof.",
+  "dependencies": [
+    "P0-B Paid Order Fulfillment",
+    "VS-07A Paystack Webhook Ingestion",
+    "VS-07B Payment Verification"
+  ],
+  "payment_triggers": {
+    "primary": "Paystack webhook ingestion",
+    "fallback": "PaymentRecoverySweepWorker every two minutes",
+    "customer_return": "GET /sales/payments/paystack/callback",
+    "verification_worker": "FastCheck.Sales.Payments.VerifyPaymentWorker",
+    "verification_service": "FastCheck.Sales.Payments.PaymentVerification",
+    "payment_authority": "Paystack Transaction Verify API through TransactionVerifier"
+  },
+  "recovery": {
+    "queue": "sales_maintenance",
+    "stale_after_seconds": 120,
+    "horizon_seconds": 900,
+    "batch_size": 200,
+    "attempt_states": [
+      "initialized",
+      "authorization_url_sent",
+      "webhook_received",
+      "verification_started",
+      "verification_retry_queued"
+    ],
+    "event_states": [
+      "stored",
+      "processing_started",
+      "unmatched",
+      "failed"
+    ],
+    "event_signature_required": true,
+    "automatic_terminal_attempt_retry": false
+  },
+  "callback": {
+    "route": "GET /sales/payments/paystack/callback",
+    "pipeline": "public browser pipeline",
+    "reference_parameters": ["reference", "trxref"],
+    "mismatch_behavior": "do not enqueue verification",
+    "status_query_is_authority": false,
+    "response_headers": {
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex, nofollow"
+    },
+    "response_contains_payment_details": false
+  },
+  "migration_required": false,
+  "index_change": false,
+  "documentation": [
+    "docs/fastcheck_sales/feature_packs/0054_P1-A_payment-recovery-and-paystack-callback/0054_P1-A-FEATURE_PACK.md"
+  ],
+  "out_of_scope": [
+    "Webhook ingestion or signature redesign",
+    "Payment outcome classification changes",
+    "Inventory, fulfillment, issuance, or ticket-delivery changes",
+    "Refunds, Conversation restart, purchase-flow identity, or wallets"
+  ]
+}

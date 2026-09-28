@@ -67,6 +67,19 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorkerTest do
     refute_enqueued(worker: VerifyPaymentWorker)
   end
 
+  test "perform does not hand off an unsigned payment event", %{offer: offer} do
+    %{attempt: attempt} = TestSupport.initialized_payment!(offer)
+
+    event =
+      TestSupport.insert_payment_event!(%{
+        provider_reference: attempt.provider_reference,
+        signature_valid: false
+      })
+
+    assert :ok = perform_job(PaystackWebhookWorker, %{"payment_event_id" => event.id})
+    refute_enqueued(worker: VerifyPaymentWorker)
+  end
+
   test "perform returns error when payment event is missing" do
     assert {:error, :payment_event_not_found} =
              perform_job(PaystackWebhookWorker, %{"payment_event_id" => 999_999_999})
