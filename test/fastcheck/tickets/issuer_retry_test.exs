@@ -5,8 +5,12 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Repo
+  alias FastCheck.Sales.ManualReview
   alias FastCheck.Tickets.Issuer
+  alias FastCheck.Workers.IssueTicketsWorker
   alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
+
+  @actor %{id: "p0c-recovery-admin", username: "p0c-recovery-admin"}
 
   describe "issue_order/2 duplicate retries" do
     test "sequential duplicate calls create exactly one attendee and ticket issue per unit" do
@@ -128,6 +132,79 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
                )
 
       assert job.args == %{"sales_order_id" => order_id}
+    end
+
+    test "completed delivery coordinator can be requeued through manual issuance recovery" do
+      %{order_id: order_id} = paid_order_fixture(quantity: 2, source_channel: "whatsapp")
+
+      conversation_id =
+        Repo.one!(
+          from(o in "sales_orders", where: o.id == ^order_id, select: o.sales_conversation_id)
+        )
+
+      Repo.update_all(
+        from(o in "sales_orders", where: o.id == ^order_id),
+        set: [sales_conversation_id: nil]
+      )
+
+      assert {:ok, %{status: :ticket_issued, ticket_issue_count: 2}} =
+               Issuer.issue_order(order_id)
+
+      assert [%{id: coordinator_a_id, args: coordinator_args}] =
+               all_enqueued(
+                 worker: TicketDeliveryCoordinatorWorker,
+                 args: %{"sales_order_id" => order_id}
+               )
+
+      assert :ok = perform_job(TicketDeliveryCoordinatorWorker, coordinator_args)
+      assert order_status(order_id) == "manual_review"
+
+      assert Repo.one!(
+               from(o in "sales_orders", where: o.id == ^order_id, select: o.manual_review_reason)
+             ) == "ticket_delivery_conversation_binding_missing"
+
+      completed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      Repo.update_all(
+        from(j in Oban.Job, where: j.id == ^coordinator_a_id),
+        set: [state: "completed", completed_at: completed_at]
+      )
+
+      Repo.update_all(
+        from(o in "sales_orders", where: o.id == ^order_id),
+        set: [sales_conversation_id: conversation_id]
+      )
+
+      before = %{attendees: attendee_count(order_id), issues: ticket_issue_count(order_id)}
+
+      assert {:ok, _review_action} =
+               ManualReview.retry_ticket_issuance(order_id, @actor, %{
+                 "reason_code" => "retry_ticket_issuance"
+               })
+
+      assert [%{args: issuer_args}] =
+               all_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+
+      assert :ok = perform_job(IssueTicketsWorker, issuer_args)
+      assert order_status(order_id) == "ticket_issued"
+
+      assert %{attendees: before.attendees, issues: before.issues} == %{
+               attendees: attendee_count(order_id),
+               issues: ticket_issue_count(order_id)
+             }
+
+      assert [%{id: coordinator_b_id, conflict?: false, args: coordinator_b_args}] =
+               all_enqueued(
+                 worker: TicketDeliveryCoordinatorWorker,
+                 args: %{"sales_order_id" => order_id}
+               )
+
+      assert coordinator_b_id != coordinator_a_id
+      assert :ok = perform_job(TicketDeliveryCoordinatorWorker, coordinator_b_args)
+      assert 2 == Repo.aggregate("sales_ticket_issues", :count, :id)
+      assert 2 == Repo.aggregate("attendees", :count, :id)
+      assert 2 == Repo.aggregate("sales_ticket_delivery_intents", :count, :id)
+      assert 2 == length(all_enqueued(worker: FastCheck.Workers.SendWhatsAppTicketLinkWorker))
     end
   end
 

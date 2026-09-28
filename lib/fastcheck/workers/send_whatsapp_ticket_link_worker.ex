@@ -503,15 +503,6 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       conversation.id != intent.conversation_id ->
         {:invalid, "ticket_delivery_relationship_conflict"}
 
-      order.sales_conversation_id != intent.conversation_id ->
-        {:invalid, "ticket_delivery_relationship_conflict"}
-
-      order.source_channel != "whatsapp" ->
-        {:invalid, "ticket_delivery_relationship_conflict"}
-
-      conversation.phone_e164 != order.buyer_phone ->
-        {:invalid, "ticket_delivery_relationship_conflict"}
-
       true ->
         :ok
     end
@@ -530,17 +521,37 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     end
   end
 
-  defp validate_delivery_purpose(%{intent: intent, challenge: challenge}) do
+  defp validate_delivery_purpose(%{intent: %{purpose: "initial_ticket_delivery"}} = bundle),
+    do: validate_initial_delivery_authority(bundle)
+
+  defp validate_delivery_purpose(%{intent: intent, challenge: challenge})
+       when intent.purpose == "verified_ticket_resend" do
+    if valid_resend_challenge?(intent, challenge),
+      do: :ok,
+      else: {:invalid, "ticket_delivery_resend_challenge_invalid"}
+  end
+
+  defp validate_delivery_purpose(_bundle),
+    do: {:invalid, "ticket_delivery_purpose_invalid"}
+
+  defp validate_initial_delivery_authority(%{
+         intent: intent,
+         order: order,
+         conversation: conversation,
+         challenge: challenge
+       }) do
     cond do
-      intent.purpose == "initial_ticket_delivery" and not is_nil(challenge) ->
+      not is_nil(challenge) ->
         {:invalid, "ticket_delivery_relationship_conflict"}
 
-      intent.purpose == "verified_ticket_resend" and
-          not valid_resend_challenge?(intent, challenge) ->
-        {:invalid, "ticket_delivery_resend_challenge_invalid"}
+      order.sales_conversation_id != intent.conversation_id ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
 
-      intent.purpose not in ["initial_ticket_delivery", "verified_ticket_resend"] ->
-        {:invalid, "ticket_delivery_purpose_invalid"}
+      order.source_channel != "whatsapp" ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
+
+      conversation.phone_e164 != order.buyer_phone ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
 
       true ->
         :ok

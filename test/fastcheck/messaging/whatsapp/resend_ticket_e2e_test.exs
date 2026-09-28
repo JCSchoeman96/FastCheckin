@@ -39,10 +39,7 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
     candidate =
       issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
 
-    Repo.update_all(
-      from(o in "sales_orders", where: o.id == ^candidate.sales_order_id),
-      set: [sales_conversation_id: conversation.id]
-    )
+    assert nil == order_conversation_id(candidate.sales_order_id)
 
     {{verified, otp}, flow_log} =
       capture_result_and_log(fn ->
@@ -152,6 +149,101 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
              )
 
     assert challenge_id == challenge.id
+    assert nil == order_conversation_id(candidate.sales_order_id)
+  end
+
+  test "verified resend uses the current conversation, not the original purchase binding", %{
+    conversation: conversation
+  } do
+    test_pid = self()
+
+    candidate =
+      issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
+
+    %{rows: [[purchase_conversation_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_conversations
+          (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
+        VALUES ('+27123456789', '27123456789', 'en', 'ticket_issued', '{}', false, now(), now())
+        RETURNING id
+        """,
+        []
+      )
+
+    Repo.update_all(
+      from(o in "sales_orders", where: o.id == ^candidate.sales_order_id),
+      set: [
+        sales_conversation_id: purchase_conversation_id,
+        source_channel: "web",
+        buyer_phone: "+27123456789"
+      ]
+    )
+
+    assert purchase_conversation_id != conversation.id
+
+    conversation
+    |> progress("hi", "different-conv-1")
+    |> progress("1", "different-conv-2")
+    |> progress("3", "different-conv-3")
+    |> progress("Jamie Smith", "different-conv-4")
+    |> progress("resend@example.com", "different-conv-5")
+    |> then(fn result ->
+      otp = extract_single_otp_from_email!()
+      assert {:ok, verified} = handle(result.conversation, otp, "wamid.different-conv-6")
+      assert verified.conversation.state == "verified_resend_delivery_queued"
+    end)
+
+    challenge_id =
+      Repo.one!(
+        from c in "sales_ticket_resend_challenges",
+          where: c.status == "verified",
+          select: c.id
+      )
+
+    intent_id =
+      Repo.one!(
+        from i in "sales_ticket_delivery_intents",
+          where: i.ticket_resend_challenge_id == ^challenge_id,
+          select: i.id
+      )
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(test_pid, {:whatsapp_request, request})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => "wamid.different-conv-resend"}]})
+       }}
+    end)
+
+    assert :ok =
+             perform_job(SendWhatsAppTicketLinkWorker, %{
+               "ticket_delivery_intent_id" => intent_id
+             })
+
+    assert_received {:whatsapp_request, request}
+    assert request.options.json["text"]["body"] =~ "/t/"
+
+    assert %{status: "consumed", consumed_at: consumed_at} =
+             resend_challenge_snapshot(challenge_id)
+
+    assert consumed_at
+    assert order_conversation_id(candidate.sales_order_id) == purchase_conversation_id
+
+    assert [
+             %{
+               status: "provider_accepted",
+               provider_message_id: "wamid.different-conv-resend",
+               delivery_reason: "verified_ticket_resend"
+             }
+           ] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_delivery_intent_id == ^intent_id,
+                 select: map(d, [:status, :provider_message_id, :delivery_reason])
+             )
   end
 
   defp progress(%{conversation: conversation}, text, suffix),
@@ -237,6 +329,14 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
       from c in "sales_ticket_resend_challenges",
         where: c.id == ^challenge_id,
         select: map(c, [:status, :consumed_at])
+    )
+  end
+
+  defp order_conversation_id(order_id) do
+    Repo.one!(
+      from o in "sales_orders",
+        where: o.id == ^order_id,
+        select: o.sales_conversation_id
     )
   end
 

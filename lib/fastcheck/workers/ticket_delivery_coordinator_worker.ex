@@ -6,7 +6,12 @@ defmodule FastCheck.Workers.TicketDeliveryCoordinatorWorker do
   use Oban.Worker,
     queue: :ticketing,
     max_attempts: 5,
-    unique: [period: :infinity, fields: [:args, :worker], keys: [:sales_order_id]]
+    unique: [
+      period: :infinity,
+      fields: [:args, :worker],
+      keys: [:sales_order_id],
+      states: :incomplete
+    ]
 
   alias FastCheck.Sales.TicketDeliveryCoordinator
 

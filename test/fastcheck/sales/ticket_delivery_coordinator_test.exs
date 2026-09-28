@@ -19,6 +19,18 @@ defmodule FastCheck.Sales.TicketDeliveryCoordinatorTest do
              })
   end
 
+  test "incomplete coordinator jobs deduplicate for the same order" do
+    args = %{"sales_order_id" => System.unique_integer([:positive])}
+
+    assert {:ok, first} = TicketDeliveryCoordinatorWorker.new(args) |> Oban.insert()
+    assert first.conflict? == false
+
+    assert {:ok, duplicate} = TicketDeliveryCoordinatorWorker.new(args) |> Oban.insert()
+    assert duplicate.conflict? == true
+
+    assert length(all_enqueued(worker: TicketDeliveryCoordinatorWorker, args: args)) == 1
+  end
+
   test "queues one durable initial intent for every valid issued ticket" do
     candidate = issued_ticket_candidate!()
     conversation_id = insert_conversation!()

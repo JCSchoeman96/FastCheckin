@@ -96,10 +96,7 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlow do
          {:ok, %TicketIssue{} = issue} <- load_ticket_issue(challenge.ticket_issue_id),
          true <-
            challenge.conversation_id == conversation.id and
-             order.sales_conversation_id == conversation.id and
-             conversation.phone_e164 == order.buyer_phone and
              order.status == "ticket_issued" and
-             order.source_channel == "whatsapp" and
              issue.sales_order_id == order.id and issue.status == "issued" and
              is_nil(issue.revoked_at) do
       :ok
