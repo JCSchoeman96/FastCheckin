@@ -11,6 +11,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
   alias FastCheck.Events
   alias FastCheck.Sales.MoneyInput
   alias FastCheck.Sales.OfferManagement
+  alias FastCheck.Sales.PurchaseLimits
 
   @max_postgres_integer 2_147_483_647
 
@@ -20,6 +21,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
          {:ok, event_id} <- OfferManagement.parse_event_id(event_id_param),
          {:ok, %{event: event, archived?: archived?}} <-
            OfferManagement.fetch_event_context(event_id) do
+      event = event_with_authoritative_quantity_cap(event)
       actor = OfferManagement.admin_actor_from_user(user, event_id)
 
       case OfferManagement.list_offers(actor, event_id) do
@@ -220,6 +222,15 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
             <p class="text-sm text-fc-text-secondary">
               Examples: Event 4 + Offer 6 → effective 4. Event 6 + Offer 2 → effective 2.
             </p>
+            <p class="text-sm text-fc-text-secondary">
+              A customer can purchase up to {PurchaseLimits.max_tickets_per_order()} tickets in one order.
+            </p>
+            <p
+              :if={@event.whatsapp_max_tickets_per_order > PurchaseLimits.max_tickets_per_order()}
+              class="text-sm text-warning-dark"
+            >
+              This saved limit is above the platform maximum. Choose a value at or below {PurchaseLimits.max_tickets_per_order()} before saving; the current value is preserved until then.
+            </p>
             <p :if={@archived?} class="text-sm text-fc-text-primary">
               Current limit: <span class="font-medium">{@event.whatsapp_max_tickets_per_order}</span>
             </p>
@@ -232,9 +243,11 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
             >
               <.input
                 field={@quantity_cap_form[:whatsapp_max_tickets_per_order]}
+                value={@event.whatsapp_max_tickets_per_order}
                 type="number"
                 label="Event max tickets per WhatsApp order"
                 min="1"
+                max={PurchaseLimits.max_tickets_per_order()}
                 step="1"
                 required
               />
@@ -359,6 +372,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
                   type="number"
                   label="Max per order"
                   min="1"
+                  max={PurchaseLimits.max_tickets_per_order()}
                   step="1"
                   required
                 />
@@ -373,6 +387,9 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
         <.card :if={!@archived?} variant="outline" color="natural" rounded="large" padding="large">
           <.card_content class="space-y-4">
             <h2 class="text-lg font-semibold text-fc-text-primary">Create ticket offer</h2>
+            <p class="text-sm text-fc-text-secondary">
+              One customer order can include up to {PurchaseLimits.max_tickets_per_order()} tickets.
+            </p>
             <.form
               for={@create_form}
               id="whatsapp-offer-create-form"
@@ -403,6 +420,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
                 type="number"
                 label="Max per order"
                 min="1"
+                max={PurchaseLimits.max_tickets_per_order()}
                 step="1"
                 required
               />
@@ -510,6 +528,13 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
     )
   end
 
+  defp event_with_authoritative_quantity_cap(event) do
+    case Events.whatsapp_max_tickets_per_order(event.id) do
+      limit when is_integer(limit) -> %{event | whatsapp_max_tickets_per_order: limit}
+      _ -> event
+    end
+  end
+
   defp parse_ui_quantity_cap(value) when is_binary(value) do
     trimmed = String.trim(value)
 
@@ -529,6 +554,10 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
 
   defp quantity_cap_error_message(:event_archived),
     do: "Archived events cannot change the order limit."
+
+  defp quantity_cap_error_message(:platform_max_per_order_exceeded),
+    do:
+      "The event limit cannot exceed #{PurchaseLimits.max_tickets_per_order()} tickets per order."
 
   defp quantity_cap_error_message(:not_found), do: "Event not found."
   defp quantity_cap_error_message(_), do: "Could not update the order limit."

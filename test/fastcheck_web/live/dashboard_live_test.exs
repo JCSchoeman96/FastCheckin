@@ -842,7 +842,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       })
 
       Application.put_env(:fastcheck, :dashboard_reveal_rate_limit_window_ms, 5_000)
-      Application.put_env(:fastcheck, :dashboard_reveal_lock_duration_ms, 1_000)
+      Application.put_env(:fastcheck, :dashboard_reveal_lock_duration_ms, 10_000)
       Application.put_env(:fastcheck, :dashboard_reveal_max_failures, 3)
 
       on_exit(fn ->
@@ -995,7 +995,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert html =~ "Too many incorrect attempts"
 
-      Process.sleep(1_100)
+      Process.sleep(10_100)
 
       html =
         view

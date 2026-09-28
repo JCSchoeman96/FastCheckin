@@ -57,6 +57,7 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/payment_attempt.ex",
              "lib/fastcheck/sales/payment_event.ex",
              "lib/fastcheck/sales/policy_checks.ex",
+             "lib/fastcheck/sales/purchase_limits.ex",
              "lib/fastcheck/sales/sandbox_fixtures.ex",
              "lib/fastcheck/sales/secondary_entrypoints.ex",
              "lib/fastcheck/sales/state_transition.ex",

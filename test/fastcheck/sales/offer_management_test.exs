@@ -132,6 +132,54 @@ defmodule FastCheck.Sales.OfferManagementTest do
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
   end
 
+  test "create_offer accepts the platform maximum but rejects 51", %{event: event, actor: actor} do
+    assert {:ok, offer} =
+             OfferManagement.create_offer(actor, event.id, %{
+               "name" => "Platform Maximum",
+               "price" => "100",
+               "initial_quantity" => "60",
+               "max_per_order" => "50"
+             })
+
+    assert offer.max_per_order == 50
+
+    assert {:error, :platform_max_per_order_exceeded} =
+             OfferManagement.create_offer(actor, event.id, %{
+               "name" => "Above Platform Maximum",
+               "price" => "100",
+               "initial_quantity" => "60",
+               "max_per_order" => "51"
+             })
+
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "update_offer rejects max_per_order 51 without changing the offer", %{
+    event: event,
+    actor: actor
+  } do
+    {:ok, offer} =
+      OfferManagement.create_offer(actor, event.id, %{
+        "name" => "Update Ceiling",
+        "price" => "80",
+        "initial_quantity" => "60",
+        "max_per_order" => "50"
+      })
+
+    assert {:error, :platform_max_per_order_exceeded} =
+             OfferManagement.update_offer(actor, event.id, offer.id, %{
+               "name" => "Update Ceiling",
+               "price" => "80",
+               "max_per_order" => "51",
+               "lock_version" => to_string(offer.lock_version)
+             })
+
+    refreshed = Repo.get!(TicketOffer, offer.id)
+    assert refreshed.max_per_order == 50
+    assert refreshed.lock_version == offer.lock_version
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
   test "update_offer can raise max_per_order to 12 and increments lock_version", %{
     event: event,
     actor: actor
@@ -154,6 +202,27 @@ defmodule FastCheck.Sales.OfferManagementTest do
 
     assert updated.max_per_order == 12
     assert updated.lock_version == offer.lock_version + 1
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "update_offer accepts the platform maximum", %{event: event, actor: actor} do
+    {:ok, offer} =
+      OfferManagement.create_offer(actor, event.id, %{
+        "name" => "Update To Platform Maximum",
+        "price" => "80",
+        "initial_quantity" => "60",
+        "max_per_order" => "2"
+      })
+
+    assert {:ok, updated} =
+             OfferManagement.update_offer(actor, event.id, offer.id, %{
+               "name" => "Update To Platform Maximum",
+               "price" => "80",
+               "max_per_order" => "50",
+               "lock_version" => to_string(offer.lock_version)
+             })
+
+    assert updated.max_per_order == 50
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
   end
 

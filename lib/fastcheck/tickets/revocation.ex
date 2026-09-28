@@ -2,9 +2,9 @@ defmodule FastCheck.Tickets.Revocation do
   @moduledoc """
   Core Sales ticket revocation boundary for scanner visibility.
 
-  Revokes `TicketIssue` rows, marks linked attendees `not_scannable`, appends
-  invalidation events, bumps mobile sync version inside the transaction, and
-  invalidates attendee caches after commit.
+  Revokes every issued `TicketIssue` for an Order through bounded keyset pages,
+  marks linked attendees `not_scannable`, appends invalidation events, bumps the
+  mobile sync version inside the transaction, and invalidates attendee caches after commit.
   """
 
   import Ecto.Query
@@ -20,7 +20,7 @@ defmodule FastCheck.Tickets.Revocation do
   alias FastCheck.Sales.TicketIssue
   alias FastCheck.Tickets.ScannerVisibility
 
-  @max_order_revoke_batch 50
+  @order_revoke_page_size 50
   @pending_revoke_sources ~w(cancel cleanup cancellation system_reconciliation)
 
   @type revoke_result :: %{
@@ -96,7 +96,7 @@ defmodule FastCheck.Tickets.Revocation do
   end
 
   @doc """
-  Revokes issued tickets for an order in a bounded batch.
+  Revokes every issued ticket for an order through bounded keyset pages.
 
   Ticket and attendee mutations run inside one outer database transaction with
   per-ticket savepoints for partial failures. The mobile sync version bump runs
@@ -104,7 +104,12 @@ defmodule FastCheck.Tickets.Revocation do
   mutations roll back. Cache invalidation runs once after commit.
   """
   @spec revoke_order_tickets(integer(), keyword()) ::
-          {:ok, %{revoked: [revoke_result()], failures: [map()]}}
+          {:ok,
+           %{
+             revoked: [revoke_result()],
+             failures: [map()],
+             remaining_issued_count: non_neg_integer()
+           }}
           | {:error, :not_found | :forbidden | :reason_required | :audit_context_required}
           | {:error, {:mobile_sync_version_aggregation_failed, term()}}
   def revoke_order_tickets(order_id, opts \\ []) when is_integer(order_id) do
@@ -113,12 +118,17 @@ defmodule FastCheck.Tickets.Revocation do
     with :ok <- authorize_actor(context, opts),
          {:ok, order} <- fetch_order(order_id),
          :ok <- authorize_event_scope(context, order.event_id),
-         ticket_issues <- list_issued_ticket_issues(order_id),
          {:ok, batch_result} <-
-           revoke_order_ticket_batch(order, ticket_issues, context, opts) do
+           revoke_order_ticket_batch(order_id, context, opts) do
       maybe_invalidate_caches_post_commit(batch_result)
       maybe_manual_review_order(order_id, batch_result.failures, context, opts)
-      {:ok, %{revoked: batch_result.revoked, failures: batch_result.failures}}
+
+      {:ok,
+       %{
+         revoked: batch_result.revoked,
+         failures: batch_result.failures,
+         remaining_issued_count: batch_result.remaining_issued_count
+       }}
     end
   end
 
@@ -138,43 +148,72 @@ defmodule FastCheck.Tickets.Revocation do
     |> normalize_transaction_result()
   end
 
-  defp revoke_order_ticket_batch(order, ticket_issues, context, opts) do
+  defp revoke_order_ticket_batch(order_id, context, opts) do
     reason = revocation_reason(opts)
     aggregator = mobile_sync_aggregator(opts)
 
     Repo.transaction(fn ->
-      acc =
-        Enum.reduce(
-          ticket_issues,
-          %{revoked: [], failures: [], cache_targets: []},
-          fn ticket_issue, acc ->
-            revoke_order_ticket_issue_step(ticket_issue, order, context, opts, reason, acc)
-          end
-        )
+      Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
+      order = reload_order_after_lock!(order_id)
 
-      case bump_batch_sync_if_needed(order.event_id, acc.cache_targets, aggregator) do
+      case authorize_event_scope(context, order.event_id) do
         :ok ->
-          Map.merge(acc, %{
-            cache?: acc.cache_targets != [],
-            event_id: order.event_id
-          })
+          acc =
+            revoke_order_ticket_pages(
+              order,
+              context,
+              opts,
+              reason,
+              0,
+              %{revoked: [], failures: [], cache_targets: []}
+            )
 
-        {:error, reason} ->
-          Repo.rollback({:mobile_sync_version_aggregation_failed, reason})
+          remaining_issued_count = count_issued_ticket_issues(order.id)
+          failures = add_incomplete_failure(acc.failures, remaining_issued_count)
+          cache_targets = Enum.reverse(acc.cache_targets)
+
+          case bump_batch_sync_if_needed(order.event_id, cache_targets, aggregator) do
+            :ok ->
+              %{
+                revoked: Enum.reverse(acc.revoked),
+                failures: Enum.reverse(failures),
+                remaining_issued_count: remaining_issued_count,
+                cache?: cache_targets != [],
+                cache_targets: cache_targets,
+                event_id: order.event_id
+              }
+
+            {:error, sync_error} ->
+              Repo.rollback({:mobile_sync_version_aggregation_failed, sync_error})
+          end
+
+        {:error, authorization_error} ->
+          Repo.rollback(authorization_error)
       end
     end)
     |> normalize_transaction_result()
   end
 
-  defp revoke_order_ticket_issue_step(ticket_issue, order, context, opts, reason, acc) do
-    case Repo.transaction(fn ->
-           locked_issue = lock_ticket_issue!(ticket_issue.id)
+  defp revoke_order_ticket_pages(order, context, opts, reason, last_seen_id, acc) do
+    page = list_issued_ticket_issue_page(order.id, last_seen_id)
 
-           revoke_locked_ticket_issue(locked_issue, order, context, opts, reason,
-             sync_bump?: false,
-             aggregator: mobile_sync_aggregator(opts)
-           )
-         end) do
+    case page do
+      [] ->
+        acc
+
+      ticket_issues ->
+        page_result =
+          Enum.reduce(ticket_issues, acc, fn ticket_issue, page_acc ->
+            revoke_order_ticket_issue_step(ticket_issue, order, context, opts, reason, page_acc)
+          end)
+
+        next_cursor = List.last(ticket_issues).id
+        revoke_order_ticket_pages(order, context, opts, reason, next_cursor, page_result)
+    end
+  end
+
+  defp revoke_order_ticket_issue_step(ticket_issue, order, context, opts, reason, acc) do
+    case revoke_order_ticket_issue_in_savepoint(ticket_issue, order, context, opts, reason) do
       {:ok, %{status: :revoked} = result} ->
         target = %{
           event_id: order.event_id,
@@ -184,17 +223,52 @@ defmodule FastCheck.Tickets.Revocation do
 
         %{
           acc
-          | revoked: acc.revoked ++ [format_revoke_result(result)],
-            cache_targets: acc.cache_targets ++ [target]
+          | revoked: [format_revoke_result(result) | acc.revoked],
+            cache_targets: [target | acc.cache_targets]
         }
 
       {:ok, result} ->
-        %{acc | revoked: acc.revoked ++ [format_revoke_result(result)]}
+        %{acc | revoked: [format_revoke_result(result) | acc.revoked]}
 
       {:error, error} ->
-        failure = %{ticket_issue_id: ticket_issue.id, error: error}
-        %{acc | failures: acc.failures ++ [failure]}
+        failure = %{
+          ticket_issue_id: ticket_issue.id,
+          error: safe_ticket_revocation_failure(error)
+        }
+
+        %{acc | failures: [failure | acc.failures]}
     end
+  end
+
+  defp revoke_order_ticket_issue_in_savepoint(ticket_issue, order, context, opts, reason) do
+    Repo.query!("SAVEPOINT fastcheck_order_ticket_revoke")
+
+    try do
+      locked_issue = lock_ticket_issue!(ticket_issue.id)
+
+      case revoke_locked_ticket_issue(locked_issue, order, context, opts, reason,
+             sync_bump?: false,
+             aggregator: mobile_sync_aggregator(opts),
+             rollback_on_error?: false
+           ) do
+        {:error, error} ->
+          rollback_ticket_revoke_savepoint!()
+          {:error, error}
+
+        result ->
+          Repo.query!("RELEASE SAVEPOINT fastcheck_order_ticket_revoke")
+          {:ok, result}
+      end
+    rescue
+      _error ->
+        rollback_ticket_revoke_savepoint!()
+        {:error, :revocation_failed}
+    end
+  end
+
+  defp rollback_ticket_revoke_savepoint! do
+    Repo.query!("ROLLBACK TO SAVEPOINT fastcheck_order_ticket_revoke")
+    Repo.query!("RELEASE SAVEPOINT fastcheck_order_ticket_revoke")
   end
 
   defp bump_batch_sync_if_needed(_event_id, [], _aggregator), do: :ok
@@ -234,8 +308,9 @@ defmodule FastCheck.Tickets.Revocation do
   defp revoke_locked_ticket_issue(locked_issue, order, context, opts, reason, txn_opts) do
     sync_bump? = Keyword.get(txn_opts, :sync_bump?, false)
     aggregator = Keyword.get(txn_opts, :aggregator, MobileSyncVersionAggregator)
+    rollback_on_error? = Keyword.get(txn_opts, :rollback_on_error?, true)
 
-    with attendee when not is_nil(attendee) <- lock_and_validate_attendee!(locked_issue, order),
+    with {:ok, attendee} <- lock_and_validate_attendee!(locked_issue, order),
          {:ok, revoked_issue} <- mark_ticket_issue_revoked(locked_issue, reason, context, opts),
          {:ok, visibility} <-
            ScannerVisibility.mark_not_scannable(attendee, reason_code: ReasonCodes.revoked()),
@@ -251,7 +326,8 @@ defmodule FastCheck.Tickets.Revocation do
         ticket_code: visibility.attendee.ticket_code
       }
     else
-      {:error, reason} -> Repo.rollback(reason)
+      {:error, error} when rollback_on_error? -> Repo.rollback(error)
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -390,11 +466,46 @@ defmodule FastCheck.Tickets.Revocation do
     :ok
   end
 
-  defp list_issued_ticket_issues(order_id) do
-    TicketIssue
-    |> AshQuery.for_read(:list_issued_by_order, %{sales_order_id: order_id})
-    |> AshQuery.limit(@max_order_revoke_batch)
-    |> Ash.read!(authorize?: false)
+  defp list_issued_ticket_issue_page(order_id, last_seen_id) do
+    Repo.all(
+      from ticket_issue in TicketIssue,
+        where:
+          ticket_issue.sales_order_id == ^order_id and ticket_issue.status == "issued" and
+            ticket_issue.id > ^last_seen_id,
+        order_by: [asc: ticket_issue.id],
+        limit: ^@order_revoke_page_size
+    )
+  end
+
+  defp count_issued_ticket_issues(order_id) do
+    Repo.one!(
+      from ticket_issue in "sales_ticket_issues",
+        where: ticket_issue.sales_order_id == ^order_id and ticket_issue.status == "issued",
+        select: count(ticket_issue.id)
+    )
+  end
+
+  defp add_incomplete_failure(failures, 0), do: failures
+  defp add_incomplete_failure([_ | _] = failures, _remaining_issued_count), do: failures
+
+  defp add_incomplete_failure([], _remaining_issued_count),
+    do: [%{error: :order_revocation_incomplete}]
+
+  defp safe_ticket_revocation_failure({:missing_attendee, _ticket_issue_id}),
+    do: :missing_attendee
+
+  defp safe_ticket_revocation_failure({:conflict, reason})
+       when reason in [:ticket_code_mismatch, :event_mismatch],
+       do: {:conflict, reason}
+
+  defp safe_ticket_revocation_failure(:invalid_state), do: :invalid_state
+  defp safe_ticket_revocation_failure(_error), do: :revocation_failed
+
+  defp reload_order_after_lock!(order_id) do
+    case fetch_order(order_id) do
+      {:ok, order} -> order
+      {:error, reason} -> Repo.rollback(reason)
+    end
   end
 
   defp fetch_ticket_issue(ticket_issue_id) do
@@ -461,20 +572,20 @@ defmodule FastCheck.Tickets.Revocation do
 
         cond do
           is_nil(attendee) ->
-            Repo.rollback({:missing_attendee, locked_issue.id})
+            {:error, {:missing_attendee, locked_issue.id}}
 
           attendee.ticket_code != locked_issue.ticket_code ->
-            Repo.rollback({:conflict, :ticket_code_mismatch})
+            {:error, {:conflict, :ticket_code_mismatch}}
 
           attendee.event_id != order.event_id ->
-            Repo.rollback({:conflict, :event_mismatch})
+            {:error, {:conflict, :event_mismatch}}
 
           true ->
-            attendee
+            {:ok, attendee}
         end
 
       _ ->
-        Repo.rollback({:missing_attendee, locked_issue.id})
+        {:error, {:missing_attendee, locked_issue.id}}
     end
   end
 

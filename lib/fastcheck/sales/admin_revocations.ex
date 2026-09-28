@@ -69,7 +69,7 @@ defmodule FastCheck.Sales.AdminRevocations do
     end
   end
 
-  @doc "Revokes all issued tickets for an order in a bounded batch."
+  @doc "Revokes all issued tickets for an order and reports the remaining issued count."
   def revoke_order_tickets(actor, order_id, attrs) when is_map(attrs) do
     attrs = stringify_keys(attrs)
 
@@ -87,7 +87,7 @@ defmodule FastCheck.Sales.AdminRevocations do
          :ok <- authorize_dashboard_actor(actor, order.event_id),
          opts = revocation_opts(actor, order.event_id, attrs),
          {:ok, result} <- invoke_order_ticket_revocation(order_id, opts) do
-      case Map.get(result, :failures, []) do
+      case order_revocation_failures(result) do
         [_ | _] = failures ->
           :telemetry.execute(
             TelemetryNames.admin_revocation_failed(),
@@ -150,36 +150,56 @@ defmodule FastCheck.Sales.AdminRevocations do
          %{
            revoked: [],
            failures: [
-             %{ticket_issue_id: ticket_issue_id, error: {:missing_attendee, ticket_issue_id}}
-           ]
+             %{ticket_issue_id: ticket_issue_id, error: :missing_attendee}
+           ],
+           remaining_issued_count: remaining_issued_ticket_count(order_id)
          }}
 
       {:error, :rollback} ->
         {:ok,
          %{
            revoked: [],
-           failures: failures_for_still_issued_tickets(order_id, :rollback)
+           failures: [%{error: :revocation_failed}],
+           remaining_issued_count: remaining_issued_ticket_count(order_id)
          }}
 
       {:error, reason} ->
-        {:ok, %{revoked: [], failures: [%{error: reason}]}}
+        {:ok,
+         %{
+           revoked: [],
+           failures: [%{error: safe_revocation_failure(reason)}],
+           remaining_issued_count: remaining_issued_ticket_count(order_id)
+         }}
     end
   end
 
-  defp failures_for_still_issued_tickets(order_id, error_reason) do
-    order_id
-    |> issued_ticket_issue_ids()
-    |> Enum.map(&%{ticket_issue_id: &1, error: error_reason})
+  defp order_revocation_failures(result) do
+    failures = Map.get(result, :failures, Map.get(result, "failures", []))
+    remaining_issued_count = Map.get(result, :remaining_issued_count)
+
+    cond do
+      failures != [] ->
+        failures
+
+      remaining_issued_count == 0 ->
+        []
+
+      true ->
+        [%{error: :order_revocation_incomplete}]
+    end
   end
 
-  defp issued_ticket_issue_ids(order_id) do
-    Repo.all(
+  defp remaining_issued_ticket_count(order_id) do
+    Repo.one!(
       from t in "sales_ticket_issues",
         where: t.sales_order_id == ^order_id and t.status == "issued",
-        order_by: [asc: t.id],
-        select: t.id
+        select: count(t.id)
     )
   end
+
+  defp safe_revocation_failure(:forbidden), do: :forbidden
+  defp safe_revocation_failure(:not_found), do: :not_found
+  defp safe_revocation_failure(_reason), do: :revocation_failed
 
   defp require_reason(attrs) do
     reason = blank_to_nil(Map.get(attrs, "reason"))

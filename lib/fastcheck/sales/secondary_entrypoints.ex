@@ -9,6 +9,7 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
 
   alias FastCheck.Events
   alias FastCheck.Sales.Checkout
+  alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
 
   @type dashboard_user :: %{required(:username) => String.t(), optional(:id) => String.t()}
@@ -91,6 +92,9 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
 
   def safe_error_message(:max_per_order_exceeded),
     do: "Quantity exceeds the maximum allowed per order."
+
+  def safe_error_message(:platform_max_per_order_exceeded),
+    do: "An order can contain up to #{PurchaseLimits.max_tickets_per_order()} tickets."
 
   def safe_error_message(:insufficient_inventory),
     do: "Not enough tickets are available right now."

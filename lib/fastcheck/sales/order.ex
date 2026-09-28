@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.Order do
     authorizers: [Ash.Policy.Authorizer]
 
   alias Ash.Changeset
+  alias FastCheck.Repo
   alias FastCheck.Sales.StateTransitionSupport
 
   postgres do
@@ -399,8 +400,10 @@ defmodule FastCheck.Sales.Order do
 
     update :mark_refunded_manual do
       require_atomic?(false)
+      transaction?(true)
       accept([:manual_review_reason])
       argument(:reason, :string)
+      change(&ensure_no_issued_tickets_before_finalization/2)
 
       change(fn changeset, context ->
         reason =
@@ -435,8 +438,10 @@ defmodule FastCheck.Sales.Order do
 
     update :mark_cancelled_manual do
       require_atomic?(false)
+      transaction?(true)
       accept([:manual_review_reason])
       argument(:reason, :string)
+      change(&ensure_no_issued_tickets_before_finalization/2)
 
       change(fn changeset, context ->
         reason =
@@ -455,6 +460,9 @@ defmodule FastCheck.Sales.Order do
             allowed_from: [
               "paid_verified",
               "fulfillment_queued",
+              "partially_issued",
+              "ticket_issued",
+              "issuance_retry_queued",
               "manual_review",
               "manual_review_held"
             ],
@@ -707,6 +715,45 @@ defmodule FastCheck.Sales.Order do
           {:error, error} -> {:error, error}
         end
       end)
+    else
+      changeset
+    end
+  end
+
+  defp ensure_no_issued_tickets_before_finalization(changeset, _context) do
+    if changeset.valid? do
+      order_id = Changeset.get_data(changeset, :id)
+      expected_status = Changeset.get_data(changeset, :status)
+
+      Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
+
+      case Repo.query!(
+             """
+             SELECT o.status,
+                    (SELECT count(*)
+                     FROM sales_ticket_issues i
+                     WHERE i.sales_order_id = o.id AND i.status = 'issued')
+             FROM sales_orders o
+             WHERE o.id = $1
+             FOR UPDATE
+             """,
+             [order_id]
+           ).rows do
+        [[^expected_status, 0]] ->
+          changeset
+
+        [[_current_status, remaining_issued_count]] when remaining_issued_count > 0 ->
+          Changeset.add_error(changeset,
+            field: :status,
+            message: "issued tickets must be revoked before finalizing the Order"
+          )
+
+        _ ->
+          Changeset.add_error(changeset,
+            field: :status,
+            message: "Order changed while finalization was in progress"
+          )
+      end
     else
       changeset
     end

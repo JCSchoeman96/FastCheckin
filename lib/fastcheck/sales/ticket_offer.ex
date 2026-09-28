@@ -13,6 +13,7 @@ defmodule FastCheck.Sales.TicketOffer do
 
   alias Ash.Changeset
   alias FastCheck.Sales.Offers.CacheInvalidation
+  alias FastCheck.Sales.PurchaseLimits
 
   postgres do
     table("sales_ticket_offers")
@@ -61,6 +62,7 @@ defmodule FastCheck.Sales.TicketOffer do
       validate(compare(:initial_quantity, greater_than_or_equal_to: 0))
       validate(compare(:max_per_order, greater_than_or_equal_to: 1))
       validate(compare(:max_per_order, less_than_or_equal_to: :configured_quantity_available))
+      validate(&validate_platform_max_per_order/2)
       validate(match(:currency, ~r/^[A-Z]{3}$/))
       validate(one_of(:sales_channel, ["whatsapp", "admin", "web", "all", "internal"]))
       change(&attach_cache_invalidation/2)
@@ -95,6 +97,7 @@ defmodule FastCheck.Sales.TicketOffer do
       validate(compare(:initial_quantity, greater_than_or_equal_to: 0))
       validate(compare(:max_per_order, greater_than_or_equal_to: 1))
       validate(compare(:max_per_order, less_than_or_equal_to: :configured_quantity_available))
+      validate(&validate_platform_max_per_order/2)
       validate(match(:currency, ~r/^[A-Z]{3}$/))
       validate(one_of(:sales_channel, ["whatsapp", "admin", "web", "all", "internal"]))
     end
@@ -383,6 +386,19 @@ defmodule FastCheck.Sales.TicketOffer do
 
       true ->
         :ok
+    end
+  end
+
+  defp validate_platform_max_per_order(changeset, _context) do
+    max_per_order = Changeset.get_attribute(changeset, :max_per_order)
+
+    if is_integer(max_per_order) and max_per_order > PurchaseLimits.max_tickets_per_order() do
+      {:error,
+       field: :max_per_order,
+       message:
+         "cannot exceed #{PurchaseLimits.max_tickets_per_order()} tickets per order on this platform"}
+    else
+      :ok
     end
   end
 

@@ -7,6 +7,8 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
 
   alias Ash.Changeset
   alias FastCheck.Events
+  alias FastCheck.Events.Cache
+  alias FastCheck.Events.Event
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketOffer
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
@@ -133,6 +135,63 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
 
     assert render(view) =~ "Event WhatsApp order limit updated."
     assert Events.whatsapp_max_tickets_per_order(event.id) == 3
+  end
+
+  test "event cap form accepts 50 and advertises the platform maximum", %{
+    conn: conn,
+    event: event
+  } do
+    assert {:ok, view, html} = mount_offers(conn, event.id)
+    assert html =~ ~s|max="50"|
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "50"}
+    })
+    |> render_submit()
+
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 50
+  end
+
+  test "historical event cap above 50 remains visible until a valid replacement is saved", %{
+    conn: conn,
+    event: event
+  } do
+    Repo.query!("UPDATE events SET whatsapp_max_tickets_per_order = 100 WHERE id = $1", [event.id])
+
+    assert :ok = Cache.invalidate_event_cache(event.id)
+    assert 100 == Events.whatsapp_max_tickets_per_order(event.id)
+    assert :ok = Cache.persist_event_cache(Repo.get!(Event, event.id))
+
+    assert {:ok, view, html} = mount_offers(conn, event.id)
+
+    [cap_input] =
+      Regex.scan(~r/<input\b[^>]*whatsapp_max_tickets_per_order[^>]*>/s, html)
+      |> List.flatten()
+
+    assert cap_input =~ ~s|value="100"|
+    assert html =~ "This saved limit is above the platform maximum"
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "50"}
+    })
+    |> render_submit()
+
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 50
+  end
+
+  test "event cap form rejects 51 with safe platform-limit copy", %{conn: conn, event: event} do
+    assert {:ok, view, _html} = mount_offers(conn, event.id)
+
+    view
+    |> form("#event-quantity-cap-form", %{
+      "event_quantity_cap" => %{"whatsapp_max_tickets_per_order" => "51"}
+    })
+    |> render_submit()
+
+    assert render(view) =~ "cannot exceed 50 tickets per order"
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 9
   end
 
   test "invalid event cap 0 is rejected in admin UI", %{conn: conn, event: event} do

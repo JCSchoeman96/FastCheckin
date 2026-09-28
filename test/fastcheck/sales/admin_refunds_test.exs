@@ -4,6 +4,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   import Ecto.Query
 
   alias Ash.Changeset
+  alias FastCheck.Attendees.Scan
   alias FastCheck.Repo
   alias FastCheck.Sales.AdminRefundFixtures, as: Fixtures
   alias FastCheck.Sales.AdminRefunds
@@ -37,6 +38,82 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              ),
              :count
            ) >= 1
+  end
+
+  test "admin refund revokes all 60 historical tickets before the Order transition" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture(quantity: 60)
+    ticket_issue_ids = Fixtures.ticket_issue_ids(order_id)
+
+    assert {:ok,
+            %{
+              order: %{status: "refunded"},
+              revoke: %{revoked: revoked, failures: [], remaining_issued_count: 0}
+            }} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert length(ticket_issue_ids) == 60
+    assert length(revoked) == 60
+    assert issued_ticket_count(order_id) == 0
+
+    assert Repo.aggregate(
+             from(t in "sales_ticket_issues",
+               where: t.sales_order_id == ^order_id and t.status == "revoked"
+             ),
+             :count
+           ) == 60
+
+    assert_order_tickets_not_scannable(event.id, ticket_issue_ids, [0, 59])
+  end
+
+  test "admin refund cannot transition after a page-two ticket fails, then succeeds after retry" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture(quantity: 60)
+    ticket_issue_ids = Fixtures.ticket_issue_ids(order_id)
+    failed_issue_id = Enum.at(ticket_issue_ids, 54)
+    attendee_id = issue_attendee_id(failed_issue_id)
+    ticket_code = issue_ticket_code(failed_issue_id)
+
+    Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+      9_999_999,
+      failed_issue_id
+    ])
+
+    assert {:error, {:revoke_failures, [%{ticket_issue_id: ^failed_issue_id}]}} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert Fixtures.order_status(order_id) == "manual_review"
+    assert issued_ticket_count(order_id) == 1
+    assert Repo.get!(FastCheck.Attendees.Attendee, attendee_id).scan_eligibility == "active"
+    assert {:ok, _attendee, "SUCCESS"} = Scan.check_in(event.id, ticket_code, "Main", "Operator")
+
+    Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+      attendee_id,
+      failed_issue_id
+    ])
+
+    assert {:ok,
+            %{
+              order: %{status: "refunded"},
+              revoke: %{failures: [], remaining_issued_count: 0}
+            }} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert issued_ticket_count(order_id) == 0
+    assert Enum.all?(ticket_issue_ids, &(issue_status(&1) == "revoked"))
+
+    assert {:error, "TICKET_NOT_SCANNABLE", _} =
+             Scan.check_in(event.id, ticket_code, "Main", "Operator")
   end
 
   test "admin without allowed_event_ids cannot mark order refunded" do
@@ -185,31 +262,128 @@ defmodule FastCheck.Sales.AdminRefundsTest do
     assert order.status == "cancelled"
   end
 
-  test "mark_refunded_manual Ash action is idempotent" do
+  test "admin cancellation revokes all 60 historical tickets before the Order transition" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture(quantity: 60)
+    ticket_issue_ids = Fixtures.ticket_issue_ids(order_id)
+
+    assert {:ok,
+            %{
+              order: %{status: "cancelled"},
+              revoke: %{revoked: revoked, failures: [], remaining_issued_count: 0}
+            }} =
+             AdminRefunds.mark_order_cancelled_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert length(revoked) == 60
+    assert issued_ticket_count(order_id) == 0
+    assert_order_tickets_not_scannable(event.id, ticket_issue_ids, [0, 59])
+  end
+
+  test "admin cancellation cannot transition after a page-two failure and completes on retry" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture(quantity: 60)
+    ticket_issue_ids = Fixtures.ticket_issue_ids(order_id)
+    failed_issue_id = Enum.at(ticket_issue_ids, 54)
+    attendee_id = issue_attendee_id(failed_issue_id)
+    ticket_code = issue_ticket_code(failed_issue_id)
+
+    Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+      9_999_999,
+      failed_issue_id
+    ])
+
+    assert {:error, {:revoke_failures, [%{ticket_issue_id: ^failed_issue_id}]}} =
+             AdminRefunds.mark_order_cancelled_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert Fixtures.order_status(order_id) == "manual_review"
+    assert issued_ticket_count(order_id) == 1
+    assert {:ok, _attendee, "SUCCESS"} = Scan.check_in(event.id, ticket_code, "Main", "Operator")
+
+    Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+      attendee_id,
+      failed_issue_id
+    ])
+
+    assert {:ok,
+            %{
+              order: %{status: "cancelled"},
+              revoke: %{failures: [], remaining_issued_count: 0}
+            }} =
+             AdminRefunds.mark_order_cancelled_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert issued_ticket_count(order_id) == 0
+    assert Enum.all?(ticket_issue_ids, &(issue_status(&1) == "revoked"))
+
+    assert {:error, "TICKET_NOT_SCANNABLE", _} =
+             Scan.check_in(event.id, ticket_code, "Main", "Operator")
+  end
+
+  test "direct Ash refund and cancellation actions refuse Orders with issued tickets" do
     %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
     actor = %{actor_type: :admin, actor_id: "admin", allowed_event_ids: [event.id]}
 
     order =
       Order |> Ash.Query.for_read(:get_by_id, %{id: order_id}) |> Ash.read_one!(authorize?: false)
 
-    order =
-      order
-      |> Changeset.for_update(:mark_refunded_manual, %{reason: "first"}, actor: actor)
-      |> Ash.update!(authorize?: false)
+    for action <- [:mark_refunded_manual, :mark_cancelled_manual] do
+      assert {:error, %Ash.Error.Invalid{}} =
+               order
+               |> Changeset.for_update(action, %{reason: "must revoke first"}, actor: actor)
+               |> Ash.update(authorize?: false)
 
-    assert order.status == "refunded"
-    count_after_first = Fixtures.order_transition_count(order_id, "refunded")
+      assert Fixtures.order_status(order_id) == "ticket_issued"
+    end
 
-    order =
-      order
-      |> Changeset.for_update(:mark_refunded_manual, %{reason: "retry"}, actor: actor)
-      |> Ash.update!(authorize?: false)
-
-    assert order.status == "refunded"
-    assert Fixtures.order_transition_count(order_id, "refunded") == count_after_first
+    assert issued_ticket_count(order_id) == 1
   end
 
   defp insert_minimal_event! do
     FastCheckWeb.SalesWebFixtures.insert_event!()
+  end
+
+  defp issued_ticket_count(order_id) do
+    Repo.one!(
+      from t in "sales_ticket_issues",
+        where: t.sales_order_id == ^order_id and t.status == "issued",
+        select: count(t.id)
+    )
+  end
+
+  defp issue_attendee_id(ticket_issue_id) do
+    Repo.one!(
+      from t in "sales_ticket_issues", where: t.id == ^ticket_issue_id, select: t.attendee_id
+    )
+  end
+
+  defp issue_ticket_code(ticket_issue_id) do
+    Repo.one!(
+      from t in "sales_ticket_issues", where: t.id == ^ticket_issue_id, select: t.ticket_code
+    )
+  end
+
+  defp issue_status(ticket_issue_id) do
+    Repo.one!(from t in "sales_ticket_issues", where: t.id == ^ticket_issue_id, select: t.status)
+  end
+
+  defp assert_order_tickets_not_scannable(event_id, issue_ids, indexes) do
+    for index <- indexes do
+      assert {:error, "TICKET_NOT_SCANNABLE", _} =
+               Scan.check_in(
+                 event_id,
+                 issue_ticket_code(Enum.at(issue_ids, index)),
+                 "Main",
+                 "Operator"
+               )
+    end
   end
 end

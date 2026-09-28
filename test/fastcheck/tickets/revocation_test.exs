@@ -4,6 +4,7 @@ defmodule FastCheck.Tickets.RevocationTest do
   import Ecto.Query
   import ExUnit.CaptureLog
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Attendees.AttendeeInvalidationEvent
   alias FastCheck.Attendees.ReasonCodes
@@ -251,6 +252,222 @@ defmodule FastCheck.Tickets.RevocationTest do
       assert issued_count == 0
     end
 
+    test "revokes every ticket in one 50-ticket page" do
+      assert_complete_order_revocation(50, "corr-revoke-50")
+    end
+
+    test "revokes one issued ticket" do
+      assert_complete_order_revocation(1, "corr-revoke-1")
+    end
+
+    test "revokes all 49 tickets before a full page boundary" do
+      assert_complete_order_revocation(49, "corr-revoke-49")
+    end
+
+    test "continues keyset pagination for 51 issued tickets" do
+      assert_complete_order_revocation(51, "corr-revoke-51")
+    end
+
+    test "revokes all 60 tickets in a historical order" do
+      assert_complete_order_revocation(60, "corr-revoke-60")
+    end
+
+    test "continues keyset pagination across 101 historical tickets" do
+      assert_complete_order_revocation(101, "corr-revoke-101")
+    end
+
+    test "page-two failure reports incompleteness and retry revokes only the remainder" do
+      %{order_id: order_id, event: event} = issued_order_fixture(quantity: 60)
+      issue_ids = ticket_issue_ids(order_id)
+      failed_issue_id = Enum.at(issue_ids, 54)
+      failed_attendee_id = ticket_issue_row(failed_issue_id).attendee_id
+      version_before = event_sync_version(event.id)
+
+      Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+        9_999_999,
+        failed_issue_id
+      ])
+
+      assert {:ok, first_attempt} =
+               Revocation.revoke_order_tickets(order_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-page-two-failure",
+                 reason: "cancel"
+               )
+
+      assert length(first_attempt.revoked) == 59
+      assert first_attempt.remaining_issued_count == 1
+
+      assert [%{ticket_issue_id: ^failed_issue_id, error: :missing_attendee}] =
+               first_attempt.failures
+
+      assert ticket_issue_row(failed_issue_id).status == "issued"
+      assert Repo.get!(Attendee, failed_attendee_id).scan_eligibility == "active"
+      assert event_sync_version(event.id) == version_before + 1
+
+      assert Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.status) ==
+               "manual_review"
+
+      Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+        failed_attendee_id,
+        failed_issue_id
+      ])
+
+      assert {:ok, retry} =
+               Revocation.revoke_order_tickets(order_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-page-two-retry",
+                 reason: "cancel"
+               )
+
+      assert length(retry.revoked) == 1
+      assert retry.failures == []
+      assert retry.remaining_issued_count == 0
+      assert Enum.all?(issue_ids, &(ticket_issue_row(&1).status == "revoked"))
+      assert Enum.all?(issue_ids, &(invalidation_count(ticket_issue_row(&1).attendee_id) == 1))
+      assert event_sync_version(event.id) == version_before + 2
+    end
+
+    test "60-ticket sync aggregation failure rolls back every page and can be retried" do
+      %{order_id: order_id, event: event} = issued_order_fixture(quantity: 60)
+      issue_ids = ticket_issue_ids(order_id)
+      attendee_ids = Enum.map(issue_ids, &ticket_issue_row(&1).attendee_id)
+      version_before = event_sync_version(event.id)
+
+      opts = [
+        actor_type: :system,
+        actor_id: "test",
+        correlation_id: "corr-sync-fail-60",
+        reason: "cancel",
+        mobile_sync_version_aggregator: FastCheck.Tickets.RevocationTest.FailingAggregator
+      ]
+
+      assert {:error, {:mobile_sync_version_aggregation_failed, :forced_failure}} =
+               Revocation.revoke_order_tickets(order_id, opts)
+
+      assert Enum.all?(issue_ids, &(ticket_issue_row(&1).status == "issued"))
+      assert Enum.all?(attendee_ids, &(Repo.get!(Attendee, &1).scan_eligibility == "active"))
+      assert Enum.all?(attendee_ids, &(invalidation_count(&1) == 0))
+      assert event_sync_version(event.id) == version_before
+
+      assert {:ok, retry} =
+               Revocation.revoke_order_tickets(order_id,
+                 actor_type: :system,
+                 actor_id: "test",
+                 correlation_id: "corr-sync-retry-60",
+                 reason: "cancel"
+               )
+
+      assert length(retry.revoked) == 60
+      assert retry.failures == []
+      assert retry.remaining_issued_count == 0
+      assert Enum.all?(issue_ids, &(ticket_issue_row(&1).status == "revoked"))
+
+      assert Enum.all?(
+               attendee_ids,
+               &(Repo.get!(Attendee, &1).scan_eligibility == "not_scannable")
+             )
+
+      assert event_sync_version(event.id) == version_before + 1
+    end
+
+    test "issuance and order revocation wait on the same advisory lock in separate transactions" do
+      %{event: event, order_id: order_id} =
+        Sandbox.unboxed_run(Repo, fn ->
+          {:ok, fixture} = Repo.transaction(fn -> issued_order_fixture(quantity: 60) end)
+          fixture
+        end)
+
+      on_exit(fn -> cleanup_committed_order_fixture!(event.id, order_id) end)
+
+      parent = self()
+
+      lock_holder =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            Repo.transaction(fn ->
+              Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
+              send(parent, {:order_advisory_lock_held, self()})
+
+              receive do
+                :release_order_advisory_lock -> :released
+              after
+                10_000 -> Repo.rollback(:order_advisory_lock_test_timeout)
+              end
+            end)
+          end)
+        end)
+
+      assert_receive {:order_advisory_lock_held, lock_holder_pid}
+      assert lock_holder_pid == lock_holder.pid
+
+      issuance_task =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn -> Issuer.issue_order(order_id) end)
+        end)
+
+      revocation_task =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            Revocation.revoke_order_tickets(order_id,
+              actor_type: :system,
+              actor_id: "test",
+              correlation_id: "corr-issuance-revocation-race",
+              reason: "cancel"
+            )
+          end)
+        end)
+
+      try do
+        await_order_advisory_lock_waiters!(order_id, 2)
+        assert is_nil(Task.yield(issuance_task, 0))
+        assert is_nil(Task.yield(revocation_task, 0))
+
+        send(lock_holder.pid, :release_order_advisory_lock)
+        assert {:ok, :released} = Task.await(lock_holder, 5_000)
+
+        issuance_result = Task.await(issuance_task, 15_000)
+        revocation_result = Task.await(revocation_task, 15_000)
+
+        assert match?({:ok, %{ticket_issue_count: 60}}, issuance_result) or
+                 match?(
+                   {:error, {:manual_review_required, :issuer_attendee_conflict}},
+                   issuance_result
+                 )
+
+        assert {:ok, %{revoked: revoked, failures: [], remaining_issued_count: 0}} =
+                 revocation_result
+
+        assert length(revoked) == 60
+        assert Enum.all?(ticket_issue_ids(order_id), &(ticket_issue_row(&1).status == "revoked"))
+
+        assert Enum.all?(ticket_issue_ids(order_id), fn ticket_issue_id ->
+                 Repo.get!(Attendee, ticket_issue_row(ticket_issue_id).attendee_id).scan_eligibility ==
+                   "not_scannable"
+               end)
+      after
+        if Process.alive?(lock_holder.pid) do
+          send(lock_holder.pid, :release_order_advisory_lock)
+        end
+
+        Enum.each([issuance_task, revocation_task, lock_holder], &stop_race_task_if_alive/1)
+      end
+    end
+
+    test "order revocation uses the same advisory lock call as Issuer before reloading the Order" do
+      lock_call = ~s|Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])|
+      issuer_source = File.read!("lib/fastcheck/tickets/issuer.ex")
+      revocation_source = File.read!("lib/fastcheck/tickets/revocation.ex")
+
+      assert issuer_source =~ lock_call
+      assert revocation_source =~ lock_call
+
+      assert :binary.match(revocation_source, lock_call) <
+               :binary.match(revocation_source, "reload_order_after_lock!(order_id)")
+    end
+
     test "list_issued_by_order excludes revoked tickets at query layer" do
       %{order_id: order_id} = issued_order_fixture(quantity: 2)
       [first_id, second_id] = ticket_issue_ids(order_id)
@@ -351,6 +568,121 @@ defmodule FastCheck.Tickets.RevocationTest do
     assert {:ok, %{status: :ticket_issued}} = Issuer.issue_order(order_id)
 
     %{event: event, order_id: order_id, line_id: line_id}
+  end
+
+  defp assert_complete_order_revocation(quantity, correlation_id) do
+    %{event: event, order_id: order_id} = issued_order_fixture(quantity: quantity)
+    issue_ids = ticket_issue_ids(order_id)
+    attendee_ids = Enum.map(issue_ids, &ticket_issue_row(&1).attendee_id)
+    version_before = event_sync_version(event.id)
+
+    assert length(issue_ids) == quantity
+
+    assert {:ok, result} =
+             Revocation.revoke_order_tickets(order_id,
+               actor_type: :system,
+               actor_id: "test",
+               correlation_id: correlation_id,
+               reason: "cancel"
+             )
+
+    assert length(result.revoked) == quantity
+    assert result.failures == []
+    assert result.remaining_issued_count == 0
+    assert Enum.all?(issue_ids, &(ticket_issue_row(&1).status == "revoked"))
+
+    assert Enum.all?(attendee_ids, fn attendee_id ->
+             Repo.get!(Attendee, attendee_id).scan_eligibility == "not_scannable" and
+               invalidation_count(attendee_id) == 1
+           end)
+
+    assert event_sync_version(event.id) == version_before + 1
+  end
+
+  defp await_order_advisory_lock_waiters!(order_id, expected_count) do
+    observer =
+      Task.async(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          wait_for_order_advisory_lock_waiters!(order_id, expected_count)
+        end)
+      end)
+
+    assert :ok = Task.await(observer, 6_000)
+  end
+
+  defp wait_for_order_advisory_lock_waiters!(order_id, expected_count) do
+    deadline = System.monotonic_time(:millisecond) + 5_000
+    do_wait_for_order_advisory_lock_waiters(order_id, expected_count, deadline)
+  end
+
+  defp do_wait_for_order_advisory_lock_waiters(order_id, expected_count, deadline) do
+    %{rows: [[waiter_count]]} =
+      Repo.query!(
+        """
+        SELECT count(*)
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND granted = false
+          AND classid = 0::oid
+          AND objid::bigint = $1::bigint
+          AND objsubid = 1
+        """,
+        [order_id]
+      )
+
+    cond do
+      waiter_count >= expected_count ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        raise "expected #{expected_count} waiters for the order advisory lock, saw #{waiter_count}"
+
+      true ->
+        Process.sleep(10)
+        do_wait_for_order_advisory_lock_waiters(order_id, expected_count, deadline)
+    end
+  end
+
+  defp stop_race_task_if_alive(%Task{pid: pid} = task) do
+    if Process.alive?(pid) do
+      case Task.yield(task, 5_000) do
+        nil -> Task.shutdown(task, :brutal_kill)
+        _result -> :ok
+      end
+    end
+  end
+
+  defp cleanup_committed_order_fixture!(event_id, order_id) do
+    Sandbox.unboxed_run(Repo, fn ->
+      Repo.transaction(fn ->
+        Repo.query!(
+          "DELETE FROM sales_state_transitions WHERE (entity_type = 'Order' AND entity_id = $1::bigint::text) OR (entity_type = 'TicketIssue' AND entity_id IN (SELECT id::text FROM sales_ticket_issues WHERE sales_order_id = $1::bigint)) OR (entity_type = 'Attendee' AND entity_id IN (SELECT id::text FROM attendees WHERE sales_order_id = $1::bigint))",
+          [order_id]
+        )
+
+        Repo.query!("DELETE FROM sales_delivery_attempts WHERE sales_order_id = $1", [order_id])
+
+        Repo.query!("DELETE FROM sales_ticket_delivery_intents WHERE sales_order_id = $1", [
+          order_id
+        ])
+
+        Repo.query!("DELETE FROM attendee_invalidation_events WHERE event_id = $1", [event_id])
+
+        Repo.query!(
+          "UPDATE attendees SET sales_ticket_issue_id = NULL WHERE sales_order_id = $1",
+          [order_id]
+        )
+
+        Repo.query!("DELETE FROM sales_ticket_issues WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM attendees WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_payment_attempts WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_checkout_sessions WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_order_lines WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_orders WHERE id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_ticket_offers WHERE event_id = $1", [event_id])
+        Repo.query!("DELETE FROM events WHERE id = $1", [event_id])
+      end)
+    end)
   end
 
   defp ticket_issue_ids(order_id) do

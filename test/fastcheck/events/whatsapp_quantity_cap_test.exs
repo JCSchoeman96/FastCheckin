@@ -138,6 +138,30 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
     assert updated.whatsapp_max_tickets_per_order == 12
   end
 
+  test "domain setter accepts 50 and rejects 51 without changing the event" do
+    event = create_event(%{name: "Quantity platform boundary"})
+
+    assert {:ok, at_ceiling} = Events.set_whatsapp_max_tickets_per_order(event.id, 50)
+    assert at_ceiling.whatsapp_max_tickets_per_order == 50
+
+    assert {:error, :platform_max_per_order_exceeded} =
+             Events.set_whatsapp_max_tickets_per_order(event.id, 51)
+
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 50
+  end
+
+  test "direct WhatsApp cap changeset also rejects values above the platform ceiling" do
+    event = create_event(%{name: "Direct quantity platform boundary"})
+
+    assert {:error, failed} =
+             event
+             |> Event.whatsapp_max_tickets_per_order_changeset(51)
+             |> Repo.update()
+
+    assert Keyword.has_key?(failed.errors, :whatsapp_max_tickets_per_order)
+    assert Events.whatsapp_max_tickets_per_order(event.id) == 9
+  end
+
   defp set_updated_at!(event_id, timestamp) do
     assert {1, nil} =
              Repo.update_all(

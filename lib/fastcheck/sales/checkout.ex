@@ -21,6 +21,7 @@ defmodule FastCheck.Sales.Checkout do
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.OrderLine
+  alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
 
   @type checkout_input :: %{
@@ -107,9 +108,7 @@ defmodule FastCheck.Sales.Checkout do
 
   defp validate_effective_sales_channel(_input, _opts), do: :ok
 
-  defp validate_quantity(%{quantity: quantity}) when is_integer(quantity) and quantity > 0,
-    do: :ok
-
+  defp validate_quantity(%{quantity: quantity}), do: PurchaseLimits.validate_quantity(quantity)
   defp validate_quantity(_), do: {:error, :invalid_quantity}
 
   defp validate_whatsapp_conversation_binding(%{source_channel: "whatsapp"} = input) do

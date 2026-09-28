@@ -23,6 +23,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias FastCheck.Messaging.WhatsApp.TicketLinkRenderer
   alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
+  alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
 
   @menu_limit 9
@@ -350,10 +351,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp dispatch(command, conversation, {:ok, {:number, quantity}})
        when conversation.state == "collecting_quantity" do
     data = state_data(conversation)
-    event_id = Map.get(data, "selected_event_id")
-    event_cap = Events.whatsapp_max_tickets_per_order(event_id)
-    offer_max = Map.get(data, "selected_offer_max_per_order", 1)
-    effective_max = min_positive_cap(event_cap, offer_max)
+    {effective_max, event_cap} = current_quantity_limits(conversation)
 
     if quantity <= effective_max do
       with {:ok, conversation} <-
@@ -632,6 +630,9 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       {:error, :event_max_per_order_exceeded} ->
         return_to_quantity_collection_after_event_cap_change(command, conversation)
 
+      {:error, :platform_max_per_order_exceeded} ->
+        return_to_quantity_collection_after_event_cap_change(command, conversation)
+
       {:error, :order_total_too_large} ->
         return_to_quantity_collection_after_event_cap_change(command, conversation)
 
@@ -709,22 +710,29 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   end
 
   defp quantity_prompt_for(conversation) do
-    data = state_data(conversation)
-    event_id = Map.get(data, "selected_event_id")
-    event_cap = Events.whatsapp_max_tickets_per_order(event_id)
-    offer_max = Map.get(data, "selected_offer_max_per_order", 1)
-    effective_max = min_positive_cap(event_cap, offer_max)
+    {effective_max, _event_cap} = current_quantity_limits(conversation)
     MenuRenderer.quantity_prompt(language(conversation), effective_max)
   end
 
-  defp min_positive_cap(event_cap, offer_max)
-       when is_integer(event_cap) and is_integer(offer_max) do
-    min(event_cap, offer_max)
-  end
+  defp current_quantity_limits(conversation) do
+    data = state_data(conversation)
+    event_id = Map.get(data, "selected_event_id")
+    offer_id = Map.get(data, "selected_offer_id")
+    event_cap = Events.whatsapp_max_tickets_per_order(event_id)
 
-  defp min_positive_cap(_event_cap, offer_max) when is_integer(offer_max), do: offer_max
-  defp min_positive_cap(event_cap, _offer_max) when is_integer(event_cap), do: event_cap
-  defp min_positive_cap(_event_cap, _offer_max), do: 1
+    offer_max =
+      case active_offer(event_id, offer_id) do
+        {:ok, offer} -> offer.max_per_order
+        {:error, _reason} -> 1
+      end
+
+    effective_max =
+      [PurchaseLimits.max_tickets_per_order(), event_cap, offer_max]
+      |> Enum.filter(&(is_integer(&1) and &1 > 0))
+      |> Enum.min()
+
+    {effective_max, event_cap}
+  end
 
   defp return_to_refreshed_event_selection(command, conversation, notice \\ nil) do
     events = sellable_events()

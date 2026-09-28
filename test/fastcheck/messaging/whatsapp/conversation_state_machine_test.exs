@@ -1460,6 +1460,45 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert rejected.response_body =~ "1 tot 12"
   end
 
+  test "historical offer and event caps above 50 still enforce the platform maximum", %{
+    conversation: conversation,
+    event: event,
+    offer: offer
+  } do
+    at_quantity = quantity_prompt_conversation(conversation)
+    assert at_quantity.conversation.state == "collecting_quantity"
+
+    Repo.query!(
+      "UPDATE events SET whatsapp_max_tickets_per_order = 100 WHERE id = $1",
+      [event.id]
+    )
+
+    Repo.query!(
+      "UPDATE sales_ticket_offers SET max_per_order = 100 WHERE id = $1",
+      [offer.id]
+    )
+
+    Repo.query!(
+      """
+      UPDATE sales_conversations
+      SET state_data = jsonb_set(state_data, '{selected_offer_max_per_order}', '100'::jsonb, true)
+      WHERE id = $1
+      """,
+      [at_quantity.conversation.id]
+    )
+
+    current_conversation = Repo.get!(Conversation, at_quantity.conversation.id)
+
+    assert {:ok, rejected} = handle(current_conversation, "51", "platform-cap-historical-51")
+    assert rejected.conversation.state == "collecting_quantity"
+    assert rejected.response_body =~ "1 tot 50"
+
+    assert {:ok, accepted} =
+             handle(current_conversation, "50", "platform-cap-historical-50")
+
+    assert accepted.conversation.state == "collecting_buyer_name"
+  end
+
   test "event cap 10 and offer max 15 accept 10 and reject 11 by event ceiling", %{
     conversation: conversation,
     event: event,
