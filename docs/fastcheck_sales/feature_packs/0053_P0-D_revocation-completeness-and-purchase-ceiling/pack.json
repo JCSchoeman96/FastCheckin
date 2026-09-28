@@ -1,0 +1,53 @@
+{
+  "pack_id": "0053_P0-D",
+  "slice": "P0-D",
+  "name": "Revocation Completeness and Purchase Ceiling",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0053_P0-D_revocation-completeness-and-purchase-ceiling",
+  "goal": "Revoke every issued TicketIssue for an Order of any historical size and enforce an absolute platform ceiling on new customer purchases.",
+  "dependencies": [
+    "P0-B Paid Order Fulfillment",
+    "P0-C Automatic Complete Ticket Delivery",
+    "VS-09A Ticket Issuance Contract",
+    "VS-15A Core Revocation and Scanner Visibility",
+    "VS-15B Admin Refund and Revocation Operations"
+  ],
+  "revocation": {
+    "page_size": 50,
+    "pagination": "bounded ascending-id keyset pages scoped by sales_order_id and issued status",
+    "order_lock": "same pg_advisory_xact_lock(order_id) call and namespace as FastCheck.Tickets.Issuer",
+    "transaction": "one outer Postgres transaction with per-ticket savepoints",
+    "completion_authority": "authoritative count of issued TicketIssues must equal zero",
+    "mobile_sync": "one complete changed-attendee aggregation inside the transaction; failure rolls back all pages",
+    "cache_invalidation": "one post-commit invalidation for every successfully revoked attendee",
+    "historical_order_size_limit": "unlimited"
+  },
+  "purchase_limits": {
+    "policy_module": "FastCheck.Sales.PurchaseLimits",
+    "max_tickets_per_order": 50,
+    "checkout_enforcement": "before inventory reservation and durable commercial writes",
+    "offer_action_validation": "create and update at TicketOffer resource actions plus OfferManagement",
+    "event_whatsapp_cap": "positive values up to the platform maximum; existing default remains 9",
+    "whatsapp_effective_cap": "minimum of platform, current Offer, and current Event limits"
+  },
+  "migration_required": false,
+  "index_change": false,
+  "documentation": [
+    "docs/fastcheck_sales/state_machines/ORDER_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/TICKET_ISSUE_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/STATE_MACHINE_MASTER.md"
+  ],
+  "out_of_scope": [
+    "Paystack refund API",
+    "provider refund evidence",
+    "partial financial refunds",
+    "inventory restocking",
+    "payment reconciliation",
+    "conversation restart hardening",
+    "purchase_flow_id",
+    "wallets"
+  ]
+}

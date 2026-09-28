@@ -5,6 +5,7 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
 
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Attendees.Scan
+  alias FastCheck.Observability.TelemetryNames
   alias FastCheck.Repo
   alias FastCheck.Sales.AdminRefundFixtures, as: Fixtures
   alias FastCheck.Sales.AdminRevocations
@@ -177,6 +178,28 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
     end
   end
 
+  test "admin order revocation reports complete 60-ticket success" do
+    %{order_id: order_id, ticket_issue_ids: issue_ids, event: event} =
+      Fixtures.issued_order_fixture(quantity: 60)
+
+    assert {:ok, %{revoked: revoked, failures: [], remaining_issued_count: 0}} =
+             AdminRevocations.revoke_order_tickets(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    assert length(revoked) == 60
+
+    assert Enum.all?(issue_ids, fn issue_id ->
+             Repo.one!(
+               from t in "sales_ticket_issues",
+                 where: t.id == ^issue_id,
+                 select: t.status
+             ) == "revoked"
+           end)
+  end
+
   test "order revoke with missing attendee returns revoke_failures error" do
     %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _], event: event} =
       Fixtures.issued_order_fixture()
@@ -186,14 +209,32 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
       ticket_issue_id
     ])
 
-    assert {:error, {:revoke_failures, [failure | _]}} =
-             AdminRevocations.revoke_order_tickets(
-               Fixtures.admin_actor(event_id: event.id),
-               order_id,
-               Fixtures.admin_attrs()
-             )
+    handler_id = "admin-revoke-incomplete-#{System.unique_integer([:positive])}"
 
-    assert failure.ticket_issue_id == ticket_issue_id
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        TelemetryNames.admin_revocation_completed(),
+        fn event_name, _measurements, _metadata, parent ->
+          send(parent, {:admin_revocation_completed, event_name})
+        end,
+        self()
+      )
+
+    try do
+      assert {:error, {:revoke_failures, [failure | _]}} =
+               AdminRevocations.revoke_order_tickets(
+                 Fixtures.admin_actor(event_id: event.id),
+                 order_id,
+                 Fixtures.admin_attrs()
+               )
+
+      assert failure.ticket_issue_id == ticket_issue_id
+      assert failure.error == :missing_attendee
+      refute_receive {:admin_revocation_completed, _event_name}
+    after
+      :telemetry.detach(handler_id)
+    end
   end
 
   test "admin modules do not expose per-ticket refund marker API" do

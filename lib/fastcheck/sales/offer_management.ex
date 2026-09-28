@@ -16,6 +16,7 @@ defmodule FastCheck.Sales.OfferManagement do
   alias FastCheck.Repo
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.MoneyInput
+  alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
 
   @currency "ZAR"
@@ -134,6 +135,9 @@ defmodule FastCheck.Sales.OfferManagement do
 
   def safe_error_message(:invalid_max_per_order),
     do: "Max per order must be a positive whole number."
+
+  def safe_error_message(:platform_max_per_order_exceeded),
+    do: "Max per order cannot exceed #{PurchaseLimits.max_tickets_per_order()} tickets."
 
   def safe_error_message(:max_per_order_exceeds_inventory),
     do: "Max per order cannot exceed inventory."
@@ -353,7 +357,8 @@ defmodule FastCheck.Sales.OfferManagement do
 
   defp parse_max_per_order(params, configured_quantity) do
     with {:ok, max_per_order} <-
-           parse_positive_int(params, "max_per_order", :invalid_max_per_order) do
+           parse_positive_int(params, "max_per_order", :invalid_max_per_order),
+         :ok <- PurchaseLimits.validate_quantity(max_per_order) do
       if max_per_order > configured_quantity do
         {:error, :max_per_order_exceeds_inventory}
       else

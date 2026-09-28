@@ -43,6 +43,40 @@ defmodule FastCheck.Sales.TicketOfferTest do
     assert updated.name == "VIP Updated"
   end
 
+  test "approved direct create and update actions reject max_per_order above the platform ceiling" do
+    actor = admin_actor([@event_id])
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             TicketOffer
+             |> Changeset.for_create(
+               :create_offer,
+               valid_offer_attrs(@event_id, %{max_per_order: 51}),
+               actor: actor,
+               authorize?: true
+             )
+             |> Ash.create(authorize?: true)
+
+    offer =
+      TicketOffer
+      |> Changeset.for_create(
+        :create_offer,
+        valid_offer_attrs(@event_id, %{max_per_order: 50}),
+        actor: actor,
+        authorize?: true
+      )
+      |> Ash.create!(authorize?: true)
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             offer
+             |> Changeset.for_update(:update_offer, %{max_per_order: 51},
+               actor: actor,
+               authorize?: true
+             )
+             |> Ash.update(authorize?: true)
+
+    assert Repo.get!(TicketOffer, offer.id).max_per_order == 50
+  end
+
   test "enable_sales and disable_sales are idempotent admin actions" do
     actor = admin_actor([@event_id])
 

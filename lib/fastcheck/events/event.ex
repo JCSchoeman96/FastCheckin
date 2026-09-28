@@ -10,6 +10,7 @@ defmodule FastCheck.Events.Event do
   import Ecto.Changeset
 
   alias FastCheck.Events.AdmissionMode
+  alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Security.Sanitizer
 
   @scanner_code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -262,6 +263,10 @@ defmodule FastCheck.Events.Event do
     |> cast(%{whatsapp_max_tickets_per_order: limit}, [:whatsapp_max_tickets_per_order])
     |> validate_required([:whatsapp_max_tickets_per_order])
     |> validate_number(:whatsapp_max_tickets_per_order, greater_than: 0)
+    |> validate_number(:whatsapp_max_tickets_per_order,
+      less_than_or_equal_to: PurchaseLimits.max_tickets_per_order(),
+      message: "must be no more than #{PurchaseLimits.max_tickets_per_order()} tickets per order"
+    )
     |> check_constraint(:whatsapp_max_tickets_per_order,
       name: "events_whatsapp_max_tickets_per_order_positive"
     )

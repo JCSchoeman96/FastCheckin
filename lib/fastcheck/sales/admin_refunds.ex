@@ -58,16 +58,20 @@ defmodule FastCheck.Sales.AdminRefunds do
          :ok <- authorize_event(actor, order.event_id),
          :ok <- verified_payment_context?(order),
          {:ok, revoke_result} <- revoke_issued_tickets(actor, order, attrs) do
-      case Map.get(revoke_result, :failures, Map.get(revoke_result, "failures", [])) do
+      case incomplete_revocation_failures(revoke_result) do
         [_ | _] = failures ->
           maybe_move_to_manual_review(order_id, actor, attrs, failures)
           {:error, {:revoke_failures, failures}}
 
         [] ->
-          case transition_refunded(order, actor, attrs) do
+          case finalize_order_transition(order.id, actor, attrs, :refunded) do
             {:ok, updated} ->
               emit_refund_marked(actor, order.id)
               {:ok, %{order: updated, revoke: revoke_result}}
+
+            {:error, {:order_revocation_incomplete, count} = error} ->
+              maybe_move_to_manual_review(order_id, actor, attrs, [%{error: error}])
+              {:error, {:order_revocation_incomplete, count}}
 
             {:error, _} = error ->
               error
@@ -93,15 +97,22 @@ defmodule FastCheck.Sales.AdminRefunds do
          {:ok, order} <- load_order(order_id),
          :ok <- authorize_event(actor, order.event_id),
          {:ok, revoke_result} <- revoke_issued_tickets(actor, order, attrs) do
-      case Map.get(revoke_result, :failures, Map.get(revoke_result, "failures", [])) do
+      case incomplete_revocation_failures(revoke_result) do
         [_ | _] = failures ->
           maybe_move_to_manual_review(order_id, actor, attrs, failures)
           {:error, {:revoke_failures, failures}}
 
         [] ->
-          case transition_cancelled(order, actor, attrs) do
-            {:ok, updated} -> {:ok, %{order: updated, revoke: revoke_result}}
-            {:error, _} = error -> error
+          case finalize_order_transition(order.id, actor, attrs, :cancelled) do
+            {:ok, updated} ->
+              {:ok, %{order: updated, revoke: revoke_result}}
+
+            {:error, {:order_revocation_incomplete, count} = error} ->
+              maybe_move_to_manual_review(order_id, actor, attrs, [%{error: error}])
+              {:error, {:order_revocation_incomplete, count}}
+
+            {:error, _} = error ->
+              error
           end
       end
     else
@@ -128,7 +139,7 @@ defmodule FastCheck.Sales.AdminRefunds do
     counts = ticket_status_counts(order.id)
 
     if counts.issued == 0 do
-      {:ok, %{revoked: [], failures: []}}
+      {:ok, %{revoked: [], failures: [], remaining_issued_count: 0}}
     else
       revoke_attrs =
         attrs
@@ -137,7 +148,12 @@ defmodule FastCheck.Sales.AdminRefunds do
 
       case AdminRevocations.revoke_order_tickets(actor, order.id, revoke_attrs) do
         {:error, {:revoke_failures, failures}} ->
-          {:ok, %{revoked: [], failures: failures}}
+          {:ok,
+           %{
+             revoked: [],
+             failures: failures,
+             remaining_issued_count: remaining_issued_ticket_count(order.id)
+           }}
 
         other ->
           other
@@ -171,6 +187,70 @@ defmodule FastCheck.Sales.AdminRefunds do
       )
       |> Ash.update(authorize?: false)
     end
+  end
+
+  defp finalize_order_transition(order_id, actor, attrs, target) do
+    Repo.transaction(fn ->
+      Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
+
+      order =
+        case load_order(order_id) do
+          {:ok, order} -> order
+          {:error, reason} -> Repo.rollback(reason)
+        end
+
+      with :ok <- authorize_event(actor, order.event_id),
+           :ok <- maybe_require_verified_payment(target, order),
+           0 <- remaining_issued_ticket_count(order_id) do
+        transition_result =
+          case target do
+            :refunded -> transition_refunded(order, actor, attrs)
+            :cancelled -> transition_cancelled(order, actor, attrs)
+          end
+
+        case transition_result do
+          {:ok, updated} -> updated
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      else
+        {:error, reason} ->
+          Repo.rollback(reason)
+
+        remaining_issued_count when is_integer(remaining_issued_count) ->
+          Repo.rollback({:order_revocation_incomplete, remaining_issued_count})
+      end
+    end)
+    |> case do
+      {:ok, updated} -> {:ok, updated}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_require_verified_payment(:refunded, order), do: verified_payment_context?(order)
+  defp maybe_require_verified_payment(:cancelled, _order), do: :ok
+
+  defp incomplete_revocation_failures(result) do
+    failures = Map.get(result, :failures, Map.get(result, "failures", []))
+    remaining_issued_count = Map.get(result, :remaining_issued_count)
+
+    cond do
+      failures != [] ->
+        failures
+
+      remaining_issued_count == 0 ->
+        []
+
+      true ->
+        [%{error: :order_revocation_incomplete}]
+    end
+  end
+
+  defp remaining_issued_ticket_count(order_id) do
+    Repo.one!(
+      from t in "sales_ticket_issues",
+        where: t.sales_order_id == ^order_id and t.status == "issued",
+        select: count(t.id)
+    )
   end
 
   defp maybe_move_to_manual_review(order_id, actor, attrs, failures) do

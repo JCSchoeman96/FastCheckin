@@ -27,14 +27,15 @@
 | `paid_unverified` | `manual_review` | `flag_unverified_payment_review` | `system` | Verification mismatch, provider ambiguity, or missing local ownership. | Record review reason. | yes | Same mismatch is idempotent. | no |
 | `paid_verified` | `fulfillment_queued` | `queue_fulfillment` | `system` | Verified attempt amount/currency match the Order; CheckoutSession is paid; exactly one OrderLine exists; its exact inventory hold is consumed. | Set `fulfillment_queued_at` and insert `IssueTicketsWorker` in the same Postgres transaction under the order advisory lock. | yes | Exact consumed holds are accepted on retry; transition and issuer enqueue are idempotent. | no |
 | `paid_verified` | `manual_review` | `flag_verified_payment_review` | `system/admin` | Inventory or issuance precondition cannot be safely met. | Preserve verified payment evidence. | yes | Duplicate review preserves original evidence. | no |
-| `paid_verified` | `refunded` | `mark_verified_order_refunded` | `admin/system` | Refund/revocation policy approves and audit reason exists. | Revoke related tickets if issued; update scanner visibility where needed. | yes | Duplicate refund action returns refunded. | yes |
+| `paid_verified` | `refunded` | `mark_verified_order_refunded` | `admin/system` | Admin refund flow completes revocation under the Order advisory lock and confirms zero issued TicketIssues. | Revoke every issued ticket and update scanner visibility before the transition. | yes | Duplicate refund action returns refunded only after the zero-issued invariant is confirmed. | yes |
 | `fulfillment_queued` | `ticket_issued` | `mark_ticket_issued` | `system` | All attendee and TicketIssue rows created idempotently. | Enqueue event sync aggregation and, for WhatsApp orders, insert `TicketDeliveryCoordinatorWorker` in the same Postgres transaction. | yes | Duplicate issuer returns existing tickets and repairs a missing WhatsApp coordinator handoff. | yes |
 | `fulfillment_queued` | `partially_issued` | `mark_partially_issued` | `system` | Some, but not all, ticket rows or attendee rows exist. | Record partial failure metadata; enqueue retry/review. | yes | Retry links existing rows. | no |
 | `fulfillment_queued` | `manual_review` | `flag_fulfillment_review` | `system/admin` | Issuance cannot safely continue automatically. | Record reason and preserve partial artifacts. | yes | Existing review remains. | no |
 | `partially_issued` | `ticket_issued` | `complete_partial_issuance` | `system` | Missing ticket artifacts are safely completed. | Enqueue event sync aggregation and, for WhatsApp orders, insert `TicketDeliveryCoordinatorWorker` in the same Postgres transaction. | yes | Existing issued rows reused and the WhatsApp coordinator handoff is restored. | yes |
 | `partially_issued` | `manual_review` | `flag_partial_issuance_review` | `system/admin` | Retry cannot safely complete. | Preserve partial artifacts and reason. | yes | Existing review remains. | no |
-| `partially_issued` | `refunded` | `refund_partially_issued_order` | `admin/system` | Refund/revocation policy approves. | Revoke issued artifacts and update scanner visibility. | yes | Duplicate refund returns refunded. | yes |
-| `ticket_issued` | `refunded` | `refund_issued_order` | `admin/system` | Refund/revocation policy approves and audit reason exists. | Revoke tickets, invalidate tokens, enqueue scanner sync. | yes | Duplicate refund returns refunded. | yes |
+| `partially_issued` | `refunded` | `refund_partially_issued_order` | `admin/system` | Admin refund flow completes revocation under the Order advisory lock and confirms zero issued TicketIssues. | Revoke every issued artifact and update scanner visibility before the transition. | yes | Duplicate refund action returns refunded only after the zero-issued invariant is confirmed. | yes |
+| `ticket_issued` | `refunded` | `refund_issued_order` | `admin/system` | Admin refund flow completes revocation under the Order advisory lock, confirms zero issued TicketIssues, and has an audit reason. | Revoke every ticket, invalidate tokens, and update scanner visibility before the transition. | yes | Duplicate refund action returns refunded only after the zero-issued invariant is confirmed. | yes |
+| post-payment eligible state | `cancelled` | `mark_order_cancelled_manual` | `admin` | Admin cancellation completes revocation under the Order advisory lock and confirms zero issued TicketIssues. | Revoke every issued ticket and update scanner visibility before the transition. | yes | Duplicate cancellation action returns cancelled only after the zero-issued invariant is confirmed. | yes |
 | `ticket_issued` | `manual_review` | `flag_issued_order_review` | `admin/system` | Support issue requires review without invalidating issued ticket yet. | Record reason; do not mutate scanner validity unless explicit revocation. | yes | Duplicate review preserves issued evidence. | no |
 | `manual_review` | `paid_verified` | `retry_paid_fulfillment` | `admin/system` | No prior fulfillment boundary; allowed pre-fulfillment inventory failure reason; one exact verified-success attempt, matching amount/currency, paid CheckoutSession, one OrderLine, and no issued TicketIssue. | Preserve `paid_at`, clear the current failure markers, record `retry_paid_order_fulfillment`, and insert `PaidOrderFulfillmentWorker` in the same Postgres transaction. | yes | State transition prevents a second operator retry; worker remains independently idempotent. | no |
 | `manual_review` | approved target | `resolve_manual_review_to_target` | `admin/system` | Target is explicitly allowed by policy and reason exists. | Record recovery metadata and target side effects. | yes | Same resolution idempotent by review id. | target-dependent |
@@ -115,3 +116,36 @@ already crossed the fulfillment boundary.
 Once verified payment exists, no customer channel may state that payment was not
 received. The customer may be told that fulfillment is pending, under review, or
 awaiting support.
+
+## P0-D Order Revocation Completeness
+
+Order-level revocation takes the same `pg_advisory_xact_lock(order_id)` used by
+`FastCheck.Tickets.Issuer`, reloads the Order after acquiring it, and traverses
+all issued TicketIssues by ascending id with bounded keyset pages. The page
+size is an implementation detail and does not limit which historical orders
+can be revoked.
+
+Each ticket mutation uses a savepoint inside one outer Postgres transaction.
+Mobile sync aggregation runs once for the complete set of changed attendees;
+an aggregation failure rolls back every page. The transaction finishes with an
+authoritative count of issued TicketIssues for that Order. Clean revocation
+requires that count to be zero. Attendee cache invalidation runs once after
+commit for the complete revoked set.
+
+Admin refund and cancellation flows require an empty failure list and a zero
+remaining-issued count before their final state transition. Immediately before
+that transition they reacquire the same Order advisory lock, reload the Order,
+and check the issued count again. An incomplete attempt stays out of `refunded`
+and `cancelled` and follows the existing manual-review path.
+
+## P0-D Customer Purchase Ceiling
+
+`FastCheck.Sales.PurchaseLimits` defines the platform customer purchase ceiling
+of 50 tickets per Order. Checkout validates this before inventory reservation
+or commercial writes. Offer actions and Event WhatsApp cap configuration cannot
+exceed the same policy; WhatsApp presents the minimum of the platform ceiling,
+the current Offer limit, and the current Event limit.
+
+The 50-ticket purchase ceiling does not constrain historical Order quantities,
+revocation, refund review, or cancellation review. No OrderLine quantity
+constraint or migration is part of P0-D.

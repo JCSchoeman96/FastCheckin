@@ -10,6 +10,106 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   alias FastCheck.Sales.OrderLine
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
 
+  test "platform ceiling permits 50 tickets when offer and inventory allow it" do
+    event = create_event(%{name: "Platform quantity fifty"})
+
+    offer =
+      Fixtures.insert_offer!(
+        event_id: event.id,
+        sales_channel: "web",
+        max_per_order: 50,
+        configured_quantity_available: 100
+      )
+
+    on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
+
+    input =
+      Fixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        quantity: 50,
+        source_channel: "web",
+        event_name: event.name
+      })
+
+    assert {:ok, %{order: order}} =
+             Checkout.start_checkout(input, Fixtures.customer_session_actor([event.id]))
+
+    assert order.event_id == event.id
+
+    assert [%{quantity: 50}] =
+             OrderLine
+             |> Ash.Query.for_read(:list_for_order, %{sales_order_id: order.id})
+             |> Ash.read!(authorize?: false)
+  end
+
+  test "platform ceiling rejects 51 before checkout, Redis, or Oban side effects" do
+    event = create_event(%{name: "Platform quantity fifty one"})
+
+    offer =
+      Fixtures.insert_offer!(
+        event_id: event.id,
+        sales_channel: "web",
+        max_per_order: 100,
+        configured_quantity_available: 200
+      )
+
+    on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
+
+    input =
+      Fixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        quantity: 51,
+        source_channel: "web",
+        event_name: event.name
+      })
+
+    before = checkout_side_effect_counts(event.id)
+    inventory_before = availability_snapshot!(offer.id)
+
+    assert {:error, :platform_max_per_order_exceeded} =
+             Checkout.start_checkout(input, Fixtures.customer_session_actor([event.id]))
+
+    assert checkout_side_effect_counts(event.id) == before
+    assert availability_snapshot!(offer.id) == inventory_before
+  end
+
+  test "platform ceiling applies to administrative and WhatsApp checkout callers" do
+    for {channel, actor_type, offer_channel} <- [
+          {"admin", :admin, "admin"},
+          {"whatsapp", :customer_session, "whatsapp"}
+        ] do
+      event = create_event(%{name: "Platform cap #{channel}"})
+
+      offer =
+        Fixtures.insert_offer!(
+          event_id: event.id,
+          sales_channel: offer_channel,
+          max_per_order: 100,
+          configured_quantity_available: 200
+        )
+
+      input =
+        Fixtures.checkout_input(%{
+          event_id: event.id,
+          ticket_offer_id: offer.id,
+          quantity: 51,
+          source_channel: channel,
+          event_name: event.name
+        })
+
+      actor =
+        case actor_type do
+          :admin -> Fixtures.admin_actor([event.id])
+          :customer_session -> Fixtures.customer_session_actor([event.id])
+        end
+
+      assert {:error, :platform_max_per_order_exceeded} = Checkout.start_checkout(input, actor)
+      Fixtures.flush_inventory_keys(offer.id)
+    end
+  end
+
   test "fresh WhatsApp checkout rejects quantity above the event cap with zero side effects" do
     event = create_event(%{name: "Event cap checkout"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
@@ -228,5 +328,15 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   defp availability_snapshot!(offer_id) do
     assert {:ok, snapshot} = ReservationLedger.get_availability(offer_id)
     snapshot
+  end
+
+  defp checkout_side_effect_counts(event_id) do
+    %{
+      orders: Repo.aggregate(from(o in "sales_orders", where: o.event_id == ^event_id), :count),
+      order_lines: Repo.aggregate(from(l in "sales_order_lines"), :count),
+      checkout_sessions: Repo.aggregate(from(s in "sales_checkout_sessions"), :count),
+      payment_attempts: Repo.aggregate(from(p in "sales_payment_attempts"), :count),
+      oban_jobs: Repo.aggregate(from(j in "oban_jobs"), :count)
+    }
   end
 end

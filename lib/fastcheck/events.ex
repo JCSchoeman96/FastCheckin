@@ -11,6 +11,7 @@ defmodule FastCheck.Events do
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Repo
+  alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.TickeraClient
 
   alias FastCheck.{
@@ -362,9 +363,25 @@ defmodule FastCheck.Events do
   """
   @spec set_whatsapp_max_tickets_per_order(integer(), integer()) ::
           {:ok, Event.t()}
-          | {:error, :invalid_event_id | :invalid_limit | :not_found | :event_archived}
+          | {:error,
+             :invalid_event_id
+             | :invalid_limit
+             | :platform_max_per_order_exceeded
+             | :not_found
+             | :event_archived}
   def set_whatsapp_max_tickets_per_order(event_id, limit)
       when is_integer(event_id) and event_id > 0 and is_integer(limit) and limit > 0 do
+    with :ok <- PurchaseLimits.validate_quantity(limit) do
+      do_set_whatsapp_max_tickets_per_order(event_id, limit)
+    end
+  end
+
+  def set_whatsapp_max_tickets_per_order(_event_id, limit) when is_integer(limit) and limit > 0,
+    do: {:error, :invalid_event_id}
+
+  def set_whatsapp_max_tickets_per_order(_event_id, _limit), do: {:error, :invalid_limit}
+
+  defp do_set_whatsapp_max_tickets_per_order(event_id, limit) do
     now = NaiveDateTime.utc_now()
 
     updated_count =
@@ -411,11 +428,6 @@ defmodule FastCheck.Events do
         end
     end
   end
-
-  def set_whatsapp_max_tickets_per_order(_event_id, limit) when is_integer(limit) and limit > 0,
-    do: {:error, :invalid_event_id}
-
-  def set_whatsapp_max_tickets_per_order(_event_id, _limit), do: {:error, :invalid_limit}
 
   @doc "Reads the durable WhatsApp per-order quantity ceiling directly from PostgreSQL."
   @spec whatsapp_max_tickets_per_order(integer()) :: integer() | nil
