@@ -2,7 +2,10 @@ defmodule FastCheckWeb.Sales.PaystackCallbackControllerTest do
   use FastCheckWeb.ConnCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  import Ecto.Query
+
   alias FastCheck.Sales.Payments.{
+    PaymentRecovery,
     PaystackWebhookWorker,
     TestSupport,
     VerifyPaymentWorker,
@@ -197,6 +200,166 @@ defmodule FastCheckWeb.Sales.PaystackCallbackControllerTest do
     assert E2E.reload_payment_attempt!(attempt.id).status == "manual_review"
   end
 
+  test "an old unresolved callback waits for the sweep to hand it to manual review", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Repo.query!(
+      "UPDATE sales_payment_attempts SET inserted_at = $2 WHERE id = $1",
+      [attempt.id, DateTime.add(DateTime.utc_now(), -1_800, :second)]
+    )
+
+    {request_fun, request_count} = TestSupport.flunk_paystack_request_fun()
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+
+    conn = get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+
+    assert conn.status == 200
+    assert E2E.reload_payment_attempt!(attempt.id).status == "initialized"
+    refute_enqueued(worker: VerifyPaymentWorker)
+    assert :counters.get(request_count, 1) == 0
+  end
+
+  test "callback restarts only recovery-exhausted manual review through server verification", %{
+    event: event,
+    offer: offer
+  } do
+    %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Repo.query!(
+      "UPDATE sales_payment_attempts SET status = 'manual_review', manual_review_reason = $2 WHERE id = $1",
+      [attempt.id, "payment_verification_recovery_exhausted"]
+    )
+
+    {request_fun, request_count} =
+      TestSupport.counting_request_fun(
+        TestSupport.verify_success_request_fun(amount: order.total_amount_cents)
+      )
+
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+
+    conn = get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "We're checking your payment."
+    refute conn.resp_body =~ attempt.provider_reference
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+    assert :counters.get(request_count, 1) == 0
+
+    assert [%{args: args}] = all_enqueued(worker: VerifyPaymentWorker)
+    assert args == %{"payment_attempt_id" => attempt.id}
+    assert :ok = perform_job(VerifyPaymentWorker, args)
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
+    assert E2E.reload_order!(order.id).status == "paid_verified"
+    assert :counters.get(request_count, 1) == 1
+  end
+
+  test "callback preserves retry intent while an exhausted verify job is still active", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Repo.query!(
+      "UPDATE sales_payment_attempts SET status = 'manual_review', manual_review_reason = $2 WHERE id = $1",
+      [attempt.id, "payment_verification_recovery_exhausted"]
+    )
+
+    assert {:ok, active_job} =
+             VerifyPaymentWorker.new(%{"payment_attempt_id" => attempt.id})
+             |> Oban.insert()
+
+    Repo.update_all(
+      from(job in Oban.Job, where: job.id == ^active_job.id),
+      set: [state: "executing"]
+    )
+
+    conn = get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+
+    assert conn.status == 200
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+
+    Repo.update_all(
+      from(job in Oban.Job, where: job.id == ^active_job.id),
+      set: [state: "discarded"]
+    )
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+
+    assert [%{args: %{"payment_attempt_id" => id}}] =
+             all_enqueued(worker: VerifyPaymentWorker)
+
+    assert id == attempt.id
+  end
+
+  test "callback does not restart unrelated manual-review payments", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Repo.query!(
+      "UPDATE sales_payment_attempts SET status = 'manual_review', manual_review_reason = 'payment_state_conflict' WHERE id = $1",
+      [attempt.id]
+    )
+
+    conn = get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "We're checking your payment."
+    assert E2E.reload_payment_attempt!(attempt.id).status == "manual_review"
+    refute_enqueued(worker: VerifyPaymentWorker)
+  end
+
+  test "recovery-exhausted callback retry has one bounded verification cycle", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Repo.query!(
+      "UPDATE sales_payment_attempts SET status = 'manual_review', manual_review_reason = $2 WHERE id = $1",
+      [attempt.id, "payment_verification_recovery_exhausted"]
+    )
+
+    {request_fun, request_count} =
+      TestSupport.counting_request_fun(
+        TestSupport.init_and_verify_request_fun(
+          amount: attempt.amount_cents,
+          currency: attempt.currency,
+          provider_status: "pending"
+        )
+      )
+
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+    get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+
+    assert [%{id: job_id, args: args}] = all_enqueued(worker: VerifyPaymentWorker)
+
+    assert :ok =
+             VerifyPaymentWorker.perform(%Oban.Job{
+               args: args,
+               attempt: 5,
+               max_attempts: 5
+             })
+
+    Repo.query!("UPDATE oban_jobs SET state = 'completed' WHERE id = $1", [job_id])
+
+    reviewed = E2E.reload_payment_attempt!(attempt.id)
+    assert reviewed.status == "manual_review"
+    assert reviewed.manual_review_reason == "payment_verification_recovery_retry_exhausted"
+    assert :counters.get(request_count, 1) == 1
+
+    get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "manual_review"
+    refute_enqueued(worker: VerifyPaymentWorker)
+    assert :counters.get(request_count, 1) == 1
+  end
+
   test "callback and webhook races produce one verified payment and one fulfillment chain", %{
     event: event,
     offer: offer
@@ -240,6 +403,32 @@ defmodule FastCheckWeb.Sales.PaystackCallbackControllerTest do
     assert E2E.reload_order!(order.id).status == "paid_verified"
     assert E2E.order_transition_count(order.id, "paid_verified") == 1
     assert length(all_enqueued(worker: PaidOrderFulfillmentWorker)) == 1
+
+    if E2E.reload_payment_event!(payment_event.id).processing_status != "processed" do
+      Repo.query!(
+        "UPDATE oban_jobs SET state = 'completed' WHERE worker = $1 AND args->>'payment_attempt_id' = $2 AND state IN ('available', 'scheduled', 'retryable')",
+        [inspect(VerifyPaymentWorker), to_string(attempt.id)]
+      )
+
+      Repo.query!(
+        "UPDATE oban_jobs SET state = 'completed' WHERE worker = $1 AND args->>'payment_event_id' = $2 AND state IN ('available', 'scheduled', 'retryable')",
+        [inspect(PaystackWebhookWorker), to_string(payment_event.id)]
+      )
+
+      Repo.query!(
+        "UPDATE sales_payment_events SET inserted_at = $2 WHERE id = $1",
+        [payment_event.id, DateTime.add(DateTime.utc_now(), -180, :second)]
+      )
+
+      assert {:ok, %{events_enqueued: 1}} = PaymentRecovery.sweep()
+      assert :ok = perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+
+      assert [%{args: replay_args}] = all_enqueued(worker: VerifyPaymentWorker)
+      assert replay_args["payment_event_id"] == payment_event.id
+      assert :ok = perform_job(VerifyPaymentWorker, replay_args)
+    end
+
+    assert E2E.reload_payment_event!(payment_event.id).processing_status == "processed"
 
     assert [%{args: fulfillment_args}] = all_enqueued(worker: PaidOrderFulfillmentWorker)
     assert :ok = perform_job(PaidOrderFulfillmentWorker, fulfillment_args)

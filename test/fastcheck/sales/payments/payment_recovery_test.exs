@@ -6,13 +6,16 @@ defmodule FastCheck.Sales.Payments.PaymentRecoveryTest do
 
   alias Ash.Changeset
   alias FastCheck.Repo
+  alias FastCheck.Sales.ManualReview
 
   alias FastCheck.Sales.Payments.{
     PaymentRecovery,
     PaymentRecoverySweepWorker,
+    PaymentVerification,
     PaystackWebhookWorker,
     TestSupport,
-    VerifyPaymentWorker
+    VerifyPaymentWorker,
+    WebhookIngestion
   }
 
   alias FastCheck.SalesCheckoutFixtures
@@ -178,6 +181,387 @@ defmodule FastCheck.Sales.Payments.PaymentRecoveryTest do
 
     assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
     assert E2E.reload_order!(order.id).status == "paid_verified"
+  end
+
+  test "old initialized attempts from an application outage enter recovery-exhausted review", %{
+    event: event,
+    offer: offer
+  } do
+    %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+    age_attempt!(attempt.id, 1_800)
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+
+    reviewed = E2E.reload_payment_attempt!(attempt.id)
+    assert reviewed.status == "manual_review"
+    assert reviewed.manual_review_reason == "payment_verification_recovery_exhausted"
+    assert E2E.reload_order!(order.id).status == "awaiting_payment"
+    refute_enqueued(worker: VerifyPaymentWorker)
+    refute_enqueued(worker: PaidOrderFulfillmentWorker)
+  end
+
+  test "expired checkout with an orphaned pending verification enters recovery-exhausted review",
+       %{
+         event: event,
+         offer: offer
+       } do
+    %{order: order, session: session, attempt: attempt} =
+      E2E.start_initialized_checkout!(event, offer)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: order.total_amount_cents,
+        currency: order.currency,
+        provider_status: "pending"
+      )
+    )
+
+    assert {:error, :retryable} = PaymentVerification.verify_attempt(attempt.id)
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_started"
+
+    Repo.query!(
+      "UPDATE sales_checkout_sessions SET expires_at = $2 WHERE id = $1",
+      [session.id, DateTime.add(DateTime.utc_now(), -1, :second)]
+    )
+
+    assert {:ok, :expired} = FastCheck.Sales.CheckoutExpiry.expire_session(session.id)
+    age_attempt!(attempt.id, 1_800)
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+
+    reviewed = E2E.reload_payment_attempt!(attempt.id)
+    assert reviewed.status == "manual_review"
+    assert reviewed.manual_review_reason == "payment_verification_recovery_exhausted"
+    assert E2E.reload_order!(order.id).status == "expired"
+    assert E2E.reload_session!(session.id).status == "expired"
+    refute_enqueued(worker: VerifyPaymentWorker)
+    refute_enqueued(worker: PaidOrderFulfillmentWorker)
+  end
+
+  test "a pending payment beyond the automatic horizon remains recoverable as manual review", %{
+    event: event,
+    offer: offer
+  } do
+    %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: order.total_amount_cents,
+        currency: order.currency,
+        provider_status: "pending"
+      )
+    )
+
+    assert {:error, :retryable} = PaymentVerification.verify_attempt(attempt.id)
+    age_attempt!(attempt.id, 1_800)
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+
+    reviewed = E2E.reload_payment_attempt!(attempt.id)
+    assert reviewed.status == "manual_review"
+    assert reviewed.manual_review_reason == "payment_verification_recovery_exhausted"
+    assert E2E.reload_order!(order.id).status == "awaiting_payment"
+    refute_enqueued(worker: VerifyPaymentWorker)
+    refute_enqueued(worker: PaidOrderFulfillmentWorker)
+  end
+
+  test "a pending provider result on the final verify attempt enters recovery-exhausted review",
+       %{
+         event: event,
+         offer: offer
+       } do
+    %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: order.total_amount_cents,
+        currency: order.currency,
+        provider_status: "pending"
+      )
+    )
+
+    job = %Oban.Job{
+      args: %{"payment_attempt_id" => attempt.id},
+      attempt: 5,
+      max_attempts: 5
+    }
+
+    assert :ok = VerifyPaymentWorker.perform(job)
+
+    reviewed = E2E.reload_payment_attempt!(attempt.id)
+    assert reviewed.status == "manual_review"
+    assert reviewed.manual_review_reason == "payment_verification_recovery_exhausted"
+    assert E2E.reload_order!(order.id).status == "awaiting_payment"
+    refute_enqueued(worker: PaidOrderFulfillmentWorker)
+  end
+
+  test "a live verify job prevents the horizon handoff", %{event: event, offer: offer} do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    attempt =
+      attempt
+      |> Changeset.for_update(:mark_verification_started, %{},
+        actor: SalesCheckoutFixtures.system_actor([event.id])
+      )
+      |> Ash.update!(authorize?: false)
+
+    age_attempt!(attempt.id, 1_800)
+    job = VerifyPaymentWorker.new(%{"payment_attempt_id" => attempt.id}) |> Oban.insert!()
+    old_time = DateTime.add(DateTime.utc_now(), -600, :second)
+
+    Repo.update_all(
+      from(row in Oban.Job, where: row.id == ^job.id),
+      set: [inserted_at: old_time, scheduled_at: old_time]
+    )
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_started"
+    assert Repo.get!(Oban.Job, job.id).state == "available"
+    assert length(all_enqueued(worker: VerifyPaymentWorker)) == 1
+  end
+
+  test "an old operator retry remains recoverable if its queued job is discarded", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+    set_attempt_manual_review!(attempt.id, "payment_state_conflict")
+    age_attempt!(attempt.id, 7_200)
+
+    assert {:ok, _action} =
+             ManualReview.retry_payment_verification(
+               attempt.id,
+               %{id: "recovery-test-admin"},
+               %{"reason_code" => "retry_payment_verification"}
+             )
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+    assert [%{id: job_id}] = all_enqueued(worker: VerifyPaymentWorker)
+
+    old_time = DateTime.add(DateTime.utc_now(), -600, :second)
+
+    Repo.update_all(
+      from(job in Oban.Job, where: job.id == ^job_id),
+      set: [state: "discarded", inserted_at: old_time, scheduled_at: old_time]
+    )
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+
+    assert [%{args: %{"payment_attempt_id" => id}}] =
+             all_enqueued(worker: VerifyPaymentWorker)
+
+    assert id == attempt.id
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+  end
+
+  test "recovery-exhausted attempts can be restarted by a signed late webhook", %{
+    event: event,
+    offer: offer
+  } do
+    %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+    set_attempt_manual_review!(attempt.id, "payment_verification_recovery_exhausted")
+
+    %{event: payment_event, status: :created} =
+      E2E.ingest_paystack_success!(attempt,
+        provider_event_id: "late-after-recovery-#{System.unique_integer([:positive])}"
+      )
+
+    assert payment_event.signature_valid
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.verify_success_request_fun(amount: order.total_amount_cents)
+    )
+
+    assert :ok =
+             perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+
+    assert [%{args: args}] = all_enqueued(worker: VerifyPaymentWorker)
+    assert args["payment_attempt_id"] == attempt.id
+    assert args["payment_event_id"] == payment_event.id
+    assert :ok = perform_job(VerifyPaymentWorker, args)
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
+    assert E2E.reload_order!(order.id).status == "paid_verified"
+    assert E2E.reload_payment_event!(payment_event.id).processing_status == "processed"
+  end
+
+  test "late webhook preserves retry intent while an exhausted verify job is still active", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+    set_attempt_manual_review!(attempt.id, "payment_verification_recovery_exhausted")
+
+    assert {:ok, active_job} =
+             VerifyPaymentWorker.new(%{"payment_attempt_id" => attempt.id})
+             |> Oban.insert()
+
+    Repo.update_all(
+      from(job in Oban.Job, where: job.id == ^active_job.id),
+      set: [state: "executing"]
+    )
+
+    %{event: payment_event, status: :created} =
+      E2E.ingest_paystack_success!(attempt,
+        provider_event_id: "late-active-job-#{System.unique_integer([:positive])}"
+      )
+
+    assert :ok = perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+
+    Repo.update_all(
+      from(job in Oban.Job, where: job.id == ^active_job.id),
+      set: [state: "discarded"]
+    )
+
+    assert {:ok, _} = PaymentRecovery.sweep()
+
+    assert [%{args: %{"payment_attempt_id" => id}}] =
+             all_enqueued(worker: VerifyPaymentWorker)
+
+    assert id == attempt.id
+  end
+
+  test "a signed duplicate webhook can restart the same exhausted event exactly once", %{
+    event: event,
+    offer: offer
+  } do
+    %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+    webhook =
+      E2E.ingest_paystack_success!(attempt,
+        provider_event_id: "replay-after-exhaustion-#{System.unique_integer([:positive])}"
+      )
+
+    payment_event = webhook.event
+    assert webhook.status == :created
+
+    assert :ok =
+             perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.init_and_verify_request_fun(
+        amount: order.total_amount_cents,
+        currency: order.currency,
+        provider_status: "pending"
+      )
+    )
+
+    verify_args = %{
+      "payment_attempt_id" => attempt.id,
+      "payment_event_id" => payment_event.id,
+      "provider_reference" => attempt.provider_reference
+    }
+
+    assert :ok =
+             VerifyPaymentWorker.perform(%Oban.Job{
+               args: verify_args,
+               attempt: 5,
+               max_attempts: 5
+             })
+
+    assert E2E.reload_payment_attempt!(attempt.id).manual_review_reason ==
+             "payment_verification_recovery_exhausted"
+
+    assert E2E.reload_payment_event!(payment_event.id).processing_status == "manual_review"
+
+    Repo.update_all(
+      from(job in Oban.Job,
+        where: job.worker == ^inspect(PaystackWebhookWorker),
+        where: fragment("?->>'payment_event_id' = ?", job.args, ^to_string(payment_event.id))
+      ),
+      set: [state: "completed"]
+    )
+
+    Repo.update_all(
+      from(job in Oban.Job,
+        where: job.worker == ^inspect(VerifyPaymentWorker),
+        where: fragment("?->>'payment_attempt_id' = ?", job.args, ^to_string(attempt.id))
+      ),
+      set: [state: "completed"]
+    )
+
+    assert {:ok, :duplicate, replayed_event} =
+             WebhookIngestion.ingest(webhook.body, webhook.signature)
+
+    assert replayed_event.id == payment_event.id
+    assert payment_event_count() == 1
+    assert [%{args: %{"payment_event_id" => id}}] = all_enqueued(worker: PaystackWebhookWorker)
+    assert id == payment_event.id
+
+    Application.put_env(
+      :fastcheck,
+      :paystack_request_fun,
+      TestSupport.verify_success_request_fun(amount: order.total_amount_cents)
+    )
+
+    assert :ok = perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verification_retry_queued"
+
+    assert [%{args: retried_verify_args}] = all_enqueued(worker: VerifyPaymentWorker)
+    assert retried_verify_args["payment_attempt_id"] == attempt.id
+    assert :ok = perform_job(VerifyPaymentWorker, retried_verify_args)
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
+    assert E2E.reload_order!(order.id).status == "paid_verified"
+    assert E2E.reload_payment_event!(payment_event.id).processing_status == "processed"
+    assert length(all_enqueued(worker: PaidOrderFulfillmentWorker)) == 1
+  end
+
+  test "unrelated manual-review payments are not restarted by a signed webhook", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+    set_attempt_manual_review!(attempt.id, "payment_state_conflict")
+
+    payment_event =
+      TestSupport.insert_payment_event!(%{
+        provider_reference: attempt.provider_reference,
+        signature_valid: true,
+        processing_status: "stored"
+      })
+
+    assert :ok =
+             perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "manual_review"
+    assert E2E.reload_payment_event!(payment_event.id).processing_status == "manual_review"
+    refute_enqueued(worker: VerifyPaymentWorker)
+  end
+
+  test "a signed webhook does not retry a terminal failed attempt", %{
+    event: event,
+    offer: offer
+  } do
+    %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+    set_attempt_status!(attempt.id, "failed")
+
+    payment_event =
+      TestSupport.insert_payment_event!(%{
+        provider_reference: attempt.provider_reference,
+        signature_valid: true,
+        processing_status: "stored"
+      })
+
+    assert :ok =
+             perform_job(PaystackWebhookWorker, %{"payment_event_id" => payment_event.id})
+
+    assert E2E.reload_payment_attempt!(attempt.id).status == "failed"
+    assert E2E.reload_payment_event!(payment_event.id).processing_status == "manual_review"
+    refute_enqueued(worker: VerifyPaymentWorker)
   end
 
   test "sweep re-drives each recoverable event state through the webhook worker", %{
@@ -450,6 +834,19 @@ defmodule FastCheck.Sales.Payments.PaymentRecoveryTest do
 
   defp set_attempt_status!(id, status) do
     Repo.query!("UPDATE sales_payment_attempts SET status = $1 WHERE id = $2", [status, id])
+  end
+
+  defp set_attempt_manual_review!(id, reason) do
+    attempt = E2E.reload_payment_attempt!(id)
+
+    attempt
+    |> Changeset.for_update(
+      :mark_manual_review,
+      %{manual_review_reason: reason},
+      reason: reason,
+      actor: SalesCheckoutFixtures.system_actor()
+    )
+    |> Ash.update!(authorize?: false)
   end
 
   defp age_event!(id, seconds) do

@@ -9,7 +9,12 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   use Oban.Worker,
     queue: :payments,
     max_attempts: 5,
-    unique: [period: 300, fields: [:args], keys: [:payment_event_id]]
+    unique: [
+      period: 300,
+      fields: [:args],
+      keys: [:payment_event_id],
+      states: [:available, :scheduled, :executing, :retryable]
+    ]
 
   require Ash.Expr
   require Ash.Query
@@ -23,6 +28,7 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   alias FastCheck.Repo
   alias FastCheck.Sales.PaymentAttempt
   alias FastCheck.Sales.PaymentEvent
+  alias FastCheck.Sales.Payments.PaymentRecovery
   alias FastCheck.Sales.Payments.VerifyPaymentWorker
 
   @provider_paystack "paystack"
@@ -71,28 +77,62 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
 
   defp handoff_verification(_event), do: :ok
 
-  defp atomic_handoff_with_attempt(event, attempt) do
+  defp atomic_handoff_with_attempt(event, %PaymentAttempt{id: payment_attempt_id}) do
+    case PaymentRecovery.prepare_webhook_attempt(payment_attempt_id) do
+      {:ok, :not_recoverable} -> mark_event_not_recoverable(event)
+      {:ok, handoff} -> atomic_handoff_with_prepared_attempt(event, handoff)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp atomic_handoff_with_prepared_attempt(event, attempt_handoff) do
     action =
-      if event.processing_status == "unmatched",
+      if event.processing_status in ["unmatched", "failed", "manual_review"],
         do: :retry_processing,
         else: :mark_processing_started
 
     Multi.new()
-    |> Multi.run(:payment_event, fn _repo, _changes ->
-      update_event(event, action)
-    end)
+    |> Multi.run(:payment_event, fn _repo, _changes -> update_event(event, action) end)
     |> Multi.run(:verify_job, fn _repo, _changes ->
-      VerifyPaymentWorker.new(%{
-        "payment_event_id" => event.id,
-        "payment_attempt_id" => attempt.id,
-        "provider_reference" => attempt.provider_reference
-      })
-      |> Oban.insert()
+      case attempt_handoff do
+        :deferred ->
+          {:ok, :deferred}
+
+        %PaymentAttempt{id: payment_attempt_id, provider_reference: provider_reference} ->
+          VerifyPaymentWorker.new(%{
+            "payment_event_id" => event.id,
+            "payment_attempt_id" => payment_attempt_id,
+            "provider_reference" => provider_reference
+          })
+          |> Oban.insert()
+      end
     end)
     |> Repo.transaction()
     |> case do
       {:ok, _} -> :ok
       {:error, _step, reason, _changes} -> {:error, reason}
+    end
+  end
+
+  defp mark_event_not_recoverable(%{processing_status: "manual_review"}), do: :ok
+
+  defp mark_event_not_recoverable(event) do
+    action =
+      if event.processing_status in ["unmatched", "failed"],
+        do: :retry_processing,
+        else: :mark_processing_started
+
+    Repo.transaction(fn ->
+      with {:ok, updated_event} <- update_event(event, action),
+           {:ok, _reviewed_event} <- mark_event_not_recoverable_state(updated_event) do
+        :ok
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -115,6 +155,16 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   defp update_event(event, action) do
     event
     |> Changeset.for_update(action, %{}, actor: system_actor())
+    |> Ash.update(authorize?: false)
+  end
+
+  defp mark_event_not_recoverable_state(event) do
+    event
+    |> Changeset.for_update(
+      :mark_manual_review,
+      %{last_processing_error: "payment_attempt_not_recoverable"},
+      actor: system_actor()
+    )
     |> Ash.update(authorize?: false)
   end
 

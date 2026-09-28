@@ -13,6 +13,7 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
   import Ash.Expr
 
   alias Ash.Changeset
+  alias Ash.Notifier
   alias Ash.Query
   alias FastCheck.Observability.Correlation
   alias FastCheck.Payments.Paystack.Error, as: PaystackError
@@ -142,7 +143,7 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
             {:error, :retryable}
 
           {:error, error} ->
-            finalize_verifier_error(attempt, event, error, context)
+            finalize_verifier_error(attempt, order, session, event, error, context)
         end
 
       {:error, reason} ->
@@ -151,11 +152,30 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
   end
 
   defp mark_verification_started(attempt, context) do
-    case attempt
-         |> Changeset.for_update(:mark_verification_started, %{}, actor: context.actor)
-         |> Ash.update(authorize?: false, context: context) do
-      {:ok, updated} -> {:ok, updated}
-      {:error, error} -> {:error, error}
+    Repo.transaction(fn ->
+      Repo.query!("SELECT pg_advisory_xact_lock($1)", [attempt.sales_order_id])
+
+      with {:ok, current_attempt} <- load_attempt(attempt.id),
+           {:ok, updated, notifications} <-
+             current_attempt
+             |> Changeset.for_update(:mark_verification_started, %{}, actor: context.actor)
+             |> Ash.update(
+               authorize?: false,
+               context: context,
+               return_notifications?: true
+             ) do
+        {updated, notifications}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, {updated, notifications}} ->
+        Notifier.notify(notifications)
+        {:ok, updated}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -215,25 +235,89 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
   defp normalize_handler_result(:late_payment_manual_review), do: :manual_review
   defp normalize_handler_result(other), do: other
 
-  defp finalize_verifier_error(attempt, event, error, context) do
+  defp finalize_verifier_error(attempt, order, session, event, error, context) do
     attrs = verifier_error_attrs(error)
 
-    with {:ok, _attempt} <-
-           attempt
-           |> Changeset.for_update(:mark_verification_failed, attrs, actor: context.actor)
-           |> Ash.update(authorize?: false, context: context),
-         :ok <- maybe_mark_event_failed(event, attrs, context) do
-      :telemetry.execute(
-        [:fastcheck, :sales, :payment, :failed],
-        %{count: 1},
-        %{payment_attempt_id: attempt.id, verifier_error: true}
-        |> Correlation.operational_metadata()
-        |> Map.new()
-      )
+    result =
+      Repo.transaction(fn ->
+        Repo.query!("SELECT pg_advisory_xact_lock($1)", [order.id])
 
-      {:ok, :failed}
-    else
-      {:error, reason} -> {:error, reason}
+        current_attempt = reload_attempt!(attempt.id)
+        current_event = reload_event!(event)
+
+        case current_attempt.status do
+          "verification_started" ->
+            finalize_failed_attempt_in_transaction(
+              current_attempt,
+              current_event,
+              attrs,
+              context
+            )
+
+          "failed" ->
+            case maybe_mark_event_failed(current_event, attrs, context) do
+              {:ok, notifications} -> {:failed, notifications}
+              {:error, reason} -> Repo.rollback(reason)
+            end
+
+          "verified_success" ->
+            {:verified, []}
+
+          _other_status ->
+            {:unchanged, []}
+        end
+      end)
+
+    case result do
+      {:ok, {:failed, notifications}} ->
+        Notifier.notify(notifications)
+        record_verifier_failure(attempt.id)
+        {:ok, :failed}
+
+      {:ok, {:verified, notifications}} ->
+        Notifier.notify(notifications)
+
+        PaymentOutcomeHandler.apply_idempotent_verified(
+          attempt,
+          order,
+          session,
+          event,
+          context
+        )
+
+      {:ok, {:unchanged, notifications}} ->
+        Notifier.notify(notifications)
+        {:ok, :idempotent}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp finalize_failed_attempt_in_transaction(attempt, event, attrs, context) do
+    case mark_attempt_failed(attempt, attrs, context) do
+      {:ok, attempt_notifications} ->
+        case maybe_mark_event_failed(event, attrs, context) do
+          {:ok, event_notifications} ->
+            {:failed, attempt_notifications ++ event_notifications}
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
+
+  defp mark_attempt_failed(attempt, attrs, context) do
+    attempt
+    |> Changeset.for_update(:mark_verification_failed, attrs, actor: context.actor)
+    |> Ash.update(authorize?: false, context: context, return_notifications?: true)
+    |> case do
+      {:ok, _updated, notifications} -> {:ok, notifications}
+      {:ok, _updated} -> {:ok, []}
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -267,9 +351,9 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
     }
   end
 
-  defp maybe_mark_event_failed(nil, _attrs, _context), do: :ok
+  defp maybe_mark_event_failed(nil, _attrs, _context), do: {:ok, []}
 
-  defp maybe_mark_event_failed(%{processing_status: "failed"}, _attrs, _context), do: :ok
+  defp maybe_mark_event_failed(%{processing_status: "failed"}, _attrs, _context), do: {:ok, []}
 
   defp maybe_mark_event_failed(%{processing_status: "processing_started"} = event, attrs, context) do
     error_message = Map.get(attrs, :failure_message) || "verification_failed"
@@ -280,13 +364,36 @@ defmodule FastCheck.Sales.Payments.PaymentVerification do
            %{last_processing_error: error_message},
            actor: context.actor
          )
-         |> Ash.update(authorize?: false, context: context) do
-      {:ok, _} -> :ok
+         |> Ash.update(authorize?: false, context: context, return_notifications?: true) do
+      {:ok, _updated, notifications} -> {:ok, notifications}
+      {:ok, _updated} -> {:ok, []}
       {:error, error} -> {:error, error}
     end
   end
 
-  defp maybe_mark_event_failed(_event, _attrs, _context), do: :ok
+  defp maybe_mark_event_failed(_event, _attrs, _context), do: {:ok, []}
+
+  defp reload_event!(nil), do: nil
+
+  defp reload_event!(%PaymentEvent{id: id}) do
+    case PaymentEvent
+         |> Query.for_read(:get_by_id, %{id: id})
+         |> Ash.read_one(authorize?: false) do
+      {:ok, nil} -> Repo.rollback(:payment_event_not_found)
+      {:ok, event} -> event
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp record_verifier_failure(payment_attempt_id) do
+    :telemetry.execute(
+      [:fastcheck, :sales, :payment, :failed],
+      %{count: 1},
+      %{payment_attempt_id: payment_attempt_id, verifier_error: true}
+      |> Correlation.operational_metadata()
+      |> Map.new()
+    )
+  end
 
   defp reload_attempt!(id), do: load_attempt(id) |> unwrap!
   defp reload_order!(id), do: load_order(id) |> unwrap!

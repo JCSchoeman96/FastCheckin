@@ -85,13 +85,17 @@ defmodule FastCheck.Sales.ManualReview do
 
   def retry_payment_verification(payment_attempt_id, actor, attrs) do
     with {:ok, reason_code} <- require_reason(attrs, "retry_payment_verification"),
-         {:ok, attempt} <- load_payment_attempt(payment_attempt_id),
-         {:ok, order} <- load_order(attempt.sales_order_id),
-         :ok <- require_status(attempt.status, ["manual_review"]) do
+         {:ok, loaded_attempt} <- load_payment_attempt(payment_attempt_id),
+         {:ok, loaded_order} <- load_order(loaded_attempt.sales_order_id),
+         :ok <- require_status(loaded_attempt.status, ["manual_review"]) do
       run_transaction(fn ->
-        ash_actor = ash_actor(actor, order.event_id)
+        Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
 
-        with {:ok, updated_attempt} <-
+        with {:ok, attempt} <- load_payment_attempt(loaded_attempt.id),
+             {:ok, order} <- load_order(attempt.sales_order_id),
+             :ok <- require_status(attempt.status, ["manual_review"]),
+             ash_actor = ash_actor(actor, order.event_id),
+             {:ok, updated_attempt} <-
                transition_payment_attempt(
                  attempt,
                  :queue_verification_retry,
