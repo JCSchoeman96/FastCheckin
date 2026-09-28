@@ -1,0 +1,48 @@
+{
+  "pack_id": "0052_P0-C",
+  "slice": "P0-C",
+  "name": "Automatic Complete Ticket Delivery",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0052_P0-C_automatic-complete-ticket-delivery",
+  "goal": "Automatically deliver every issued ticket unit for WhatsApp orders through durable PostgreSQL intents and provider-attempt audit records.",
+  "dependencies": [
+    "P0-B Paid Order Fulfillment",
+    "VS-09A Ticket Issuance Contract",
+    "VS-13 Manual Review Operations",
+    "VS-24D Verified Ticket Resend"
+  ],
+  "delivery_model": {
+    "logical_identity": "FastCheck.Sales.TicketDeliveryIntent",
+    "provider_attempt_audit": "FastCheck.Sales.DeliveryAttempt",
+    "initial_identity": "unique ticket_issue_id and initial_ticket_delivery purpose",
+    "verified_resend_identity": "unique ticket_resend_challenge_id",
+    "attempt_identity": "unique ticket_delivery_intent_id and attempt_number",
+    "redis_dedupe": "optimization only"
+  },
+  "automatic_scope": "WhatsApp source orders only",
+  "conversation_authority": "sales_orders.sales_conversation_id exact FK and matching buyer phone",
+  "issuance_handoff": "ticket_issued transition and TicketDeliveryCoordinatorWorker insertion commit together",
+  "coordinator_worker_arg": "sales_order_id only",
+  "send_worker_arg": "ticket_delivery_intent_id only",
+  "pagination": "bounded id-ordered keyset pages of 50 with per-page intent and job transactions",
+  "migration_required": true,
+  "migration_scope": "Create sales_ticket_delivery_intents, link per-attempt delivery audit rows, add correctness unique identities and required indexes, extend delivery_reason contract; down migration refuses to destroy durable delivery evidence.",
+  "documentation": [
+    "docs/fastcheck_sales/state_machines/TICKET_DELIVERY_INTENT_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/DELIVERY_ATTEMPT_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/ORDER_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/STATE_MACHINE_MASTER.md"
+  ],
+  "out_of_scope": [
+    "P0-D revocation batching and purchase ceiling",
+    "payment reconciliation",
+    "conversation restart/idempotency redesign",
+    "refunds",
+    "Apple Wallet",
+    "Google Wallet",
+    "automatic email delivery"
+  ]
+}

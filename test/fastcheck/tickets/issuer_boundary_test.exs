@@ -15,7 +15,6 @@ defmodule FastCheck.Tickets.IssuerBoundaryTest do
   ]
 
   @forbidden_issuer_calls [
-    "Oban.insert",
     "Paystack",
     "IssueTicketsWorker",
     "DeliveryAttempt",
@@ -54,6 +53,12 @@ defmodule FastCheck.Tickets.IssuerBoundaryTest do
       refute String.contains?(@issuer_source, fragment),
              "issuer must not reference #{fragment}"
     end
+  end
+
+  test "issuer adds only the approved WhatsApp delivery coordinator handoff" do
+    assert @issuer_source =~ "alias FastCheck.Workers.TicketDeliveryCoordinatorWorker"
+    assert @issuer_source =~ "TicketDeliveryCoordinatorWorker.new"
+    refute @issuer_source =~ "SendWhatsAppTicketLinkWorker"
   end
 
   test "payment outcome modules do not reference forbidden issuance domains" do

@@ -1,20 +1,18 @@
 defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   @moduledoc """
-  Sends a secure ticket page link through WhatsApp after backend issuance exists.
+  Sends one secure ticket page link using a durable ticket delivery intent.
+
+  The intent is the authority for the order, issued ticket, conversation, and
+  resend challenge. Redis is not used to decide whether a customer may receive
+  another initial delivery.
   """
 
-  import Ecto.Query, only: [from: 2, dynamic: 2]
-
-  require Logger
+  import Ecto.Query, only: [from: 2]
 
   use Oban.Worker,
     queue: :whatsapp_outbound,
     max_attempts: 5,
-    unique: [
-      period: 600,
-      fields: [:args],
-      keys: [:conversation_id, :ticket_issue_id, :ticket_resend_challenge_id]
-    ]
+    unique: [period: 300, fields: [:args], keys: [:ticket_delivery_intent_id]]
 
   alias Ash.Changeset
   alias Ash.Query
@@ -28,281 +26,641 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.DeliveryAttempt
   alias FastCheck.Sales.Order
+  alias FastCheck.Sales.TicketDeliveryIntent
   alias FastCheck.Sales.TicketIssue
   alias FastCheck.Sales.TicketPage
   alias FastCheck.Sales.TicketResendChallenge
   alias FastCheck.Tickets.DeliveryToken
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{
-        args:
-          %{
-            "conversation_id" => conversation_id,
-            "sales_order_id" => order_id,
-            "ticket_issue_id" => ticket_issue_id
-          } = args
-      }) do
-    conversation_id = normalize_id(conversation_id)
-    order_id = normalize_id(order_id)
-    ticket_issue_id = normalize_id(ticket_issue_id)
-    resend_challenge_id = normalize_optional_id(Map.get(args, "ticket_resend_challenge_id"))
+  @intent_terminal_states ["provider_accepted", "fallback_required", "cancelled"]
+  @attempt_acceptance_states ["provider_accepted", "sent", "delivered", "read", "provider_failed"]
 
-    with {:ok, audit_context} <-
-           validate_delivery_audit(
-             resend_challenge_id,
-             Map.get(args, "delivery_reason"),
-             conversation_id,
-             order_id,
-             ticket_issue_id
-           ),
-         {:ok, :new} <- claim_ticket_link_dedupe(conversation_id, ticket_issue_id, audit_context),
-         :ok <- check_ticket_link_ambiguity_guard(ticket_issue_id, audit_context),
-         {:ok, conversation} <- load_conversation(conversation_id),
-         {:ok, order} <- load_order(order_id),
-         :ok <- ensure_order_deliverable(order),
-         {:ok, ticket_issue} <- load_ticket_issue(ticket_issue_id),
-         :ok <- ensure_ticket_issue_deliverable(ticket_issue),
-         token <- DeliveryToken.generate(),
-         {:ok, ticket_issue} <- rotate_token(ticket_issue, token),
-         url <- ticket_url(token.token),
-         :ok <- ensure_secure_page_valid(token.token),
-         decision <- DeliveryPolicy.select_ticket_delivery(conversation),
-         {:ok, delivery_attempt} <-
-           create_delivery_attempt(order, ticket_issue, conversation, decision, audit_context),
-         {:ok, _delivery_attempt} <-
-           deliver_and_mark(delivery_attempt, conversation, decision, url, fn ->
-             release_ticket_link_dedupe(conversation_id, ticket_issue_id, audit_context)
-           end),
-         :ok <- consume_resend_challenge(resend_challenge_id) do
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"ticket_delivery_intent_id" => id} = args} = job)
+      when map_size(args) == 1 do
+    with {:ok, intent_id} <- positive_id(id),
+         {:ok, _intent} <- load_intent(intent_id),
+         {:ok, prepared} <- prepare_attempt(intent_id),
+         :ok <- execute_prepared(prepared, job) do
       :ok
     else
-      {:ok, :duplicate} ->
-        :ok
-
-      {:error, :ticket_not_deliverable} ->
-        {:discard, :ticket_not_deliverable}
-
-      {:error, %{retryable?: true}} = error ->
-        error
-
-      {:discard, _reason} = discard ->
-        discard
-
-      {:error, reason} ->
-        {:error, reason}
+      {:stop, reason} -> {:discard, reason}
+      {:retry, classification} -> {:error, %{retryable?: true, classification: classification}}
+      {:error, :intent_not_found} -> {:discard, :intent_not_found}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   def perform(_job), do: {:discard, :invalid_args}
 
-  defp check_ticket_link_ambiguity_guard(ticket_issue_id, %{delivery_reason: nil}) do
-    attempts =
-      Repo.all(
-        from d in "sales_delivery_attempts",
-          where:
-            d.ticket_issue_id == ^ticket_issue_id and
-              is_nil(d.delivery_reason) and
-              d.provider == "meta" and
-              d.channel == "whatsapp" and
-              d.status in ["dispatching", "manual_review"],
-          order_by: [desc: d.attempt_number, desc: d.id],
-          select: %{id: d.id, status: d.status}
-      )
-
-    eval_ambiguity_attempts(attempts)
-  end
-
-  defp check_ticket_link_ambiguity_guard(ticket_issue_id, %{
-         delivery_reason: "verified_ticket_resend",
-         ticket_resend_challenge_id: challenge_id
-       })
-       when is_integer(challenge_id) do
-    case Repo.one(
-           from d in "sales_delivery_attempts",
-             where: ^verified_resend_scope(ticket_issue_id, challenge_id, "dispatching"),
-             order_by: [desc: d.attempt_number, desc: d.id],
-             limit: 1,
-             select: %{id: d.id}
-         ) do
-      %{id: attempt_id} ->
-        resolve_unresolved_dispatching(attempt_id)
-        {:discard, :manual_review}
-
-      nil ->
-        cond do
-          Repo.exists?(
-            from d in "sales_delivery_attempts",
-              where: ^verified_resend_scope(ticket_issue_id, challenge_id, "manual_review")
-          ) ->
-            {:discard, :manual_review}
-
-          Repo.exists?(
-            from d in "sales_delivery_attempts",
-              where:
-                ^verified_resend_scope(ticket_issue_id, challenge_id, :with_acceptance_evidence)
-          ) ->
-            recover_consumed_resend_challenge(challenge_id)
-            {:discard, :resend_challenge_already_delivered}
-
-          true ->
-            :ok
-        end
+  # Attempt allocation and intent inspection share one short transaction. The
+  # row lock serializes duplicate executions and attempt_number allocation.
+  # The transaction is committed before any token rotation or provider call.
+  defp prepare_attempt(intent_id) do
+    Repo.transaction(fn ->
+      case lock_intent(intent_id) do
+        nil -> Repo.rollback(:intent_not_found)
+        locked_intent -> prepare_locked_intent(locked_intent)
+      end
+    end)
+    |> case do
+      {:ok, result} -> {:ok, result}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp check_ticket_link_ambiguity_guard(_ticket_issue_id, _audit_context), do: :ok
+  defp prepare_locked_intent(%{status: "provider_accepted", id: id}) do
+    case load_intent(id) do
+      {:ok, intent} -> {:recover_acceptance, resend_challenge_id(intent)}
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
 
-  defp eval_ambiguity_attempts(attempts) do
+  defp prepare_locked_intent(%{status: status}) when status in @intent_terminal_states do
+    {:stop, :already_terminal}
+  end
+
+  defp prepare_locked_intent(locked_intent) do
+    with {:ok, intent} <- load_intent(locked_intent.id),
+         {:ok, attempts} <- load_intent_attempts(intent.id) do
+      cond do
+        acceptance_evidence?(attempts) ->
+          recover_accepted_intent(intent)
+
+        intent.status == "manual_review" ->
+          {:stop, :manual_review}
+
+        dispatching_attempt =
+            Enum.find(attempts, &(whatsapp_meta_attempt?(&1) and &1.status == "dispatching")) ->
+          review_ambiguous_dispatch(intent, dispatching_attempt)
+
+        Enum.any?(attempts, &(whatsapp_meta_attempt?(&1) and &1.status == "manual_review")) ->
+          review_ambiguous_intent(intent)
+
+        true ->
+          prepare_new_attempt(intent)
+      end
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp recover_accepted_intent(intent) do
+    case mark_intent_provider_accepted(intent) do
+      :ok -> {:recover_acceptance, resend_challenge_id(intent)}
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp review_ambiguous_dispatch(intent, attempt) do
+    with :ok <- mark_attempt_manual_review(attempt.id, "ambiguous_transport_outcome"),
+         :ok <- mark_intent_manual_review(intent, "ambiguous_transport_outcome") do
+      {:stop, :manual_review}
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp review_ambiguous_intent(intent) do
+    case mark_intent_manual_review(intent, "ambiguous_transport_outcome") do
+      :ok -> {:stop, :manual_review}
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp prepare_new_attempt(intent) do
+    with {:ok, bundle} <- load_and_validate_bundle(intent),
+         decision <- DeliveryPolicy.select_ticket_delivery(bundle.conversation),
+         {:ok, attempt} <- create_delivery_attempt(intent, bundle, decision),
+         {:ok, prepared} <- prepare_transport_attempt(attempt, intent, bundle, decision) do
+      prepared
+    else
+      {:unsafe, reason} ->
+        cancel_unsafe_intent(intent, reason)
+
+      {:invalid, reason} ->
+        review_invalid_intent(intent, reason)
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
+
+  defp cancel_unsafe_intent(intent, reason) do
+    case mark_intent_cancelled(intent, reason) do
+      :ok -> {:stop, :ticket_not_deliverable}
+      {:error, update_reason} -> Repo.rollback(update_reason)
+    end
+  end
+
+  defp review_invalid_intent(intent, reason) do
+    case mark_intent_manual_review(intent, reason) do
+      :ok -> {:stop, :manual_review}
+      {:error, update_reason} -> Repo.rollback(update_reason)
+    end
+  end
+
+  defp prepare_transport_attempt(attempt, intent, _bundle, %{mode: :fallback_required} = decision) do
+    with {:ok, _attempt} <-
+           mark_fallback_required(
+             attempt,
+             decision.failure_reason,
+             decision.fallback_channel
+           ),
+         :ok <- mark_intent_fallback_required(intent, "whatsapp_fallback_required") do
+      {:ok, {:stop, :fallback_required}}
+    end
+  end
+
+  defp prepare_transport_attempt(attempt, _intent, bundle, decision) do
+    case mark_dispatching(attempt) do
+      {:ok, attempt} -> {:ok, {:send, attempt, Map.put(bundle, :decision, decision)}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp execute_prepared({:stop, reason}, _job), do: {:stop, reason}
+
+  defp execute_prepared({:recover_acceptance, challenge_id}, _job) do
+    recover_resend_challenge_consumption(challenge_id)
+  end
+
+  defp execute_prepared({:send, attempt, bundle}, job) do
+    with :ok <- claim_dedupe_optimization(bundle.intent),
+         token <- DeliveryToken.generate(),
+         {:ok, _ticket_issue} <- rotate_token(bundle.ticket_issue, token),
+         :ok <- ensure_secure_page_valid(token.token),
+         url <- ticket_url(token.token),
+         result <- deliver(attempt, bundle.conversation, bundle.decision, url),
+         :ok <- persist_provider_result(result, attempt, bundle.intent, job) do
+      :ok
+    else
+      {:error, :ticket_not_deliverable} ->
+        case persist_manual_review(
+               attempt.id,
+               bundle.intent.id,
+               "secure_ticket_page_invalid",
+               attempt_failure: "secure_ticket_page_invalid"
+             ) do
+          :ok -> {:stop, :ticket_not_deliverable}
+          {:error, _reason} -> {:error, :delivery_attempt_persistence_failed}
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp deliver(attempt, conversation, %{mode: :session_message}, url) do
+    body = TicketLinkRenderer.ticket_link(conversation.preferred_language, url)
+
+    Client.send_text(conversation.phone_e164, body, correlation_id: attempt.correlation_id)
+  end
+
+  defp deliver(
+         attempt,
+         conversation,
+         %{mode: :template_message, template_key: template_key, template: template},
+         url
+       ) do
+    Client.send_template(
+      conversation.phone_e164,
+      template_key,
+      template.language_code,
+      ticket_link_template_components(url),
+      correlation_id: attempt.correlation_id
+    )
+  end
+
+  defp persist_provider_result({:ok, response}, attempt, intent, _job) do
+    case persist_acceptance(attempt.id, intent.id, response.provider_message_id) do
+      :ok -> recover_resend_challenge_consumption(resend_challenge_id(intent))
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp persist_provider_result({:error, reason}, attempt, intent, job) do
+    case OutboundDeliveryPolicy.classify(reason) do
+      :safe_retry ->
+        persist_safe_retry(attempt, intent, job)
+
+      :ambiguous_manual_review ->
+        persist_classified_review(attempt, intent, "ambiguous_transport_outcome")
+
+      :permanent_manual_review ->
+        persist_classified_review(attempt, intent, "permanent_transport_failure")
+    end
+  end
+
+  defp persist_safe_retry(attempt, intent, job) do
+    if max_worker_attempt_reached?(job) do
+      case persist_exhausted_safe_retry(attempt.id, intent.id) do
+        :ok -> {:stop, :manual_review}
+        {:error, _reason} -> {:error, :delivery_attempt_persistence_failed}
+      end
+    else
+      case mark_failed(attempt, "safe_retryable_transport_failure") do
+        {:ok, _attempt} ->
+          release_dedupe_optimization(intent)
+          {:retry, "safe_retryable_transport_failure"}
+
+        {:error, _reason} ->
+          {:error, :delivery_attempt_persistence_failed}
+      end
+    end
+  end
+
+  defp persist_classified_review(attempt, intent, reason) do
+    case persist_manual_review(
+           attempt.id,
+           intent.id,
+           reason,
+           attempt_failure: reason
+         ) do
+      :ok -> {:stop, :manual_review}
+      {:error, _reason} -> {:error, :delivery_attempt_persistence_failed}
+    end
+  end
+
+  defp persist_acceptance(attempt_id, intent_id, provider_message_id) do
+    Repo.transaction(fn ->
+      with {:ok, attempt} <- load_attempt(attempt_id),
+           {:ok, intent} <- load_intent(intent_id),
+           {:ok, _attempt} <- mark_provider_accepted(attempt, provider_message_id),
+           :ok <- mark_intent_provider_accepted(intent) do
+        :ok
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> normalize_transaction()
+  end
+
+  defp persist_manual_review(attempt_id, intent_id, reason, opts) do
+    Repo.transaction(fn ->
+      with {:ok, attempt} <- load_attempt(attempt_id),
+           {:ok, intent} <- load_intent(intent_id),
+           {:ok, _attempt} <- mark_manual_review(attempt, Keyword.fetch!(opts, :attempt_failure)),
+           :ok <- mark_intent_manual_review(intent, reason) do
+        :ok
+      else
+        {:error, failure} -> Repo.rollback(failure)
+      end
+    end)
+    |> normalize_transaction()
+  end
+
+  defp persist_exhausted_safe_retry(attempt_id, intent_id) do
+    Repo.transaction(fn ->
+      with {:ok, attempt} <- load_attempt(attempt_id),
+           {:ok, intent} <- load_intent(intent_id),
+           {:ok, _failed_attempt} <-
+             mark_failed(attempt, "safe_retryable_transport_failure"),
+           :ok <- mark_intent_manual_review(intent, "safe_transport_retries_exhausted") do
+        :ok
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> normalize_transaction()
+  end
+
+  defp create_delivery_attempt(intent, bundle, decision) do
+    attempt_number =
+      Repo.one(
+        from d in "sales_delivery_attempts",
+          where: d.ticket_delivery_intent_id == ^intent.id,
+          select: coalesce(max(d.attempt_number), 0)
+      ) + 1
+
+    attrs = %{
+      sales_order_id: intent.sales_order_id,
+      ticket_issue_id: intent.ticket_issue_id,
+      ticket_delivery_intent_id: intent.id,
+      ticket_resend_challenge_id: intent.ticket_resend_challenge_id,
+      channel: "whatsapp",
+      provider: "meta",
+      recipient: Redactor.redact_phone(bundle.conversation.phone_e164),
+      delivery_reason: delivery_reason(intent),
+      template_name: template_name(decision),
+      within_whatsapp_window: decision.within_whatsapp_window,
+      attempt_number: attempt_number,
+      correlation_id: "ticket-delivery-#{intent.id}-attempt-#{attempt_number}"
+    }
+
+    DeliveryAttempt
+    |> Changeset.for_create(:create_queued, attrs, actor: system_actor())
+    |> ash_create()
+  end
+
+  defp load_and_validate_bundle(intent) do
+    with {:ok, issue} <- load_ticket_issue(intent.ticket_issue_id),
+         {:ok, order} <- load_order(intent.sales_order_id),
+         {:ok, conversation} <- load_conversation(intent.conversation_id),
+         {:ok, challenge} <- maybe_load_resend_challenge(intent) do
+      bundle = %{
+        intent: intent,
+        ticket_issue: issue,
+        order: order,
+        conversation: conversation,
+        challenge: challenge
+      }
+
+      case validate_bundle(bundle) do
+        :ok -> {:ok, bundle}
+        {:unsafe, reason} -> {:unsafe, reason}
+        {:invalid, reason} -> {:invalid, reason}
+      end
+    else
+      {:error, _reason} -> {:invalid, "ticket_delivery_relationship_conflict"}
+    end
+  end
+
+  defp validate_bundle(bundle) do
+    with :ok <- validate_authority_relationships(bundle),
+         :ok <- validate_ticket_deliverability(bundle) do
+      validate_delivery_purpose(bundle)
+    end
+  end
+
+  defp validate_authority_relationships(%{
+         intent: intent,
+         ticket_issue: issue,
+         order: order,
+         conversation: conversation
+       }) do
     cond do
-      dispatching_attempt = Enum.find(attempts, &(&1.status == "dispatching")) ->
-        resolve_unresolved_dispatching(dispatching_attempt.id)
-        {:discard, :manual_review}
+      issue.sales_order_id != intent.sales_order_id ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
 
-      Enum.any?(attempts, &(&1.status == "manual_review")) ->
-        {:discard, :manual_review}
+      order.id != intent.sales_order_id ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
+
+      conversation.id != intent.conversation_id ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
+
+      order.sales_conversation_id != intent.conversation_id ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
+
+      order.source_channel != "whatsapp" ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
+
+      conversation.phone_e164 != order.buyer_phone ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
 
       true ->
         :ok
     end
   end
 
-  defp verified_resend_scope(ticket_issue_id, challenge_id, status_or_evidence) do
-    base =
-      dynamic(
-        [d],
-        d.ticket_issue_id == ^ticket_issue_id and
-          d.ticket_resend_challenge_id == ^challenge_id and
-          d.delivery_reason == "verified_ticket_resend" and
-          d.provider == "meta" and
-          d.channel == "whatsapp"
-      )
+  defp validate_ticket_deliverability(%{order: order, ticket_issue: issue}) do
+    cond do
+      order.status != "ticket_issued" ->
+        {:unsafe, "ticket_or_order_not_deliverable"}
 
-    case status_or_evidence do
-      :with_acceptance_evidence ->
-        dynamic(
-          [d],
-          ^base and not is_nil(d.provider_message_id) and
-            fragment("trim(?) <> ''", d.provider_message_id)
-        )
+      issue.status != "issued" or not is_nil(issue.revoked_at) ->
+        {:unsafe, "ticket_or_order_not_deliverable"}
 
-      status when is_binary(status) ->
-        dynamic([d], ^base and d.status == ^status)
-    end
-  end
-
-  defp recover_consumed_resend_challenge(challenge_id) do
-    case load_resend_challenge(challenge_id) do
-      {:ok, %TicketResendChallenge{status: "verified", consumed_at: nil} = challenge} ->
-        case challenge
-             |> Changeset.for_update(
-               :mark_consumed,
-               %{consumed_at: DateTime.utc_now() |> DateTime.truncate(:second)},
-               actor: system_actor()
-             )
-             |> Ash.update(authorize?: false) do
-          {:ok, _challenge} ->
-            :ok
-
-          {:error, _reason} ->
-            Logger.warning("whatsapp_resend_challenge_recovery_failed",
-              source: "send_whatsapp_ticket_link_worker"
-            )
-
-            :ok
-        end
-
-      {:ok, _challenge} ->
-        :ok
-
-      {:error, _reason} ->
+      true ->
         :ok
     end
   end
 
-  defp resolve_unresolved_dispatching(attempt_id) do
-    with {:ok, %DeliveryAttempt{} = attempt} <-
-           DeliveryAttempt
-           |> Query.for_read(:get_by_id, %{id: attempt_id})
-           |> Ash.read_one(authorize?: false) do
-      mark_manual_review(
-        attempt,
-        %{status: :ambiguous_transport_outcome},
-        "ambiguous_transport_outcome"
-      )
+  defp validate_delivery_purpose(%{intent: intent, challenge: challenge}) do
+    cond do
+      intent.purpose == "initial_ticket_delivery" and not is_nil(challenge) ->
+        {:invalid, "ticket_delivery_relationship_conflict"}
+
+      intent.purpose == "verified_ticket_resend" and
+          not valid_resend_challenge?(intent, challenge) ->
+        {:invalid, "ticket_delivery_resend_challenge_invalid"}
+
+      intent.purpose not in ["initial_ticket_delivery", "verified_ticket_resend"] ->
+        {:invalid, "ticket_delivery_purpose_invalid"}
+
+      true ->
+        :ok
     end
   end
 
-  defp validate_delivery_audit(
-         nil,
-         "verified_ticket_resend",
-         _conversation_id,
-         _order_id,
-         _ticket_issue_id
-       ),
-       do: {:discard, :invalid_resend_challenge}
-
-  defp validate_delivery_audit(
-         nil,
-         _delivery_reason,
-         _conversation_id,
-         _order_id,
-         _ticket_issue_id
-       ) do
-    {:ok, %{delivery_reason: nil, ticket_resend_challenge_id: nil}}
+  defp valid_resend_challenge?(intent, %TicketResendChallenge{} = challenge) do
+    intent.ticket_resend_challenge_id == challenge.id and
+      challenge.status == "verified" and is_nil(challenge.consumed_at) and
+      challenge.conversation_id == intent.conversation_id and
+      challenge.sales_order_id == intent.sales_order_id and
+      challenge.ticket_issue_id == intent.ticket_issue_id
   end
 
-  defp validate_delivery_audit(
-         challenge_id,
-         "verified_ticket_resend",
-         conversation_id,
-         order_id,
-         ticket_issue_id
-       )
-       when is_integer(challenge_id) do
-    case load_resend_challenge(challenge_id) do
-      {:ok, %TicketResendChallenge{} = challenge} ->
-        if valid_resend_challenge?(challenge, conversation_id, order_id, ticket_issue_id) do
-          {:ok,
-           %{
-             delivery_reason: "verified_ticket_resend",
-             ticket_resend_challenge_id: challenge.id
-           }}
-        else
-          {:discard, :invalid_resend_challenge}
-        end
+  defp valid_resend_challenge?(_intent, _challenge), do: false
 
-      {:error, _reason} ->
-        {:discard, :invalid_resend_challenge}
+  defp maybe_load_resend_challenge(%{
+         purpose: "initial_ticket_delivery",
+         ticket_resend_challenge_id: nil
+       }),
+       do: {:ok, nil}
+
+  defp maybe_load_resend_challenge(%{ticket_resend_challenge_id: challenge_id})
+       when is_integer(challenge_id),
+       do: load_resend_challenge(challenge_id)
+
+  defp maybe_load_resend_challenge(_intent), do: {:error, :invalid_challenge}
+
+  defp acceptance_evidence?(attempts) do
+    Enum.any?(attempts, fn attempt ->
+      whatsapp_meta_attempt?(attempt) and
+        (attempt.status in @attempt_acceptance_states or
+           usable_provider_message_id?(attempt.provider_message_id))
+    end)
+  end
+
+  defp whatsapp_meta_attempt?(%{provider: "meta", channel: "whatsapp"}), do: true
+  defp whatsapp_meta_attempt?(_attempt), do: false
+
+  defp load_intent_attempts(intent_id) do
+    Repo.all(
+      from d in "sales_delivery_attempts",
+        where: d.ticket_delivery_intent_id == ^intent_id,
+        order_by: [asc: d.attempt_number, asc: d.id],
+        select: map(d, [:id, :status, :provider_message_id, :provider, :channel])
+    )
+    |> then(&{:ok, &1})
+  end
+
+  defp lock_intent(intent_id) do
+    Repo.one(
+      from i in "sales_ticket_delivery_intents",
+        where: i.id == ^intent_id,
+        lock: "FOR UPDATE",
+        select: map(i, [:id, :status])
+    )
+  end
+
+  defp load_intent(id),
+    do: read_one(TicketDeliveryIntent, :get_by_id, %{id: id}, :intent_not_found)
+
+  defp load_order(id), do: read_one(Order, :get_by_id, %{id: id}, :order_not_found)
+
+  defp load_ticket_issue(id),
+    do: read_one(TicketIssue, :get_by_id, %{id: id}, :ticket_issue_not_found)
+
+  defp load_conversation(id),
+    do: read_one(Conversation, :get_by_id, %{id: id}, :conversation_not_found)
+
+  defp load_resend_challenge(id),
+    do: read_one(TicketResendChallenge, :get_by_id, %{id: id}, :resend_challenge_not_found)
+
+  defp read_one(resource, action, args, not_found) do
+    resource
+    |> Query.for_read(action, args)
+    |> Ash.read_one(authorize?: false)
+    |> case do
+      {:ok, nil} -> {:error, not_found}
+      {:ok, record} -> {:ok, record}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp validate_delivery_audit(
-         _challenge_id,
-         _delivery_reason,
-         _conversation_id,
-         _order_id,
-         _ticket_issue_id
-       ),
-       do: {:discard, :invalid_resend_challenge}
-
-  defp valid_resend_challenge?(
-         %TicketResendChallenge{} = challenge,
-         conversation_id,
-         order_id,
-         ticket_issue_id
-       ) do
-    challenge.status == "verified" and
-      is_nil(challenge.consumed_at) and
-      challenge.conversation_id == conversation_id and
-      challenge.sales_order_id == order_id and
-      challenge.ticket_issue_id == ticket_issue_id
+  defp mark_dispatching(attempt) do
+    attempt
+    |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
+    |> ash_update()
   end
 
-  defp ensure_order_deliverable(%{status: "ticket_issued"}), do: :ok
-  defp ensure_order_deliverable(_order), do: {:error, :ticket_not_deliverable}
+  defp mark_provider_accepted(attempt, provider_message_id) do
+    attempt
+    |> Changeset.for_update(
+      :mark_provider_accepted,
+      %{
+        provider_message_id: provider_message_id,
+        provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      },
+      actor: system_actor()
+    )
+    |> ash_update()
+  end
 
-  defp ensure_ticket_issue_deliverable(%{status: "issued", revoked_at: nil}), do: :ok
-  defp ensure_ticket_issue_deliverable(_ticket_issue), do: {:error, :ticket_not_deliverable}
+  defp mark_failed(attempt, safe_reason) do
+    attempt
+    |> Changeset.for_update(
+      :mark_failed,
+      %{
+        provider_error_code: "whatsapp_send_retryable",
+        provider_error_message: "whatsapp send failed",
+        failure_reason: safe_reason
+      },
+      actor: system_actor()
+    )
+    |> ash_update()
+  end
+
+  defp mark_manual_review(attempt, safe_reason) do
+    attempt
+    |> Changeset.for_update(
+      :mark_manual_review,
+      %{
+        provider_error_code: "whatsapp_send_requires_review",
+        provider_error_message: "whatsapp send requires review",
+        failure_reason: safe_reason,
+        fallback_channel: "manual_review"
+      },
+      actor: system_actor()
+    )
+    |> ash_update()
+  end
+
+  defp mark_fallback_required(attempt, reason, fallback_channel) do
+    attempt
+    |> Changeset.for_update(
+      :mark_fallback_required,
+      %{
+        provider_error_code: "whatsapp_delivery_fallback_required",
+        provider_error_message: "whatsapp delivery fallback required",
+        failure_reason: safe_classification(reason),
+        fallback_channel: fallback_channel
+      },
+      actor: system_actor()
+    )
+    |> ash_update()
+  end
+
+  defp mark_intent_provider_accepted(%TicketDeliveryIntent{status: "provider_accepted"}), do: :ok
+
+  defp mark_intent_provider_accepted(intent) do
+    case intent
+         |> Changeset.for_update(:mark_provider_accepted, %{}, actor: system_actor())
+         |> ash_update() do
+      {:ok, _intent} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp mark_intent_manual_review(%TicketDeliveryIntent{status: "manual_review"}, _reason), do: :ok
+
+  defp mark_intent_manual_review(intent, reason) do
+    update_intent(intent, :mark_manual_review, %{failure_reason: reason})
+  end
+
+  defp mark_intent_fallback_required(intent, reason) do
+    update_intent(intent, :mark_fallback_required, %{failure_reason: reason})
+  end
+
+  defp mark_intent_cancelled(intent, reason) do
+    update_intent(intent, :mark_cancelled, %{failure_reason: reason})
+  end
+
+  defp update_intent(intent, action, attrs) do
+    case intent
+         |> Changeset.for_update(action, attrs, actor: system_actor())
+         |> ash_update() do
+      {:ok, _intent} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp mark_attempt_manual_review(attempt_id, reason) do
+    with {:ok, attempt} <- load_attempt(attempt_id),
+         {:ok, _attempt} <- mark_manual_review(attempt, reason) do
+      :ok
+    end
+  end
+
+  defp load_attempt(id),
+    do: read_one(DeliveryAttempt, :get_by_id, %{id: id}, :delivery_attempt_not_found)
+
+  defp recover_resend_challenge_consumption(nil), do: :ok
+
+  defp recover_resend_challenge_consumption(challenge_id) when is_integer(challenge_id) do
+    Repo.transaction(fn ->
+      case Repo.one(
+             from c in "sales_ticket_resend_challenges",
+               where: c.id == ^challenge_id,
+               lock: "FOR UPDATE",
+               select: map(c, [:id, :status, :consumed_at])
+           ) do
+        %{status: "verified", consumed_at: nil} ->
+          with {:ok, challenge} <- load_resend_challenge(challenge_id),
+               {:ok, _challenge} <- consume_challenge(challenge) do
+            :ok
+          else
+            {:error, reason} -> Repo.rollback(reason)
+          end
+
+        _already_unavailable_or_consumed ->
+          :ok
+      end
+    end)
+    |> normalize_transaction()
+  end
+
+  defp consume_challenge(challenge) do
+    challenge
+    |> Changeset.for_update(
+      :mark_consumed,
+      %{consumed_at: DateTime.utc_now() |> DateTime.truncate(:second)},
+      actor: system_actor()
+    )
+    |> ash_update()
+  end
 
   defp rotate_token(ticket_issue, token) do
     ticket_issue
@@ -318,9 +676,11 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
       authorize?: false,
       context: %{
         actor: system_actor(),
-        correlation_id: "whatsapp-ticket-link-#{ticket_issue.id}"
-      }
+        correlation_id: "ticket-delivery-#{ticket_issue.id}"
+      },
+      return_notifications?: true
     )
+    |> normalize_ash_result()
   end
 
   defp ensure_secure_page_valid(token) do
@@ -332,333 +692,131 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   defp ticket_url(token), do: FastCheckWeb.Endpoint.url() <> "/t/" <> token
 
-  defp deliver_and_mark(
-         delivery_attempt,
-         conversation,
-         %{mode: :session_message},
-         url,
-         release_dedupe
-       ) do
-    with {:ok, delivery_attempt} <- mark_dispatching(delivery_attempt) do
-      body = TicketLinkRenderer.ticket_link(conversation.preferred_language, url)
-
-      Client.send_text(conversation.phone_e164, body,
-        correlation_id: delivery_attempt.correlation_id
-      )
-      |> mark_provider_result(delivery_attempt, release_dedupe)
-    end
-  end
-
-  defp deliver_and_mark(
-         delivery_attempt,
-         conversation,
-         %{mode: :template_message, template_key: template_key, template: template},
-         url,
-         release_dedupe
-       ) do
-    with {:ok, delivery_attempt} <- mark_dispatching(delivery_attempt) do
-      Client.send_template(
-        conversation.phone_e164,
-        template_key,
-        template.language_code,
-        ticket_link_template_components(url),
-        correlation_id: delivery_attempt.correlation_id
-      )
-      |> mark_provider_result(delivery_attempt, release_dedupe)
-    end
-  end
-
-  defp deliver_and_mark(
-         delivery_attempt,
-         _conversation,
-         %{mode: :fallback_required} = decision,
-         _url,
-         _release_dedupe
-       ) do
-    with {:ok, _delivery_attempt} <-
-           mark_fallback_required(
-             delivery_attempt,
-             decision.failure_reason,
-             decision.fallback_channel
-           ) do
-      {:discard, :fallback_required}
-    end
-  end
-
-  defp mark_provider_result(result, delivery_attempt, release_dedupe) do
-    case result do
-      {:ok, response} ->
-        mark_provider_accepted(delivery_attempt, response.provider_message_id)
-
-      {:error, reason} = error ->
-        mark_provider_failure(delivery_attempt, reason, release_dedupe, error)
-    end
-  end
-
-  defp mark_provider_failure(delivery_attempt, reason, release_dedupe, error) do
-    case OutboundDeliveryPolicy.classify(reason) do
-      :safe_retry ->
-        _ = mark_failed(delivery_attempt, reason)
-        release_dedupe.()
-        error
-
-      :ambiguous_manual_review ->
-        case mark_manual_review(delivery_attempt, reason, "ambiguous_transport_outcome") do
-          {:ok, _delivery_attempt} ->
-            {:discard, :manual_review}
-
-          {:error, _persistence_reason} ->
-            {:error, :whatsapp_delivery_attempt_manual_review_failed}
-        end
-
-      :permanent_manual_review ->
-        case mark_manual_review(delivery_attempt, reason) do
-          {:ok, _delivery_attempt} ->
-            {:discard, :manual_review}
-
-          {:error, _persistence_reason} ->
-            release_dedupe.()
-            {:error, :whatsapp_delivery_attempt_manual_review_failed}
-        end
-    end
-  end
-
-  defp create_delivery_attempt(order, ticket_issue, conversation, decision, audit_context) do
-    attrs = %{
-      sales_order_id: order.id,
-      ticket_issue_id: ticket_issue.id,
-      ticket_resend_challenge_id: audit_context.ticket_resend_challenge_id,
-      channel: "whatsapp",
-      provider: "meta",
-      recipient: Redactor.redact_phone(conversation.phone_e164),
-      delivery_reason: audit_context.delivery_reason,
-      template_name: template_name(decision),
-      within_whatsapp_window: decision.within_whatsapp_window,
-      attempt_number: next_attempt_number(order.id, ticket_issue.id),
-      correlation_id: "whatsapp-ticket-link-#{ticket_issue.id}"
-    }
-
-    DeliveryAttempt
-    |> Changeset.for_create(:create_queued, attrs, actor: system_actor())
-    |> Ash.create(authorize?: false)
-  end
-
-  defp mark_dispatching(delivery_attempt) do
-    delivery_attempt
-    |> Changeset.for_update(:mark_dispatching, %{}, actor: system_actor())
-    |> Ash.update(authorize?: false)
-  end
-
-  defp mark_provider_accepted(delivery_attempt, provider_message_id) do
-    delivery_attempt
-    |> Changeset.for_update(
-      :mark_provider_accepted,
+  defp ticket_link_template_components(url) do
+    [
       %{
-        provider_message_id: provider_message_id,
-        provider_accepted_at: DateTime.utc_now() |> DateTime.truncate(:second)
-      },
-      actor: system_actor()
-    )
-    |> Ash.update(authorize?: false)
-  end
-
-  defp mark_failed(delivery_attempt, reason) do
-    delivery_attempt
-    |> Changeset.for_update(
-      :mark_failed,
-      %{
-        provider_error_code: provider_error_code(reason),
-        provider_error_message: "whatsapp send failed",
-        failure_reason: failure_reason(reason)
-      },
-      actor: system_actor()
-    )
-    |> Ash.update(authorize?: false)
-  end
-
-  defp mark_fallback_required(delivery_attempt, failure_reason, fallback_channel) do
-    delivery_attempt
-    |> Changeset.for_update(
-      :mark_fallback_required,
-      %{
-        provider_error_code: "whatsapp_delivery_fallback_required",
-        provider_error_message: "whatsapp delivery fallback required",
-        failure_reason: failure_reason,
-        fallback_channel: fallback_channel
-      },
-      actor: system_actor()
-    )
-    |> Ash.update(authorize?: false)
-  end
-
-  defp mark_manual_review(delivery_attempt, reason, explicit_failure_reason \\ nil) do
-    delivery_attempt
-    |> Changeset.for_update(
-      :mark_manual_review,
-      %{
-        provider_error_code: provider_error_code(reason),
-        provider_error_message: "whatsapp send failed",
-        failure_reason: explicit_failure_reason || failure_reason(reason),
-        fallback_channel: "manual_review"
-      },
-      actor: system_actor()
-    )
-    |> Ash.update(authorize?: false)
-  end
-
-  defp consume_resend_challenge(nil), do: :ok
-
-  defp consume_resend_challenge(challenge_id) when is_integer(challenge_id) do
-    with {:ok, %TicketResendChallenge{} = challenge} <- load_resend_challenge(challenge_id),
-         {:ok, _challenge} <-
-           challenge
-           |> Changeset.for_update(
-             :mark_consumed,
-             %{consumed_at: DateTime.utc_now() |> DateTime.truncate(:second)},
-             actor: system_actor()
-           )
-           |> Ash.update(authorize?: false) do
-      :ok
-    else
-      _reason ->
-        Logger.warning("whatsapp_resend_challenge_consume_failed",
-          source: "send_whatsapp_ticket_link_worker"
-        )
-
-        {:discard, :resend_challenge_consume_failed}
-    end
+        "type" => "body",
+        "parameters" => [%{"type" => "text", "text" => url}]
+      }
+    ]
   end
 
   defp template_name(%{template: %{name: name}}), do: name
   defp template_name(_decision), do: nil
 
-  defp ticket_link_template_components(url) do
-    [
+  defp delivery_reason(%{purpose: "initial_ticket_delivery"}), do: "initial_ticket_delivery"
+  defp delivery_reason(%{purpose: "verified_ticket_resend"}), do: "verified_ticket_resend"
+
+  defp claim_dedupe_optimization(%TicketDeliveryIntent{} = intent) do
+    result =
+      case intent do
+        %{
+          purpose: "verified_ticket_resend",
+          conversation_id: conversation_id,
+          ticket_issue_id: ticket_issue_id,
+          ticket_resend_challenge_id: challenge_id
+        }
+        when is_integer(challenge_id) ->
+          Dedupe.claim_send_ticket_link_for_challenge(
+            conversation_id,
+            ticket_issue_id,
+            challenge_id,
+            ticket_delivery_dedupe_ttl_seconds(),
+            FastCheck.Redix
+          )
+
+        _initial ->
+          Dedupe.claim_send_ticket_link(
+            intent.conversation_id,
+            intent.ticket_issue_id,
+            ticket_delivery_dedupe_ttl_seconds()
+          )
+      end
+
+    # Redis only records a best-effort hint. Database intent and attempt state
+    # remains the authority even when a key is absent, duplicated, or expired.
+    case result do
+      {:ok, _claim} -> :ok
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp release_dedupe_optimization(%TicketDeliveryIntent{} = intent) do
+    case intent do
       %{
-        "type" => "body",
-        "parameters" => [
-          %{"type" => "text", "text" => url}
-        ]
+        purpose: "verified_ticket_resend",
+        conversation_id: conversation_id,
+        ticket_issue_id: ticket_issue_id,
+        ticket_resend_challenge_id: challenge_id
       }
-    ]
-  end
+      when is_integer(challenge_id) ->
+        Dedupe.release_send_ticket_link_for_challenge(
+          conversation_id,
+          ticket_issue_id,
+          challenge_id,
+          FastCheck.Redix
+        )
 
-  defp provider_error_code({:error, reason}), do: provider_error_code(reason)
-  defp provider_error_code(%{provider_error_code: code}) when is_binary(code), do: code
-  defp provider_error_code(%{status: status}) when is_atom(status), do: Atom.to_string(status)
-  defp provider_error_code(_reason), do: "whatsapp_send_failed"
-
-  defp failure_reason({:error, reason}), do: failure_reason(reason)
-  defp failure_reason(%{status: status}) when is_atom(status), do: Atom.to_string(status)
-  defp failure_reason(_reason), do: "whatsapp_send_failed"
-
-  defp next_attempt_number(order_id, ticket_issue_id) do
-    Repo.one!(
-      from d in "sales_delivery_attempts",
-        where: d.sales_order_id == ^order_id and d.ticket_issue_id == ^ticket_issue_id,
-        select: count(d.id)
-    ) + 1
-  end
-
-  defp load_conversation(id) do
-    Conversation
-    |> Query.for_read(:get_by_id, %{id: id})
-    |> Ash.read_one(authorize?: false)
-    |> case do
-      {:ok, nil} -> {:error, :conversation_not_found}
-      {:ok, conversation} -> {:ok, conversation}
-      {:error, reason} -> {:error, reason}
+      _initial ->
+        Dedupe.release_send_ticket_link(intent.conversation_id, intent.ticket_issue_id)
     end
-  end
-
-  defp load_order(id) do
-    Order
-    |> Query.for_read(:get_by_id, %{id: id})
-    |> Ash.read_one(authorize?: false)
-    |> case do
-      {:ok, nil} -> {:error, :order_not_found}
-      {:ok, order} -> {:ok, order}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp load_ticket_issue(id) do
-    TicketIssue
-    |> Query.for_read(:get_by_id, %{id: id})
-    |> Ash.read_one(authorize?: false)
-    |> case do
-      {:ok, nil} -> {:error, :ticket_issue_not_found}
-      {:ok, ticket_issue} -> {:ok, ticket_issue}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp load_resend_challenge(id) do
-    TicketResendChallenge
-    |> Query.for_read(:get_by_id, %{id: id})
-    |> Ash.read_one(authorize?: false)
-    |> case do
-      {:ok, nil} -> {:error, :resend_challenge_not_found}
-      {:ok, challenge} -> {:ok, challenge}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp normalize_id(id) when is_integer(id), do: id
-
-  defp normalize_id(id) when is_binary(id) do
-    case Integer.parse(id) do
-      {int, ""} -> int
-      _ -> id
-    end
-  end
-
-  defp normalize_optional_id(nil), do: nil
-  defp normalize_optional_id(""), do: nil
-  defp normalize_optional_id(id), do: normalize_id(id)
-
-  defp claim_ticket_link_dedupe(conversation_id, ticket_issue_id, %{
-         delivery_reason: "verified_ticket_resend",
-         ticket_resend_challenge_id: challenge_id
-       })
-       when is_integer(challenge_id) do
-    Dedupe.claim_send_ticket_link_for_challenge(
-      conversation_id,
-      ticket_issue_id,
-      challenge_id,
-      ticket_delivery_dedupe_ttl_seconds(),
-      FastCheck.Redix
-    )
-  end
-
-  defp claim_ticket_link_dedupe(conversation_id, ticket_issue_id, _audit_context) do
-    Dedupe.claim_send_ticket_link(
-      conversation_id,
-      ticket_issue_id,
-      ticket_delivery_dedupe_ttl_seconds()
-    )
-  end
-
-  defp release_ticket_link_dedupe(conversation_id, ticket_issue_id, %{
-         delivery_reason: "verified_ticket_resend",
-         ticket_resend_challenge_id: challenge_id
-       })
-       when is_integer(challenge_id) do
-    Dedupe.release_send_ticket_link_for_challenge(
-      conversation_id,
-      ticket_issue_id,
-      challenge_id,
-      FastCheck.Redix
-    )
-  end
-
-  defp release_ticket_link_dedupe(conversation_id, ticket_issue_id, _audit_context) do
-    Dedupe.release_send_ticket_link(conversation_id, ticket_issue_id)
   end
 
   defp ticket_delivery_dedupe_ttl_seconds do
     Application.get_env(:fastcheck, :whatsapp_ticket_delivery_dedupe_ttl_seconds, 86_400)
   end
+
+  defp resend_challenge_id(%{purpose: "verified_ticket_resend", ticket_resend_challenge_id: id}),
+    do: id
+
+  defp resend_challenge_id(_intent), do: nil
+
+  defp max_worker_attempt_reached?(%Oban.Job{attempt: attempt, max_attempts: max_attempts})
+       when is_integer(attempt) and is_integer(max_attempts),
+       do: attempt >= max_attempts
+
+  defp max_worker_attempt_reached?(_job), do: false
+
+  defp usable_provider_message_id?(id) when is_binary(id), do: String.trim(id) != ""
+  defp usable_provider_message_id?(_id), do: false
+
+  defp safe_classification(value) when is_atom(value), do: Atom.to_string(value)
+  defp safe_classification(_value), do: "whatsapp_delivery_failure"
+
+  defp normalize_transaction({:ok, :ok}), do: :ok
+  defp normalize_transaction({:ok, result}), do: result
+  defp normalize_transaction({:error, reason}), do: {:error, reason}
+
+  defp ash_create(changeset) do
+    changeset
+    |> Ash.create(authorize?: false, return_notifications?: true)
+    |> normalize_ash_result()
+  end
+
+  defp ash_update(changeset) do
+    changeset
+    |> Ash.update(authorize?: false, return_notifications?: true)
+    |> normalize_ash_result()
+  end
+
+  defp normalize_ash_result({:ok, record, notifications}) do
+    Ash.Notifier.notify(notifications)
+    {:ok, record}
+  end
+
+  defp normalize_ash_result({:ok, record}), do: {:ok, record}
+  defp normalize_ash_result({:error, reason}), do: {:error, reason}
+
+  defp positive_id(id) when is_integer(id) and id > 0, do: {:ok, id}
+
+  defp positive_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {parsed, ""} when parsed > 0 -> {:ok, parsed}
+      _ -> {:error, :invalid_args}
+    end
+  end
+
+  defp positive_id(_id), do: {:error, :invalid_args}
 
   defp system_actor, do: %{actor_type: :system, actor_id: "send_whatsapp_ticket_link_worker"}
 end

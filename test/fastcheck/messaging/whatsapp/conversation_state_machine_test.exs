@@ -602,7 +602,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   test "valid resend OTP queues verified resend delivery without exposing link", %{
     conversation: conversation
   } do
-    issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
+    candidate =
+      issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
+
+    Repo.update_all(
+      from(o in "sales_orders", where: o.id == ^candidate.sales_order_id),
+      set: [sales_conversation_id: conversation.id]
+    )
 
     result =
       conversation
@@ -638,16 +644,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute inspect(verified.response_body) =~ public_id
 
     challenge = reload_challenge(public_id)
+    intent_id = resend_delivery_intent_id!(challenge.id)
 
     assert_enqueued(
       worker: SendWhatsAppTicketLinkWorker,
-      args: %{
-        "conversation_id" => verified.conversation.id,
-        "sales_order_id" => challenge.sales_order_id,
-        "ticket_issue_id" => challenge.ticket_issue_id,
-        "ticket_resend_challenge_id" => challenge.id,
-        "delivery_reason" => "verified_ticket_resend"
-      }
+      args: %{"ticket_delivery_intent_id" => intent_id}
     )
 
     assert delivery_attempt_count() == 0
@@ -664,7 +665,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   end
 
   test "leading-zero resend OTP verifies from raw command text", %{conversation: conversation} do
-    issued_ticket_candidate!(buyer_email: "zero@example.com", buyer_name: "Jamie Smith")
+    candidate =
+      issued_ticket_candidate!(buyer_email: "zero@example.com", buyer_name: "Jamie Smith")
+
+    Repo.update_all(
+      from(o in "sales_orders", where: o.id == ^candidate.sales_order_id),
+      set: [sales_conversation_id: conversation.id]
+    )
 
     result =
       conversation
@@ -896,15 +903,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
 
+    intent_id = resend_delivery_intent_id!(verified_challenge.id)
+
     assert_enqueued(
       worker: SendWhatsAppTicketLinkWorker,
-      args: %{
-        "conversation_id" => conversation.id,
-        "sales_order_id" => verified_challenge.sales_order_id,
-        "ticket_issue_id" => verified_challenge.ticket_issue_id,
-        "ticket_resend_challenge_id" => verified_challenge.id,
-        "delivery_reason" => "verified_ticket_resend"
-      }
+      args: %{"ticket_delivery_intent_id" => intent_id}
     )
 
     assert delivery_attempt_count() == 0
@@ -1942,5 +1945,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     |> Query.for_read(:read, %{})
     |> Ash.read!(authorize?: false)
     |> length()
+  end
+
+  defp resend_delivery_intent_id!(challenge_id) do
+    Repo.one!(
+      from i in "sales_ticket_delivery_intents",
+        where: i.ticket_resend_challenge_id == ^challenge_id,
+        select: i.id
+    )
   end
 end

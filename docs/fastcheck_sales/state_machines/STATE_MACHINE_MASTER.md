@@ -29,6 +29,7 @@
 - `PaymentAttempt`: provider transaction lifecycle.
 - `PaymentEvent`: webhook/event processing lifecycle.
 - `TicketIssue`: ticket validity/issuance lifecycle.
+- `TicketDeliveryIntent`: one logical customer ticket-delivery lifecycle.
 - `DeliveryAttempt`: delivery audit lifecycle.
 - `Conversation`: WhatsApp/customer interaction lifecycle.
 
@@ -38,7 +39,7 @@
 |---|---|
 | `mark_paid_verified` | Paystack server-side verification success, amount match, currency match, provider reference match, event ownership match. |
 | `queue_fulfillment` | Verified `PaymentAttempt`, paid `CheckoutSession`, exactly one `OrderLine`, and its exact hold confirmed consumed. Set `fulfillment_queued_at` and insert `IssueTicketsWorker` atomically in Postgres. |
-| `mark_ticket_issued` | Order already passed `fulfillment_queued`; attendee rows, `TicketIssue` rows, event sync aggregation enqueue, and idempotent issuance result exist. |
+| `mark_ticket_issued` | Order already passed `fulfillment_queued`; all attendee and `TicketIssue` rows exist. For WhatsApp orders, the `TicketDeliveryCoordinatorWorker` handoff is inserted in the same Postgres transaction as the transition. |
 | `revoke_issued_ticket` | Revocation reason, scanner visibility update, event sync aggregation enqueue, token invalidation, and audit reason exist. |
 
 ## Future Test Expectations

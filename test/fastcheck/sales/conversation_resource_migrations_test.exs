@@ -12,12 +12,13 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
     "sales_payment_attempts",
     "sales_payment_events",
     "sales_state_transitions",
+    "sales_ticket_delivery_intents",
     "sales_ticket_issues",
     "sales_ticket_offers",
     "sales_ticket_resend_challenges"
   ]
 
-  test "creates the expected Sales table inventory through VS-01E" do
+  test "creates the current Sales table inventory" do
     existing_tables =
       Repo.query!(
         """

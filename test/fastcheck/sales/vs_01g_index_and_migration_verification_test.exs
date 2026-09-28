@@ -12,6 +12,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "sales_payment_attempts",
     "sales_payment_events",
     "sales_state_transitions",
+    "sales_ticket_delivery_intents",
     "sales_ticket_issues",
     "sales_ticket_offers",
     "sales_ticket_resend_challenges"
@@ -27,6 +28,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     FastCheck.Sales.PaymentEvent,
     FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
+    FastCheck.Sales.TicketDeliveryIntent,
     FastCheck.Sales.DeliveryAttempt,
     FastCheck.Sales.Conversation,
     FastCheck.Sales.TicketResendChallenge

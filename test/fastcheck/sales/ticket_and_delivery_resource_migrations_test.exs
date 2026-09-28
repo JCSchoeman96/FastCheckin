@@ -323,6 +323,12 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceMigrationsTest do
         ticket_resend_challenge_id: challenge_id
       )
     end)
+
+    assert :ok =
+             insert_delivery_attempt!(order_id, ticket_issue_id, "whatsapp", "queued",
+               attempt_number: 7,
+               delivery_reason: "initial_ticket_delivery"
+             )
   end
 
   test "partial unique indexes reject duplicate ticket issue identities" do

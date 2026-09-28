@@ -39,6 +39,11 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
     candidate =
       issued_ticket_candidate!(buyer_email: "resend@example.com", buyer_name: "Jamie Smith")
 
+    Repo.update_all(
+      from(o in "sales_orders", where: o.id == ^candidate.sales_order_id),
+      set: [sales_conversation_id: conversation.id]
+    )
+
     {{verified, otp}, flow_log} =
       capture_result_and_log(fn ->
         conversation
@@ -79,15 +84,16 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
     assert challenge.consumed_at == nil
     assert_safe_flow_log!(flow_log, candidate, challenge.public_id, otp)
 
+    intent_id =
+      Repo.one!(
+        from i in "sales_ticket_delivery_intents",
+          where: i.ticket_resend_challenge_id == ^challenge.id,
+          select: i.id
+      )
+
     assert_enqueued(
       worker: SendWhatsAppTicketLinkWorker,
-      args: %{
-        "conversation_id" => verified.conversation.id,
-        "sales_order_id" => challenge.sales_order_id,
-        "ticket_issue_id" => challenge.ticket_issue_id,
-        "ticket_resend_challenge_id" => challenge.id,
-        "delivery_reason" => "verified_ticket_resend"
-      }
+      args: %{"ticket_delivery_intent_id" => intent_id}
     )
 
     Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
@@ -104,11 +110,7 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
       capture_log(fn ->
         assert :ok =
                  perform_job(SendWhatsAppTicketLinkWorker, %{
-                   "conversation_id" => verified.conversation.id,
-                   "sales_order_id" => challenge.sales_order_id,
-                   "ticket_issue_id" => challenge.ticket_issue_id,
-                   "ticket_resend_challenge_id" => challenge.id,
-                   "delivery_reason" => "verified_ticket_resend"
+                   "ticket_delivery_intent_id" => intent_id
                  })
       end)
 

@@ -59,6 +59,7 @@ defmodule FastCheck.Sales.DeliveryAttempt do
       accept([
         :sales_order_id,
         :ticket_issue_id,
+        :ticket_delivery_intent_id,
         :ticket_resend_challenge_id,
         :channel,
         :provider,
@@ -311,6 +312,12 @@ defmodule FastCheck.Sales.DeliveryAttempt do
 
     belongs_to :ticket_resend_challenge, FastCheck.Sales.TicketResendChallenge do
       source_attribute(:ticket_resend_challenge_id)
+      attribute_type(:integer)
+      allow_nil?(true)
+    end
+
+    belongs_to :ticket_delivery_intent, FastCheck.Sales.TicketDeliveryIntent do
+      source_attribute(:ticket_delivery_intent_id)
       attribute_type(:integer)
       allow_nil?(true)
     end
