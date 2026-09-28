@@ -6,6 +6,7 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   It does not use Repo/Ash/TicketOffer reads in hot operations.
   """
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Inventory.RedisScripts
 
   @expire_batch_size 100
@@ -701,12 +702,15 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   end
 
   defp do_discover_offer_ids(cursor, acc) do
-    case command_result(["SCAN", cursor, "MATCH", "sales:offer:*:holds", "COUNT", "1000"], nil) do
+    case command_result(
+           ["SCAN", cursor, "MATCH", Namespace.pattern("sales:offer:*:holds"), "COUNT", "1000"],
+           nil
+         ) do
       {:ok, [next_cursor, keys]} ->
         found =
           keys
           |> Enum.map(fn key ->
-            case String.split(key, ":") do
+            case Namespace.unscoped(key) |> String.split(":") do
               ["sales", "offer", offer_id, "holds"] -> String.to_integer(offer_id)
               _ -> nil
             end
@@ -779,20 +783,21 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
 
   defp args_sig(operation, parts), do: Enum.join([operation | Enum.map(parts, &to_string/1)], "|")
 
-  defp inventory_key(offer_id), do: "sales:offer:#{offer_id}:inventory"
-  defp holds_key(offer_id), do: "sales:offer:#{offer_id}:holds"
+  defp inventory_key(offer_id), do: Namespace.key("sales:offer:#{offer_id}:inventory")
+  defp holds_key(offer_id), do: Namespace.key("sales:offer:#{offer_id}:holds")
 
   @doc """
   Returns the canonical Redis hold key for an order public reference.
   """
   @spec hold_key(String.t()) :: String.t()
   def hold_key(order_public_reference) when is_binary(order_public_reference),
-    do: "sales:hold:#{order_public_reference}"
+    do: Namespace.key("sales:hold:#{order_public_reference}")
 
-  defp order_lock_key(order_public_reference), do: "sales:order:#{order_public_reference}:lock"
+  defp order_lock_key(order_public_reference),
+    do: Namespace.key("sales:order:#{order_public_reference}:lock")
 
   defp dedupe_key(operation, idempotency_key),
-    do: "sales:inventory:dedupe:#{operation}:#{idempotency_key}"
+    do: Namespace.key("sales:inventory:dedupe:#{operation}:#{idempotency_key}")
 
   defp now_ms, do: System.system_time(:millisecond)
 end

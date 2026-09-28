@@ -5,6 +5,7 @@ defmodule FastCheck.SalesCheckoutFixtures do
 
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.TicketOffer
@@ -234,15 +235,15 @@ defmodule FastCheck.SalesCheckoutFixtures do
 
   def flush_inventory_keys(offer_id) do
     keys = [
-      "sales:offer:#{offer_id}:inventory",
-      "sales:offer:#{offer_id}:holds",
-      "sales:inventory:events:#{offer_id}"
+      Namespace.key("sales:offer:#{offer_id}:inventory"),
+      Namespace.key("sales:offer:#{offer_id}:holds"),
+      Namespace.key("sales:inventory:events:#{offer_id}")
     ]
 
-    _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
-    scan_delete_all("sales:hold:*")
-    scan_delete_all("sales:order:*:lock")
-    scan_delete_all("sales:inventory:dedupe:*")
+    _ = Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
+    scan_delete_all(Namespace.pattern("sales:hold:*"))
+    scan_delete_all(Namespace.pattern("sales:order:*:lock"))
+    scan_delete_all(Namespace.pattern("sales:inventory:dedupe:*"))
     :ok
   end
 
@@ -253,7 +254,8 @@ defmodule FastCheck.SalesCheckoutFixtures do
   defp do_scan_delete_all(cursor, pattern) do
     case Redix.command(FastCheck.Redix, ["SCAN", cursor, "MATCH", pattern, "COUNT", "500"]) do
       {:ok, [next_cursor, keys]} ->
-        if keys != [], do: _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
+        if keys != [],
+          do: _ = Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
 
         if next_cursor == "0" do
           :ok

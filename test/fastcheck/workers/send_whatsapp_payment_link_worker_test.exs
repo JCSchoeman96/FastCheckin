@@ -8,6 +8,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
   alias Ash
   alias Ash.Changeset
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Payments.TestSupport, as: PaymentSupport
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
@@ -323,7 +324,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
       assert {:ok, ttl} =
                Redix.command(FastCheck.Redix, [
                  "TTL",
-                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+                 Namespace.key(
+                   "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+                 )
                ])
 
       assert ttl > 0
@@ -367,7 +370,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert {:ok, ttl} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               Namespace.key(
+                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               )
              ])
 
     assert ttl > 0
@@ -415,7 +420,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert {:ok, ttl} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               Namespace.key(
+                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               )
              ])
 
     assert ttl > 0
@@ -452,7 +459,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               Namespace.key(
+                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               )
              ])
   end
 
@@ -487,7 +496,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               Namespace.key(
+                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+               )
              ])
   end
 
@@ -558,7 +569,9 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
       assert {:ok, ttl} =
                Redix.command(FastCheck.Redix, [
                  "TTL",
-                 "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+                 Namespace.key(
+                   "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+                 )
                ])
 
       assert ttl > 0
@@ -587,7 +600,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
 
     # Simulate Redis dedupe expiry by deleting key
     dedupe_key =
-      "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+      Namespace.key("fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}")
 
     {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", dedupe_key])
 
@@ -921,7 +934,7 @@ defmodule FastCheck.Workers.SendWhatsAppPaymentLinkWorkerTest do
 
     # A customer payment-status re-request after the dedupe window must still be sendable
     dedupe_key =
-      "fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}"
+      Namespace.key("fastcheck:whatsapp:dedupe:send_payment_link:#{conversation_id}:#{order.id}")
 
     {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", dedupe_key])
 

@@ -15,12 +15,21 @@ transitions using:
 
 ## Environment model
 
-The harness runs in a scripted, isolated dev-style environment:
+The harness runs in a scripted, project-isolated perf environment:
 
-- infra: `postgres`, `redis`, `pgbouncer` via `docker compose`
-- backend runtime: `MIX_ENV=dev`
+- infra: `postgres`, `redis`, `pgbouncer`, and the one-shot `perf-db-role`
+  service from the explicit `docker-compose.yml` `perf-small` profile
+- Compose project: `fastcheckin` by default (override with
+  `PERF_COMPOSE_PROJECT`)
+- backend runtime: `MIX_ENV=perf`
+- database: `fastcheck_prod` on the dedicated perf PostgreSQL at
+  `127.0.0.1:5434`, using the non-superuser `fastcheck_perf` role
 - Android connected tests with instrumentation args that enable integration mode
   in androidTest dependency wiring
+
+The harness never uses workstation `dev-core` services or the shared DEV
+database. Migrations use the perf stack's admin URL; application and cleanup
+commands use `fastcheck_perf`.
 
 The runner controls ordering and mutation. Android instrumentation does not
 perform backend state mutations.
@@ -43,6 +52,13 @@ Optional environment overrides:
 - `REVOKE_REASON` (default `revoked`)
 - `KEEP_SEEDED_DATA=true` to keep seeded data for manual debugging
 
+Required perf-stack credentials:
+
+- `FASTCHECK_PERF_DB_PASSWORD` for the non-superuser application role
+- `PERF_ADMIN_DB_PASSWORD` for the disposable perf PostgreSQL admin role
+- `SECRET_KEY_BASE`, `ENCRYPTION_KEY`, and `MOBILE_JWT_SECRET` for the
+  `MIX_ENV=perf` runner
+
 Current scripted scope:
 
 - wired: active -> revoked/not-scannable convergence
@@ -51,8 +67,9 @@ Current scripted scope:
 
 ## Runner sequence (strict)
 
-1. boot docker services
-2. migrate/reset steps
+1. boot the explicit `docker-compose.yml` stack with project name
+   `fastcheckin` and profile `perf-small`
+2. migrate the existing perf database through its admin URL
 3. seed deterministic event and known ticket set
 4. start Phoenix server
 5. wait for backend readiness
@@ -69,7 +86,8 @@ Important artifact:
 
 ## Scenario state dump contract
 
-`mix fastcheck.load.dump_mobile_ticket_state` emits JSON with at least:
+`MIX_ENV=perf mix fastcheck.load.dump_mobile_ticket_state` emits JSON with at
+least:
 
 - `event_id`
 - `ticket_code`
@@ -82,11 +100,11 @@ Important artifact:
 ## Backend mutation commands
 
 - Revoke:
-  - `mix fastcheck.load.revoke_mobile_ticket --event_id <id> --ticket_code <code>`
+  - `MIX_ENV=perf mix fastcheck.load.revoke_mobile_ticket --event_id <id> --ticket_code <code>`
 - Payment status:
-  - `mix fastcheck.load.set_mobile_ticket_payment_status --event_id <id> --ticket_code <code> --payment_status refunded`
+  - `MIX_ENV=perf mix fastcheck.load.set_mobile_ticket_payment_status --event_id <id> --ticket_code <code> --payment_status refunded`
 - Dump:
-  - `mix fastcheck.load.dump_mobile_ticket_state --event_id <id> --ticket_code <code>`
+  - `MIX_ENV=perf mix fastcheck.load.dump_mobile_ticket_state --event_id <id> --ticket_code <code>`
 
 All mutation commands are domain-safe and avoid direct SQL state forging.
 

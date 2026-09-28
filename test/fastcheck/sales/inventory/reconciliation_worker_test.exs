@@ -2,6 +2,7 @@ defmodule FastCheck.Sales.Inventory.ReconciliationWorkerTest do
   use FastCheck.DataCase, async: false
   use Oban.Testing, repo: FastCheck.Repo
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Inventory.ReconciliationWorker
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
@@ -18,7 +19,7 @@ defmodule FastCheck.Sales.Inventory.ReconciliationWorkerTest do
     assert {:ok, _} =
              Redix.command(FastCheck.Redix, [
                "HSET",
-               "sales:offer:#{offer.id}:inventory",
+               Namespace.key("sales:offer:#{offer.id}:inventory"),
                "available_quantity",
                "9"
              ])

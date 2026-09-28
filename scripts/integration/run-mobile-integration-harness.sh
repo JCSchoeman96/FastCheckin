@@ -12,6 +12,41 @@ ARTIFACT_DIR="${ARTIFACT_DIR:-$ROOT_DIR/.tmp/mobile-integration-artifacts}"
 PHOENIX_LOG="$ARTIFACT_DIR/phoenix.log"
 REVOKE_REASON="${REVOKE_REASON:-revoked}"
 KEEP_SEEDED_DATA="${KEEP_SEEDED_DATA:-false}"
+PERF_COMPOSE_PROJECT="${PERF_COMPOSE_PROJECT:-fastcheckin}"
+PERF_COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+FASTCHECK_PERF_DB_PASSWORD="${FASTCHECK_PERF_DB_PASSWORD:?Set FASTCHECK_PERF_DB_PASSWORD for the isolated perf stack}"
+PERF_ADMIN_DB_PASSWORD="${PERF_ADMIN_DB_PASSWORD:?Set PERF_ADMIN_DB_PASSWORD for the isolated perf stack}"
+SECRET_KEY_BASE="${SECRET_KEY_BASE:?Set SECRET_KEY_BASE for MIX_ENV=perf}"
+ENCRYPTION_KEY="${ENCRYPTION_KEY:?Set ENCRYPTION_KEY to the value used by app-perf}"
+MOBILE_JWT_SECRET="${MOBILE_JWT_SECRET:?Set MOBILE_JWT_SECRET for the isolated perf stack}"
+PERF_MIGRATION_DATABASE_URL="ecto://postgres:${PERF_ADMIN_DB_PASSWORD}@127.0.0.1:5434/fastcheck_prod"
+export FASTCHECK_PERF_DB_PASSWORD PERF_ADMIN_DB_PASSWORD SECRET_KEY_BASE ENCRYPTION_KEY MOBILE_JWT_SECRET
+
+perf_compose() {
+  docker compose \
+    --project-name "$PERF_COMPOSE_PROJECT" \
+    --file "$PERF_COMPOSE_FILE" \
+    --profile perf-small \
+    "$@"
+}
+
+PERF_MIX_ENV=(
+  MIX_ENV=perf
+  FASTCHECK_PERF_DB_PASSWORD="$FASTCHECK_PERF_DB_PASSWORD"
+  SECRET_KEY_BASE="$SECRET_KEY_BASE"
+  ENCRYPTION_KEY="$ENCRYPTION_KEY"
+  MOBILE_JWT_SECRET="$MOBILE_JWT_SECRET"
+)
+
+perf_mix() {
+  env "${PERF_MIX_ENV[@]}" "$@"
+}
+
+perf_migrate() {
+  env "${PERF_MIX_ENV[@]}" \
+    MIGRATION_DATABASE_URL="$PERF_MIGRATION_DATABASE_URL" \
+    "$@"
+}
 
 TEST_CLASS="za.co.voelgoed.fastcheck.app.MobileIntegrationHarnessFlowTest"
 PHASE_1_METHOD="activeTicketIsAcceptedAfterLoginAndSync"
@@ -30,7 +65,7 @@ cleanup() {
   if [[ "$KEEP_SEEDED_DATA" != "true" ]] && [[ -f "$MANIFEST_PATH" ]]; then
     (
       cd "$ROOT_DIR"
-      MIX_ENV=dev mix fastcheck.load.cleanup_mobile_event --manifest "$MANIFEST_PATH" >/dev/null 2>&1 || true
+      perf_mix mix fastcheck.load.cleanup_mobile_event --manifest "$MANIFEST_PATH" >/dev/null 2>&1 || true
     )
   fi
 }
@@ -51,23 +86,22 @@ run_connected_method() {
   )
 }
 
-echo "[harness] Booting local infra..."
+echo "[harness] Booting the isolated perf-small stack..."
 (
   cd "$ROOT_DIR"
-  docker compose up -d postgres redis pgbouncer
+  perf_compose up --build -d
 )
 
-echo "[harness] Running DB migrate/reset steps..."
+echo "[harness] Migrating the existing perf database through its admin URL..."
 (
   cd "$ROOT_DIR"
-  MIX_ENV=dev mix ecto.create
-  MIX_ENV=dev mix ecto.migrate
+  perf_migrate mix ecto.migrate
 )
 
 echo "[harness] Seeding deterministic scenario..."
 (
   cd "$ROOT_DIR"
-  MIX_ENV=dev mix fastcheck.load.seed_mobile_event \
+  perf_mix mix fastcheck.load.seed_mobile_event \
     --attendees "$ATTENDEES" \
     --credential "$CREDENTIAL" \
     --ticket_prefix "$TICKET_PREFIX" \
@@ -83,7 +117,7 @@ echo "[harness] Note: payment-status mutation tooling exists but is not yet scri
 echo "[harness] Starting Phoenix server..."
 (
   cd "$ROOT_DIR"
-  MIX_ENV=dev mix phx.server >"$PHOENIX_LOG" 2>&1
+  perf_mix mix phx.server >"$PHOENIX_LOG" 2>&1
 ) &
 PHOENIX_PID="$!"
 
@@ -106,7 +140,7 @@ run_connected_method "$PHASE_1_METHOD"
 echo "[harness] Applying backend mutation in outer runner..."
 (
   cd "$ROOT_DIR"
-  MIX_ENV=dev mix fastcheck.load.revoke_mobile_ticket \
+  perf_mix mix fastcheck.load.revoke_mobile_ticket \
     --event_id "$EVENT_ID" \
     --ticket_code "$TICKET_CODE" \
     --reason_code "$REVOKE_REASON"
@@ -115,7 +149,7 @@ echo "[harness] Applying backend mutation in outer runner..."
 echo "[harness] Capturing scenario dump after mutation..."
 (
   cd "$ROOT_DIR"
-  MIX_ENV=dev mix fastcheck.load.dump_mobile_ticket_state \
+  perf_mix mix fastcheck.load.dump_mobile_ticket_state \
     --event_id "$EVENT_ID" \
     --ticket_code "$TICKET_CODE" \
     >"$ARTIFACT_DIR/post-mutation-ticket-state.json"

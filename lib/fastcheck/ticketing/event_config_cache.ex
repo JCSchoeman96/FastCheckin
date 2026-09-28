@@ -5,6 +5,7 @@ defmodule FastCheck.Ticketing.EventConfigCache do
   """
 
   alias FastCheck.Redis
+  alias FastCheck.Redis.Namespace
 
   @spec get(integer()) :: {:ok, map() | nil} | {:error, term()}
   def get(event_id) when is_integer(event_id) do
@@ -59,5 +60,5 @@ defmodule FastCheck.Ticketing.EventConfigCache do
   def invalidate(_event_id), do: {:error, :invalid_event_id}
 
   @spec cache_key(integer()) :: String.t()
-  def cache_key(event_id), do: "event_config:#{event_id}"
+  def cache_key(event_id), do: Namespace.key("event_config:#{event_id}")
 end

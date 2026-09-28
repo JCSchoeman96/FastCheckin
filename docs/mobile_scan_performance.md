@@ -40,19 +40,27 @@ Current recorded local baselines:
 
 Use the `perf-small` profile when you want an app-tier ceiling estimate for a `2 vCPU / 2 GB` app container without also capping Postgres or Redis.
 
-The `perf-small` stack has two services:
+The app-facing `perf-small` path has two application services:
 
 - `app-perf` runs the Phoenix release in `redis_authoritative`, capped at `cpus: 2.0` and `mem_limit: 2g`
 - `perf-proxy` is the only host-exposed entrypoint for capacity, mixed-load, abuse, and degraded-network runs
 
 `app-perf` stays internal on the Docker network for measurements. The proxy strips inbound `X-Forwarded-For`, maps one logical device id to one deterministic synthetic IP in `10.250.0.0/16`, and forwards trusted client identity to Phoenix.
 
-Start the capped stack:
+The performance stack owns its PostgreSQL, PgBouncer, and Redis services. It is
+separate from workstation `dev-core` and from the shared DEV/TEST endpoints.
+Always select the legacy performance Compose file and an isolated Compose
+project explicitly. Every service in this file belongs to the `perf-small`
+profile, including the one-shot application-role grant:
 
 ```bash
-docker compose up -d postgres pgbouncer redis
-docker compose --profile perf-small up --build -d app-perf perf-proxy
+docker compose --project-name fastcheckin -f docker-compose.yml --profile perf-small up --build -d
 ```
+
+The application uses the non-superuser `fastcheck_perf` role. The
+`perf-db-role` service grants that role access after PostgreSQL is healthy.
+Migrations run against the perf stack's admin URL. Do not point this workflow at
+`dev-core`, the DEV database, or a generic `DATABASE_URL`.
 
 Trusted perf path:
 
@@ -63,27 +71,31 @@ This is an app-tier measurement only. It is not a full small-stack ceiling becau
 
 ## Seed Deterministic Load Data
 
-Create a dedicated event and manifest:
+When seeding from the host shell against the isolated performance database,
+use the dedicated `perf` environment. The PostgreSQL service listens on host
+port `5434`, and the dedicated Redis service listens on `6380`:
 
 ```bash
-mix fastcheck.load.seed_mobile_event \
+export MIX_ENV=perf
+export FASTCHECK_PERF_DB_PASSWORD='replace-with-local-perf-role-password'
+export PERF_ADMIN_DB_PASSWORD='replace-with-local-perf-admin-password'
+export SECRET_KEY_BASE='replace-with-local-perf-secret-key-base'
+export ENCRYPTION_KEY='replace-with-local-perf-encryption-key'
+export MOBILE_JWT_SECRET='replace-with-local-perf-mobile-jwt-secret'
+export REDIS_URL=redis://127.0.0.1:6380
+export MIGRATION_DATABASE_URL="ecto://postgres:${PERF_ADMIN_DB_PASSWORD}@127.0.0.1:5434/fastcheck_prod"
+MIX_ENV=perf mix ecto.migrate
+unset MIGRATION_DATABASE_URL
+MIX_ENV=perf mix fastcheck.load.seed_mobile_event \
   --attendees 50000 \
   --credential scanner-secret \
   --ticket-prefix PERF \
   --output performance/manifests/mobile-load-event.json
 ```
 
-When seeding from the host shell against the local Docker stack:
-
-```bash
-set MIX_ENV=dev
-set DB_HOST=localhost
-set DB_PORT=5434
-set DB_PASSWORD=postgres
-set ENCRYPTION_KEY=perf-small-encryption-key-perf-small-encryption-key-1234
-mix ecto.migrate
-mix fastcheck.load.seed_mobile_event --attendees 50000 --credential scanner-secret --ticket-prefix PERF --output performance/manifests/mobile-load-event.json
-```
+The migration command uses the admin URL explicitly. Seed, cleanup, and
+inspection commands use `fastcheck_perf` and the existing `fastcheck_prod`
+database; they do not create, reset, or drop the database.
 
 If the app under test is `app-perf`, the seed must use the same `ENCRYPTION_KEY` as the runtime under test. Otherwise `POST /api/v1/mobile/login` will fail with `403 invalid_credential`.
 
@@ -102,20 +114,23 @@ Cleanup is manual. k6 runs do not remove seeded events, scan attempts, check-ins
 Cleanup all seeded perf events:
 
 ```bash
-mix fastcheck.load.cleanup_mobile_event
+MIX_ENV=perf mix fastcheck.load.cleanup_mobile_event
 ```
 
 Cleanup one seeded event from a manifest:
 
 ```bash
-mix fastcheck.load.cleanup_mobile_event --manifest performance/manifests/mobile-load-event.json
+MIX_ENV=perf mix fastcheck.load.cleanup_mobile_event --manifest performance/manifests/mobile-load-event.json
 ```
 
-Cleanup one seeded event and flush the current Redis DB for the local perf stack:
+Cleanup one seeded event and only its matching Redis hot-state keys:
 
 ```bash
-mix fastcheck.load.cleanup_mobile_event --event-id 123 --flush-redis
+MIX_ENV=perf mix fastcheck.load.cleanup_mobile_event --event-id 123
 ```
+
+Redis `FLUSHDB` and `FLUSHALL` are not supported by the cleanup task. Cleanup
+uses targeted key scans; the performance Redis service remains project-isolated.
 
 For a clean rerun after knee-finding or soak work, use a fresh cleanup and reseed before the next pass.
 
@@ -126,8 +141,7 @@ The server runtime is authoritative-only. k6 does not switch ingestion behavior 
 Primary target:
 
 ```bash
-set ENABLE_METRICS=true
-mix phx.server
+MIX_ENV=perf ENABLE_METRICS=true mix phx.server
 ```
 
 The `perf-small` Docker path already bakes in:
@@ -145,8 +159,7 @@ For capacity and endurance runs, use the proxy path only. Do not target `app-per
 Failure-injection target:
 
 ```bash
-set MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true
-mix phx.server
+MIX_ENV=perf MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true mix phx.server
 ```
 
 For a dedicated enqueue-failure recovery check, run one forced-failure instance and one normal authoritative instance against the same Postgres and Redis.

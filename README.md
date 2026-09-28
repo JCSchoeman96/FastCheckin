@@ -18,7 +18,7 @@ FastCheck is a Phoenix + LiveView event check-in system with a separate Kotlin A
 
 - **Backend**: Phoenix `~> 1.8.1`, Phoenix LiveView `~> 1.1.17`, Elixir `~> 1.17` (see `mix.exs`).
 - **Frontend**: LiveView + Tailwind (assets in `assets/`).
-- **Data**: PostgreSQL (Docker compose uses Postgres 18). Optional pgBouncer + Redis are provided in `docker-compose.yml`.
+- **Data**: PostgreSQL and Redis are external runtime dependencies. Workstation development uses the shared PostgreSQL 18 and Redis 7 services; the opt-in performance stack remains project-isolated in `docker-compose.yml`.
 - **Android**: Kotlin, Room, Retrofit/OkHttp, WorkManager (see `android/scanner-app/docs/architecture.md`).
 
 ## Active API contract (Android runtime)
@@ -60,31 +60,48 @@ Backend runtime note:
 ### Prerequisites
 
 - Elixir `1.17+`
-- Docker (recommended for Postgres/pgBouncer/Redis)
+- Access to workstation `dev-core` PostgreSQL 18 DEV/TEST and Redis 7 DEV/TEST services
 
-### Start infra (recommended)
-
-```bash
-# From repo root
-docker compose up -d postgres pgbouncer redis
-```
-
-Set `DB_PASSWORD` in your environment (or a local `.env`) so compose can seed both Postgres and pgBouncer. For local development you can point `DATABASE_URL` at either:
-
-- Postgres direct: `ecto://postgres:${DB_PASSWORD}@localhost:5434/fastcheck_prod`
-- pgBouncer: `ecto://postgres:${DB_PASSWORD}@localhost:6432/fastcheck_prod`
-
-For Redis-backed mobile scan work, the same compose stack publishes Redis on
-`redis://localhost:6380` from the host. Container-internal and default env
-examples may still use `redis://localhost:6379` (for example `.env.example`
-and in-network service wiring).
+Workstation services are externally owned by Dockge's `dev-core` stack. This
+repository does not start, stop, recreate, or remove those services.
 
 ### Run the app
 
+Copy `.env.development.example` to the ignored `.env.development.local`, set the
+FastCheck DEV role password, then export it into the shell:
+
 ```bash
+cp .env.development.example .env.development.local
+set -a
+. ./.env.development.local
+set +a
 mix setup
 mix phx.server
 ```
+
+DEV connects directly to PostgreSQL at `127.0.0.1:55432` using database and role
+`fastcheck_dev`, and to Redis at `127.0.0.1:56379`. The database is provisioned
+outside this repository; `mix setup` applies migrations and seeds it.
+
+### Run tests
+
+Copy `.env.test.example` to the ignored `.env.test.local`, set the TEST role
+password, and export it before running the suite:
+
+```bash
+cp .env.test.example .env.test.local
+set -a
+. ./.env.test.local
+set +a
+mix test
+```
+
+Tests connect only to PostgreSQL at `127.0.0.1:55433` and Redis at
+`127.0.0.1:56380`. The TEST database name remains `fastcheck_test` with
+`MIX_TEST_PARTITION` appended for partitioned runs. The dedicated TEST role
+may have `CREATEDB` on the TEST cluster for this alias; PostgreSQL does not
+restrict that privilege to a database-name prefix. It is a non-superuser role
+on a separate cluster from DEV.
 
 Health endpoints:
 
@@ -93,10 +110,9 @@ Health endpoints:
 
 ### Environment variables
 
-Set `REDIS_URL` explicitly when you are not using the default local Docker
-compose port mapping or when production points at a managed Redis host.
-
-See `.env.example` for the full set of production-style env vars. At minimum you’ll need values for `SECRET_KEY_BASE`, `ENCRYPTION_KEY`, `MOBILE_JWT_SECRET`, and `DATABASE_URL` in the environment you run the server under.
+See `.env.example` for the production Compose environment template. It contains
+placeholders only; provide real credentials through an ignored env file or
+secret manager.
 
 ## Local development (Android scanner)
 
@@ -133,14 +149,31 @@ $env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-25.0.2.10-hotspot'
 .\gradlew.bat :app:compileDebugKotlin :app:testDebugUnitTest
 ```
 
-## Deployment notes (infra + pooling)
+## Deployment with Docker Compose
 
-- `docker-compose.yml` provides **Postgres 18**, **pgBouncer** (transaction pool mode), and **Redis**.
-- pgBouncer is intended to collapse many client connections into a smaller number of upstream Postgres sessions; monitor it with `SHOW POOLS` / `SHOW STATS` via psql.
-- Keep the mobile request path unchanged as `validate -> hot-state decision -> enqueue durability -> promote results -> respond`; PgBouncer helps connection pressure and async durability load, not Redis admission semantics.
-- Keep `/api/v1/live` as process liveness and `/api/v1/health` as DB-backed readiness/dependency signaling.
-- Keep `MIGRATION_DATABASE_URL` pointed at direct Postgres when `DATABASE_URL` points at PgBouncer.
-- See `docs/pgbouncer_rollout.md` for the rollout and verification checklist.
+The repository-owned `compose.yaml` is the Phoenix application deployment
+contract. It defines the app only and requires external `DATABASE_URL`,
+`MIGRATION_DATABASE_URL`, and `REDIS_URL` values. It does not define or manage
+workstation DEV/TEST PostgreSQL or Redis. The HTTP port is bound to loopback by
+default for a host reverse proxy.
+
+After filling `.env` from `.env.example` with deployment values, validate and
+start the app with:
+
+```bash
+docker compose -f compose.yaml config
+docker compose -f compose.yaml up -d --build
+```
+
+Do not run this Compose app beside another FastCheck app process for the same
+deployment. The systemd release unit remains the current production lifecycle
+configuration until a deployment cutover is made; it is not started by this
+repository's local development or Compose validation.
+
+The old `docker-compose.yml` is retained for explicitly isolated performance
+work only. Use `-f docker-compose.yml --profile perf-small` when operating that
+stack. Its PostgreSQL and Redis services are not workstation shared services
+and are not the normal development or test databases.
 
 ## Performance testing
 
@@ -149,7 +182,7 @@ The repo includes a k6-based mobile scan performance harness aimed at the author
 - Seed deterministic load data with `mix fastcheck.load.seed_mobile_event`
 - Run k6 scenarios from `performance/k6/mobile_scans.js`
 - Use `MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true` only for the dedicated non-production enqueue-failure scenario
-- Use `docker compose --profile perf-small up --build app-perf perf-proxy` for the opt-in capped app-tier path
+- Use `docker compose -f docker-compose.yml --profile perf-small up --build app-perf perf-proxy` for the opt-in capped app-tier path
 - Use `mix fastcheck.load.cleanup_mobile_event` to remove seeded perf events and related DB/Redis data after a run
 - Hit the trusted perf proxy on `http://127.0.0.1:4100` for `capacity_*` and `abuse_*` runs; `app-perf` stays internal for capacity measurements
 - Capacity runs now model `device_i -> token_i -> synthetic_ip_i`, while abuse-control runs intentionally concentrate on one hot device identity

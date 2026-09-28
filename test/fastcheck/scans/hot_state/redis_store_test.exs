@@ -1,6 +1,7 @@
 defmodule FastCheck.Scans.HotState.RedisStoreTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Scans.HotState.{Keyspace, RedisStore}
   alias FastCheck.Scans.Ingest.ScanCommand
 
@@ -151,14 +152,15 @@ defmodule FastCheck.Scans.HotState.RedisStoreTest do
   end
 
   defp cleanup_namespace(namespace, event_id) do
-    pattern = "fastcheck:mobile_scans:#{namespace}:event:#{event_id}:*"
+    pattern = Namespace.pattern("fastcheck:mobile_scans:#{namespace}:event:#{event_id}:*")
 
     case scan_redis_keys(pattern) do
       [] ->
         :ok
 
       keys ->
-        assert {:ok, _deleted} = Redix.command(FastCheck.Redix, ["DEL" | keys])
+        assert {:ok, _deleted} =
+                 Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
     end
   end
 

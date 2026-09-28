@@ -6,13 +6,14 @@ defmodule FastCheck.Payments.Paystack.EventDedupe do
   require Logger
 
   alias FastCheck.Observability.Correlation
+  alias FastCheck.Redis.Namespace
 
   @dedupe_prefix "sales:payments:paystack:webhook:"
   @ttl_seconds 86_400
 
   @spec claim(String.t()) :: :ok | {:error, :duplicate} | {:error, :redis_unavailable}
   def claim(dedupe_key) when is_binary(dedupe_key) and dedupe_key != "" do
-    redis_key = @dedupe_prefix <> dedupe_key
+    redis_key = Namespace.key(@dedupe_prefix <> dedupe_key)
     value = Integer.to_string(System.system_time(:millisecond))
 
     case redix_command(["SET", redis_key, value, "NX", "EX", Integer.to_string(@ttl_seconds)]) do
@@ -36,7 +37,7 @@ defmodule FastCheck.Payments.Paystack.EventDedupe do
 
   @spec release(String.t()) :: :ok
   def release(dedupe_key) when is_binary(dedupe_key) and dedupe_key != "" do
-    redis_key = @dedupe_prefix <> dedupe_key
+    redis_key = Namespace.key(@dedupe_prefix <> dedupe_key)
 
     case redix_command(["DEL", redis_key]) do
       {:ok, _} -> :ok

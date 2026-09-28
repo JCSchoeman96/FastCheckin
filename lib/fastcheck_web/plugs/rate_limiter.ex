@@ -29,6 +29,8 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   import Plug.Conn
   require Logger
 
+  alias FastCheck.Redis.Namespace
+
   # ---------------------------------------------------------------------------
   # RATE LIMIT CONFIG (RUNTIME)
   #
@@ -121,7 +123,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Tier 1: Critical operations (Tickera API + expensive DB queries)
   rule "throttle_sync", conn do
     if sync_operation?(conn) do
-      key = "sync:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
+      key = Namespace.key("sync:#{get_event_id(conn)}:#{get_peer_ip(conn)}")
       # Configurable limit per 5 minutes per event
       throttle(key,
         limit: get_limit(:sync_limit, 3),
@@ -135,7 +137,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   rule "throttle_occupancy", conn do
     if occupancy_operation?(conn) do
-      key = "occupancy:#{get_event_id(conn)}:#{get_peer_ip(conn)}"
+      key = Namespace.key("occupancy:#{get_event_id(conn)}:#{get_peer_ip(conn)}")
       # Configurable limit per minute per event
       throttle(key,
         limit: get_limit(:occupancy_limit, 10),
@@ -150,7 +152,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Tier 1.5: Security critical (Login)
   rule "throttle_login", conn do
     if login_operation?(conn) do
-      key = "login:#{get_peer_ip(conn)}"
+      key = Namespace.key("login:#{get_peer_ip(conn)}")
       # Strict limit per minute per IP to prevent brute force
       throttle(key,
         limit: get_limit(:login_limit, 5),
@@ -164,7 +166,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   rule "throttle_secure_ticket", conn do
     if secure_ticket_operation?(conn) do
-      key = "secure_ticket:#{get_peer_ip(conn)}"
+      key = Namespace.key("secure_ticket:#{get_peer_ip(conn)}")
 
       throttle(key,
         limit: get_limit(:secure_ticket_limit, 5),
@@ -178,7 +180,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   rule "throttle_whatsapp_webhook", conn do
     if whatsapp_webhook_operation?(conn) do
-      key = "whatsapp_webhook:#{request_identity(conn)}"
+      key = Namespace.key("whatsapp_webhook:#{request_identity(conn)}")
 
       throttle(key,
         limit: get_limit(:whatsapp_webhook_limit, 120),
@@ -193,7 +195,11 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Tier 2: High frequency scanner operations
   rule "throttle_check_in", conn do
     if check_in_operation?(conn) do
-      key = "check_in:#{normalize_event_scope(get_event_id(conn))}:#{request_identity(conn)}"
+      key =
+        Namespace.key(
+          "check_in:#{normalize_event_scope(get_event_id(conn))}:#{request_identity(conn)}"
+        )
+
       # Configurable limit per minute per IP
       throttle(key,
         limit: get_limit(:checkin_limit, 30),
@@ -207,7 +213,11 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
 
   rule "throttle_scan", conn do
     if scan_operation?(conn) do
-      key = "scan:#{normalize_event_scope(get_event_id(conn))}:#{request_identity(conn)}"
+      key =
+        Namespace.key(
+          "scan:#{normalize_event_scope(get_event_id(conn))}:#{request_identity(conn)}"
+        )
+
       # Configurable limit per minute per IP
       throttle(key,
         limit: get_limit(:scan_limit, 50),
@@ -222,7 +232,7 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Tier 3: General dashboard/read operations (lenient)
   rule "throttle_dashboard", conn do
     if dashboard_operation?(conn) do
-      key = "general:dashboard:#{request_identity(conn)}"
+      key = Namespace.key("general:dashboard:#{request_identity(conn)}")
 
       # Configurable limit per minute per identity
       throttle(key,

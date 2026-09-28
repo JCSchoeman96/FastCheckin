@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Fastcheck.Load.CleanupMobileEvent do
 
       mix fastcheck.load.cleanup_mobile_event
       mix fastcheck.load.cleanup_mobile_event --manifest performance/manifests/mobile-load-event.json
-      mix fastcheck.load.cleanup_mobile_event --event-id 123 --flush-redis
+      mix fastcheck.load.cleanup_mobile_event --event-id 123
   """
 
   use Mix.Task
@@ -15,7 +15,6 @@ defmodule Mix.Tasks.Fastcheck.Load.CleanupMobileEvent do
 
   @switches [
     event_id: :integer,
-    flush_redis: :boolean,
     manifest: :string
   ]
 

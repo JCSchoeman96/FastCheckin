@@ -1,6 +1,7 @@
 defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Payments.LatePaymentRecovery
   alias FastCheck.Sales.Payments.PaymentFailureReason
@@ -58,8 +59,8 @@ defmodule FastCheck.Sales.Payments.LatePaymentRecoveryTest do
     assert {:ok, %{status: :released}} =
              ReservationLedger.get_hold_detail(offer.id, order_ref)
 
-    reserve_dedupe_key = "sales:inventory:dedupe:reserve:#{ctx.reserve_key}"
-    release_dedupe_key = "sales:inventory:dedupe:release:#{ctx.release_key}"
+    reserve_dedupe_key = Namespace.key("sales:inventory:dedupe:reserve:#{ctx.reserve_key}")
+    release_dedupe_key = Namespace.key("sales:inventory:dedupe:release:#{ctx.release_key}")
 
     assert {:ok, 0} = Redix.command(FastCheck.Redix, ["EXISTS", reserve_dedupe_key])
     assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", release_dedupe_key])

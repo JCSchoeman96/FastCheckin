@@ -6,6 +6,7 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
   require Logger
 
   alias FastCheck.Observability.Correlation
+  alias FastCheck.Redis.Namespace
 
   @prefix "fastcheck:whatsapp:dedupe:message:"
   @send_payment_link_prefix "fastcheck:whatsapp:dedupe:send_payment_link:"
@@ -199,18 +200,21 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
       )
 
   def send_ticket_link_identity(conversation_id, ticket_issue_id, nil),
-    do: @send_ticket_link_prefix <> "#{conversation_id}:#{ticket_issue_id}"
+    do: Namespace.key(@send_ticket_link_prefix <> "#{conversation_id}:#{ticket_issue_id}")
 
   def send_ticket_link_identity(conversation_id, ticket_issue_id, ticket_resend_challenge_id)
       when is_integer(conversation_id) and is_integer(ticket_issue_id) and
              is_integer(ticket_resend_challenge_id) do
-    @send_ticket_link_prefix <>
-      "#{conversation_id}:#{ticket_issue_id}:challenge:#{ticket_resend_challenge_id}"
+    Namespace.key(
+      @send_ticket_link_prefix <>
+        "#{conversation_id}:#{ticket_issue_id}:challenge:#{ticket_resend_challenge_id}"
+    )
   end
 
-  defp key(provider_message_id), do: @prefix <> provider_message_id
+  defp key(provider_message_id), do: Namespace.key(@prefix <> provider_message_id)
 
-  defp claim_key(key, ttl_seconds, redis_name) do
+  defp claim_key(raw_key, ttl_seconds, redis_name) do
+    key = Namespace.key(raw_key)
     value = Integer.to_string(System.system_time(:millisecond))
 
     case redix_command(redis_name, ["SET", key, value, "NX", "EX", Integer.to_string(ttl_seconds)]) do
@@ -220,7 +224,9 @@ defmodule FastCheck.Messaging.WhatsApp.Dedupe do
     end
   end
 
-  defp release_key(key, event_name, redis_name) do
+  defp release_key(raw_key, event_name, redis_name) do
+    key = Namespace.key(raw_key)
+
     case redix_command(redis_name, ["DEL", key]) do
       {:ok, _} ->
         :ok

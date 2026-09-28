@@ -39,6 +39,32 @@ Main integration test file with:
 2. Database credentials must be configured in `config/test.exs`
 3. Run migrations: `MIX_ENV=test mix ecto.migrate`
 
+These tests use the dedicated TEST PostgreSQL endpoint configured by
+`config/test.exs`. Keep standard integration tests on `MIX_ENV=test`.
+
+## Mobile Connected Integration Harness
+
+Run the Android connected lifecycle harness with:
+
+```bash
+bash scripts/integration/run-mobile-integration-harness.sh
+```
+
+The harness starts only the project-isolated `docker-compose.yml` `perf-small`
+stack, runs the backend with `MIX_ENV=perf`, and uses the dedicated
+`fastcheck_perf` application role. Set these values before running it:
+
+- `FASTCHECK_PERF_DB_PASSWORD`
+- `PERF_ADMIN_DB_PASSWORD`
+- `SECRET_KEY_BASE`
+- `ENCRYPTION_KEY`
+- `MOBILE_JWT_SECRET`
+
+The migration step uses the perf stack's admin URL. Seed, mutation, dump, and
+cleanup commands use `fastcheck_perf` against the existing `fastcheck_prod`
+database. Do not run this destructive workflow against `dev-core` or the
+shared DEV database.
+
 ### Run All Integration Tests
 ```bash
 mix test test/fastcheck/integration/

@@ -438,7 +438,7 @@ defmodule FastCheck.Sales.SandboxFixturesTest do
       """,
       [
         order_id,
-        "sales:hold:#{public_reference}",
+        ReservationLedger.hold_key(public_reference),
         DateTime.add(now, 10 * 60, :second),
         now
       ]

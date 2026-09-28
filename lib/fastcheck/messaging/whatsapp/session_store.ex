@@ -4,6 +4,7 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStore do
   """
 
   alias FastCheck.Messaging.WhatsApp.MessageCommand
+  alias FastCheck.Redis.Namespace
 
   @prefix "fastcheck:whatsapp:session:"
 
@@ -45,11 +46,12 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStore do
   def get_session_by_wa_id(_wa_id), do: {:error, :invalid_args}
 
   @spec key_for_wa_id(String.t()) :: String.t()
-  def key_for_wa_id(wa_id) when is_binary(wa_id), do: @prefix <> "wa:" <> hash(wa_id)
+  def key_for_wa_id(wa_id) when is_binary(wa_id),
+    do: Namespace.key(@prefix <> "wa:" <> hash(wa_id))
 
   @spec key_for_phone(String.t()) :: String.t()
   def key_for_phone(phone_e164) when is_binary(phone_e164),
-    do: @prefix <> "phone:" <> hash(phone_e164)
+    do: Namespace.key(@prefix <> "phone:" <> hash(phone_e164))
 
   defp write_hash(key, fields, ttl_seconds) do
     commands = [

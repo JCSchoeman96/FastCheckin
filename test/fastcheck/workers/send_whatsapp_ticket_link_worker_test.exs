@@ -189,7 +189,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               Dedupe.send_ticket_link_identity(conversation_id, issue_id)
              ])
 
     assert [] =
@@ -294,7 +294,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert {:ok, ttl} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               Dedupe.send_ticket_link_identity(conversation_id, issue_id)
              ])
 
     assert ttl > 80_000
@@ -395,7 +395,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               Dedupe.send_ticket_link_identity(conversation_id, issue_id)
              ])
 
     assert [] =
@@ -431,7 +431,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               Dedupe.send_ticket_link_identity(conversation_id, issue_id)
              ])
 
     assert [] =
@@ -468,7 +468,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               Dedupe.send_ticket_link_identity(conversation_id, issue_id)
              ])
 
     assert [] =
@@ -505,7 +505,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert {:ok, -2} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+               Dedupe.send_ticket_link_identity(conversation_id, issue_id)
              ])
   end
 
@@ -868,8 +868,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     refute_received {:whatsapp_request, _duplicate}
 
     challenge_dedupe_key =
-      "fastcheck:whatsapp:dedupe:send_ticket_link:" <>
-        "#{conversation_id}:#{issue_id}:challenge:#{challenge.id}"
+      Dedupe.send_ticket_link_identity(conversation_id, issue_id, challenge.id)
 
     assert {:ok, ttl} = Redix.command(FastCheck.Redix, ["TTL", challenge_dedupe_key])
 
@@ -945,7 +944,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       assert {:ok, ttl} =
                Redix.command(FastCheck.Redix, [
                  "TTL",
-                 "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+                 Dedupe.send_ticket_link_identity(conversation_id, issue_id)
                ])
 
       assert ttl > 0
@@ -981,7 +980,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     token_after_attempt = Repo.get!(TicketIssue, issue_id).delivery_token_hash
 
     # Simulate Redis dedupe expiry by deleting key
-    dedupe_key = "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+    dedupe_key = Dedupe.send_ticket_link_identity(conversation_id, issue_id)
     {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", dedupe_key])
 
     # Re-executing the job is blocked by DB guard with zero Meta calls and no token rotation
@@ -1178,7 +1177,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
 
     # A customer ticket re-request after the dedupe window must still be sendable
-    dedupe_key = "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{issue_id}"
+    dedupe_key = Dedupe.send_ticket_link_identity(conversation_id, issue_id)
     {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", dedupe_key])
 
     assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)

@@ -1,6 +1,7 @@
 defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Inventory.ReservationLedger
 
   @offer_id 44_001
@@ -425,7 +426,9 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
     reserve_key = idem("idem-checkout-bad-index", run_id)
     compensation_key = "checkout-compensate-bad-index-#{run_id}"
     reserve_key_name = reserve_dedupe_key(reserve_key)
-    compensation_key_name = "sales:inventory:dedupe:checkout_compensation:#{compensation_key}"
+
+    compensation_key_name =
+      Namespace.key("sales:inventory:dedupe:checkout_compensation:#{compensation_key}")
 
     assert {:ok, _held} = ReservationLedger.reserve(@offer_id, order_ref, 1, 120, reserve_key)
     assert {:ok, 1} = Redix.command(FastCheck.Redix, ["DEL", holds_key(@offer_id)])
@@ -641,10 +644,10 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
       event_trail_key(offer_id)
     ]
 
-    _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
-    scan_delete_all("sales:hold:*")
-    scan_delete_all("sales:order:*:lock")
-    scan_delete_all("sales:inventory:dedupe:*")
+    _ = Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
+    scan_delete_all(Namespace.pattern("sales:hold:*"))
+    scan_delete_all(Namespace.pattern("sales:order:*:lock"))
+    scan_delete_all(Namespace.pattern("sales:inventory:dedupe:*"))
     :ok
   end
 
@@ -655,7 +658,8 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
   defp do_scan_delete_all(cursor, pattern) do
     case Redix.command(FastCheck.Redix, ["SCAN", cursor, "MATCH", pattern, "COUNT", "500"]) do
       {:ok, [next_cursor, keys]} ->
-        if keys != [], do: _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
+        if keys != [],
+          do: _ = Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
 
         if next_cursor == "0" do
           :ok
@@ -668,13 +672,13 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
     end
   end
 
-  defp inventory_key(offer_id), do: "sales:offer:#{offer_id}:inventory"
-  defp holds_key(offer_id), do: "sales:offer:#{offer_id}:holds"
-  defp event_trail_key(offer_id), do: "sales:inventory:events:#{offer_id}"
-  defp order_lock_key(order_ref), do: "sales:order:#{order_ref}:lock"
+  defp inventory_key(offer_id), do: Namespace.key("sales:offer:#{offer_id}:inventory")
+  defp holds_key(offer_id), do: Namespace.key("sales:offer:#{offer_id}:holds")
+  defp event_trail_key(offer_id), do: Namespace.key("sales:inventory:events:#{offer_id}")
+  defp order_lock_key(order_ref), do: Namespace.key("sales:order:#{order_ref}:lock")
 
   defp reserve_dedupe_key(idempotency_key),
-    do: "sales:inventory:dedupe:reserve:#{idempotency_key}"
+    do: Namespace.key("sales:inventory:dedupe:reserve:#{idempotency_key}")
 
   defp availability! do
     assert {:ok, snapshot} = ReservationLedger.get_availability(@offer_id)

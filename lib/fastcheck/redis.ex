@@ -9,11 +9,14 @@ defmodule FastCheck.Redis do
   @ets_table :fastcheck_redis_fallback
   @redix_name FastCheck.Redix
 
+  alias FastCheck.Redis.Namespace
+
   @spec command([String.t()], Keyword.t()) :: {:ok, term()} | {:error, term()}
   def command(command, opts \\ [])
 
   def command(command, opts) when is_list(command) do
     fallback? = Keyword.get(opts, :fallback, true)
+    command = Namespace.command(command)
 
     case Process.whereis(@redix_name) do
       pid when is_pid(pid) ->

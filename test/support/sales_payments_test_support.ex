@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.Payments.TestSupport do
   @moduledoc false
 
+  alias FastCheck.Redis.Namespace
+
   alias Ash.Query
 
   def setup_paystack! do
@@ -359,14 +361,14 @@ defmodule FastCheck.Sales.Payments.TestSupport do
   end
 
   def flush_webhook_dedupe_keys! do
-    pattern = "sales:payments:paystack:webhook:*"
+    pattern = Namespace.pattern("sales:payments:paystack:webhook:*")
 
     case Redix.command(FastCheck.Redix, ["KEYS", pattern]) do
       {:ok, []} ->
         :ok
 
       {:ok, keys} ->
-        _ = Redix.command(FastCheck.Redix, ["DEL" | keys])
+        _ = Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
         :ok
 
       _ ->

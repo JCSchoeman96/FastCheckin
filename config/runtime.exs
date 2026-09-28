@@ -518,20 +518,60 @@ default_redis_url =
     System.get_env("GITHUB_ACTIONS") ->
       "redis://localhost:6379"
 
+    config_env() == :test ->
+      "redis://127.0.0.1:56380"
+
+    config_env() == :dev ->
+      "redis://127.0.0.1:56379"
+
     config_env() == :prod ->
       "redis://localhost:6379"
 
     true ->
-      # Local Docker compose publishes the Redis container on host port 6380.
-      "redis://localhost:6380"
+      # The project-isolated performance stack publishes Redis on host port 6380.
+      "redis://127.0.0.1:6380"
   end
 
-redis_url = System.get_env("REDIS_URL", default_redis_url)
+# DEV and TEST use the allocated workstation Redis endpoints. GitHub Actions
+# keeps its job-owned localhost endpoint through the default above. Other
+# environments may still provide REDIS_URL explicitly.
+redis_url =
+  if config_env() in [:dev, :test] do
+    default_redis_url
+  else
+    System.get_env("REDIS_URL", default_redis_url)
+  end
+
+default_redis_namespace =
+  case config_env() do
+    :dev -> "fastcheck:dev"
+    :test -> Application.get_env(:fastcheck, :redis_namespace)
+    _ -> nil
+  end
+
+redis_namespace =
+  case config_env() do
+    environment when environment in [:dev, :test] ->
+      default_redis_namespace
+
+    _environment ->
+      case System.get_env("FASTCHECK_REDIS_NAMESPACE") do
+        nil ->
+          default_redis_namespace
+
+        value ->
+          case String.trim(value) do
+            "" -> default_redis_namespace
+            trimmed -> trimmed
+          end
+      end
+  end
 
 config :fastcheck,
   cache_enabled: cache_enabled,
   cache_ttl: cache_ttl,
-  redis_url: redis_url
+  redis_url: redis_url,
+  redis_namespace: redis_namespace
 
 mobile_scan_force_enqueue_failure =
   case System.get_env("MOBILE_SCAN_FORCE_ENQUEUE_FAILURE", "false")

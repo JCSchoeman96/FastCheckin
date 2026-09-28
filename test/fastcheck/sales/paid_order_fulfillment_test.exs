@@ -4,6 +4,7 @@ defmodule FastCheck.Sales.PaidOrderFulfillmentTest do
 
   import Ecto.Query
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
@@ -86,7 +87,9 @@ defmodule FastCheck.Sales.PaidOrderFulfillmentTest do
 
     assert :ok = perform_fulfillment(attempt.id)
 
-    key = "sales:inventory:dedupe:consume:paid_order_fulfillment:consume:#{attempt.id}"
+    key =
+      Namespace.key("sales:inventory:dedupe:consume:paid_order_fulfillment:consume:#{attempt.id}")
+
     assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXISTS", key])
   end
 
