@@ -50,9 +50,16 @@ Run the Android connected lifecycle harness with:
 bash scripts/integration/run-mobile-integration-harness.sh
 ```
 
-The harness starts only the project-isolated `docker-compose.yml` `perf-small`
-stack, runs the backend with `MIX_ENV=perf`, and uses the dedicated
-`fastcheck_perf` application role. Set these values before running it:
+The harness is currently blocked pending a separate backup and deliberate
+migration of the existing performance PostgreSQL 18 data. Compose requires a
+non-empty migration acknowledgement, and the harness requires the exact value
+`FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK=backed-up-and-migrated` after that work
+is complete. The acknowledgement does not perform the migration.
+
+After the data migration, the harness starts only the project-isolated
+`docker-compose.yml` `perf-small` stack, runs the backend with `MIX_ENV=perf`,
+and uses the dedicated `fastcheck_perf` application role. Set these values
+before running it:
 
 - `FASTCHECK_PERF_DB_PASSWORD`
 - `PERF_ADMIN_DB_PASSWORD`

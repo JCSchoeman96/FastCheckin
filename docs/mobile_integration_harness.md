@@ -34,6 +34,12 @@ commands use `fastcheck_perf`.
 The runner controls ordering and mutation. Android instrumentation does not
 perform backend state mutations.
 
+The harness is currently blocked pending a separate backup and deliberate
+migration of the existing performance PostgreSQL 18 data. Do not set
+`FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK` or run the harness until that work is
+complete. Compose requires this acknowledgement to be non-empty, and the
+harness checks that its value is exactly `backed-up-and-migrated`.
+
 ## One-command run
 
 Run from repo root:
@@ -52,7 +58,9 @@ Optional environment overrides:
 - `REVOKE_REASON` (default `revoked`)
 - `KEEP_SEEDED_DATA=true` to keep seeded data for manual debugging
 
-Required perf-stack credentials:
+After the data migration is complete, the harness requires the explicit
+acknowledgement `FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK=backed-up-and-migrated`.
+It is not a migration mechanism. Required perf-stack credentials:
 
 - `FASTCHECK_PERF_DB_PASSWORD` for the non-superuser application role
 - `PERF_ADMIN_DB_PASSWORD` for the disposable perf PostgreSQL admin role

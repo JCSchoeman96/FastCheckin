@@ -49,13 +49,16 @@ The app-facing `perf-small` path has two application services:
 
 The performance stack owns its PostgreSQL, PgBouncer, and Redis services. It is
 separate from workstation `dev-core` and from the shared DEV/TEST endpoints.
-Always select the legacy performance Compose file and an isolated Compose
-project explicitly. Every service in this file belongs to the `perf-small`
-profile, including the one-shot application-role grant:
+The existing PostgreSQL 18 cluster stores its data on an anonymous volume
+mounted at `/var/lib/postgresql`. The corrected Compose contract mounts the
+named volume at that PG18 data root, but the existing data has not been backed
+up or migrated to it. The `perf-small` stack is therefore unavailable until a
+separate, deliberate backup and data migration is completed.
 
-```bash
-docker compose --project-name fastcheckin -f docker-compose.yml --profile perf-small up --build -d
-```
+Compose requires a non-empty `FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK` before it
+will render the performance services. Set it to `backed-up-and-migrated` only
+after the migration is complete. The mobile integration harness enforces that
+exact value before it starts Compose.
 
 The application uses the non-superuser `fastcheck_perf` role. The
 `perf-db-role` service grants that role access after PostgreSQL is healthy.

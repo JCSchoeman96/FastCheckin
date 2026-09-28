@@ -170,10 +170,14 @@ deployment. The systemd release unit remains the current production lifecycle
 configuration until a deployment cutover is made; it is not started by this
 repository's local development or Compose validation.
 
-The old `docker-compose.yml` is retained for explicitly isolated performance
-work only. Use `-f docker-compose.yml --profile perf-small` when operating that
-stack. Its PostgreSQL and Redis services are not workstation shared services
-and are not the normal development or test databases.
+The old `docker-compose.yml` defines an explicitly isolated performance stack.
+Its PostgreSQL and Redis are not workstation shared services or the normal
+development and test databases. The existing performance PostgreSQL 18 data
+still resides on an anonymous volume, so this stack is currently fail-closed.
+The Compose file will not render unless the non-empty
+`FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK` acknowledgement is supplied. Set it to
+`backed-up-and-migrated` only after that data has been backed up and deliberately
+migrated. Do not set the acknowledgement before that work is complete.
 
 ## Performance testing
 
@@ -182,7 +186,9 @@ The repo includes a k6-based mobile scan performance harness aimed at the author
 - Seed deterministic load data with `mix fastcheck.load.seed_mobile_event`
 - Run k6 scenarios from `performance/k6/mobile_scans.js`
 - Use `MOBILE_SCAN_FORCE_ENQUEUE_FAILURE=true` only for the dedicated non-production enqueue-failure scenario
-- Use `docker compose -f docker-compose.yml --profile perf-small up --build app-perf perf-proxy` for the opt-in capped app-tier path
+- The capped app-tier path is unavailable until the existing performance
+  PostgreSQL data has been backed up and deliberately migrated; see
+  `docs/mobile_scan_performance.md`.
 - Use `mix fastcheck.load.cleanup_mobile_event` to remove seeded perf events and related DB/Redis data after a run
 - Hit the trusted perf proxy on `http://127.0.0.1:4100` for `capacity_*` and `abuse_*` runs; `app-perf` stays internal for capacity measurements
 - Capacity runs now model `device_i -> token_i -> synthetic_ip_i`, while abuse-control runs intentionally concentrate on one hot device identity

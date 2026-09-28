@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android/scanner-app"
 
+if [[ "${FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK:-}" != "backed-up-and-migrated" ]]; then
+  echo "[harness] refusing to start: back up and deliberately migrate the existing perf PG18 data first, then set FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK=backed-up-and-migrated" >&2
+  exit 2
+fi
+
 ATTENDEES="${ATTENDEES:-40}"
 CREDENTIAL="${CREDENTIAL:-scanner-secret}"
 TICKET_PREFIX="${TICKET_PREFIX:-INTEG}"

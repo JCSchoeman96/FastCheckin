@@ -72,8 +72,10 @@ services:
       POSTGRES_DB: fastcheck_prod
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${PERF_ADMIN_DB_PASSWORD:?Set PERF_ADMIN_DB_PASSWORD}
+    labels:
+      com.fastcheck.perf-pg18-data-migration-ack: "${FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK:?Set FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK only after the existing PG18 data is backed up and deliberately migrated}"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     ports:
       - "5434:5432"
     healthcheck:
