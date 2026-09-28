@@ -344,10 +344,11 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   defp persist_manual_review(attempt_id, intent_id, reason, opts) do
     Repo.transaction(fn ->
+      lock_delivery_attempt_authority!(intent_id, attempt_id)
+
       with {:ok, attempt} <- load_attempt(attempt_id),
            {:ok, intent} <- load_intent(intent_id),
-           {:ok, _attempt} <- mark_manual_review(attempt, Keyword.fetch!(opts, :attempt_failure)),
-           :ok <- mark_intent_manual_review(intent, reason) do
+           :ok <- mark_delivery_manual_review(attempt, intent, reason, opts) do
         :ok
       else
         {:error, failure} -> Repo.rollback(failure)
@@ -358,17 +359,74 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
 
   defp persist_exhausted_safe_retry(attempt_id, intent_id) do
     Repo.transaction(fn ->
+      lock_delivery_attempt_authority!(intent_id, attempt_id)
+
       with {:ok, attempt} <- load_attempt(attempt_id),
            {:ok, intent} <- load_intent(intent_id),
-           {:ok, _failed_attempt} <-
-             mark_failed(attempt, "safe_retryable_transport_failure"),
-           :ok <- mark_intent_manual_review(intent, "safe_transport_retries_exhausted") do
+           :ok <- mark_exhausted_safe_retry(attempt, intent) do
         :ok
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
     |> normalize_transaction()
+  end
+
+  defp mark_delivery_manual_review(attempt, intent, reason, opts) do
+    cond do
+      intent.status == "provider_accepted" ->
+        :ok
+
+      accepted_attempt?(attempt) ->
+        mark_intent_provider_accepted(intent)
+
+      true ->
+        with :ok <-
+               mark_attempt_manual_review_idempotently(
+                 attempt,
+                 Keyword.fetch!(opts, :attempt_failure)
+               ),
+             do: mark_intent_manual_review(intent, reason)
+    end
+  end
+
+  defp mark_exhausted_safe_retry(attempt, intent) do
+    cond do
+      intent.status == "provider_accepted" ->
+        :ok
+
+      accepted_attempt?(attempt) ->
+        mark_intent_provider_accepted(intent)
+
+      intent.status == "manual_review" or attempt.status == "manual_review" ->
+        reason = intent.failure_reason || "safe_transport_retries_exhausted"
+
+        with :ok <- mark_attempt_manual_review_idempotently(attempt, reason),
+             do: mark_intent_manual_review(intent, reason)
+
+      true ->
+        with {:ok, _failed_attempt} <-
+               mark_failed(attempt, "safe_retryable_transport_failure"),
+             do: mark_intent_manual_review(intent, "safe_transport_retries_exhausted")
+    end
+  end
+
+  defp mark_attempt_manual_review_idempotently(
+         %DeliveryAttempt{status: "manual_review"},
+         _reason
+       ),
+       do: :ok
+
+  defp mark_attempt_manual_review_idempotently(attempt, reason) do
+    case mark_manual_review(attempt, reason) do
+      {:ok, _attempt} -> :ok
+      {:error, failure} -> {:error, failure}
+    end
+  end
+
+  defp accepted_attempt?(attempt) do
+    attempt.status in @attempt_acceptance_states or
+      usable_provider_message_id?(attempt.provider_message_id)
   end
 
   defp create_delivery_attempt(intent, bundle, decision) do

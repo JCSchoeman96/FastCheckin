@@ -1353,6 +1353,67 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              )
   end
 
+  test "late ambiguous provider result is idempotent after a duplicate opens manual review" do
+    parent = self()
+    %{ticket_delivery_intent_id: intent_id} = issued_ticket_fixture()
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn request ->
+      send(parent, {:whatsapp_request_started, request})
+
+      receive do
+        :release_provider_response ->
+          {:ok,
+           %Req.Response{
+             status: 503,
+             body: Jason.encode!(%{"error" => %{"message" => "upstream unavailable"}})
+           }}
+      end
+    end)
+
+    task =
+      Task.async(fn ->
+        send(parent, {:send_worker_ready, self()})
+
+        receive do
+          :start_send_worker ->
+            perform_job(SendWhatsAppTicketLinkWorker, %{"ticket_delivery_intent_id" => intent_id})
+        end
+      end)
+
+    assert_receive {:send_worker_ready, task_pid}
+    assert task_pid == task.pid
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
+    send(task.pid, :start_send_worker)
+
+    assert_receive {:whatsapp_request_started, _request}, 5_000
+
+    assert {:discard, :manual_review} =
+             perform_job(
+               SendWhatsAppTicketLinkWorker,
+               %{"ticket_delivery_intent_id" => intent_id},
+               attempt: 5,
+               max_attempts: 5
+             )
+
+    send(task.pid, :release_provider_response)
+
+    assert {:discard, :manual_review} = Task.await(task, 5_000)
+
+    assert %{status: "manual_review"} =
+             Repo.one!(
+               from i in "sales_ticket_delivery_intents",
+                 where: i.id == ^intent_id,
+                 select: map(i, [:status])
+             )
+
+    assert [%{status: "manual_review", attempt_number: 1}] =
+             Repo.all(
+               from d in "sales_delivery_attempts",
+                 where: d.ticket_delivery_intent_id == ^intent_id,
+                 select: map(d, [:status, :attempt_number])
+             )
+  end
+
   test "verified resend ambiguous outcome holds challenge; same challenge blocked; new challenge sends",
        %{} do
     test_pid = self()
