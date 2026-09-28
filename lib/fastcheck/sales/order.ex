@@ -68,6 +68,7 @@ defmodule FastCheck.Sales.Order do
         :currency,
         :idempotency_key,
         :expires_at,
+        :sales_conversation_id,
         :whatsapp_conversation_id
       ])
 

@@ -18,7 +18,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
   alias FastCheck.Tickets.{DeliveryToken, TokenHash}
   alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
-  alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
+  alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
   alias FastCheckWeb.SalesWebFixtures
 
   setup do
@@ -65,6 +65,13 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
 
     order_id = result.conversation.state_data["sales_order_id"]
     assert is_integer(order_id)
+
+    assert Repo.one!(
+             from o in "sales_orders",
+               where: o.id == ^order_id,
+               select: o.sales_conversation_id
+           ) == conversation.id
+
     assert is_binary(result.conversation.state_data["order_public_reference"])
     assert is_integer(result.conversation.state_data["payment_attempt_id"])
 
@@ -157,7 +164,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
   end
 
   test "ticket_issued status says secure ticket link is being sent", %{event: event} do
-    %{order_id: order_id, ticket_issue_id: ticket_issue_id} = issued_ticket_fixture(event)
+    %{order_id: order_id} = issued_ticket_fixture(event)
 
     conversation =
       insert_conversation!(
@@ -173,13 +180,11 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
     refute result.response_body =~ "nog nie gereed"
 
     assert_enqueued(
-      worker: SendWhatsAppTicketLinkWorker,
-      args: %{
-        "conversation_id" => conversation.id,
-        "sales_order_id" => order_id,
-        "ticket_issue_id" => ticket_issue_id
-      }
+      worker: TicketDeliveryCoordinatorWorker,
+      args: %{"sales_order_id" => order_id}
     )
+
+    refute_enqueued(worker: FastCheck.Workers.SendWhatsAppTicketLinkWorker)
   end
 
   defp checkout_state_data(event, offer, buyer_email) do

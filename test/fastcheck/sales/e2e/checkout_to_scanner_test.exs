@@ -5,6 +5,8 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
   import Ecto.Query
   import ExUnit.CaptureLog
 
+  alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Repo
   alias FastCheck.Sales.Payments.PaystackWebhookWorker
   alias FastCheck.Sales.Payments.TestSupport, as: PaystackSupport
   alias FastCheck.Sales.Payments.VerifyPaymentWorker
@@ -12,6 +14,8 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
   alias FastCheck.Scans.Jobs.PersistScanBatchJob
   alias FastCheck.Workers.IssueTicketsWorker
   alias FastCheck.Workers.PaidOrderFulfillmentWorker
+  alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
+  alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
 
   @moduletag :e2e
   @moduletag :sales
@@ -154,10 +158,29 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
     refute log =~ "AC_SAFE"
   end
 
-  test "duplicate webhook and duplicate workers do not duplicate payment, tickets, attendees, or inventory",
+  test "duplicate payment and delivery workers produce four tickets and four customer sends",
        %{event: event, offer: offer} do
+    whatsapp_cleanup = WebhookTestSupport.setup_whatsapp!()
+    WebhookTestSupport.flush_redis_keys!()
+    test_pid = self()
+    provider_counter = :counters.new(1, [])
+
+    Application.put_env(:fastcheck, :whatsapp_request_fun, fn _request ->
+      :counters.add(provider_counter, 1, 1)
+      provider_message_id = "wamid.duplicate-e2e-#{:counters.get(provider_counter, 1)}"
+      send(test_pid, {:whatsapp_provider_acceptance, provider_message_id})
+
+      {:ok,
+       %Req.Response{
+         status: 200,
+         body: Jason.encode!(%{"messages" => [%{"id" => provider_message_id}]})
+       }}
+    end)
+
+    on_exit(whatsapp_cleanup)
+
     %{order: order, attempt: attempt} =
-      E2E.start_initialized_checkout!(event, offer, source_channel: "whatsapp", quantity: 2)
+      E2E.start_initialized_checkout!(event, offer, source_channel: "whatsapp", quantity: 4)
 
     webhook = E2E.ingest_paystack_success!(attempt, provider_event_id: "evt-vs22-duplicate")
     duplicate = FastCheck.Sales.Payments.WebhookIngestion.ingest(webhook.body, webhook.signature)
@@ -165,52 +188,102 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
     assert {:ok, :duplicate, duplicate_event} = duplicate
     assert duplicate_event.id == webhook.event.id
 
-    assert :ok = perform_job(PaystackWebhookWorker, %{"payment_event_id" => webhook.event.id})
-    assert :ok = perform_job(PaystackWebhookWorker, %{"payment_event_id" => webhook.event.id})
+    assert [%{args: webhook_args}] = all_enqueued(worker: PaystackWebhookWorker)
+    assert :ok = perform_job(PaystackWebhookWorker, webhook_args)
+    assert :ok = perform_job(PaystackWebhookWorker, webhook_args)
 
-    assert :ok =
-             perform_job(VerifyPaymentWorker, %{
-               "payment_event_id" => webhook.event.id,
-               "payment_attempt_id" => attempt.id
-             })
+    assert [%{args: verification_args}] = all_enqueued(worker: VerifyPaymentWorker)
+
+    assert :ok = perform_job(VerifyPaymentWorker, verification_args)
 
     assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
     assert E2E.reload_order!(order.id).status == "paid_verified"
 
-    assert :ok =
-             perform_job(VerifyPaymentWorker, %{
-               "payment_event_id" => webhook.event.id,
-               "payment_attempt_id" => attempt.id
-             })
+    assert :ok = perform_job(VerifyPaymentWorker, verification_args)
 
     assert_enqueued(
       worker: PaidOrderFulfillmentWorker,
       args: %{"payment_attempt_id" => attempt.id}
     )
 
-    assert :ok =
-             perform_job(PaidOrderFulfillmentWorker, %{
-               "payment_attempt_id" => attempt.id
-             })
+    assert [%{args: fulfillment_args}] = all_enqueued(worker: PaidOrderFulfillmentWorker)
+    assert :ok = perform_job(PaidOrderFulfillmentWorker, fulfillment_args)
+    assert :ok = perform_job(PaidOrderFulfillmentWorker, fulfillment_args)
 
     assert E2E.reload_order!(order.id).status == "fulfillment_queued"
-    assert %{reserved_quantity: 0, consumed_quantity: 2} = E2E.inventory_snapshot!(offer.id)
+    assert %{reserved_quantity: 0, consumed_quantity: 4} = E2E.inventory_snapshot!(offer.id)
     assert_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order.id})
     assert [%{args: issue_args}] = all_enqueued(worker: IssueTicketsWorker)
 
     assert :ok = perform_job(IssueTicketsWorker, issue_args)
     assert :ok = perform_job(IssueTicketsWorker, issue_args)
 
+    assert_enqueued(
+      worker: TicketDeliveryCoordinatorWorker,
+      args: %{"sales_order_id" => order.id}
+    )
+
+    assert [%{args: coordinator_args}] =
+             all_enqueued(
+               worker: TicketDeliveryCoordinatorWorker,
+               args: %{"sales_order_id" => order.id}
+             )
+
+    assert :ok = perform_job(TicketDeliveryCoordinatorWorker, coordinator_args)
+    assert :ok = perform_job(TicketDeliveryCoordinatorWorker, coordinator_args)
+
     assert E2E.reload_payment_attempt!(attempt.id).status == "verified_success"
     assert E2E.reload_order!(order.id).status == "ticket_issued"
 
     assert E2E.sales_counts(order.id) == %{
-             attendees: 2,
-             ticket_issues: 2,
-             issued_ticket_issues: 2
+             attendees: 4,
+             ticket_issues: 4,
+             issued_ticket_issues: 4
            }
 
     assert E2E.order_transition_count(order.id, "ticket_issued") == 1
-    assert %{reserved_quantity: 0, consumed_quantity: 2} = E2E.inventory_snapshot!(offer.id)
+    assert %{reserved_quantity: 0, consumed_quantity: 4} = E2E.inventory_snapshot!(offer.id)
+
+    intents =
+      Repo.all(
+        from i in "sales_ticket_delivery_intents",
+          where: i.sales_order_id == ^order.id and i.purpose == "initial_ticket_delivery",
+          select: map(i, [:id, :ticket_issue_id, :status])
+      )
+
+    assert length(intents) == 4
+    assert length(Enum.uniq(Enum.map(intents, & &1.ticket_issue_id))) == 4
+
+    send_jobs = all_enqueued(worker: SendWhatsAppTicketLinkWorker)
+    assert length(send_jobs) == 4
+
+    Enum.each(send_jobs, fn %{args: %{"ticket_delivery_intent_id" => intent_id}} ->
+      args = %{"ticket_delivery_intent_id" => intent_id}
+      assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+      assert :ok = perform_job(SendWhatsAppTicketLinkWorker, args)
+      assert_received {:whatsapp_provider_acceptance, _provider_message_id}
+      refute_received {:whatsapp_provider_acceptance, _duplicate_provider_message_id}
+    end)
+
+    accepted_attempts =
+      Repo.all(
+        from d in "sales_delivery_attempts",
+          where: d.sales_order_id == ^order.id and d.delivery_reason == "initial_ticket_delivery",
+          select: map(d, [:ticket_issue_id, :provider_message_id, :status])
+      )
+
+    assert length(accepted_attempts) == 4
+    assert Enum.all?(accepted_attempts, &(&1.status == "provider_accepted"))
+    assert length(Enum.uniq(Enum.map(accepted_attempts, & &1.ticket_issue_id))) == 4
+    assert length(Enum.uniq(Enum.map(accepted_attempts, & &1.provider_message_id))) == 4
+
+    assert 4 ==
+             Repo.one!(
+               from i in "sales_ticket_delivery_intents",
+                 where:
+                   i.sales_order_id == ^order.id and
+                     i.purpose == "initial_ticket_delivery" and i.status == "provider_accepted",
+                 select: count(i.id)
+             )
   end
 end

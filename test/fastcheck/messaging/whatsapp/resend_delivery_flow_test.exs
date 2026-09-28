@@ -12,7 +12,7 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlowTest do
   alias FastCheck.Tickets.Resend.Otp
   alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
 
-  test "verified challenge enqueues ticket link worker with internal challenge id" do
+  test "verified challenge creates a durable resend intent and queues only its id" do
     conversation = insert_conversation!()
     challenge = verified_challenge!(conversation.id)
     conversation = put_challenge(conversation, challenge.public_id)
@@ -38,16 +38,31 @@ defmodule FastCheck.Messaging.WhatsApp.ResendDeliveryFlowTest do
     refute inspect(updates) =~ "/t/"
     refute inspect(updates) =~ "delivery_token"
 
+    intent =
+      Repo.one!(
+        from i in "sales_ticket_delivery_intents",
+          where: i.ticket_resend_challenge_id == ^challenge.id,
+          select:
+            map(i, [:id, :purpose, :status, :sales_order_id, :ticket_issue_id, :conversation_id])
+      )
+
+    assert intent.purpose == "verified_ticket_resend"
+    assert intent.status == "queued"
+    assert intent.sales_order_id == challenge.sales_order_id
+    assert intent.ticket_issue_id == challenge.ticket_issue_id
+    assert intent.conversation_id == conversation.id
+
     assert_enqueued(
       worker: SendWhatsAppTicketLinkWorker,
-      args: %{
-        "conversation_id" => conversation.id,
-        "sales_order_id" => challenge.sales_order_id,
-        "ticket_issue_id" => challenge.ticket_issue_id,
-        "ticket_resend_challenge_id" => challenge.id,
-        "delivery_reason" => "verified_ticket_resend"
-      }
+      args: %{"ticket_delivery_intent_id" => intent.id}
     )
+
+    assert %{status: "verified", consumed_at: nil} =
+             Repo.one!(
+               from c in "sales_ticket_resend_challenges",
+                 where: c.id == ^challenge.id,
+                 select: map(c, [:status, :consumed_at])
+             )
   end
 
   test "missing or unknown challenge does not enqueue" do

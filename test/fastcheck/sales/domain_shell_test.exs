@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.DomainShellTest do
     FastCheck.Sales.PaymentEvent,
     FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
+    FastCheck.Sales.TicketDeliveryIntent,
     FastCheck.Sales.DeliveryAttempt,
     FastCheck.Sales.Conversation,
     FastCheck.Sales.TicketResendChallenge
@@ -22,7 +23,7 @@ defmodule FastCheck.Sales.DomainShellTest do
     assert FastCheck.Sales in Application.fetch_env!(:fastcheck, :ash_domains)
   end
 
-  test "FastCheck.Sales registers exactly the VS-01E sales resources" do
+  test "FastCheck.Sales registers the current Sales resources" do
     assert Ash.Domain.Info.resources(FastCheck.Sales) == @expected_resource_modules
   end
 
@@ -32,7 +33,7 @@ defmodule FastCheck.Sales.DomainShellTest do
     end
   end
 
-  test "only VS-05 Sales resource and policy helper files exist" do
+  test "the current Sales resource and policy helper files exist" do
     assert Path.wildcard("priv/repo/migrations/*sales*.exs") != []
 
     assert Path.wildcard("lib/fastcheck/sales/*.ex") |> Enum.sort() == [
@@ -60,6 +61,8 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/secondary_entrypoints.ex",
              "lib/fastcheck/sales/state_transition.ex",
              "lib/fastcheck/sales/state_transition_support.ex",
+             "lib/fastcheck/sales/ticket_delivery_coordinator.ex",
+             "lib/fastcheck/sales/ticket_delivery_intent.ex",
              "lib/fastcheck/sales/ticket_issue.ex",
              "lib/fastcheck/sales/ticket_offer.ex",
              "lib/fastcheck/sales/ticket_page.ex",

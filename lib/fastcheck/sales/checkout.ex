@@ -17,6 +17,7 @@ defmodule FastCheck.Sales.Checkout do
   alias FastCheck.Events
   alias FastCheck.Repo
   alias FastCheck.Sales.CheckoutSession
+  alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.OrderLine
@@ -29,6 +30,7 @@ defmodule FastCheck.Sales.Checkout do
           optional(:buyer_name) => String.t() | nil,
           optional(:buyer_phone) => String.t() | nil,
           optional(:buyer_email) => String.t() | nil,
+          optional(:sales_conversation_id) => integer() | nil,
           required(:source_channel) => String.t(),
           required(:idempotency_key) => String.t(),
           optional(:correlation_id) => String.t() | nil,
@@ -48,6 +50,7 @@ defmodule FastCheck.Sales.Checkout do
 
     with :ok <- validate_checkout_request(input),
          :ok <- validate_quantity(input),
+         :ok <- validate_whatsapp_conversation_binding(input),
          {:ok, existing_order} <- lookup_idempotent_order(input) do
       if existing_order && not idempotent_inputs_match?(existing_order, input, opts) do
         {:error, :duplicate_idempotency_conflict}
@@ -108,6 +111,33 @@ defmodule FastCheck.Sales.Checkout do
     do: :ok
 
   defp validate_quantity(_), do: {:error, :invalid_quantity}
+
+  defp validate_whatsapp_conversation_binding(%{source_channel: "whatsapp"} = input) do
+    case Map.get(input, :sales_conversation_id) do
+      id when is_integer(id) and id > 0 ->
+        case Conversation
+             |> Query.for_read(:get_by_id, %{id: id})
+             |> Ash.read_one(authorize?: false) do
+          {:ok, %Conversation{} = conversation} ->
+            if conversation.phone_e164 == Map.get(input, :buyer_phone) do
+              :ok
+            else
+              {:error, :sales_conversation_phone_mismatch}
+            end
+
+          {:ok, nil} ->
+            {:error, :sales_conversation_not_found}
+
+          {:error, _reason} ->
+            {:error, :sales_conversation_not_found}
+        end
+
+      _invalid_id ->
+        {:error, :sales_conversation_required}
+    end
+  end
+
+  defp validate_whatsapp_conversation_binding(_input), do: :ok
 
   defp validate_checkout_request(%{
          event_id: event_id,
@@ -228,6 +258,7 @@ defmodule FastCheck.Sales.Checkout do
           line.quantity == Map.get(input, :quantity) and
           line.event_name_snapshot == Map.get(input, :event_name) and
           effective_channel == effective_sales_channel(Map.get(input, :source_channel), opts) and
+          conversation_binding_matches?(order, input) and
           buyer_fields_match?(order, input)
 
       _ ->
@@ -256,6 +287,12 @@ defmodule FastCheck.Sales.Checkout do
       Map.get(input, :buyer_phone) == order.buyer_phone and
       Map.get(input, :buyer_email) == order.buyer_email
   end
+
+  defp conversation_binding_matches?(%{source_channel: "whatsapp"} = order, input) do
+    order.sales_conversation_id == Map.get(input, :sales_conversation_id)
+  end
+
+  defp conversation_binding_matches?(_order, _input), do: true
 
   defp load_checkout_session(order) do
     order_id = order.id
@@ -421,6 +458,7 @@ defmodule FastCheck.Sales.Checkout do
       total_amount_cents: total_cents,
       currency: offer.currency,
       idempotency_key: Map.get(input, :idempotency_key),
+      sales_conversation_id: Map.get(input, :sales_conversation_id),
       expires_at: expires_at
     }
 

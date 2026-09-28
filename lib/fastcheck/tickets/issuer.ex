@@ -25,6 +25,7 @@ defmodule FastCheck.Tickets.Issuer do
   alias FastCheck.Tickets.CodeGenerator
   alias FastCheck.Tickets.DeliveryToken
   alias FastCheck.Tickets.QrPayload
+  alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
 
   @source_fastcheck_sales "fastcheck_sales"
   @payment_status_completed "completed"
@@ -81,6 +82,7 @@ defmodule FastCheck.Tickets.Issuer do
            {:ok, attendee_results} <- create_or_reuse_attendees(order, order_lines, context),
            {:ok, ticket_issue_result} <-
              create_or_reuse_ticket_issues(order, order_lines, attendee_results, context),
+           :ok <- ensure_ticket_delivery_handoff(order, opts),
            :ok <-
              maybe_bump_mobile_sync_version(order, attendee_results, ticket_issue_result, opts) do
         ticket_issue_result
@@ -461,6 +463,21 @@ defmodule FastCheck.Tickets.Issuer do
     |> Changeset.for_update(:mark_ticket_issued, %{}, actor: context.actor, context: context)
     |> ash_update(context)
   end
+
+  defp ensure_ticket_delivery_handoff(%Order{source_channel: "whatsapp", id: order_id}, opts) do
+    insert_job_fun = Keyword.get(opts, :ticket_delivery_coordinator_insert_fun, &Oban.insert/1)
+    job = TicketDeliveryCoordinatorWorker.new(%{"sales_order_id" => order_id})
+
+    case insert_job_fun.(job) do
+      {:ok, _job} ->
+        :ok
+
+      {:error, _reason} ->
+        Repo.rollback(:ticket_delivery_coordinator_handoff_failed)
+    end
+  end
+
+  defp ensure_ticket_delivery_handoff(%Order{}, _opts), do: :ok
 
   defp build_ticket_issue_result(
          %Order{} = original_order,

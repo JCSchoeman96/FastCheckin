@@ -19,7 +19,9 @@ defmodule FastCheck.Sales.Vs01eBoundaryTest do
       refute File.exists?(path), "#{path} is out of scope for VS-01E"
     end
 
-    assert Path.wildcard("lib/fastcheck/workers/*delivery*") == []
+    assert Path.wildcard("lib/fastcheck/workers/*delivery*") == [
+             "lib/fastcheck/workers/ticket_delivery_coordinator_worker.ex"
+           ]
   end
 
   test "forbidden workflow actions are not implemented in VS-01E" do

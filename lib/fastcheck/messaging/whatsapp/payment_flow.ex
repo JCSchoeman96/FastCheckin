@@ -23,9 +23,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.Payments.TransactionInitialization
-  alias FastCheck.Sales.TicketIssue
   alias FastCheck.Workers.SendWhatsAppPaymentLinkWorker
-  alias FastCheck.Workers.SendWhatsAppTicketLinkWorker
+  alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
 
   @session_ttl_seconds 86_400
 
@@ -124,15 +123,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
   end
 
   defp respond_for_order(command, conversation, %{status: "ticket_issued"} = order) do
-    case load_deliverable_ticket_issue(order.id) do
-      {:ok, ticket_issue} ->
-        :ok = enqueue_ticket_link(conversation.id, order.id, ticket_issue.id)
-
-        {:ok,
-         result(conversation, TicketLinkRenderer.sending_now(language(conversation)), command)}
-
-      {:error, :not_found} ->
-        {:ok, result(conversation, TicketLinkRenderer.not_ready(language(conversation)), command)}
+    with :ok <- enqueue_ticket_delivery_coordinator(order.id) do
+      {:ok, result(conversation, TicketLinkRenderer.sending_now(language(conversation)), command)}
     end
   end
 
@@ -173,6 +165,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
       buyer_name: Map.get(data, "buyer_name"),
       buyer_phone: conversation.phone_e164,
       buyer_email: Map.get(data, "buyer_email"),
+      sales_conversation_id: conversation.id,
       source_channel: "whatsapp",
       idempotency_key: "whatsapp:conversation:#{conversation.id}:checkout",
       correlation_id: command.correlation_id,
@@ -206,12 +199,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
     end
   end
 
-  defp enqueue_ticket_link(conversation_id, order_id, ticket_issue_id) do
-    SendWhatsAppTicketLinkWorker.new(%{
-      "conversation_id" => conversation_id,
-      "sales_order_id" => order_id,
-      "ticket_issue_id" => ticket_issue_id
-    })
+  defp enqueue_ticket_delivery_coordinator(order_id) do
+    TicketDeliveryCoordinatorWorker.new(%{"sales_order_id" => order_id})
     |> Oban.insert()
     |> case do
       {:ok, _job} -> :ok
@@ -301,17 +290,6 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
     |> case do
       {:ok, nil} -> {:error, :checkout_session_not_found}
       {:ok, session} -> {:ok, session}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp load_deliverable_ticket_issue(order_id) do
-    TicketIssue
-    |> Query.for_read(:list_issued_by_order, %{sales_order_id: order_id})
-    |> Ash.read(authorize?: false)
-    |> case do
-      {:ok, [issue | _]} -> {:ok, issue}
-      {:ok, []} -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
     end
   end

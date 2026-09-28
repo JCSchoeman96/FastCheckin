@@ -50,7 +50,10 @@ defmodule FastCheck.SalesCheckoutFixtures do
       event_name: "Test Event"
     }
 
-    input = Map.merge(base, overrides)
+    input =
+      base
+      |> Map.merge(overrides)
+      |> maybe_attach_whatsapp_conversation(overrides)
 
     if skip_lock_version? do
       input
@@ -58,6 +61,30 @@ defmodule FastCheck.SalesCheckoutFixtures do
       maybe_attach_whatsapp_lock_version(input)
     end
   end
+
+  defp maybe_attach_whatsapp_conversation(%{source_channel: "whatsapp"} = input, overrides) do
+    if Map.has_key?(overrides, :sales_conversation_id) do
+      input
+    else
+      phone_e164 = Map.get(input, :buyer_phone)
+      unique = System.unique_integer([:positive])
+
+      %{rows: [[conversation_id]]} =
+        Repo.query!(
+          """
+          INSERT INTO sales_conversations
+            (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
+          VALUES ($1, $2, 'en', 'confirming_order', '{}', false, now(), now())
+          RETURNING id
+          """,
+          [phone_e164, "checkout-fixture-#{unique}"]
+        )
+
+      Map.put(input, :sales_conversation_id, conversation_id)
+    end
+  end
+
+  defp maybe_attach_whatsapp_conversation(input, _overrides), do: input
 
   defp maybe_attach_whatsapp_lock_version(%{ticket_offer_id: offer_id} = input)
        when is_integer(offer_id) do

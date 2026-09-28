@@ -28,10 +28,10 @@
 | `paid_verified` | `fulfillment_queued` | `queue_fulfillment` | `system` | Verified attempt amount/currency match the Order; CheckoutSession is paid; exactly one OrderLine exists; its exact inventory hold is consumed. | Set `fulfillment_queued_at` and insert `IssueTicketsWorker` in the same Postgres transaction under the order advisory lock. | yes | Exact consumed holds are accepted on retry; transition and issuer enqueue are idempotent. | no |
 | `paid_verified` | `manual_review` | `flag_verified_payment_review` | `system/admin` | Inventory or issuance precondition cannot be safely met. | Preserve verified payment evidence. | yes | Duplicate review preserves original evidence. | no |
 | `paid_verified` | `refunded` | `mark_verified_order_refunded` | `admin/system` | Refund/revocation policy approves and audit reason exists. | Revoke related tickets if issued; update scanner visibility where needed. | yes | Duplicate refund action returns refunded. | yes |
-| `fulfillment_queued` | `ticket_issued` | `mark_ticket_issued` | `system` | All attendee and TicketIssue rows created idempotently. | Enqueue event sync aggregation and delivery. | yes | Duplicate issuer returns existing tickets. | yes |
+| `fulfillment_queued` | `ticket_issued` | `mark_ticket_issued` | `system` | All attendee and TicketIssue rows created idempotently. | Enqueue event sync aggregation and, for WhatsApp orders, insert `TicketDeliveryCoordinatorWorker` in the same Postgres transaction. | yes | Duplicate issuer returns existing tickets and repairs a missing WhatsApp coordinator handoff. | yes |
 | `fulfillment_queued` | `partially_issued` | `mark_partially_issued` | `system` | Some, but not all, ticket rows or attendee rows exist. | Record partial failure metadata; enqueue retry/review. | yes | Retry links existing rows. | no |
 | `fulfillment_queued` | `manual_review` | `flag_fulfillment_review` | `system/admin` | Issuance cannot safely continue automatically. | Record reason and preserve partial artifacts. | yes | Existing review remains. | no |
-| `partially_issued` | `ticket_issued` | `complete_partial_issuance` | `system` | Missing ticket artifacts are safely completed. | Enqueue delivery and event sync aggregation. | yes | Existing issued rows reused. | yes |
+| `partially_issued` | `ticket_issued` | `complete_partial_issuance` | `system` | Missing ticket artifacts are safely completed. | Enqueue event sync aggregation and, for WhatsApp orders, insert `TicketDeliveryCoordinatorWorker` in the same Postgres transaction. | yes | Existing issued rows reused and the WhatsApp coordinator handoff is restored. | yes |
 | `partially_issued` | `manual_review` | `flag_partial_issuance_review` | `system/admin` | Retry cannot safely complete. | Preserve partial artifacts and reason. | yes | Existing review remains. | no |
 | `partially_issued` | `refunded` | `refund_partially_issued_order` | `admin/system` | Refund/revocation policy approves. | Revoke issued artifacts and update scanner visibility. | yes | Duplicate refund returns refunded. | yes |
 | `ticket_issued` | `refunded` | `refund_issued_order` | `admin/system` | Refund/revocation policy approves and audit reason exists. | Revoke tickets, invalidate tokens, enqueue scanner sync. | yes | Duplicate refund returns refunded. | yes |
@@ -80,6 +80,22 @@ or roll back together. No consumed inventory is released to compensate for a
 later database or queue failure. Redis failures retry; unsafe or exhausted
 fulfillment moves the paid Order to `manual_review` while preserving payment
 evidence.
+
+## WhatsApp Ticket Delivery Handoff
+
+Issuance creates and links the complete durable `TicketIssue` set before the
+Order transitions to `ticket_issued`. For a WhatsApp order, that transition and
+the `TicketDeliveryCoordinatorWorker` insert commit in the same Postgres
+transaction. A queue insertion failure rolls back the transition and the newly
+created issue rows. An issuer replay repairs the coordinator handoff without
+creating duplicate TicketIssues.
+
+The coordinator validates the Order's exact `sales_conversation_id` binding
+and phone match, then checks that every commercial unit has one deliverable
+issued TicketIssue. It pages through the complete issue set with bounded
+keyset queries. In a transaction per page, it creates or reuses one
+`TicketDeliveryIntent` and inserts its send job. Automatic delivery currently
+applies only to WhatsApp source orders.
 
 This ordering covers process loss after Redis consumption: the retry verifies
 the exact consumed hold and completes the database transaction. Process loss

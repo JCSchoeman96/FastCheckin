@@ -1,10 +1,16 @@
 defmodule FastCheck.Tickets.IssuerRetryTest do
   use FastCheck.DataCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Repo
+  alias FastCheck.Sales.ManualReview
   alias FastCheck.Tickets.Issuer
+  alias FastCheck.Workers.IssueTicketsWorker
+  alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
+
+  @actor %{id: "p0c-recovery-admin", username: "p0c-recovery-admin"}
 
   describe "issue_order/2 duplicate retries" do
     test "sequential duplicate calls create exactly one attendee and ticket issue per unit" do
@@ -91,6 +97,115 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
         refute Map.has_key?(transition.metadata, "raw_payload")
       end
     end
+
+    test "WhatsApp issuance rolls back ticket issues when coordinator handoff insertion fails" do
+      %{order_id: order_id} = paid_order_fixture(quantity: 2, source_channel: "whatsapp")
+
+      assert {:error, :ticket_delivery_coordinator_handoff_failed} =
+               Issuer.issue_order(order_id,
+                 ticket_delivery_coordinator_insert_fun: fn _job -> {:error, :forced_failure} end
+               )
+
+      assert order_status(order_id) == "fulfillment_queued"
+      assert attendee_count(order_id) == 0
+      assert ticket_issue_count(order_id) == 0
+
+      refute_enqueued(
+        worker: TicketDeliveryCoordinatorWorker,
+        args: %{"sales_order_id" => order_id}
+      )
+
+      assert {:ok, %{status: :ticket_issued, ticket_issue_count: 2}} =
+               Issuer.issue_order(order_id)
+
+      assert {:ok, %{status: :already_issued, ticket_issue_count: 2}} =
+               Issuer.issue_order(order_id)
+
+      assert order_status(order_id) == "ticket_issued"
+      assert attendee_count(order_id) == 2
+      assert ticket_issue_count(order_id) == 2
+
+      assert [job] =
+               all_enqueued(
+                 worker: TicketDeliveryCoordinatorWorker,
+                 args: %{"sales_order_id" => order_id}
+               )
+
+      assert job.args == %{"sales_order_id" => order_id}
+    end
+
+    test "completed delivery coordinator can be requeued through manual issuance recovery" do
+      %{order_id: order_id} = paid_order_fixture(quantity: 2, source_channel: "whatsapp")
+
+      conversation_id =
+        Repo.one!(
+          from(o in "sales_orders", where: o.id == ^order_id, select: o.sales_conversation_id)
+        )
+
+      Repo.update_all(
+        from(o in "sales_orders", where: o.id == ^order_id),
+        set: [sales_conversation_id: nil]
+      )
+
+      assert {:ok, %{status: :ticket_issued, ticket_issue_count: 2}} =
+               Issuer.issue_order(order_id)
+
+      assert [%{id: coordinator_a_id, args: coordinator_args}] =
+               all_enqueued(
+                 worker: TicketDeliveryCoordinatorWorker,
+                 args: %{"sales_order_id" => order_id}
+               )
+
+      assert :ok = perform_job(TicketDeliveryCoordinatorWorker, coordinator_args)
+      assert order_status(order_id) == "manual_review"
+
+      assert Repo.one!(
+               from(o in "sales_orders", where: o.id == ^order_id, select: o.manual_review_reason)
+             ) == "ticket_delivery_conversation_binding_missing"
+
+      completed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      Repo.update_all(
+        from(j in Oban.Job, where: j.id == ^coordinator_a_id),
+        set: [state: "completed", completed_at: completed_at]
+      )
+
+      Repo.update_all(
+        from(o in "sales_orders", where: o.id == ^order_id),
+        set: [sales_conversation_id: conversation_id]
+      )
+
+      before = %{attendees: attendee_count(order_id), issues: ticket_issue_count(order_id)}
+
+      assert {:ok, _review_action} =
+               ManualReview.retry_ticket_issuance(order_id, @actor, %{
+                 "reason_code" => "retry_ticket_issuance"
+               })
+
+      assert [%{args: issuer_args}] =
+               all_enqueued(worker: IssueTicketsWorker, args: %{"sales_order_id" => order_id})
+
+      assert :ok = perform_job(IssueTicketsWorker, issuer_args)
+      assert order_status(order_id) == "ticket_issued"
+
+      assert %{attendees: before.attendees, issues: before.issues} == %{
+               attendees: attendee_count(order_id),
+               issues: ticket_issue_count(order_id)
+             }
+
+      assert [%{id: coordinator_b_id, conflict?: false, args: coordinator_b_args}] =
+               all_enqueued(
+                 worker: TicketDeliveryCoordinatorWorker,
+                 args: %{"sales_order_id" => order_id}
+               )
+
+      assert coordinator_b_id != coordinator_a_id
+      assert :ok = perform_job(TicketDeliveryCoordinatorWorker, coordinator_b_args)
+      assert 2 == Repo.aggregate("sales_ticket_issues", :count, :id)
+      assert 2 == Repo.aggregate("attendees", :count, :id)
+      assert 2 == Repo.aggregate("sales_ticket_delivery_intents", :count, :id)
+      assert 2 == length(all_enqueued(worker: FastCheck.Workers.SendWhatsAppTicketLinkWorker))
+    end
   end
 
   defp paid_order_fixture(opts) do
@@ -100,7 +215,24 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
     total = quantity * unit_amount
 
     offer_id = insert_offer!(event.id, unit_amount)
-    order_id = insert_order!(event.id, "fulfillment_queued", total)
+
+    order_id =
+      insert_order!(
+        event.id,
+        "fulfillment_queued",
+        total,
+        Keyword.get(opts, :source_channel, "test")
+      )
+
+    if Keyword.get(opts, :source_channel) == "whatsapp" do
+      conversation_id = insert_conversation!()
+
+      Repo.update_all(
+        from(o in "sales_orders", where: o.id == ^order_id),
+        set: [sales_conversation_id: conversation_id]
+      )
+    end
+
     line_id = insert_order_line!(order_id, offer_id, quantity, unit_amount, total)
     insert_checkout_session!(order_id, "paid", quantity)
     insert_payment_attempt!(order_id, "verified_success", total)
@@ -127,7 +259,7 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
     id
   end
 
-  defp insert_order!(event_id, status, total_amount_cents) do
+  defp insert_order!(event_id, status, total_amount_cents, source_channel) do
     %{rows: [[id]]} =
       Repo.query!(
         """
@@ -136,15 +268,40 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
            status, total_amount_cents, currency, paid_at, fulfillment_queued_at,
            lock_version, inserted_at, updated_at)
         VALUES
-          ($1, $2, 'Buyer Name', '+27123456789', 'buyer@example.com', 'test',
+          ($1, $2, 'Buyer Name', '+27123456789', 'buyer@example.com', $5,
            $3, $4, 'ZAR', now(), CASE WHEN $3::varchar = 'fulfillment_queued' THEN now() ELSE NULL END,
            1, now(), now())
         RETURNING id
         """,
-        ["ORD-#{System.unique_integer([:positive])}", event_id, status, total_amount_cents]
+        [
+          "ORD-#{System.unique_integer([:positive])}",
+          event_id,
+          status,
+          total_amount_cents,
+          source_channel
+        ]
       )
 
     id
+  end
+
+  defp insert_conversation! do
+    %{rows: [[id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_conversations
+          (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
+        VALUES ('+27123456789', $1, 'en', 'ticket_issued', '{}', false, now(), now())
+        RETURNING id
+        """,
+        ["issuer-#{System.unique_integer([:positive])}"]
+      )
+
+    id
+  end
+
+  defp order_status(order_id) do
+    Repo.one!(from(o in "sales_orders", where: o.id == ^order_id, select: o.status))
   end
 
   defp insert_order_line!(order_id, offer_id, quantity, unit_amount, total_amount) do

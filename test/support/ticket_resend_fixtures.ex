@@ -56,11 +56,12 @@ defmodule FastCheck.TicketResendFixtures do
     candidate = issued_ticket_candidate!(opts)
     email = Keyword.get(opts, :normalized_email, "resend@example.com")
     name = Keyword.get(opts, :normalized_name, "jamie smith")
+    conversation_id = Keyword.get(opts, :conversation_id)
 
     %{
       sales_order_id: candidate.sales_order_id,
       ticket_issue_id: candidate.ticket_issue_id,
-      conversation_id: Keyword.get(opts, :conversation_id),
+      conversation_id: conversation_id,
       request_email_hash: Hash.email(email),
       request_name_hash: Hash.name(name),
       source_hash: Hash.source(%{conversation_id: Keyword.get(opts, :conversation_id, 123)}),
