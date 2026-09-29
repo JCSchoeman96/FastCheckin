@@ -435,4 +435,307 @@ defmodule FastCheckWeb.Sales.PaystackCallbackControllerTest do
     assert %{reserved_quantity: 0, consumed_quantity: 1} = E2E.inventory_snapshot!(offer.id)
     assert length(all_enqueued(worker: IssueTicketsWorker)) == 1
   end
+
+  test "late-webhook recovery holds the order lock through callback retry and verification" do
+    %{event: event, offer: offer, order: order, attempt: attempt, payment_event: payment_event} =
+      committed_recovery_race_fixture!()
+
+    parent = self()
+    previous_hooks = Application.get_env(:fastcheck, :sales_payment_recovery_test_hooks, [])
+
+    barrier = fn payment_attempt_id, loaded_attempt ->
+      send(parent, {
+        :webhook_attempt_reload_barrier,
+        self(),
+        payment_attempt_id,
+        loaded_attempt.status,
+        Repo.in_transaction?()
+      })
+
+      receive do
+        :release_webhook_attempt_reload -> :ok
+      after
+        10_000 -> {:error, :webhook_attempt_reload_barrier_timeout}
+      end
+    end
+
+    Application.put_env(
+      :fastcheck,
+      :sales_payment_recovery_test_hooks,
+      Keyword.put(previous_hooks, :webhook_attempt_reload_barrier, barrier)
+    )
+
+    {request_fun, request_count} =
+      TestSupport.counting_request_fun(
+        TestSupport.verify_success_request_fun(amount: order.total_amount_cents)
+      )
+
+    Application.put_env(:fastcheck, :paystack_request_fun, request_fun)
+
+    webhook_task =
+      Task.async(fn ->
+        Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+          PaystackWebhookWorker.perform(%Oban.Job{
+            args: %{"payment_event_id" => payment_event.id}
+          })
+        end)
+      end)
+
+    Process.put(:payment_recovery_callback_race_task, nil)
+
+    try do
+      assert_receive {
+                       :webhook_attempt_reload_barrier,
+                       webhook_pid,
+                       attempt_id,
+                       "manual_review",
+                       true
+                     },
+                     5_000
+
+      assert webhook_pid == webhook_task.pid
+      assert attempt_id == attempt.id
+
+      callback_task =
+        Task.async(fn ->
+          Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+            conn = get(build_conn(), @callback_path, %{"reference" => attempt.provider_reference})
+            {conn.status, conn.resp_body}
+          end)
+        end)
+
+      Process.put(:payment_recovery_callback_race_task, callback_task)
+
+      await_order_advisory_lock_waiters!(order.id, 1)
+      assert is_nil(Task.yield(callback_task, 0))
+
+      send(webhook_task.pid, :release_webhook_attempt_reload)
+      assert :ok = Task.await(webhook_task, 10_000)
+
+      assert {200, body} = Task.await(callback_task, 10_000)
+      assert body =~ "We're checking your payment."
+
+      assert [%{args: verify_args}] =
+               all_enqueued(
+                 worker: VerifyPaymentWorker,
+                 args: %{"payment_attempt_id" => attempt.id}
+               )
+
+      assert verify_args["payment_event_id"] == payment_event.id
+
+      assert :ok =
+               Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+                 VerifyPaymentWorker.perform(%Oban.Job{
+                   args: verify_args,
+                   attempt: 1,
+                   max_attempts: 5
+                 })
+               end)
+
+      assert Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+               E2E.reload_payment_attempt!(attempt.id).status
+             end) == "verified_success"
+
+      assert Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+               E2E.reload_payment_event!(payment_event.id).processing_status
+             end) == "processed"
+
+      assert Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+               E2E.reload_order!(order.id).status
+             end) == "paid_verified"
+
+      assert Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+               E2E.order_transition_count(order.id, "paid_verified")
+             end) == 1
+
+      assert committed_transition_count("PaymentAttempt", attempt.id, "verified_success") == 1
+
+      assert committed_transition_count("PaymentAttempt", attempt.id, "verification_retry_queued") ==
+               1
+
+      assert committed_transition_id("PaymentAttempt", attempt.id, "verification_retry_queued") <
+               committed_transition_id("PaymentAttempt", attempt.id, "verified_success")
+
+      assert :counters.get(request_count, 1) == 1
+
+      assert Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+               Ecto.Adapters.SQL.query!(
+                 Repo,
+                 "SELECT count(*) FROM oban_jobs WHERE worker = $1 AND args->>'payment_attempt_id' = $2 AND state IN ('available', 'scheduled', 'executing', 'retryable')",
+                 [inspect(PaidOrderFulfillmentWorker), to_string(attempt.id)]
+               ).rows
+               |> hd()
+               |> hd()
+             end) == 1
+    after
+      if Process.alive?(webhook_task.pid) do
+        send(webhook_task.pid, :release_webhook_attempt_reload)
+      end
+
+      case Process.get(:payment_recovery_callback_race_task) do
+        %Task{pid: callback_pid} = callback_task ->
+          if Process.alive?(callback_pid), do: Task.shutdown(callback_task, :brutal_kill)
+
+        _ ->
+          :ok
+      end
+
+      Process.delete(:payment_recovery_callback_race_task)
+
+      Task.shutdown(webhook_task, :brutal_kill)
+
+      if previous_hooks == [],
+        do: Application.delete_env(:fastcheck, :sales_payment_recovery_test_hooks),
+        else:
+          Application.put_env(
+            :fastcheck,
+            :sales_payment_recovery_test_hooks,
+            previous_hooks
+          )
+
+      cleanup_committed_payment_fixture!(
+        event.id,
+        offer.id,
+        order.id,
+        attempt.id,
+        payment_event.id
+      )
+    end
+  end
+
+  defp committed_recovery_race_fixture! do
+    Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+      {event, offer} = E2E.setup_sales_event_offer!()
+      %{order: order, attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
+
+      Repo.query!(
+        "UPDATE sales_payment_attempts SET status = 'manual_review', manual_review_reason = $2 WHERE id = $1",
+        [attempt.id, "payment_verification_recovery_exhausted"]
+      )
+
+      %{status: _status, event: payment_event} = E2E.ingest_paystack_success!(attempt)
+
+      %{event: event, offer: offer, order: order, attempt: attempt, payment_event: payment_event}
+    end)
+  end
+
+  defp await_order_advisory_lock_waiters!(order_id, expected_count) do
+    deadline = System.monotonic_time(:millisecond) + 5_000
+    do_await_order_advisory_lock_waiters(order_id, expected_count, deadline)
+  end
+
+  defp do_await_order_advisory_lock_waiters(order_id, expected_count, deadline) do
+    %{rows: [[waiter_count]]} =
+      Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+        Repo.query!(
+          """
+          SELECT count(*)
+          FROM pg_locks
+          WHERE locktype = 'advisory'
+            AND granted = false
+            AND classid = 0::oid
+            AND objid::bigint = $1::bigint
+            AND objsubid = 1
+          """,
+          [order_id]
+        )
+      end)
+
+    cond do
+      waiter_count >= expected_count ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("expected #{expected_count} order advisory-lock waiters, saw #{waiter_count}")
+
+      true ->
+        Process.sleep(10)
+        do_await_order_advisory_lock_waiters(order_id, expected_count, deadline)
+    end
+  end
+
+  defp committed_transition_count(entity_type, entity_id, to_state) do
+    Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+      Repo.one!(
+        from(transition in "sales_state_transitions",
+          where:
+            transition.entity_type == ^entity_type and
+              transition.entity_id == ^to_string(entity_id) and transition.to_state == ^to_state,
+          select: count(transition.id)
+        )
+      )
+    end)
+  end
+
+  defp committed_transition_id(entity_type, entity_id, to_state) do
+    Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+      Repo.one!(
+        from(transition in "sales_state_transitions",
+          where:
+            transition.entity_type == ^entity_type and
+              transition.entity_id == ^to_string(entity_id) and transition.to_state == ^to_state,
+          select: min(transition.id)
+        )
+      )
+    end)
+  end
+
+  defp cleanup_committed_payment_fixture!(
+         event_id,
+         offer_id,
+         order_id,
+         attempt_id,
+         payment_event_id
+       ) do
+    Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+      Repo.transaction(fn ->
+        conversation_id =
+          Repo.one!(
+            from(order in "sales_orders",
+              where: order.id == ^order_id,
+              select: order.sales_conversation_id
+            )
+          )
+
+        session_id =
+          Repo.one!(
+            from(session in "sales_checkout_sessions",
+              where: session.sales_order_id == ^order_id,
+              select: session.id
+            )
+          )
+
+        Repo.query!(
+          "DELETE FROM oban_jobs WHERE args->>'payment_attempt_id' = $1 OR args->>'payment_event_id' = $2",
+          [to_string(attempt_id), to_string(payment_event_id)]
+        )
+
+        Repo.query!(
+          "DELETE FROM sales_state_transitions WHERE (entity_type = 'Order' AND entity_id = $1) OR (entity_type = 'PaymentAttempt' AND entity_id = $2) OR (entity_type = 'PaymentEvent' AND entity_id = $3)",
+          [to_string(order_id), to_string(attempt_id), to_string(payment_event_id)]
+        )
+
+        Repo.query!(
+          "DELETE FROM sales_state_transitions WHERE entity_type = 'CheckoutSession' AND entity_id = $1",
+          [to_string(session_id)]
+        )
+
+        Repo.query!("DELETE FROM sales_payment_events WHERE id = $1", [payment_event_id])
+        Repo.query!("DELETE FROM sales_payment_attempts WHERE id = $1", [attempt_id])
+        Repo.query!("DELETE FROM sales_checkout_sessions WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_order_lines WHERE sales_order_id = $1", [order_id])
+        Repo.query!("DELETE FROM sales_orders WHERE id = $1", [order_id])
+
+        if conversation_id do
+          Repo.query!("DELETE FROM sales_conversations WHERE id = $1", [conversation_id])
+        end
+
+        Repo.query!("DELETE FROM sales_ticket_offers WHERE id = $1", [offer_id])
+        Repo.query!("DELETE FROM events WHERE id = $1", [event_id])
+      end)
+    end)
+
+    SalesCheckoutFixtures.flush_inventory_keys(offer_id)
+    TestSupport.flush_webhook_dedupe_keys!()
+  end
 end

@@ -44,6 +44,14 @@ The verification worker delegates to `PaymentVerification`. A successful
 verification follows the existing paid order handoff, including
 `PaidOrderFulfillmentWorker`.
 
+For a signed matching event, `PaystackWebhookWorker` loads the event and attempt
+inside one Repo transaction, takes the order advisory lock, reloads the attempt,
+and then decides any recovery transition. The PaymentAttempt transition,
+refreshed PaymentEvent transition, and VerifyPaymentWorker insertion commit or
+roll back together. `PaymentRecovery.prepare_webhook_attempt/1` rejects calls
+outside that transaction. A verified attempt can use the existing idempotent
+event-finalization path; stale webhook data cannot move it back into retry.
+
 ## Scheduled recovery
 
 The existing Oban Cron plugin runs `PaymentRecoverySweepWorker` every two
@@ -147,3 +155,9 @@ recovery-exhausted retry path; unrelated manual-review reasons remain protected.
 Existing payment, mismatch, timeout, pending, late-payment, webhook, worker, and
 P0-B fulfillment tests remain in the verification set. No migration or index
 change is part of P1-A.
+
+The late-webhook concurrency regression uses separate PostgreSQL connections and
+proves the callback waits on the same order advisory lock until the webhook
+handoff transaction commits. A constrained VerifyPaymentWorker insert also
+proves the attempt and PaymentEvent transitions roll back together on handoff
+failure.

@@ -121,10 +121,15 @@ defmodule FastCheck.Sales.Payments.PaymentRecovery do
   @spec prepare_webhook_attempt(integer()) ::
           {:ok, PaymentAttempt.t() | :deferred | :not_recoverable} | {:error, term()}
   def prepare_webhook_attempt(payment_attempt_id) when is_integer(payment_attempt_id) do
-    with {:ok, initial_attempt} <- required_attempt(payment_attempt_id),
-         :ok <- lock_order(initial_attempt.sales_order_id),
-         {:ok, attempt} <- required_attempt(payment_attempt_id) do
-      prepare_webhook_attempt_for(attempt)
+    if Repo.in_transaction?() do
+      with {:ok, initial_attempt} <- required_attempt(payment_attempt_id),
+           :ok <- lock_order(initial_attempt.sales_order_id),
+           {:ok, attempt} <- required_attempt(payment_attempt_id),
+           :ok <- webhook_attempt_reload_barrier(payment_attempt_id, attempt) do
+        prepare_webhook_attempt_for(attempt)
+      end
+    else
+      {:error, :transaction_required}
     end
   end
 
@@ -640,6 +645,18 @@ defmodule FastCheck.Sales.Payments.PaymentRecovery do
   defp lock_order(order_id) do
     Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
     :ok
+  end
+
+  if Mix.env() == :test do
+    defp webhook_attempt_reload_barrier(payment_attempt_id, attempt) do
+      case Application.get_env(:fastcheck, :sales_payment_recovery_test_hooks, [])
+           |> Keyword.get(:webhook_attempt_reload_barrier) do
+        fun when is_function(fun, 2) -> fun.(payment_attempt_id, attempt)
+        _ -> :ok
+      end
+    end
+  else
+    defp webhook_attempt_reload_barrier(_payment_attempt_id, _attempt), do: :ok
   end
 
   defp find_event_by_id(id) do

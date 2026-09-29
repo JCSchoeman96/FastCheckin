@@ -62,6 +62,7 @@ defmodule FastCheck.Payments.Paystack.WebhookBoundaryTest do
     end
 
     assert source =~ "VerifyPaymentWorker"
-    assert source =~ "Ecto.Multi"
+    assert source =~ "Repo.transaction("
+    assert source =~ "PaymentRecovery.prepare_webhook_attempt(payment_attempt_id)"
   end
 end

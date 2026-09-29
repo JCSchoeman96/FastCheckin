@@ -35,6 +35,13 @@ defmodule FastCheck.Sales.Payments.PaymentVerificationBoundaryTest do
     end
 
     assert String.contains?(File.read!(@orchestrator_path), "TransactionVerifier")
-    assert String.contains?(File.read!(@webhook_worker_path), "Ecto.Multi")
+    webhook_worker = File.read!(@webhook_worker_path)
+
+    assert String.contains?(webhook_worker, "Repo.transaction(")
+
+    assert String.contains?(
+             webhook_worker,
+             "PaymentRecovery.prepare_webhook_attempt(payment_attempt_id)"
+           )
   end
 end

@@ -2,8 +2,9 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   @moduledoc """
   Oban worker for Paystack webhook follow-up after ingestion.
 
-  VS-07B atomically marks `PaymentEvent` processing state and enqueues
-  `VerifyPaymentWorker`. Transaction verification runs in the verify worker.
+  Signed-event recovery, PaymentEvent advancement, and VerifyPaymentWorker
+  handoff share one Repo transaction. The order advisory lock stays held until
+  that transaction commits. Transaction verification runs in the verify worker.
   """
 
   use Oban.Worker,
@@ -23,7 +24,6 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
 
   alias Ash.Changeset
   alias Ash.Query
-  alias Ecto.Multi
   alias FastCheck.Observability.Correlation
   alias FastCheck.Repo
   alias FastCheck.Sales.PaymentAttempt
@@ -37,27 +37,44 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
   def perform(%Oban.Job{args: %{"payment_event_id" => payment_event_id}}) do
     payment_event_id = normalize_id(payment_event_id)
 
-    with {:ok, event} <- load_event(payment_event_id) do
-      metadata =
-        Correlation.operational_metadata(%{
-          payment_event_id: event.id,
-          provider: event.provider,
-          event_type: event.event_type,
-          status: event.processing_status
-        })
-        |> Map.new()
+    Repo.transaction(fn ->
+      case load_event(payment_event_id) do
+        {:ok, event} ->
+          emit_webhook_received_telemetry(event)
 
-      :telemetry.execute(
-        [:fastcheck, :sales, :payment, :webhook_received],
-        %{count: 1},
-        metadata
-      )
+          case handoff_verification(event) do
+            :ok -> :ok
+            {:error, reason} -> Repo.rollback(reason)
+          end
 
-      handoff_verification(event)
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
   def perform(_job), do: {:error, :invalid_args}
+
+  defp emit_webhook_received_telemetry(event) do
+    metadata =
+      Correlation.operational_metadata(%{
+        payment_event_id: event.id,
+        provider: event.provider,
+        event_type: event.event_type,
+        status: event.processing_status
+      })
+      |> Map.new()
+
+    :telemetry.execute(
+      [:fastcheck, :sales, :payment, :webhook_received],
+      %{count: 1},
+      metadata
+    )
+  end
 
   defp handoff_verification(%{signature_valid: true, processing_status: "processed"}), do: :ok
   defp handoff_verification(%{signature_valid: true, processing_status: "duplicate"}), do: :ok
@@ -79,38 +96,48 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
 
   defp atomic_handoff_with_attempt(event, %PaymentAttempt{id: payment_attempt_id}) do
     case PaymentRecovery.prepare_webhook_attempt(payment_attempt_id) do
-      {:ok, :not_recoverable} -> mark_event_not_recoverable(event)
-      {:ok, handoff} -> atomic_handoff_with_prepared_attempt(event, handoff)
-      {:error, reason} -> {:error, reason}
+      {:ok, handoff} ->
+        with {:ok, current_event} <- load_event(event.id) do
+          if current_event.processing_status in ["processed", "duplicate"] do
+            :ok
+          else
+            handoff_event(current_event, handoff)
+          end
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp atomic_handoff_with_prepared_attempt(event, attempt_handoff) do
+  defp handoff_event(event, :not_recoverable), do: mark_event_not_recoverable(event)
+
+  defp handoff_event(event, attempt_handoff) do
     action =
       if event.processing_status in ["unmatched", "failed", "manual_review"],
         do: :retry_processing,
         else: :mark_processing_started
 
-    Multi.new()
-    |> Multi.run(:payment_event, fn _repo, _changes -> update_event(event, action) end)
-    |> Multi.run(:verify_job, fn _repo, _changes ->
-      case attempt_handoff do
-        :deferred ->
-          {:ok, :deferred}
+    case update_event(event, action) do
+      {:ok, _updated_event} -> insert_verification_handoff(event, attempt_handoff)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-        %PaymentAttempt{id: payment_attempt_id, provider_reference: provider_reference} ->
-          VerifyPaymentWorker.new(%{
-            "payment_event_id" => event.id,
-            "payment_attempt_id" => payment_attempt_id,
-            "provider_reference" => provider_reference
-          })
-          |> Oban.insert()
-      end
-    end)
-    |> Repo.transaction()
-    |> case do
-      {:ok, _} -> :ok
-      {:error, _step, reason, _changes} -> {:error, reason}
+  defp insert_verification_handoff(_event, :deferred), do: :ok
+
+  defp insert_verification_handoff(
+         %{id: event_id},
+         %PaymentAttempt{id: payment_attempt_id, provider_reference: provider_reference}
+       ) do
+    case VerifyPaymentWorker.new(%{
+           "payment_event_id" => event_id,
+           "payment_attempt_id" => payment_attempt_id,
+           "provider_reference" => provider_reference
+         })
+         |> Oban.insert() do
+      {:ok, _job} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -122,33 +149,21 @@ defmodule FastCheck.Sales.Payments.PaystackWebhookWorker do
         do: :retry_processing,
         else: :mark_processing_started
 
-    Repo.transaction(fn ->
-      with {:ok, updated_event} <- update_event(event, action),
-           {:ok, _reviewed_event} <- mark_event_not_recoverable_state(updated_event) do
-        :ok
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-    |> case do
-      {:ok, :ok} -> :ok
-      {:error, reason} -> {:error, reason}
+    with {:ok, updated_event} <- update_event(event, action),
+         {:ok, _reviewed_event} <- mark_event_not_recoverable_state(updated_event) do
+      :ok
     end
   end
 
   defp atomic_handoff_unmatched(event) do
-    Multi.new()
-    |> Multi.run(:payment_event, fn _repo, _changes ->
-      attrs = %{last_processing_error: "no_matching_payment_attempt"}
+    attrs = %{last_processing_error: "no_matching_payment_attempt"}
 
-      event
-      |> Changeset.for_update(:mark_unmatched, attrs, actor: system_actor())
-      |> Ash.update(authorize?: false)
-    end)
-    |> Repo.transaction()
+    event
+    |> Changeset.for_update(:mark_unmatched, attrs, actor: system_actor())
+    |> Ash.update(authorize?: false)
     |> case do
-      {:ok, _} -> :ok
-      {:error, _step, reason, _changes} -> {:error, reason}
+      {:ok, _updated_event} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
