@@ -135,6 +135,15 @@ Restart rules:
   the Order association or start another flow. The customer receives a status
   or support response from the durable Order state. Multiple active Orders
   fail closed to support; the runtime never chooses the newest or oldest.
+- An active commercial Order also dominates messages in a Conversation already
+  inside Resend (`collecting_resend_name`, `collecting_resend_email`,
+  `collecting_resend_otp`, `awaiting_verified_resend_delivery`, or
+  `verified_resend_delivery_queued`). This is a valid historical state from
+  the pre-P1-B Restart bug, which could clear an active purchase before the
+  customer entered Resend. The active-order check runs before resend OTP
+  creation or verification and before delivery enqueue. The message receives
+  the existing payment, fulfillment, or support response, and Resend does not
+  advance.
 - **Terminal/completed Order:** Restart may clear the old Conversation
   checkpoint. Historical Orders remain linked to the Conversation. The next
   Buy receives a new purchase UUID and checkout key.

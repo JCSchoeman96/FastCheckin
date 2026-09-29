@@ -124,6 +124,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp commercial_order_guard_required?(_conversation, {:ok, :stop}), do: true
   defp commercial_order_guard_required?(_conversation, {:ok, :back}), do: true
 
+  defp commercial_order_guard_required?(%{state: state}, _normalized)
+       when state in [
+              "collecting_resend_name",
+              "collecting_resend_email",
+              "collecting_resend_otp",
+              "awaiting_verified_resend_delivery",
+              "verified_resend_delivery_queued"
+            ],
+       do: true
+
   defp commercial_order_guard_required?(%{state: "main_menu"}, {:ok, {:number, number}})
        when number in [1, 3],
        do: true

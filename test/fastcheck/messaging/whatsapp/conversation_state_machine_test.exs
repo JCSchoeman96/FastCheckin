@@ -557,6 +557,184 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute inspect(session) =~ data["resend_challenge_public_id"]
   end
 
+  test "active Orders dominate inbound messages in historical resend states", %{
+    event: event,
+    offer: offer
+  } do
+    cases = [
+      {"collecting_resend_name", "Jamie Smith", %{}, "payment_pending"},
+      {"collecting_resend_email", "resend@example.com", %{"resend_name" => "jamie smith"},
+       "manual_review"},
+      {"collecting_resend_otp", nil,
+       %{"resend_name" => "jamie smith", "resend_email" => "resend@example.com"},
+       "manual_review"},
+      {"awaiting_verified_resend_delivery", "continue",
+       %{"resend_name" => "jamie smith", "resend_email" => "resend@example.com"},
+       "manual_review"},
+      {"verified_resend_delivery_queued", "continue",
+       %{"resend_otp_verification_status" => "verified", "resend_delivery_status" => "queued"},
+       "manual_review"}
+    ]
+
+    for {state, input, initial_data, order_status} <- cases do
+      conversation = insert_conversation!(state: state, state_data: initial_data)
+
+      {challenge, otp} =
+        case state do
+          "collecting_resend_otp" ->
+            resend_challenge!(conversation, :pending)
+
+          "awaiting_verified_resend_delivery" ->
+            {challenge, _otp} = resend_challenge!(conversation, :verified)
+
+            {challenge, nil}
+
+          _other ->
+            {nil, nil}
+        end
+
+      state_data =
+        case {state, challenge} do
+          {"collecting_resend_otp", challenge} ->
+            Map.put(initial_data, "resend_challenge_public_id", challenge.public_id)
+
+          {"awaiting_verified_resend_delivery", challenge} ->
+            initial_data
+            |> Map.put("resend_challenge_public_id", challenge.public_id)
+            |> Map.put("resend_otp_verification_status", "verified")
+            |> Map.put("resend_otp_verified_at", DateTime.utc_now() |> DateTime.to_iso8601())
+
+          _other ->
+            initial_data
+        end
+
+      conversation = %{conversation | state_data: state_data}
+
+      order =
+        create_active_order!(
+          conversation,
+          event,
+          offer,
+          "historical-resend-#{state}-#{conversation.id}"
+        )
+
+      Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+        set: [status: order_status]
+      )
+
+      challenge_before = challenge && resend_challenge_snapshot(challenge.public_id)
+      order_before = commercial_order_snapshot(order.id)
+      order_count_before = Repo.one!(from(o in "sales_orders", select: count(o.id)))
+
+      challenge_count_before =
+        Repo.one!(from(c in "sales_ticket_resend_challenges", select: count(c.id)))
+
+      intent_count_before =
+        Repo.one!(from(i in "sales_ticket_delivery_intents", select: count(i.id)))
+
+      delivery_attempts_before = delivery_attempt_count()
+
+      input = if is_nil(input), do: otp, else: input
+
+      assert {:ok, result} =
+               handle(
+                 conversation,
+                 input,
+                 "wamid.active-resend-#{state}-#{conversation.id}"
+               )
+
+      assert result.conversation.state == state
+
+      assert result.response_body =~
+               if(order_status == "payment_pending", do: "betaling", else: "ondersteuning")
+
+      assert result.conversation.state_data["sales_order_id"] == order.id
+      assert result.conversation.state_data["order_public_reference"] == order.public_reference
+      refute Map.has_key?(result.conversation.state_data, "purchase_flow_id")
+
+      for {key, value} <- state_data do
+        assert result.conversation.state_data[key] == value
+      end
+
+      assert commercial_order_snapshot(order.id) == order_before
+      assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == order_count_before
+
+      assert Repo.one!(from(c in "sales_ticket_resend_challenges", select: count(c.id))) ==
+               challenge_count_before
+
+      assert Repo.one!(from(i in "sales_ticket_delivery_intents", select: count(i.id))) ==
+               intent_count_before
+
+      assert delivery_attempt_count() == delivery_attempts_before
+
+      if challenge do
+        assert resend_challenge_snapshot(challenge.public_id) == challenge_before
+      end
+
+      refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+    end
+
+    assert_no_email_sent()
+  end
+
+  test "multiple active Orders in a resend state hand off without resend side effects", %{
+    event: event,
+    offer: offer
+  } do
+    state_data = %{"resend_name" => "jamie smith"}
+    conversation = insert_conversation!(state: "collecting_resend_email", state_data: state_data)
+
+    orders = [
+      create_active_order!(
+        conversation,
+        event,
+        offer,
+        "ambiguous-resend-a-#{conversation.id}"
+      ),
+      create_active_order!(
+        conversation,
+        event,
+        offer,
+        "ambiguous-resend-b-#{conversation.id}"
+      )
+    ]
+
+    orders_before = Enum.map(orders, &commercial_order_snapshot(&1.id))
+    order_count_before = Repo.one!(from(o in "sales_orders", select: count(o.id)))
+
+    challenge_count_before =
+      Repo.one!(from(c in "sales_ticket_resend_challenges", select: count(c.id)))
+
+    intent_count_before =
+      Repo.one!(from(i in "sales_ticket_delivery_intents", select: count(i.id)))
+
+    assert {:ok, result} =
+             handle(
+               conversation,
+               "resend@example.com",
+               "wamid.ambiguous-resend-#{conversation.id}"
+             )
+
+    assert result.conversation.state == "manual_review"
+    assert result.conversation.needs_human
+    assert result.conversation.handoff_reason == "multiple_active_commercial_orders"
+    assert result.response_body =~ "ondersteuning"
+    assert result.conversation.state_data["resend_name"] == state_data["resend_name"]
+    refute Map.has_key?(result.conversation.state_data, "purchase_flow_id")
+    refute Map.has_key?(result.conversation.state_data, "sales_order_id")
+    assert Enum.map(orders, &commercial_order_snapshot(&1.id)) == orders_before
+    assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == order_count_before
+
+    assert Repo.one!(from(c in "sales_ticket_resend_challenges", select: count(c.id))) ==
+             challenge_count_before
+
+    assert Repo.one!(from(i in "sales_ticket_delivery_intents", select: count(i.id))) ==
+             intent_count_before
+
+    refute_enqueued(worker: SendWhatsAppTicketLinkWorker)
+    assert_no_email_sent()
+  end
+
   test "generic rejected resend request uses same visible OTP prompt without challenge id", %{
     conversation: conversation
   } do
@@ -2261,6 +2439,38 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       from i in "sales_ticket_delivery_intents",
         where: i.ticket_resend_challenge_id == ^challenge_id,
         select: i.id
+    )
+  end
+
+  defp resend_challenge!(conversation, status) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {:ok, challenge, otp} =
+      Otp.issue(challenge_attrs!(conversation_id: conversation.id), now, return_otp?: true)
+
+    case status do
+      :pending ->
+        {challenge, otp}
+
+      :verified ->
+        {:ok, verified} = Otp.verify(challenge.public_id, otp, DateTime.add(now, 1, :second))
+        {verified, otp}
+    end
+  end
+
+  defp resend_challenge_snapshot(public_id) do
+    Repo.one!(
+      from c in "sales_ticket_resend_challenges",
+        where: c.public_id == ^public_id,
+        select: map(c, [:status, :otp_hash, :failed_attempt_count, :verified_at, :consumed_at])
+    )
+  end
+
+  defp commercial_order_snapshot(order_id) do
+    Repo.one!(
+      from o in "sales_orders",
+        where: o.id == ^order_id,
+        select: map(o, [:id, :status, :idempotency_key, :sales_conversation_id, :updated_at])
     )
   end
 end

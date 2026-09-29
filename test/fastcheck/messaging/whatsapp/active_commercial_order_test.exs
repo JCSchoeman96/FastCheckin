@@ -115,6 +115,50 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
            ) == "awaiting_payment"
   end
 
+  test "direct resend Ash actions reject an active Order", %{offer: offer} do
+    cases = [
+      {:submit_resend_name, "collecting_resend_name"},
+      {:submit_resend_email, "collecting_resend_email"},
+      {:return_to_resend_name_collection, "collecting_resend_email"},
+      {:return_to_resend_email_collection, "collecting_resend_otp"},
+      {:verify_resend_otp, "collecting_resend_otp"},
+      {:queue_verified_resend_delivery, "awaiting_verified_resend_delivery"}
+    ]
+
+    for {{action, state}, index} <- Enum.with_index(cases, 1) do
+      conversation = insert_conversation!(58 + index, state, %{})
+      order = create_order!(conversation, offer, "direct-resend-#{action}-#{conversation.id}")
+
+      assert {:error, _reason} =
+               conversation
+               |> Changeset.for_update(
+                 action,
+                 %{
+                   state_data: %{},
+                   last_inbound_message_id: "wamid.direct-#{action}",
+                   last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                   correlation_id: "corr-direct-#{action}",
+                   idempotency_key: "idem-direct-#{action}",
+                   transition_metadata: %{source_channel: "whatsapp"}
+                 },
+                 actor: %{actor_type: :system, actor_id: "active-order-test"}
+               )
+               |> Ash.update(authorize?: false)
+
+      assert Repo.one!(
+               from c in "sales_conversations",
+                 where: c.id == ^conversation.id,
+                 select: c.state
+             ) == state
+
+      assert Repo.one!(
+               from o in "sales_orders",
+                 where: o.id == ^order.id,
+                 select: o.status
+             ) == "awaiting_payment"
+    end
+  end
+
   defp create_order!(conversation, offer, idempotency_key) do
     input =
       SalesFixtures.checkout_input(%{

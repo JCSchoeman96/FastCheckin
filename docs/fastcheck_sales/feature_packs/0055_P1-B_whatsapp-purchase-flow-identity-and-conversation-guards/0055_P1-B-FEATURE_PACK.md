@@ -62,6 +62,17 @@ Resend. The response comes from the durable Order status. An uncheckpointed
 Order can repair `sales_order_id` and `order_public_reference` only when the
 relationship is unambiguous. The repair does not infer a PaymentAttempt.
 
+The active Order also dominates every inbound message when a Conversation is
+already inside Resend: `collecting_resend_name`, `collecting_resend_email`,
+`collecting_resend_otp`, `awaiting_verified_resend_delivery`, and
+`verified_resend_delivery_queued`. This is a backward-compatibility state that
+the pre-P1-B Restart bug could produce: Restart cleared an active purchase,
+then the customer could enter Resend from the old main menu. The state is not
+limited to manual corruption. The active Order lookup now runs before resend
+OTP creation or verification and before delivery enqueue; an active Order
+returns the existing payment, fulfillment, or support response without
+advancing Resend.
+
 Restart behavior is:
 
 - **Pre-commercial flow:** Restart may reset the current flow and clear its

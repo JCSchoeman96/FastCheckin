@@ -207,7 +207,13 @@ defmodule FastCheck.Sales.Conversation do
     :return_to_email_collection,
     :return_to_main_menu,
     :restart_to_main_menu,
-    :cancel_conversation
+    :cancel_conversation,
+    :submit_resend_name,
+    :submit_resend_email,
+    :return_to_resend_name_collection,
+    :return_to_resend_email_collection,
+    :verify_resend_otp,
+    :queue_verified_resend_delivery
   ]
 
   @vs_18_checkpoint_fields [
