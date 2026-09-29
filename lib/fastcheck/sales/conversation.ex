@@ -1,10 +1,9 @@
 defmodule FastCheck.Sales.Conversation do
   @moduledoc """
-  Durable WhatsApp conversation checkpoint skeleton.
+  Durable checkpoint and guarded state transitions for WhatsApp conversations.
 
-  VS-01E stores recoverable conversation checkpoint shape only. Meta webhooks,
-  WhatsApp sending, Redis session/rate-limit behavior, checkout creation,
-  payment handling, ticket delivery, and menu workflow actions are deferred.
+  Purchase identity is kept in `state_data`; commercial Order identity and
+  status remain authoritative in the Sales resources.
   """
 
   use Ash.Resource,
@@ -13,7 +12,209 @@ defmodule FastCheck.Sales.Conversation do
     authorizers: [Ash.Policy.Authorizer]
 
   alias Ash.Changeset
+  alias FastCheck.Messaging.WhatsApp.ActiveCommercialOrder
+  alias FastCheck.Messaging.WhatsApp.PurchaseFlowIdentity
   alias FastCheck.Sales.StateTransitionSupport
+
+  @purchase_flow_reset_keys [
+    "purchase_flow_id",
+    "selected_event_id",
+    "selected_event_label",
+    "selected_event_max_tickets_per_order",
+    "offer_options",
+    "selected_offer_id",
+    "selected_offer_label",
+    "selected_offer_max_per_order",
+    "selected_offer_price_cents",
+    "selected_offer_currency",
+    "selected_offer_lock_version",
+    "quantity",
+    "buyer_name",
+    "buyer_email",
+    "sales_order_id",
+    "payment_attempt_id",
+    "order_public_reference"
+  ]
+
+  @transition_specs %{
+    start_language_selection: %{allowed_from: ["new"], to_state: "selecting_language"},
+    start_default_main_menu: %{allowed_from: ["new"], to_state: "main_menu"},
+    select_language: %{allowed_from: ["selecting_language"], to_state: "main_menu"},
+    choose_buy_tickets: %{allowed_from: ["main_menu"], to_state: "selecting_event"},
+    choose_resend_ticket: %{allowed_from: ["main_menu"], to_state: "collecting_resend_name"},
+    select_event: %{allowed_from: ["selecting_event"], to_state: "selecting_ticket_type"},
+    select_ticket_type: %{
+      allowed_from: ["selecting_ticket_type"],
+      to_state: "collecting_quantity"
+    },
+    submit_quantity: %{allowed_from: ["collecting_quantity"], to_state: "collecting_buyer_name"},
+    submit_buyer_name: %{allowed_from: ["collecting_buyer_name"], to_state: "collecting_email"},
+    submit_buyer_email: %{allowed_from: ["collecting_email"], to_state: "confirming_order"},
+    submit_resend_name: %{
+      allowed_from: ["collecting_resend_name"],
+      to_state: "collecting_resend_email"
+    },
+    submit_resend_email: %{
+      allowed_from: ["collecting_resend_email"],
+      to_state: "collecting_resend_otp"
+    },
+    skip_optional_email_after_name: %{
+      allowed_from: ["collecting_email"],
+      to_state: "confirming_order"
+    },
+    confirm_order: %{allowed_from: ["confirming_order"], to_state: "awaiting_payment"},
+    return_to_event_selection: %{
+      allowed_from: [
+        "selecting_event",
+        "selecting_ticket_type",
+        "collecting_quantity",
+        "confirming_order"
+      ],
+      to_state: "selecting_event"
+    },
+    return_to_ticket_type_selection: %{
+      allowed_from: [
+        "selecting_ticket_type",
+        "collecting_quantity",
+        "confirming_order"
+      ],
+      to_state: "selecting_ticket_type"
+    },
+    return_to_quantity_collection: %{
+      allowed_from: ["collecting_buyer_name", "confirming_order"],
+      to_state: "collecting_quantity"
+    },
+    return_to_buyer_name_collection: %{
+      allowed_from: ["collecting_email"],
+      to_state: "collecting_buyer_name"
+    },
+    return_to_email_collection: %{
+      allowed_from: ["confirming_order"],
+      to_state: "collecting_email"
+    },
+    return_to_resend_name_collection: %{
+      allowed_from: ["collecting_resend_email"],
+      to_state: "collecting_resend_name"
+    },
+    return_to_resend_email_collection: %{
+      allowed_from: ["collecting_resend_otp"],
+      to_state: "collecting_resend_email"
+    },
+    verify_resend_otp: %{
+      allowed_from: ["collecting_resend_otp"],
+      to_state: "awaiting_verified_resend_delivery"
+    },
+    queue_verified_resend_delivery: %{
+      allowed_from: ["awaiting_verified_resend_delivery"],
+      to_state: "verified_resend_delivery_queued"
+    },
+    return_to_main_menu: %{
+      allowed_from: [
+        "selecting_event",
+        "selecting_ticket_type",
+        "collecting_quantity",
+        "confirming_order",
+        "collecting_resend_name"
+      ],
+      to_state: "main_menu"
+    },
+    restart_to_main_menu: %{
+      allowed_from: [
+        "new",
+        "selecting_language",
+        "main_menu",
+        "selecting_event",
+        "selecting_ticket_type",
+        "collecting_quantity",
+        "collecting_buyer_name",
+        "collecting_email",
+        "confirming_order",
+        "awaiting_payment",
+        "payment_pending",
+        "payment_received",
+        "ticket_issued",
+        "completed",
+        "manual_review",
+        "cancelled",
+        "expired",
+        "collecting_resend_name",
+        "collecting_resend_email",
+        "collecting_resend_otp",
+        "awaiting_verified_resend_delivery",
+        "verified_resend_delivery_queued"
+      ],
+      to_state: "main_menu"
+    },
+    cancel_conversation: %{
+      allowed_from: [
+        "new",
+        "selecting_language",
+        "main_menu",
+        "selecting_event",
+        "selecting_ticket_type",
+        "collecting_quantity",
+        "collecting_buyer_name",
+        "collecting_email",
+        "confirming_order",
+        "collecting_resend_name",
+        "collecting_resend_email",
+        "collecting_resend_otp",
+        "awaiting_verified_resend_delivery",
+        "verified_resend_delivery_queued"
+      ],
+      to_state: "cancelled"
+    },
+    handoff_conversation: %{
+      allowed_from: [
+        "new",
+        "selecting_language",
+        "main_menu",
+        "selecting_event",
+        "selecting_ticket_type",
+        "collecting_quantity",
+        "collecting_buyer_name",
+        "collecting_email",
+        "confirming_order",
+        "awaiting_payment",
+        "payment_pending",
+        "payment_received",
+        "ticket_issued",
+        "collecting_resend_name",
+        "collecting_resend_email",
+        "collecting_resend_otp",
+        "awaiting_verified_resend_delivery",
+        "verified_resend_delivery_queued"
+      ],
+      to_state: "manual_review"
+    },
+    mark_conversation_payment_pending: %{
+      allowed_from: ["confirming_order", "main_menu", "awaiting_payment", "payment_pending"],
+      to_state: "payment_pending"
+    },
+    request_payment_email: %{
+      allowed_from: ["confirming_order", "main_menu", "awaiting_payment", "payment_pending"],
+      to_state: "collecting_email"
+    }
+  }
+
+  @commercially_guarded_actions [
+    :choose_buy_tickets,
+    :choose_resend_ticket,
+    :return_to_event_selection,
+    :return_to_ticket_type_selection,
+    :return_to_quantity_collection,
+    :return_to_buyer_name_collection,
+    :return_to_email_collection,
+    :return_to_main_menu,
+    :restart_to_main_menu,
+    :cancel_conversation,
+    :submit_resend_name,
+    :submit_resend_email,
+    :return_to_resend_name_collection,
+    :return_to_resend_email_collection,
+    :verify_resend_otp,
+    :queue_verified_resend_delivery
+  ]
 
   @vs_18_checkpoint_fields [
     :preferred_language,
@@ -155,7 +356,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "selecting_language", :start_language_selection))
+      change(&transition_state(&1, &2, :start_language_selection))
     end
 
     update :start_default_main_menu do
@@ -164,7 +365,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "main_menu", :start_default_main_menu))
+      change(&transition_state(&1, &2, :start_default_main_menu))
     end
 
     update :select_language do
@@ -173,7 +374,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "main_menu", :select_language))
+      change(&transition_state(&1, &2, :select_language))
     end
 
     update :choose_buy_tickets do
@@ -182,7 +383,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "selecting_event", :choose_buy_tickets))
+      change(&start_purchase_flow(&1, &2))
     end
 
     update :choose_resend_ticket do
@@ -191,7 +392,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_resend_name", :choose_resend_ticket))
+      change(&transition_state(&1, &2, :choose_resend_ticket))
     end
 
     update :select_event do
@@ -200,7 +401,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "selecting_ticket_type", :select_event))
+      change(&transition_state(&1, &2, :select_event))
     end
 
     update :select_ticket_type do
@@ -209,7 +410,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_quantity", :select_ticket_type))
+      change(&transition_state(&1, &2, :select_ticket_type))
     end
 
     update :submit_quantity do
@@ -218,7 +419,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_buyer_name", :submit_quantity))
+      change(&transition_state(&1, &2, :submit_quantity))
     end
 
     update :submit_buyer_name do
@@ -227,7 +428,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_email", :submit_buyer_name))
+      change(&transition_state(&1, &2, :submit_buyer_name))
     end
 
     update :submit_buyer_email do
@@ -236,7 +437,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "confirming_order", :submit_buyer_email))
+      change(&transition_state(&1, &2, :submit_buyer_email))
     end
 
     update :submit_resend_name do
@@ -245,7 +446,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_resend_email", :submit_resend_name))
+      change(&transition_state(&1, &2, :submit_resend_name))
     end
 
     update :submit_resend_email do
@@ -254,7 +455,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_resend_otp", :submit_resend_email))
+      change(&transition_state(&1, &2, :submit_resend_email))
     end
 
     update :skip_optional_email_after_name do
@@ -263,7 +464,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "confirming_order", :skip_optional_email_after_name))
+      change(&transition_state(&1, &2, :skip_optional_email_after_name))
     end
 
     update :confirm_order do
@@ -272,7 +473,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "awaiting_payment", :confirm_order))
+      change(&transition_state(&1, &2, :confirm_order))
     end
 
     update :return_to_event_selection do
@@ -281,7 +482,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "selecting_event", :return_to_event_selection))
+      change(&transition_state(&1, &2, :return_to_event_selection))
     end
 
     update :return_to_ticket_type_selection do
@@ -290,7 +491,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "selecting_ticket_type", :return_to_ticket_type_selection))
+      change(&transition_state(&1, &2, :return_to_ticket_type_selection))
     end
 
     update :return_to_quantity_collection do
@@ -299,7 +500,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_quantity", :return_to_quantity_collection))
+      change(&transition_state(&1, &2, :return_to_quantity_collection))
     end
 
     update :return_to_buyer_name_collection do
@@ -308,7 +509,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_buyer_name", :return_to_buyer_name_collection))
+      change(&transition_state(&1, &2, :return_to_buyer_name_collection))
     end
 
     update :return_to_email_collection do
@@ -317,7 +518,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_email", :return_to_email_collection))
+      change(&transition_state(&1, &2, :return_to_email_collection))
     end
 
     update :return_to_resend_name_collection do
@@ -327,9 +528,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
 
-      change(
-        &transition_state(&1, &2, "collecting_resend_name", :return_to_resend_name_collection)
-      )
+      change(&transition_state(&1, &2, :return_to_resend_name_collection))
     end
 
     update :return_to_resend_email_collection do
@@ -339,9 +538,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
 
-      change(
-        &transition_state(&1, &2, "collecting_resend_email", :return_to_resend_email_collection)
-      )
+      change(&transition_state(&1, &2, :return_to_resend_email_collection))
     end
 
     update :verify_resend_otp do
@@ -351,7 +548,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
 
-      change(&transition_state(&1, &2, "awaiting_verified_resend_delivery", :verify_resend_otp))
+      change(&transition_state(&1, &2, :verify_resend_otp))
     end
 
     update :queue_verified_resend_delivery do
@@ -361,14 +558,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
 
-      change(
-        &transition_state(
-          &1,
-          &2,
-          "verified_resend_delivery_queued",
-          :queue_verified_resend_delivery
-        )
-      )
+      change(&transition_state(&1, &2, :queue_verified_resend_delivery))
     end
 
     update :return_to_main_menu do
@@ -377,7 +567,16 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "main_menu", :return_to_main_menu))
+      change(&transition_state(&1, &2, :return_to_main_menu))
+    end
+
+    update :restart_to_main_menu do
+      require_atomic?(false)
+      accept(@vs_18_checkpoint_fields)
+      argument(:correlation_id, :string)
+      argument(:idempotency_key, :string)
+      argument(:transition_metadata, :map)
+      change(&transition_state(&1, &2, :restart_to_main_menu))
     end
 
     update :cancel_conversation do
@@ -387,7 +586,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "cancelled", :cancel_conversation))
+      change(&transition_state(&1, &2, :cancel_conversation))
     end
 
     update :handoff_conversation do
@@ -397,7 +596,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "manual_review", :handoff_conversation))
+      change(&transition_state(&1, &2, :handoff_conversation))
     end
 
     update :mark_conversation_payment_pending do
@@ -406,7 +605,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "payment_pending", :mark_conversation_payment_pending))
+      change(&transition_state(&1, &2, :mark_conversation_payment_pending))
     end
 
     update :request_payment_email do
@@ -415,7 +614,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
-      change(&transition_state(&1, &2, "collecting_email", :request_payment_email))
+      change(&transition_state(&1, &2, :request_payment_email))
     end
   end
 
@@ -756,7 +955,20 @@ defmodule FastCheck.Sales.Conversation do
 
   defp iso8601(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
 
-  defp transition_state(changeset, context, to_state, action_name) do
+  defp start_purchase_flow(changeset, context) do
+    state_data =
+      changeset
+      |> changeset_state_data()
+      |> Map.drop(@purchase_flow_reset_keys)
+      |> Map.put("purchase_flow_id", PurchaseFlowIdentity.new())
+
+    changeset
+    |> Changeset.force_change_attribute(:state_data, state_data)
+    |> transition_state(context, :choose_buy_tickets)
+  end
+
+  defp transition_state(changeset, context, action_name) do
+    %{allowed_from: allowed_from, to_state: to_state} = Map.fetch!(@transition_specs, action_name)
     from_state = Changeset.get_data(changeset, :state)
 
     reason =
@@ -777,21 +989,72 @@ defmodule FastCheck.Sales.Conversation do
       Changeset.get_argument(changeset, :idempotency_key) ||
         Map.get(action_context, :idempotency_key)
 
+    transition = %{
+      action_context: action_context,
+      to_state: to_state,
+      action_name: action_name,
+      from_state: from_state,
+      reason: reason,
+      transition_metadata: transition_metadata,
+      correlation_id: correlation_id,
+      idempotency_key: idempotency_key
+    }
+
+    cond do
+      from_state not in allowed_from ->
+        Changeset.add_error(changeset,
+          field: :state,
+          message: "invalid transition from #{from_state}"
+        )
+
+      action_name in @commercially_guarded_actions ->
+        case commercial_transition_guard(changeset) do
+          :ok ->
+            record_transition(changeset, transition)
+
+          {:error, guard_reason} ->
+            Changeset.add_error(changeset,
+              field: :state,
+              message: "commercial order prevents this transition: #{guard_reason}"
+            )
+        end
+
+      true ->
+        record_transition(changeset, transition)
+    end
+  end
+
+  defp commercial_transition_guard(changeset) do
+    conversation = %{
+      id: Changeset.get_data(changeset, :id),
+      state_data: current_state_data(changeset)
+    }
+
+    case ActiveCommercialOrder.find_active_order(conversation) do
+      {:ok, nil} -> :ok
+      {:ok, _order} -> {:error, :active_commercial_order}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp record_transition(changeset, transition) do
+    %{action_context: action_context} = transition
+
     changeset
-    |> Changeset.force_change_attribute(:state, to_state)
-    |> checkpoint_whatsapp_inbound(transition_metadata, idempotency_key)
+    |> Changeset.force_change_attribute(:state, transition.to_state)
+    |> checkpoint_whatsapp_inbound(transition.transition_metadata, transition.idempotency_key)
     |> Changeset.after_action(fn _changeset, record ->
       case StateTransitionSupport.record!(
              %{
                entity_type: "conversation",
                entity_id: Integer.to_string(record.id),
-               from_state: from_state,
+               from_state: transition.from_state,
                to_state: record.state,
-               reason: reason,
-               metadata: transition_metadata,
-               correlation_id: correlation_id,
-               idempotency_key: idempotency_key,
-               source: "whatsapp.conversation.#{action_name}"
+               reason: transition.reason,
+               metadata: transition.transition_metadata,
+               correlation_id: transition.correlation_id,
+               idempotency_key: transition.idempotency_key,
+               source: "whatsapp.conversation.#{transition.action_name}"
              },
              action_context
            ) do

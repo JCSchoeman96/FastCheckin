@@ -43,6 +43,7 @@ defmodule FastCheck.Sales.ConversationResourceSkeletonTest do
     :return_to_resend_name_collection,
     :return_to_resend_email_collection,
     :return_to_main_menu,
+    :restart_to_main_menu,
     :cancel_conversation,
     :handoff_conversation,
     :mark_conversation_payment_pending,

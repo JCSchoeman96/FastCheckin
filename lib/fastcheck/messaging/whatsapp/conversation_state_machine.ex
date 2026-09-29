@@ -1,6 +1,6 @@
 defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   @moduledoc """
-  VS-18 WhatsApp number-only conversation flow up to checkout start.
+  WhatsApp number-only purchase and resend flows with durable Order guards.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -12,11 +12,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Event
+  alias FastCheck.Messaging.WhatsApp.ActiveCommercialOrder
   alias FastCheck.Messaging.WhatsApp.FlowResult
   alias FastCheck.Messaging.WhatsApp.InputNormalizer
   alias FastCheck.Messaging.WhatsApp.MenuRenderer
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.PaymentFlow
+  alias FastCheck.Messaging.WhatsApp.PaymentStatusRenderer
   alias FastCheck.Messaging.WhatsApp.ResendDeliveryFlow
   alias FastCheck.Messaging.WhatsApp.ResendFlow
   alias FastCheck.Messaging.WhatsApp.SessionStore
@@ -71,7 +73,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
                    "quantity"
                  ] ++
                    @selected_event_keys ++
-                   @selected_offer_keys ++ @buyer_keys ++ @order_flow_keys ++ @resend_flow_keys
+                   @selected_offer_keys ++
+                   @buyer_keys ++
+                   @order_flow_keys ++
+                   @resend_flow_keys ++
+                   ["purchase_flow_id"]
 
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
@@ -90,10 +96,95 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
         # durable handled/reply checkpoint instead.
         normalized = InputNormalizer.normalize(command.text_body || "")
 
-        case dispatch(command, conversation, normalized) do
+        case dispatch_with_commercial_order_guard(command, conversation, normalized) do
           {:ok, result} -> mark_handled(command, result)
           {:error, reason} -> {:error, reason}
         end
+    end
+  end
+
+  defp dispatch_with_commercial_order_guard(command, conversation, normalized) do
+    if commercial_order_guard_required?(conversation, normalized) do
+      case ActiveCommercialOrder.find_active_order(conversation) do
+        {:ok, nil} ->
+          dispatch(command, conversation, normalized)
+
+        {:ok, order} ->
+          PaymentFlow.respond_to_active_order(command, conversation, order)
+
+        {:error, reason} ->
+          fail_closed_commercial_order_lookup(command, conversation, reason)
+      end
+    else
+      dispatch(command, conversation, normalized)
+    end
+  end
+
+  defp commercial_order_guard_required?(_conversation, {:ok, :restart}), do: true
+  defp commercial_order_guard_required?(_conversation, {:ok, :stop}), do: true
+  defp commercial_order_guard_required?(_conversation, {:ok, :back}), do: true
+
+  defp commercial_order_guard_required?(%{state: state}, _normalized)
+       when state in [
+              "collecting_resend_name",
+              "collecting_resend_email",
+              "collecting_resend_otp",
+              "awaiting_verified_resend_delivery",
+              "verified_resend_delivery_queued"
+            ],
+       do: true
+
+  defp commercial_order_guard_required?(%{state: "main_menu"}, {:ok, {:number, number}})
+       when number in [1, 3],
+       do: true
+
+  defp commercial_order_guard_required?(_conversation, _normalized), do: false
+
+  defp fail_closed_commercial_order_lookup(command, conversation, reason) do
+    handoff_reason =
+      case reason do
+        :multiple_active_orders -> "multiple_active_commercial_orders"
+        :conversation_order_mismatch -> "conversation_order_mismatch"
+        _other -> "commercial_order_lookup_failed"
+      end
+
+    if conversation.state in [
+         "new",
+         "selecting_language",
+         "main_menu",
+         "selecting_event",
+         "selecting_ticket_type",
+         "collecting_quantity",
+         "collecting_buyer_name",
+         "collecting_email",
+         "confirming_order",
+         "awaiting_payment",
+         "payment_pending",
+         "payment_received",
+         "ticket_issued",
+         "collecting_resend_name",
+         "collecting_resend_email",
+         "collecting_resend_otp",
+         "awaiting_verified_resend_delivery",
+         "verified_resend_delivery_queued"
+       ] do
+      with {:ok, conversation} <-
+             transition(command, conversation, :handoff_conversation, %{
+               state_data: state_data(conversation),
+               needs_human: true,
+               handoff_reason: handoff_reason,
+               reason: handoff_reason
+             }) do
+        {:ok,
+         result(
+           conversation,
+           PaymentStatusRenderer.manual_review(language(conversation)),
+           command
+         )}
+      end
+    else
+      {:ok,
+       result(conversation, PaymentStatusRenderer.manual_review(language(conversation)), command)}
     end
   end
 
@@ -121,7 +212,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     with {:ok, conversation} <-
            transition(command, conversation, :cancel_conversation, %{
              reason: "customer_stop_command",
-             state_data: state_data(conversation)
+             state_data: clear_current_flow(state_data(conversation))
            }) do
       {:ok, result(conversation, MenuRenderer.cancelled(language(conversation)), command)}
     end
@@ -133,7 +224,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, {:ok, :restart}) do
     with {:ok, conversation} <-
-           transition(command, conversation, :return_to_main_menu, %{state_data: %{}}) do
+           transition(command, conversation, :restart_to_main_menu, %{state_data: %{}}) do
       {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
     end
   end
@@ -1032,6 +1123,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
       quantity: Map.get(data, "quantity"),
       sales_order_id: Map.get(data, "sales_order_id"),
       order_public_reference: Map.get(data, "order_public_reference"),
+      purchase_flow_id: Map.get(data, "purchase_flow_id"),
       version: Map.get(data, "version", 0)
     }
   end

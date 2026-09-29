@@ -4,7 +4,31 @@
 
 `draft`, `awaiting_payment`, `payment_pending`, `paid_unverified`,
 `paid_verified`, `fulfillment_queued`, `ticket_issued`, `partially_issued`,
-`manual_review`, `cancelled`, `expired`, `refunded`.
+`issuance_retry_queued`, `manual_review`, `manual_review_held`,
+`no_fulfillment_closed`, `cancelled`, `expired`, `refunded`.
+
+## WhatsApp Conversation Restart Classification
+
+The WhatsApp reset guard treats these statuses as active and non-abandonable:
+
+```text
+draft
+awaiting_payment
+payment_pending
+paid_unverified
+paid_verified
+fulfillment_queued
+partially_issued
+issuance_retry_queued
+manual_review
+manual_review_held
+```
+
+`ticket_issued`, `expired`, `cancelled`, `refunded`, and
+`no_fulfillment_closed` are terminal for this guard. `ticket_issued` completes
+the purchase flow while the Order remains permanently linked to its
+Conversation. `no_fulfillment_closed` is the additional terminal state used
+when manual review closes without fulfillment.
 
 ## Transition Matrix
 

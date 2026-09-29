@@ -89,6 +89,7 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
       selected_event_id: 101,
       selected_offer_id: 202,
       quantity: 2,
+      purchase_flow_id: "e8b0d11a-dfb4-4db7-93c9-bf82d2fb7bd1",
       version: 3,
       buyer_name: "Jan Buyer",
       buyer_email: "jan@example.com"
@@ -104,6 +105,7 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStoreTest do
     assert session["selected_event_id"] == "101"
     assert session["selected_offer_id"] == "202"
     assert session["quantity"] == "2"
+    assert session["purchase_flow_id"] == "e8b0d11a-dfb4-4db7-93c9-bf82d2fb7bd1"
     assert session["version"] == "3"
     refute Map.has_key?(session, "buyer_name")
     refute Map.has_key?(session, "buyer_email")

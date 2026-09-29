@@ -3,8 +3,173 @@ defmodule FastCheck.Sales.ConversationStateActionsTest do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Messaging.WhatsApp.PurchaseFlowIdentity
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.StateTransition
+
+  @conversation_states [
+    "new",
+    "selecting_language",
+    "main_menu",
+    "selecting_event",
+    "selecting_ticket_type",
+    "collecting_quantity",
+    "collecting_buyer_name",
+    "collecting_email",
+    "confirming_order",
+    "awaiting_payment",
+    "payment_pending",
+    "payment_received",
+    "ticket_issued",
+    "completed",
+    "manual_review",
+    "cancelled",
+    "expired",
+    "collecting_resend_name",
+    "collecting_resend_email",
+    "collecting_resend_otp",
+    "awaiting_verified_resend_delivery",
+    "verified_resend_delivery_queued"
+  ]
+
+  @transition_cases [
+    {:start_language_selection, ["new"], "selecting_language"},
+    {:start_default_main_menu, ["new"], "main_menu"},
+    {:select_language, ["selecting_language"], "main_menu"},
+    {:choose_buy_tickets, ["main_menu"], "selecting_event"},
+    {:choose_resend_ticket, ["main_menu"], "collecting_resend_name"},
+    {:select_event, ["selecting_event"], "selecting_ticket_type"},
+    {:select_ticket_type, ["selecting_ticket_type"], "collecting_quantity"},
+    {:submit_quantity, ["collecting_quantity"], "collecting_buyer_name"},
+    {:submit_buyer_name, ["collecting_buyer_name"], "collecting_email"},
+    {:submit_buyer_email, ["collecting_email"], "confirming_order"},
+    {:submit_resend_name, ["collecting_resend_name"], "collecting_resend_email"},
+    {:submit_resend_email, ["collecting_resend_email"], "collecting_resend_otp"},
+    {:skip_optional_email_after_name, ["collecting_email"], "confirming_order"},
+    {:confirm_order, ["confirming_order"], "awaiting_payment"},
+    {:return_to_event_selection,
+     ["selecting_event", "selecting_ticket_type", "collecting_quantity", "confirming_order"],
+     "selecting_event"},
+    {:return_to_ticket_type_selection,
+     ["selecting_ticket_type", "collecting_quantity", "confirming_order"],
+     "selecting_ticket_type"},
+    {:return_to_quantity_collection, ["collecting_buyer_name", "confirming_order"],
+     "collecting_quantity"},
+    {:return_to_buyer_name_collection, ["collecting_email"], "collecting_buyer_name"},
+    {:return_to_email_collection, ["confirming_order"], "collecting_email"},
+    {:return_to_resend_name_collection, ["collecting_resend_email"], "collecting_resend_name"},
+    {:return_to_resend_email_collection, ["collecting_resend_otp"], "collecting_resend_email"},
+    {:verify_resend_otp, ["collecting_resend_otp"], "awaiting_verified_resend_delivery"},
+    {:queue_verified_resend_delivery, ["awaiting_verified_resend_delivery"],
+     "verified_resend_delivery_queued"},
+    {:return_to_main_menu,
+     [
+       "selecting_event",
+       "selecting_ticket_type",
+       "collecting_quantity",
+       "confirming_order",
+       "collecting_resend_name"
+     ], "main_menu"},
+    {:restart_to_main_menu,
+     [
+       "new",
+       "selecting_language",
+       "main_menu",
+       "selecting_event",
+       "selecting_ticket_type",
+       "collecting_quantity",
+       "collecting_buyer_name",
+       "collecting_email",
+       "confirming_order",
+       "awaiting_payment",
+       "payment_pending",
+       "payment_received",
+       "ticket_issued",
+       "completed",
+       "manual_review",
+       "cancelled",
+       "expired",
+       "collecting_resend_name",
+       "collecting_resend_email",
+       "collecting_resend_otp",
+       "awaiting_verified_resend_delivery",
+       "verified_resend_delivery_queued"
+     ], "main_menu"},
+    {:cancel_conversation,
+     [
+       "new",
+       "selecting_language",
+       "main_menu",
+       "selecting_event",
+       "selecting_ticket_type",
+       "collecting_quantity",
+       "collecting_buyer_name",
+       "collecting_email",
+       "confirming_order",
+       "collecting_resend_name",
+       "collecting_resend_email",
+       "collecting_resend_otp",
+       "awaiting_verified_resend_delivery",
+       "verified_resend_delivery_queued"
+     ], "cancelled"},
+    {:handoff_conversation,
+     [
+       "new",
+       "selecting_language",
+       "main_menu",
+       "selecting_event",
+       "selecting_ticket_type",
+       "collecting_quantity",
+       "collecting_buyer_name",
+       "collecting_email",
+       "confirming_order",
+       "awaiting_payment",
+       "payment_pending",
+       "payment_received",
+       "ticket_issued",
+       "collecting_resend_name",
+       "collecting_resend_email",
+       "collecting_resend_otp",
+       "awaiting_verified_resend_delivery",
+       "verified_resend_delivery_queued"
+     ], "manual_review"},
+    {:mark_conversation_payment_pending,
+     ["confirming_order", "main_menu", "awaiting_payment", "payment_pending"], "payment_pending"},
+    {:request_payment_email,
+     ["confirming_order", "main_menu", "awaiting_payment", "payment_pending"], "collecting_email"}
+  ]
+
+  for {action, allowed_from, target_state} <- @transition_cases do
+    illegal_source_state =
+      Enum.find(@conversation_states, &(&1 not in allowed_from)) ||
+        "outside_transition_matrix"
+
+    test "#{action} accepts every declared source state" do
+      action = unquote(action)
+
+      for source_state <- unquote(allowed_from) do
+        conversation = insert_conversation!(source_state)
+
+        assert {:ok, updated} = update_transition(conversation, action)
+        assert updated.state == unquote(target_state)
+
+        assert_purchase_flow_identity(action, updated)
+      end
+    end
+
+    test "#{action} rejects a source outside its declared state matrix" do
+      conversation = %{insert_conversation!("new") | state: unquote(illegal_source_state)}
+      assert {:error, _reason} = update_transition(conversation, unquote(action))
+    end
+  end
+
+  test "buy and email actions reject representative legal but disallowed source states" do
+    payment_pending = %{insert_conversation!("new") | state: "payment_pending"}
+    collecting_quantity = %{insert_conversation!("new") | state: "collecting_quantity"}
+
+    assert {:error, _reason} = update_transition(payment_pending, :choose_buy_tickets)
+    assert {:error, _reason} = update_transition(collecting_quantity, :submit_buyer_email)
+  end
 
   test "named conversation action updates state and records sanitized transition" do
     conversation = insert_conversation!("new")
@@ -156,20 +321,56 @@ defmodule FastCheck.Sales.ConversationStateActionsTest do
   end
 
   defp insert_conversation!(state) do
+    suffix =
+      System.unique_integer([:positive])
+      |> rem(1_000_000)
+      |> Integer.to_string()
+      |> String.pad_leading(6, "0")
+
     %{rows: [[id]]} =
       Repo.query!(
         """
         INSERT INTO sales_conversations
           (phone_e164, wa_id, preferred_language, state, state_data, needs_human, inserted_at, updated_at)
         VALUES
-          ('+27821234567', '27821234567', 'af', $1, '{}', false, now(), now())
+          ($2, $3, 'af', $1, '{}', false, now(), now())
         RETURNING id
         """,
-        [state]
+        [state, "+2782#{suffix}", "2782#{suffix}"]
       )
 
     Conversation
     |> Query.for_read(:get_by_id, %{id: id})
     |> Ash.read_one!(authorize?: false)
   end
+
+  defp update_transition(conversation, action) do
+    attrs = %{
+      state_data: %{},
+      last_inbound_message_id: "wamid.matrix-#{action}-#{System.unique_integer([:positive])}",
+      last_message_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      correlation_id: "corr-matrix-#{action}",
+      idempotency_key: "idem-matrix-#{action}-#{System.unique_integer([:positive])}",
+      transition_metadata: %{}
+    }
+
+    attrs =
+      if action in [:cancel_conversation, :handoff_conversation],
+        do: Map.put(attrs, :reason, "test transition"),
+        else: attrs
+
+    conversation
+    |> Changeset.for_update(action, attrs, actor: %{actor_type: :system, actor_id: "test"})
+    |> Ash.update(authorize?: false)
+  end
+
+  defp assert_purchase_flow_identity(:choose_buy_tickets, conversation) do
+    assert PurchaseFlowIdentity.valid?(conversation.state_data["purchase_flow_id"])
+  end
+
+  defp assert_purchase_flow_identity(:choose_resend_ticket, conversation) do
+    refute Map.has_key?(conversation.state_data, "purchase_flow_id")
+  end
+
+  defp assert_purchase_flow_identity(_action, _conversation), do: :ok
 end

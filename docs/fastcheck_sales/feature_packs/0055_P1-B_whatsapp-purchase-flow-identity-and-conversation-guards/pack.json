@@ -1,0 +1,73 @@
+{
+  "pack_id": "0055_P1-B",
+  "slice": "P1-B",
+  "name": "WhatsApp Purchase Flow Identity and Conversation Guards",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0055_P1-B_whatsapp-purchase-flow-identity-and-conversation-guards",
+  "goal": "Give each genuine WhatsApp purchase its own durable checkout identity, protect active commercial Orders from Conversation reset, and enforce the Conversation named-action state matrix.",
+  "identities": {
+    "provider_message_id": "inbound-message idempotency",
+    "purchase_flow_id": "one genuine WhatsApp purchase attempt; opaque UUID in Conversation.state_data",
+    "order_idempotency_key": "durable checkout identity derived from purchase_flow_id"
+  },
+  "checkout_identities": {
+    "modern": "whatsapp:conversation:<conversation_id>:purchase:<purchase_flow_id>:checkout",
+    "legacy_in_flight": "whatsapp:conversation:<conversation_id>:checkout",
+    "legacy_fallback": "Only when a historical in-flight Conversation has no purchase_flow_id"
+  },
+  "active_order_authority": {
+    "conversation_link": "sales_orders.sales_conversation_id",
+    "lookup_limit": 2,
+    "multiple_active_result": "fail closed to support; never choose by age",
+    "active_statuses": [
+      "draft",
+      "awaiting_payment",
+      "payment_pending",
+      "paid_unverified",
+      "paid_verified",
+      "fulfillment_queued",
+      "partially_issued",
+      "issuance_retry_queued",
+      "manual_review",
+      "manual_review_held"
+    ],
+    "terminal_safe_restart_statuses": [
+      "ticket_issued",
+      "expired",
+      "cancelled",
+      "refunded",
+      "no_fulfillment_closed"
+    ]
+  },
+  "restart_behavior": {
+    "pre_commercial_flow": "Restart may clear the current flow",
+    "active_commercial_order": "Restart, Stop, Back, Buy, and Resend preserve the Order link and return status or support guidance",
+    "terminal_order": "Restart is allowed; historical Order linkage remains; the next Buy creates a new purchase_flow_id"
+  },
+  "persistence": {
+    "purchase_flow_id_durable": "sales_conversations.state_data",
+    "purchase_flow_id_hot_projection": "Existing Redis SessionStore hash",
+    "order_identity": "sales_orders.idempotency_key",
+    "schema_migration_required": false,
+    "new_database_resource": false
+  },
+  "transition_guards": {
+    "boundary": "FastCheck.Sales.Conversation named Ash update actions",
+    "central_map": "@transition_specs with allowed_from and to_state",
+    "direct_action_illegal_transition_rejected": true
+  },
+  "documentation": [
+    "docs/fastcheck_sales/state_machines/CONVERSATION_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/ORDER_STATE_MACHINE.md"
+  ],
+  "out_of_scope": [
+    "Refund or restock workflows",
+    "Wallets or new payment authority",
+    "A PurchaseFlow database resource",
+    "WhatsApp-specific behavior in generic Checkout",
+    "Coupling verified resend challenges to purchase_flow_id"
+  ]
+}
