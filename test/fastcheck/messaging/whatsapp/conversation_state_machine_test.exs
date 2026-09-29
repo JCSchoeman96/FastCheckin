@@ -1128,6 +1128,27 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute_enqueued(worker: SendWhatsAppPaymentLinkWorker)
   end
 
+  test "# from selecting_event clears the pre-checkout purchase identity", %{
+    conversation: conversation
+  } do
+    result =
+      conversation
+      |> progress("hi", "restart-selecting-event-1")
+      |> progress("1", "restart-selecting-event-2")
+      |> progress("1", "restart-selecting-event-3")
+
+    assert result.conversation.state == "selecting_event"
+    assert PurchaseFlowIdentity.valid?(result.conversation.state_data["purchase_flow_id"])
+    assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == 0
+
+    assert {:ok, restarted} =
+             handle(result.conversation, "#", "wamid.restart-selecting-event-4")
+
+    assert restarted.conversation.state == "main_menu"
+    assert_flow_fields_absent(restarted.conversation.state_data)
+    assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == 0
+  end
+
   test "restart alias clears current flow and returns to main menu", %{conversation: conversation} do
     result =
       conversation
