@@ -277,6 +277,7 @@ defmodule FastCheck.Sales.Payments.TestSupport do
       provider_event_id: "evt-#{System.unique_integer([:positive])}",
       provider_reference: "ref-#{System.unique_integer([:positive])}",
       event_type: "charge.success",
+      signature_valid: true,
       payload_hash: "hash-#{System.unique_integer([:positive])}",
       raw_payload: %{"event" => "charge.success"},
       processing_status: "stored",

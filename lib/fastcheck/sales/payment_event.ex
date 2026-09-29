@@ -229,7 +229,7 @@ defmodule FastCheck.Sales.PaymentEvent do
           from_state == "processing_started" ->
             changeset
 
-          from_state in ["unmatched", "failed"] ->
+          from_state in ["unmatched", "failed", "manual_review"] ->
             count = Changeset.get_data(changeset, :processing_attempt_count) || 0
 
             transition_processing_status(

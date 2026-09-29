@@ -31,7 +31,8 @@ config :fastcheck, Oban,
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,
      crontab: [
-       {"*/2 * * * *", FastCheck.Workers.CheckoutExpirySweeperWorker}
+       {"*/2 * * * *", FastCheck.Workers.CheckoutExpirySweeperWorker},
+       {"*/2 * * * *", FastCheck.Sales.Payments.PaymentRecoverySweepWorker}
      ]}
   ]
 
@@ -44,6 +45,9 @@ config :fastcheck, :event_post_grace_days, 14
 
 config :fastcheck, :sales_checkout_hold_ttl_seconds, 600
 config :fastcheck, :sales_checkout_expiry_sweep_batch_size, 200
+config :fastcheck, :sales_payment_recovery_stale_after_seconds, 120
+config :fastcheck, :sales_payment_recovery_horizon_seconds, 900
+config :fastcheck, :sales_payment_recovery_batch_size, 200
 config :fastcheck, :sales_delivery_token_ttl_seconds, 90 * 24 * 60 * 60
 
 config :fastcheck, :ticket_resend,

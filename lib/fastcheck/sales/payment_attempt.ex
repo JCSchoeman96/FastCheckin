@@ -277,16 +277,25 @@ defmodule FastCheck.Sales.PaymentAttempt do
 
     update :queue_verification_retry do
       require_atomic?(false)
-      accept([])
+      accept([:manual_review_reason])
       argument(:reason, :string)
 
       change(fn changeset, context ->
+        recovery_retry_attrs =
+          if Changeset.get_data(changeset, :manual_review_reason) ==
+               "payment_verification_recovery_exhausted" do
+            %{manual_review_reason: "payment_verification_recovery_retry"}
+          else
+            %{}
+          end
+
         transition_status(
           changeset,
           context,
           "verification_retry_queued",
           allowed_from: ["manual_review"],
-          reason: Changeset.get_argument(changeset, :reason)
+          reason: Changeset.get_argument(changeset, :reason),
+          extra_attrs: recovery_retry_attrs
         )
       end)
     end

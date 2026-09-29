@@ -84,6 +84,8 @@ defmodule FastCheckWeb.Router do
   scope "/", FastCheckWeb do
     pipe_through :browser
 
+    get "/sales/payments/paystack/callback", Sales.PaystackCallbackController, :show, log: false
+
     get "/login", SessionController, :new
     post "/login", SessionController, :create
 

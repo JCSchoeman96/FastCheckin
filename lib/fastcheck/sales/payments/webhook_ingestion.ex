@@ -228,13 +228,13 @@ defmodule FastCheck.Sales.Payments.WebhookIngestion do
   end
 
   defp worker_job_exists?(payment_event_id) do
-    worker = to_string(PaystackWebhookWorker)
+    worker = inspect(PaystackWebhookWorker)
 
     Repo.exists?(
       from j in Oban.Job,
         where: j.worker == ^worker,
         where: fragment("?->>'payment_event_id' = ?", j.args, ^to_string(payment_event_id)),
-        where: j.state not in ["cancelled", "discarded"]
+        where: j.state in ["available", "scheduled", "executing", "retryable"]
     )
   end
 
