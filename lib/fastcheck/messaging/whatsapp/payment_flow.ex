@@ -13,9 +13,11 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
 
   alias Ash.Changeset
   alias Ash.Query
+  alias FastCheck.Messaging.WhatsApp.ActiveCommercialOrder
   alias FastCheck.Messaging.WhatsApp.FlowResult
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.PaymentStatusRenderer
+  alias FastCheck.Messaging.WhatsApp.PurchaseFlowIdentity
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.TicketLinkRenderer
   alias FastCheck.Sales.Checkout
@@ -34,6 +36,19 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
         %MessageCommand{} = command,
         %Conversation{} = conversation
       ) do
+    case ActiveCommercialOrder.find_active_order(conversation) do
+      {:ok, order} when not is_nil(order) ->
+        respond_to_active_order(command, conversation, order)
+
+      {:ok, nil} ->
+        create_confirmation_checkout(command, conversation)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp create_confirmation_checkout(command, conversation) do
     data = state_data(conversation)
 
     with :ok <- ensure_buyer_email(data),
@@ -64,20 +79,39 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
     end
   end
 
+  @spec respond_to_active_order(MessageCommand.t(), Conversation.t(), Order.t()) ::
+          {:ok, FlowResult.t()} | {:error, term()}
+  def respond_to_active_order(
+        %MessageCommand{} = command,
+        %Conversation{} = conversation,
+        %Order{} = order
+      ) do
+    with {:ok, conversation} <- repair_order_checkpoint(conversation, order) do
+      case respond_for_order(command, conversation, order) do
+        {:ok, _result} = response ->
+          response
+
+        {:error, _reason} ->
+          {:ok, result(conversation, status_response(order, language(conversation)), command)}
+      end
+    end
+  end
+
   @spec respond_to_status_request(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
   def respond_to_status_request(%MessageCommand{} = command, %Conversation{} = conversation) do
-    case load_order_from_conversation(conversation) do
-      {:ok, order} ->
-        respond_for_order(command, conversation, order)
+    case ActiveCommercialOrder.find_active_order(conversation) do
+      {:ok, %Order{} = order} ->
+        respond_to_active_order(command, conversation, order)
+
+      {:ok, nil} ->
+        case load_order_from_conversation(conversation) do
+          {:ok, order} -> respond_for_order(command, conversation, order)
+          {:error, _reason} -> support_result(command, conversation)
+        end
 
       {:error, _reason} ->
-        {:ok,
-         result(
-           conversation,
-           PaymentStatusRenderer.manual_review(language(conversation)),
-           command
-         )}
+        support_result(command, conversation)
     end
   end
 
@@ -117,9 +151,19 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
   end
 
   defp respond_for_order(command, conversation, %{status: status})
-       when status in ["paid_verified", "fulfillment_queued"] do
+       when status in [
+              "paid_verified",
+              "fulfillment_queued",
+              "partially_issued",
+              "issuance_retry_queued"
+            ] do
     {:ok,
      result(conversation, PaymentStatusRenderer.ticket_preparing(language(conversation)), command)}
+  end
+
+  defp respond_for_order(command, conversation, %{status: "paid_unverified"}) do
+    {:ok,
+     result(conversation, PaymentStatusRenderer.payment_pending(language(conversation)), command)}
   end
 
   defp respond_for_order(command, conversation, %{status: "ticket_issued"} = order) do
@@ -128,13 +172,14 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
     end
   end
 
-  defp respond_for_order(command, conversation, %{status: "manual_review"}) do
+  defp respond_for_order(command, conversation, %{status: status})
+       when status in ["manual_review", "manual_review_held", "draft"] do
     {:ok,
      result(conversation, PaymentStatusRenderer.manual_review(language(conversation)), command)}
   end
 
   defp respond_for_order(command, conversation, %{status: status})
-       when status in ["expired", "cancelled", "refunded"] do
+       when status in ["expired", "cancelled", "refunded", "no_fulfillment_closed"] do
     {:ok,
      result(conversation, PaymentStatusRenderer.terminal(language(conversation), status), command)}
   end
@@ -144,12 +189,39 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
      result(conversation, PaymentStatusRenderer.payment_pending(language(conversation)), command)}
   end
 
+  defp status_response(%{status: status}, language)
+       when status in ["awaiting_payment", "payment_pending", "paid_unverified"],
+       do: PaymentStatusRenderer.payment_pending(language)
+
+  defp status_response(%{status: status}, language)
+       when status in [
+              "paid_verified",
+              "fulfillment_queued",
+              "partially_issued",
+              "issuance_retry_queued"
+            ],
+       do: PaymentStatusRenderer.ticket_preparing(language)
+
+  defp status_response(%{status: status}, language)
+       when status in ["manual_review", "manual_review_held", "draft"],
+       do: PaymentStatusRenderer.manual_review(language)
+
+  defp status_response(%{status: status}, language)
+       when status in ["expired", "cancelled", "refunded", "no_fulfillment_closed"],
+       do: PaymentStatusRenderer.terminal(language, status)
+
+  defp status_response(_order, language), do: PaymentStatusRenderer.manual_review(language)
+
   defp checkout_for_confirmation(command, conversation, data) do
     case Map.get(data, "sales_order_id") do
       order_id when is_integer(order_id) ->
         with {:ok, order} <- load_order(order_id),
+             true <- order.sales_conversation_id == conversation.id,
              {:ok, session} <- load_checkout_session(order.id) do
           {:ok, %{order: order, checkout_session: session}}
+        else
+          false -> {:error, :conversation_order_mismatch}
+          {:error, reason} -> {:error, reason}
         end
 
       _ ->
@@ -158,23 +230,35 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
   end
 
   defp start_checkout(command, conversation, data) do
-    input = %{
-      event_id: Map.fetch!(data, "selected_event_id"),
-      ticket_offer_id: Map.fetch!(data, "selected_offer_id"),
-      quantity: Map.fetch!(data, "quantity"),
-      buyer_name: Map.get(data, "buyer_name"),
-      buyer_phone: conversation.phone_e164,
-      buyer_email: Map.get(data, "buyer_email"),
-      sales_conversation_id: conversation.id,
-      source_channel: "whatsapp",
-      idempotency_key: "whatsapp:conversation:#{conversation.id}:checkout",
-      correlation_id: command.correlation_id,
-      event_name: Map.fetch!(data, "selected_event_label"),
-      expected_offer_lock_version: Map.get(data, "selected_offer_lock_version")
-    }
+    with {:ok, idempotency_key} <- checkout_idempotency_key(conversation, data) do
+      input = %{
+        event_id: Map.fetch!(data, "selected_event_id"),
+        ticket_offer_id: Map.fetch!(data, "selected_offer_id"),
+        quantity: Map.fetch!(data, "quantity"),
+        buyer_name: Map.get(data, "buyer_name"),
+        buyer_phone: conversation.phone_e164,
+        buyer_email: Map.get(data, "buyer_email"),
+        sales_conversation_id: conversation.id,
+        source_channel: "whatsapp",
+        idempotency_key: idempotency_key,
+        correlation_id: command.correlation_id,
+        event_name: Map.fetch!(data, "selected_event_label"),
+        expected_offer_lock_version: Map.get(data, "selected_offer_lock_version")
+      }
 
-    actor = customer_actor(input.event_id)
-    Checkout.start_checkout(input, actor)
+      actor = customer_actor(input.event_id)
+      Checkout.start_checkout(input, actor)
+    end
+  end
+
+  defp checkout_idempotency_key(conversation, data) do
+    case Map.get(data, "purchase_flow_id") do
+      nil ->
+        {:ok, PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)}
+
+      purchase_flow_id ->
+        PurchaseFlowIdentity.checkout_idempotency_key(conversation.id, purchase_flow_id)
+    end
   end
 
   defp initialize_payment(session_id, event_id, command) do
@@ -211,16 +295,34 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
   defp mark_payment_pending(command, conversation, extra_data) do
     data = Map.merge(state_data(conversation), extra_data)
 
-    transition(command, conversation, :mark_conversation_payment_pending, %{
-      state_data: data
-    })
+    if conversation.state in [
+         "confirming_order",
+         "main_menu",
+         "awaiting_payment",
+         "payment_pending"
+       ] do
+      transition(command, conversation, :mark_conversation_payment_pending, %{state_data: data})
+    else
+      store_order_checkpoint(conversation, data)
+    end
   end
 
   defp request_email(command, conversation) do
-    with {:ok, conversation} <-
-           transition(command, conversation, :request_payment_email, %{
-             state_data: state_data(conversation)
-           }) do
+    result =
+      if conversation.state in [
+           "confirming_order",
+           "main_menu",
+           "awaiting_payment",
+           "payment_pending"
+         ] do
+        transition(command, conversation, :request_payment_email, %{
+          state_data: state_data(conversation)
+        })
+      else
+        {:ok, conversation}
+      end
+
+    with {:ok, conversation} <- result do
       {:ok,
        result(conversation, PaymentStatusRenderer.missing_email(language(conversation)), command)}
     end
@@ -261,15 +363,69 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlow do
     %{
       sales_order_id: Map.get(data, "sales_order_id"),
       order_public_reference: Map.get(data, "order_public_reference"),
+      purchase_flow_id: Map.get(data, "purchase_flow_id"),
       version: Map.get(data, "version", 0)
     }
   end
 
   defp load_order_from_conversation(conversation) do
     case Map.get(state_data(conversation), "sales_order_id") do
-      id when is_integer(id) -> load_order(id)
-      _ -> {:error, :order_not_found}
+      id when is_integer(id) ->
+        with {:ok, order} <- load_order(id),
+             true <- order.sales_conversation_id == conversation.id do
+          {:ok, order}
+        else
+          false -> {:error, :conversation_order_mismatch}
+          {:error, reason} -> {:error, reason}
+        end
+
+      _ ->
+        {:error, :order_not_found}
     end
+  end
+
+  defp repair_order_checkpoint(conversation, order) do
+    data = state_data(conversation)
+    order_id = order.id
+
+    case Map.get(data, "sales_order_id") do
+      nil ->
+        save_order_checkpoint(conversation, data, order)
+
+      ^order_id ->
+        save_order_checkpoint(conversation, data, order)
+
+      _other_order_id ->
+        {:error, :conversation_order_mismatch}
+    end
+  end
+
+  defp save_order_checkpoint(conversation, data, order) do
+    repaired_data =
+      data
+      |> Map.put("sales_order_id", order.id)
+      |> Map.put("order_public_reference", order.public_reference)
+
+    if repaired_data == data do
+      {:ok, conversation}
+    else
+      store_order_checkpoint(conversation, repaired_data)
+    end
+  end
+
+  defp support_result(command, conversation) do
+    {:ok,
+     result(conversation, PaymentStatusRenderer.manual_review(language(conversation)), command)}
+  end
+
+  defp store_order_checkpoint(conversation, state_data) do
+    conversation
+    |> Changeset.for_update(
+      :update_inbound_checkpoint,
+      %{state_data: state_data},
+      actor: %{actor_type: :system, actor_id: "whatsapp_payment_flow"}
+    )
+    |> Ash.update(authorize?: false)
   end
 
   defp load_order(order_id) do

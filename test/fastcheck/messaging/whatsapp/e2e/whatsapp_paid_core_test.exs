@@ -7,8 +7,10 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
 
   require Ash.Query
 
+  alias Ash.Changeset
+  alias FastCheck.Messaging.WhatsApp.ConversationStateMachine
   alias FastCheck.Messaging.WhatsApp.MessageCommand
-  alias FastCheck.Messaging.WhatsApp.PaymentFlow
+  alias FastCheck.Messaging.WhatsApp.PurchaseFlowIdentity
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
@@ -64,24 +66,30 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
        }}
     end)
 
-    conversation =
-      insert_conversation!(
-        state: "confirming_order",
-        state_data: checkout_state_data(event, offer)
-      )
+    conversation = insert_conversation!(state: "main_menu", state_data: %{})
 
     Application.put_env(:fastcheck, :paystack_request_fun, PaystackSupport.success_request_fun())
 
     log =
       capture_log(fn ->
-        assert {:ok, result} =
-                 PaymentFlow.confirm_checkout_from_conversation(
-                   command("wamid.vs22-pay"),
-                   conversation
-                 )
+        buy_a = whatsapp_step!(conversation, "1", "wamid.purchase-a-buy")
+        assert buy_a.response_body =~ event.name
+        purchase_a_flow_id = buy_a.conversation.state_data["purchase_flow_id"]
+
+        assert PurchaseFlowIdentity.valid?(purchase_a_flow_id)
+
+        result =
+          buy_a
+          |> whatsapp_step!("1", "wamid.purchase-a-event")
+          |> whatsapp_step!("1", "wamid.purchase-a-offer")
+          |> whatsapp_step!("4", "wamid.purchase-a-quantity")
+          |> whatsapp_step!("VS-22 Buyer", "wamid.purchase-a-name")
+          |> whatsapp_step!("vs22-buyer@example.com", "wamid.purchase-a-email")
+          |> whatsapp_step!("1", "wamid.purchase-a-confirm")
 
         refute result.response_body =~ "https://checkout.paystack.com"
         assert result.conversation.state == "payment_pending"
+        assert result.conversation.state_data["purchase_flow_id"] == purchase_a_flow_id
 
         order_id = result.conversation.state_data["sales_order_id"]
         attempt_id = result.conversation.state_data["payment_attempt_id"]
@@ -221,6 +229,55 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
 
         assert %{reserved_quantity: 0, consumed_quantity: 4} =
                  E2E.inventory_snapshot!(offer.id)
+
+        restarted = whatsapp_step!(result.conversation, "#", "wamid.purchase-a-restart")
+        assert restarted.conversation.state == "main_menu"
+        refute Map.has_key?(restarted.conversation.state_data, "purchase_flow_id")
+
+        buy_b =
+          restarted
+          |> whatsapp_step!("1", "wamid.purchase-b-buy")
+
+        purchase_b_flow_id = buy_b.conversation.state_data["purchase_flow_id"]
+        assert PurchaseFlowIdentity.valid?(purchase_b_flow_id)
+        refute purchase_b_flow_id == purchase_a_flow_id
+
+        result_b =
+          buy_b
+          |> whatsapp_step!("1", "wamid.purchase-b-event")
+          |> whatsapp_step!("1", "wamid.purchase-b-offer")
+          |> whatsapp_step!("1", "wamid.purchase-b-quantity")
+          |> whatsapp_step!("Second Buyer", "wamid.purchase-b-name")
+          |> whatsapp_step!("second@example.com", "wamid.purchase-b-email")
+          |> whatsapp_step!("1", "wamid.purchase-b-confirm")
+
+        assert result_b.conversation.state == "payment_pending"
+        assert result_b.conversation.id == conversation.id
+        assert result_b.conversation.state_data["purchase_flow_id"] == purchase_b_flow_id
+
+        order_b_id = result_b.conversation.state_data["sales_order_id"]
+        assert order_b_id != order_id
+
+        order_a = E2E.reload_order!(order_id)
+        order_b = E2E.reload_order!(order_b_id)
+
+        assert order_a.status == "ticket_issued"
+        assert order_a.sales_conversation_id == conversation.id
+        assert order_b.sales_conversation_id == conversation.id
+
+        assert order_a.idempotency_key ==
+                 "whatsapp:conversation:#{conversation.id}:purchase:#{purchase_a_flow_id}:checkout"
+
+        assert order_b.idempotency_key ==
+                 "whatsapp:conversation:#{conversation.id}:purchase:#{purchase_b_flow_id}:checkout"
+
+        assert order_a.idempotency_key != order_b.idempotency_key
+
+        assert Repo.one!(
+                 from o in "sales_orders",
+                   where: o.sales_conversation_id == ^conversation.id,
+                   select: count(o.id)
+               ) == 2
       end)
 
     refute log =~ "+27821234567"
@@ -308,19 +365,6 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
              )
   end
 
-  defp checkout_state_data(event, offer) do
-    %{
-      "selected_event_id" => event.id,
-      "selected_event_label" => event.name,
-      "selected_offer_id" => offer.id,
-      "selected_offer_label" => offer.name,
-      "selected_offer_lock_version" => offer.lock_version,
-      "quantity" => 4,
-      "buyer_name" => "VS-22 Buyer",
-      "buyer_email" => "vs22-buyer@example.com"
-    }
-  end
-
   defp insert_conversation!(opts) do
     state = Keyword.fetch!(opts, :state)
     state_data = Keyword.fetch!(opts, :state_data)
@@ -355,14 +399,39 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
     end
   end
 
-  defp command(provider_message_id) do
+  defp whatsapp_step!(%{conversation: %Conversation{} = conversation}, text, provider_message_id),
+    do: whatsapp_step!(conversation, text, provider_message_id)
+
+  defp whatsapp_step!(%Conversation{} = conversation, text, provider_message_id) do
+    command = command(conversation, provider_message_id, text)
+
+    assert {:ok, %{send_reply?: true, conversation: updated} = result} =
+             ConversationStateMachine.handle_inbound(command, conversation)
+
+    assert {:ok, replied} =
+             updated
+             |> Changeset.for_update(
+               :mark_reply_sent,
+               %{
+                 provider_message_id: provider_message_id,
+                 outbound_message_id: "test-outbound-#{provider_message_id}",
+                 sent_at: DateTime.utc_now() |> DateTime.truncate(:second)
+               },
+               actor: %{actor_type: :system, actor_id: "whatsapp_paid_core_test"}
+             )
+             |> Ash.update(authorize?: false)
+
+    %{result | conversation: replied}
+  end
+
+  defp command(conversation, provider_message_id, text) do
     %MessageCommand{
       provider: "meta",
       provider_message_id: provider_message_id,
-      phone_e164: "+27821234567",
-      wa_id: "27821234567",
+      phone_e164: conversation.phone_e164,
+      wa_id: conversation.wa_id,
       message_type: "text",
-      text_body: "1",
+      text_body: text,
       received_at: DateTime.utc_now() |> DateTime.truncate(:second),
       raw_payload_hash: "hash-#{provider_message_id}",
       correlation_id: "corr-#{provider_message_id}",

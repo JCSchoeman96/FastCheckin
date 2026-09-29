@@ -89,6 +89,7 @@ defmodule FastCheck.Messaging.WhatsApp.SessionStore do
       :selected_event_id,
       :selected_offer_id,
       :quantity,
+      :purchase_flow_id,
       :sales_order_id,
       :order_public_reference,
       :version

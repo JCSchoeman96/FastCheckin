@@ -9,6 +9,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
 
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.PaymentFlow
+  alias FastCheck.Messaging.WhatsApp.PurchaseFlowIdentity
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
   alias FastCheck.Repo
   alias FastCheck.Sales.Checkout
@@ -93,6 +94,56 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
     )
   end
 
+  test "legacy confirmation reuses the pre-P1-B checkout identity without inventing a flow id", %{
+    event: event,
+    offer: offer
+  } do
+    conversation =
+      insert_conversation!(
+        state: "confirming_order",
+        state_data: checkout_state_data(event, offer, "buyer@example.com")
+      )
+
+    legacy_key = PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)
+
+    input =
+      SalesFixtures.checkout_input(%{
+        event_id: event.id,
+        ticket_offer_id: offer.id,
+        buyer_name: "Jan Burger",
+        buyer_phone: conversation.phone_e164,
+        buyer_email: "buyer@example.com",
+        source_channel: "whatsapp",
+        sales_conversation_id: conversation.id,
+        idempotency_key: legacy_key,
+        expected_offer_lock_version: offer.lock_version
+      })
+
+    assert {:ok, %{order: order}} =
+             Checkout.start_checkout(input, SalesFixtures.system_actor([event.id]),
+               effective_sales_channel: "whatsapp"
+             )
+
+    before_count = Repo.one!(from o in "sales_orders", select: count(o.id))
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
+    assert {:ok, result} =
+             PaymentFlow.confirm_checkout_from_conversation(
+               command("wamid.legacy-retry"),
+               conversation
+             )
+
+    assert result.conversation.state_data["sales_order_id"] == order.id
+    refute Map.has_key?(result.conversation.state_data, "purchase_flow_id")
+    assert Repo.one!(from o in "sales_orders", select: count(o.id)) == before_count
+
+    assert Repo.one!(
+             from o in "sales_orders",
+               where: o.id == ^order.id,
+               select: o.idempotency_key
+           ) == legacy_key
+  end
+
   test "missing buyer email asks for email before Paystack initialization", %{
     event: event,
     offer: offer
@@ -122,6 +173,8 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
     event: event,
     offer: offer
   } do
+    conversation = insert_conversation!(state: "awaiting_payment", state_data: %{})
+
     {:ok, %{order: order}} =
       Checkout.start_checkout(
         SalesFixtures.checkout_input(%{
@@ -132,6 +185,7 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
           buyer_phone: "+27821234567",
           buyer_email: "buyer@example.com",
           source_channel: "whatsapp",
+          sales_conversation_id: conversation.id,
           idempotency_key: "status-#{System.unique_integer([:positive])}",
           correlation_id: "corr-status",
           event_name: event.name
@@ -139,14 +193,17 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
         %{actor_type: :customer_session, actor_id: "customer-1", allowed_event_ids: [event.id]}
       )
 
-    conversation =
-      insert_conversation!(
-        state: "awaiting_payment",
-        state_data: %{
-          "sales_order_id" => order.id,
-          "order_public_reference" => order.public_reference
-        }
-      )
+    state_data = %{
+      "sales_order_id" => order.id,
+      "order_public_reference" => order.public_reference
+    }
+
+    Repo.query!("UPDATE sales_conversations SET state_data = $1 WHERE id = $2", [
+      state_data,
+      conversation.id
+    ])
+
+    conversation = %{conversation | state_data: state_data}
 
     before_count = Repo.one!(from o in "sales_orders", select: count(o.id))
     assert {:ok, _event} = Events.disable_whatsapp_sales(event.id)
@@ -171,6 +228,11 @@ defmodule FastCheck.Messaging.WhatsApp.PaymentFlowTest do
         state: "ticket_issued",
         state_data: %{"sales_order_id" => order_id}
       )
+
+    Repo.update_all(
+      from(o in "sales_orders", where: o.id == ^order_id),
+      set: [sales_conversation_id: conversation.id]
+    )
 
     assert {:ok, result} =
              PaymentFlow.respond_to_status_request(command("wamid.ticket-ready"), conversation)
