@@ -29,6 +29,7 @@ defmodule FastCheck.Repo.Migrations.CreateSalesRefunds do
       add(:amount_cents, :bigint, null: false)
       add(:currency, :string, null: false)
       add(:status, :string, null: false, default: "evidence_recorded")
+      add(:lock_version, :integer, null: false, default: 1)
       add(:inventory_resolution_status, :string)
       add(:recorded_by, :string, null: false)
       add(:reason, :text, null: false)

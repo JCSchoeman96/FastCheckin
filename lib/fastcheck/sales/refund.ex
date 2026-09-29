@@ -102,6 +102,8 @@ defmodule FastCheck.Sales.Refund do
           )
         end
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :mark_revocation_manual_review do
@@ -121,6 +123,8 @@ defmodule FastCheck.Sales.Refund do
           extra_attrs: %{manual_review_reason: reason}
         )
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :retry_refund_revocation do
@@ -140,6 +144,8 @@ defmodule FastCheck.Sales.Refund do
           extra_attrs: %{manual_review_reason: nil}
         )
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :mark_inventory_pending do
@@ -164,6 +170,8 @@ defmodule FastCheck.Sales.Refund do
           )
         end
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :complete_released_unconsumed do
@@ -179,6 +187,8 @@ defmodule FastCheck.Sales.Refund do
           Changeset.get_argument(changeset, :reason)
         )
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :complete_retained_consumed do
@@ -194,6 +204,8 @@ defmodule FastCheck.Sales.Refund do
           Changeset.get_argument(changeset, :reason)
         )
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :mark_inventory_manual_review do
@@ -213,6 +225,8 @@ defmodule FastCheck.Sales.Refund do
           extra_attrs: %{manual_review_reason: reason}
         )
       end)
+
+      change(optimistic_lock(:lock_version))
     end
 
     update :retry_refund_inventory do
@@ -232,6 +246,8 @@ defmodule FastCheck.Sales.Refund do
           extra_attrs: %{manual_review_reason: nil}
         )
       end)
+
+      change(optimistic_lock(:lock_version))
     end
   end
 
@@ -259,20 +275,13 @@ defmodule FastCheck.Sales.Refund do
              :mark_revocation_manual_review,
              :retry_refund_revocation,
              :mark_inventory_pending,
+             :complete_released_unconsumed,
+             :complete_retained_consumed,
              :mark_inventory_manual_review,
              :retry_refund_inventory
            ]) do
       access_type(:strict)
-      authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
-    end
-
-    policy action([:complete_released_unconsumed, :complete_retained_consumed]) do
-      access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:system]})
-    end
-
-    policy action_type(:update) do
-      authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, relationship_path: [:order]})
     end
   end
 
@@ -316,6 +325,11 @@ defmodule FastCheck.Sales.Refund do
     attribute :status, :string do
       allow_nil?(false)
       default("evidence_recorded")
+    end
+
+    attribute :lock_version, :integer do
+      allow_nil?(false)
+      default(1)
     end
 
     attribute(:inventory_resolution_status, :string)
