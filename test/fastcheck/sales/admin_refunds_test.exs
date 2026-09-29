@@ -1,5 +1,6 @@
 defmodule FastCheck.Sales.AdminRefundsTest do
   use FastCheck.DataCase, async: false
+  use Oban.Testing, repo: FastCheck.Repo
 
   import Ecto.Query
 
@@ -9,6 +10,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   alias FastCheck.Sales.AdminRefundFixtures, as: Fixtures
   alias FastCheck.Sales.AdminRefunds
   alias FastCheck.Sales.Order
+  alias FastCheck.Sales.Refund
 
   setup do
     Application.put_env(:fastcheck, :dashboard_auth, %{
@@ -19,18 +21,43 @@ defmodule FastCheck.Sales.AdminRefundsTest do
     :ok
   end
 
-  test "mark_order_refunded_manual revokes tickets then marks order refunded" do
+  test "admin refund records provider evidence, revokes tickets, and queues inventory resolution" do
     %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+    attrs = Fixtures.admin_attrs_for_order(order_id)
 
-    assert {:ok, %{order: order, revoke: %{failures: []}}} =
+    assert {:ok, %{order: order, refund: refund, revoke: %{failures: []}}} =
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               attrs
              )
 
     assert order.status == "refunded"
     assert Fixtures.order_status(order_id) == "refunded"
+    assert refund.status == "inventory_pending"
+    assert refund.provider == "paystack"
+    assert refund.provider_status == "processed"
+    assert refund.provider_refund_reference == attrs["provider_refund_reference"]
+    assert refund.amount_cents == String.to_integer(attrs["amount_cents"])
+    assert refund.currency == attrs["currency"]
+
+    payment_evidence = payment_attempt_evidence(order_id)
+    refute is_nil(payment_evidence.provider_reference)
+    refute is_nil(payment_evidence.provider_paid_at)
+    refute is_nil(payment_evidence.verified_at)
+    refute is_nil(payment_evidence.raw_verify_response)
+
+    assert Repo.one!(
+             from attempt in "sales_payment_attempts",
+               where: attempt.sales_order_id == ^order_id,
+               select: attempt.status
+           ) == "refunded"
+
+    assert [%{args: %{"refund_id" => refund_id}}] =
+             all_enqueued(worker: FastCheck.Workers.RefundInventoryWorker)
+             |> Enum.filter(&(&1.args["refund_id"] == refund.id))
+
+    assert refund_id == refund.id
 
     assert Repo.aggregate(
              from(t in "sales_ticket_issues",
@@ -38,6 +65,24 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              ),
              :count
            ) >= 1
+  end
+
+  test "Refund evidence action requires an event-scoped admin with the existing password" do
+    fixture = Fixtures.issued_order_fixture()
+    evidence = refund_evidence_attrs(fixture)
+
+    assert {:error, _} =
+             create_refund_evidence(evidence, Fixtures.admin_actor(event_id: fixture.event.id))
+
+    assert {:error, _} =
+             create_refund_evidence(
+               Map.put(evidence, :admin_password, Fixtures.dashboard_password()),
+               Fixtures.out_of_scope_admin_actor(fixture.event.id)
+             )
+
+    refute Repo.exists?(
+             from refund in "sales_refunds", where: refund.sales_order_id == ^fixture.order_id
+           )
   end
 
   test "admin refund revokes all 60 historical tickets before the Order transition" do
@@ -52,7 +97,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               Fixtures.admin_attrs_for_order(order_id)
              )
 
     assert length(ticket_issue_ids) == 60
@@ -81,12 +126,32 @@ defmodule FastCheck.Sales.AdminRefundsTest do
       failed_issue_id
     ])
 
+    attrs = Fixtures.admin_attrs_for_order(order_id)
+
     assert {:error, {:revoke_failures, [%{ticket_issue_id: ^failed_issue_id}]}} =
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               attrs
              )
+
+    assert Repo.one!(
+             from refund in "sales_refunds",
+               where: refund.sales_order_id == ^order_id,
+               select: refund.status
+           ) == "revocation_manual_review"
+
+    assert Repo.one!(
+             from refund in "sales_refunds",
+               where: refund.sales_order_id == ^order_id,
+               select: refund.provider_refund_reference
+           ) == attrs["provider_refund_reference"]
+
+    assert Repo.one!(
+             from attempt in "sales_payment_attempts",
+               where: attempt.sales_order_id == ^order_id,
+               select: attempt.status
+           ) == "verified_success"
 
     assert Fixtures.order_status(order_id) == "manual_review"
     assert issued_ticket_count(order_id) == 1
@@ -106,7 +171,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               attrs
              )
 
     assert issued_ticket_count(order_id) == 0
@@ -123,7 +188,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(),
                order_id,
-               Fixtures.admin_attrs()
+               Fixtures.admin_attrs_for_order(order_id)
              )
   end
 
@@ -134,7 +199,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.out_of_scope_admin_actor(event.id),
                order_id,
-               Fixtures.admin_attrs()
+               Fixtures.admin_attrs_for_order(order_id)
              )
   end
 
@@ -145,7 +210,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.operator_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               Fixtures.admin_attrs_for_order(order_id)
              )
   end
 
@@ -169,7 +234,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               Fixtures.admin_attrs_for_order(order_id)
              )
   end
 
@@ -186,7 +251,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
       AdminRefunds.mark_order_refunded_manual(
         Fixtures.admin_actor(event_id: event.id),
         order_id,
-        Fixtures.admin_attrs()
+        Fixtures.admin_attrs_for_order(order_id)
       )
 
     assert {:error, {:revoke_failures, [_ | _]}} = result
@@ -198,8 +263,9 @@ defmodule FastCheck.Sales.AdminRefundsTest do
 
     actor = Fixtures.admin_actor(event_id: event.id)
 
-    assert {:ok, _} =
-             AdminRefunds.mark_order_refunded_manual(actor, order_id, Fixtures.admin_attrs())
+    attrs = Fixtures.admin_attrs_for_order(order_id)
+
+    assert {:ok, _} = AdminRefunds.mark_order_refunded_manual(actor, order_id, attrs)
 
     count_before = Fixtures.order_transition_count(order_id, "refunded")
 
@@ -207,11 +273,220 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_refunded_manual(
                actor,
                order_id,
-               Fixtures.admin_attrs(%{"idempotency_key" => "retry-refund"})
+               Map.put(attrs, "idempotency_key", "retry-refund")
              )
 
     assert order.status == "refunded"
     assert Fixtures.order_transition_count(order_id, "refunded") == count_before
+  end
+
+  test "conflicting provider refund evidence is rejected for an existing durable refund" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+    actor = Fixtures.admin_actor(event_id: event.id)
+    attrs = Fixtures.admin_attrs_for_order(order_id)
+
+    assert {:ok, _} = AdminRefunds.mark_order_refunded_manual(actor, order_id, attrs)
+
+    assert {:error, :conflicting_refund_evidence} =
+             AdminRefunds.mark_order_refunded_manual(
+               actor,
+               order_id,
+               Map.put(attrs, "provider_refund_reference", "DIFFERENT-RRN")
+             )
+  end
+
+  test "admin retry moves inventory_manual_review back to pending and enqueues by refund id" do
+    fixture = Fixtures.inventory_pending_refund_fixture()
+
+    Repo.query!(
+      "UPDATE sales_refunds SET status = 'inventory_manual_review', manual_review_reason = 'review' WHERE id = $1",
+      [fixture.refund_id]
+    )
+
+    attrs = %{
+      "reason" => "Verified the refund hold against the order",
+      "admin_password" => Fixtures.dashboard_password()
+    }
+
+    assert {:ok, %{refund: refund, order: %{status: "refunded"}}} =
+             AdminRefunds.retry_refund_inventory(
+               Fixtures.admin_actor(event_id: fixture.event.id),
+               fixture.order_id,
+               attrs
+             )
+
+    assert refund.status == "inventory_pending"
+
+    assert [%{args: %{"refund_id" => refund_id}}] =
+             all_enqueued(worker: FastCheck.Workers.RefundInventoryWorker)
+             |> Enum.filter(&(&1.args["refund_id"] == fixture.refund_id))
+
+    assert refund_id == fixture.refund_id
+
+    assert Repo.exists?(
+             from transition in "sales_state_transitions",
+               where:
+                 transition.entity_type == "Refund" and
+                   transition.entity_id == ^to_string(fixture.refund_id) and
+                   transition.from_state == "inventory_manual_review" and
+                   transition.to_state == "inventory_pending" and
+                   transition.reason == ^attrs["reason"]
+           )
+  end
+
+  test "inventory worker insert failure rolls back financial finalization" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+    constraint = "fail_refund_inventory_worker_insert_for_test"
+
+    Repo.query!(
+      "ALTER TABLE oban_jobs ADD CONSTRAINT #{constraint} CHECK (worker <> 'FastCheck.Workers.RefundInventoryWorker') NOT VALID"
+    )
+
+    try do
+      assert {:error, {:refund_inventory_job_insert_failed, _reason}} =
+               AdminRefunds.mark_order_refunded_manual(
+                 Fixtures.admin_actor(event_id: event.id),
+                 order_id,
+                 Fixtures.admin_attrs_for_order(order_id)
+               )
+
+      assert Fixtures.order_status(order_id) == "ticket_issued"
+      assert issued_ticket_count(order_id) == 0
+
+      assert Repo.one!(
+               from attempt in "sales_payment_attempts",
+                 where: attempt.sales_order_id == ^order_id,
+                 select: attempt.status
+             ) == "verified_success"
+
+      assert Repo.one!(
+               from refund in "sales_refunds",
+                 where: refund.sales_order_id == ^order_id,
+                 select: refund.status
+             ) == "revocation_complete"
+    after
+      Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT #{constraint}")
+    end
+  end
+
+  test "admin inventory retry rejects an Order no longer refunded" do
+    fixture = Fixtures.inventory_pending_refund_fixture()
+
+    Repo.query!(
+      "UPDATE sales_refunds SET status = 'inventory_manual_review' WHERE id = $1",
+      [fixture.refund_id]
+    )
+
+    Repo.query!("UPDATE sales_orders SET status = 'paid_verified' WHERE id = $1", [
+      fixture.order_id
+    ])
+
+    assert {:error, :invalid_order_state} =
+             AdminRefunds.retry_refund_inventory(
+               Fixtures.admin_actor(event_id: fixture.event.id),
+               fixture.order_id,
+               %{
+                 "reason" => "Retry check",
+                 "admin_password" => Fixtures.dashboard_password()
+               }
+             )
+
+    assert Repo.one!(
+             from refund in "sales_refunds",
+               where: refund.id == ^fixture.refund_id,
+               select: refund.status
+           ) == "inventory_manual_review"
+  end
+
+  test "refund evidence requires a processed Paystack reference and timestamp" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+    actor = Fixtures.admin_actor(event_id: event.id)
+    attrs = Fixtures.admin_attrs_for_order(order_id)
+
+    assert {:error, :provider_refund_reference_required} =
+             AdminRefunds.mark_order_refunded_manual(
+               actor,
+               order_id,
+               Map.put(attrs, "provider_refund_reference", " ")
+             )
+
+    assert {:error, :provider_refund_not_processed} =
+             AdminRefunds.mark_order_refunded_manual(
+               actor,
+               order_id,
+               Map.put(attrs, "provider_status", "pending")
+             )
+
+    assert {:error, :provider_refunded_at_required} =
+             AdminRefunds.mark_order_refunded_manual(
+               actor,
+               order_id,
+               Map.put(attrs, "provider_refunded_at", "invalid")
+             )
+  end
+
+  test "partial amount and currency mismatch are rejected" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+    actor = Fixtures.admin_actor(event_id: event.id)
+    attrs = Fixtures.admin_attrs_for_order(order_id)
+
+    assert {:error, :partial_refund_not_supported} =
+             AdminRefunds.mark_order_refunded_manual(
+               actor,
+               order_id,
+               Map.put(attrs, "amount_cents", "100")
+             )
+
+    assert {:error, :refund_currency_mismatch} =
+             AdminRefunds.mark_order_refunded_manual(
+               actor,
+               order_id,
+               Map.put(attrs, "currency", "USD")
+             )
+  end
+
+  test "multiple verified-success attempts fail closed" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+
+    Repo.query!(
+      """
+      INSERT INTO sales_payment_attempts
+        (sales_order_id, provider, provider_reference, status, amount_cents, currency,
+         verification_attempt_count, inserted_at, updated_at)
+      SELECT sales_order_id, provider, 'second-' || provider_reference, 'verified_success',
+             amount_cents, currency, 1, now(), now()
+      FROM sales_payment_attempts WHERE sales_order_id = $1
+      """,
+      [order_id]
+    )
+
+    assert {:error, :ambiguous_payment_attempt} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs_for_order(order_id)
+             )
+
+    assert Fixtures.order_status(order_id) != "refunded"
+  end
+
+  test "verified-success PaymentAttempt from another provider cannot back a Paystack refund" do
+    %{order_id: order_id, event: event, payment_attempt_id: payment_attempt_id} =
+      Fixtures.issued_order_fixture()
+
+    Repo.query!("UPDATE sales_payment_attempts SET provider = 'stripe' WHERE id = $1", [
+      payment_attempt_id
+    ])
+
+    assert {:error, :refund_provider_mismatch} =
+             AdminRefunds.mark_order_refunded_manual(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs_for_order(order_id)
+             )
+
+    refute Repo.exists?(from refund in "sales_refunds", where: refund.sales_order_id == ^order_id)
+    assert Fixtures.order_status(order_id) == "ticket_issued"
   end
 
   test "get_order_operations_context is bounded and uses SQL counts" do
@@ -256,7 +531,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
              AdminRefunds.mark_order_cancelled_manual(
                Fixtures.admin_actor(event_id: event.id),
                order_id,
-               Fixtures.admin_attrs()
+               Fixtures.admin_attrs_for_order(order_id)
              )
 
     assert order.status == "cancelled"
@@ -335,7 +610,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
     order =
       Order |> Ash.Query.for_read(:get_by_id, %{id: order_id}) |> Ash.read_one!(authorize?: false)
 
-    for action <- [:mark_refunded_manual, :mark_cancelled_manual] do
+    for action <- [:finalize_refund, :mark_cancelled_manual] do
       assert {:error, %Ash.Error.Invalid{}} =
                order
                |> Changeset.for_update(action, %{reason: "must revoke first"}, actor: actor)
@@ -345,6 +620,32 @@ defmodule FastCheck.Sales.AdminRefundsTest do
     end
 
     assert issued_ticket_count(order_id) == 1
+  end
+
+  test "direct Ash refund action cannot create a naked refunded Order" do
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
+    actor = %{actor_type: :admin, actor_id: "admin", allowed_event_ids: [event.id]}
+
+    assert {:ok, %{failures: [], remaining_issued_count: 0}} =
+             FastCheck.Sales.AdminRevocations.revoke_order_tickets(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               Fixtures.admin_attrs()
+             )
+
+    order =
+      Order |> Ash.Query.for_read(:get_by_id, %{id: order_id}) |> Ash.read_one!(authorize?: false)
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             order
+             |> Changeset.for_update(
+               :finalize_refund,
+               %{reason: "must include a durable refund"},
+               actor: actor
+             )
+             |> Ash.update(authorize?: false)
+
+    assert Fixtures.order_status(order_id) == "ticket_issued"
   end
 
   defp insert_minimal_event! do
@@ -357,6 +658,24 @@ defmodule FastCheck.Sales.AdminRefundsTest do
         where: t.sales_order_id == ^order_id and t.status == "issued",
         select: count(t.id)
     )
+  end
+
+  defp create_refund_evidence(attrs, actor) do
+    Refund
+    |> Changeset.for_create(:record_full_refund_evidence, attrs, actor: actor)
+    |> Ash.create(authorize?: false, context: %{actor: actor})
+  end
+
+  defp refund_evidence_attrs(fixture) do
+    %{
+      sales_order_id: fixture.order_id,
+      payment_attempt_id: fixture.payment_attempt_id,
+      provider_refund_reference: "DIRECT-RRN-#{System.unique_integer([:positive])}",
+      provider_refunded_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      amount_cents: fixture.amount_cents,
+      currency: fixture.currency,
+      reason: "Direct action policy test"
+    }
   end
 
   defp issue_attendee_id(ticket_issue_id) do
@@ -373,6 +692,19 @@ defmodule FastCheck.Sales.AdminRefundsTest do
 
   defp issue_status(ticket_issue_id) do
     Repo.one!(from t in "sales_ticket_issues", where: t.id == ^ticket_issue_id, select: t.status)
+  end
+
+  defp payment_attempt_evidence(order_id) do
+    Repo.one!(
+      from attempt in "sales_payment_attempts",
+        where: attempt.sales_order_id == ^order_id,
+        select: %{
+          provider_reference: attempt.provider_reference,
+          provider_paid_at: attempt.provider_paid_at,
+          verified_at: attempt.verified_at,
+          raw_verify_response: attempt.raw_verify_response
+        }
+    )
   end
 
   defp assert_order_tickets_not_scannable(event_id, issue_ids, indexes) do

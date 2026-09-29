@@ -8,7 +8,9 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketOffer
 
-  @sold_order_statuses ~w(paid_verified fulfillment_queued ticket_issued partially_issued)
+  @sold_order_statuses ~w(
+    paid_verified fulfillment_queued ticket_issued partially_issued refunded
+  )
   @active_hold_session_statuses ~w(hold_attached payment_link_sent payment_started)
   @terminal_order_statuses ~w(cancelled expired refunded)
   @non_expirable_order_statuses ~w(
@@ -24,6 +26,10 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
           sold_count: non_neg_integer(),
           active_hold_count: non_neg_integer(),
           manual_review_order_count: non_neg_integer(),
+          refund_inventory_pending_count: non_neg_integer(),
+          refund_inventory_manual_review_count: non_neg_integer(),
+          legacy_refund_count: non_neg_integer(),
+          ambiguous_refund_count: non_neg_integer(),
           safe_available: integer(),
           manual_review_required?: boolean(),
           anomalies: [map()]
@@ -47,6 +53,7 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
         sold_count = sold_quantity(offer_id)
         active_hold_count = active_hold_quantity(offer_id)
         manual_review_order_count = manual_review_quantity(offer_id)
+        refund_counts = refunded_order_counts(offer_id)
         configured = offer.configured_quantity_available
         safe_available = configured - sold_count - active_hold_count
 
@@ -60,8 +67,27 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
             code: :manual_review_orders_present,
             count: manual_review_order_count
           })
+          |> maybe_add(refund_counts.pending > 0, %{
+            code: :refund_inventory_resolution_pending,
+            count: refund_counts.pending
+          })
+          |> maybe_add(refund_counts.manual_review > 0, %{
+            code: :refund_inventory_resolution_manual_review,
+            count: refund_counts.manual_review
+          })
+          |> maybe_add(refund_counts.legacy > 0, %{
+            code: :legacy_refund_without_provider_evidence,
+            count: refund_counts.legacy
+          })
+          |> maybe_add(refund_counts.ambiguous > 0, %{
+            code: :refund_inventory_resolution_ambiguous,
+            count: refund_counts.ambiguous
+          })
 
-        manual_review_required? = safe_available < 0 or manual_review_order_count > 0
+        manual_review_required? =
+          safe_available < 0 or manual_review_order_count > 0 or
+            refund_counts.manual_review > 0 or refund_counts.legacy > 0 or
+            refund_counts.ambiguous > 0
 
         {:ok,
          %{
@@ -71,6 +97,10 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
            sold_count: sold_count,
            active_hold_count: active_hold_count,
            manual_review_order_count: manual_review_order_count,
+           refund_inventory_pending_count: refund_counts.pending,
+           refund_inventory_manual_review_count: refund_counts.manual_review,
+           legacy_refund_count: refund_counts.legacy,
+           ambiguous_refund_count: refund_counts.ambiguous,
            safe_available: safe_available,
            manual_review_required?: manual_review_required?,
            anomalies: anomalies
@@ -175,6 +205,47 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
         INNER JOIN sales_orders o ON o.id = ol.sales_order_id
         WHERE ol.ticket_offer_id = $1
           AND o.status = ANY($2::text[])
+          AND NOT (
+            o.status = 'refunded' AND EXISTS (
+            SELECT 1
+              FROM sales_refunds r
+              INNER JOIN sales_payment_attempts p
+                ON p.id = r.payment_attempt_id AND p.sales_order_id = o.id
+              WHERE r.sales_order_id = o.id
+                AND r.status = 'completed'
+                AND r.inventory_resolution_status = 'released_unconsumed'
+                AND r.provider = 'paystack'
+                AND r.provider_status = 'processed'
+                AND r.provider_refund_reference IS NOT NULL
+                AND btrim(r.provider_refund_reference) <> ''
+                AND r.provider_refunded_at IS NOT NULL
+                AND r.recorded_by IS NOT NULL
+                AND btrim(r.recorded_by) <> ''
+                AND r.reason IS NOT NULL
+                AND btrim(r.reason) <> ''
+                AND r.amount_cents = o.total_amount_cents
+                AND r.currency = o.currency
+                AND r.revocation_completed_at IS NOT NULL
+                AND p.provider = 'paystack'
+                AND p.status = 'refunded'
+                AND p.amount_cents = o.total_amount_cents
+                AND p.currency = o.currency
+                AND ol.quantity > 0
+                AND ol.total_amount_cents = o.total_amount_cents
+                AND ol.currency = o.currency
+                AND (SELECT count(*)
+                     FROM sales_order_lines refund_lines
+                     WHERE refund_lines.sales_order_id = o.id) = 1
+                AND (SELECT count(*)
+                     FROM sales_payment_attempts candidates
+                     WHERE candidates.sales_order_id = o.id
+                       AND candidates.status IN ('verified_success', 'refunded')) = 1
+                AND NOT EXISTS (
+                  SELECT 1 FROM sales_ticket_issues issues
+                  WHERE issues.sales_order_id = o.id AND issues.status = 'issued'
+                )
+            )
+          )
         """,
         [offer_id, @sold_order_statuses]
       )
@@ -219,9 +290,80 @@ defmodule FastCheck.Sales.Inventory.DurableSnapshot do
     scalar_to_int(result)
   end
 
+  defp refunded_order_counts(offer_id) do
+    result =
+      Repo.query!(
+        """
+        SELECT
+          COUNT(DISTINCT o.id) FILTER (WHERE r.id IS NULL)::bigint,
+          COUNT(DISTINCT o.id) FILTER (WHERE r.status = 'inventory_pending')::bigint,
+          COUNT(DISTINCT o.id) FILTER (WHERE r.status = 'inventory_manual_review')::bigint,
+          COUNT(DISTINCT o.id) FILTER (
+            WHERE r.id IS NOT NULL
+              AND NOT (
+                r.status = 'inventory_pending'
+                OR r.status = 'inventory_manual_review'
+                OR (r.status = 'completed'
+                  AND r.inventory_resolution_status IN ('released_unconsumed', 'retained_consumed')
+                  AND r.provider = 'paystack'
+                  AND r.provider_status = 'processed'
+                  AND r.provider_refund_reference IS NOT NULL
+                  AND btrim(r.provider_refund_reference) <> ''
+                  AND r.provider_refunded_at IS NOT NULL
+                  AND r.recorded_by IS NOT NULL
+                  AND btrim(r.recorded_by) <> ''
+                  AND r.reason IS NOT NULL
+                  AND btrim(r.reason) <> ''
+                  AND r.amount_cents = o.total_amount_cents
+                  AND r.currency = o.currency
+                  AND r.revocation_completed_at IS NOT NULL
+                  AND p.provider = 'paystack'
+                  AND p.status = 'refunded'
+                  AND p.amount_cents = o.total_amount_cents
+                  AND p.currency = o.currency
+                  AND ol.quantity > 0
+                  AND ol.total_amount_cents = o.total_amount_cents
+                  AND ol.currency = o.currency
+                  AND (SELECT count(*)
+                       FROM sales_order_lines refund_lines
+                       WHERE refund_lines.sales_order_id = o.id) = 1
+                  AND (SELECT count(*)
+                       FROM sales_payment_attempts candidates
+                       WHERE candidates.sales_order_id = o.id
+                         AND candidates.status IN ('verified_success', 'refunded')) = 1
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sales_ticket_issues issues
+                    WHERE issues.sales_order_id = o.id AND issues.status = 'issued'
+                  ))
+              )
+          )::bigint
+        FROM sales_orders o
+        INNER JOIN sales_order_lines ol ON ol.sales_order_id = o.id
+        LEFT JOIN sales_refunds r ON r.sales_order_id = o.id
+        LEFT JOIN sales_payment_attempts p
+          ON p.id = r.payment_attempt_id AND p.sales_order_id = o.id
+        WHERE ol.ticket_offer_id = $1 AND o.status = 'refunded'
+        """,
+        [offer_id]
+      )
+
+    case result.rows do
+      [[legacy, pending, manual_review, ambiguous]] ->
+        %{
+          legacy: to_int(legacy),
+          pending: to_int(pending),
+          manual_review: to_int(manual_review),
+          ambiguous: to_int(ambiguous)
+        }
+    end
+  end
+
   defp scalar_to_int(%{rows: [[value]]}) when is_integer(value), do: value
 
   defp scalar_to_int(%{rows: [[value]]}), do: value |> to_string() |> String.to_integer()
+
+  defp to_int(value) when is_integer(value), do: value
+  defp to_int(value), do: value |> to_string() |> String.to_integer()
 
   defp maybe_add(list, false, _item), do: list
   defp maybe_add(list, true, item), do: [item | list]

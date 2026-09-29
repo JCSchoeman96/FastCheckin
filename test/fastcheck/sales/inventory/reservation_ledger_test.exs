@@ -599,6 +599,74 @@ defmodule FastCheck.Sales.Inventory.ReservationLedgerTest do
              ReservationLedger.release(@offer_id, "ORD-EXP", idem("idem-exp-rel-fresh", run_id))
   end
 
+  test "strict release rejects a hold whose quantity changed after preflight", %{run_id: run_id} do
+    order_ref = "ORD-REFUND-QTY-#{run_id}"
+
+    assert {:ok, _hold} =
+             ReservationLedger.reserve(
+               @offer_id,
+               order_ref,
+               2,
+               120,
+               idem("refund-qty-reserve", run_id)
+             )
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, [
+               "HSET",
+               ReservationLedger.hold_key(order_ref),
+               "quantity",
+               "3"
+             ])
+
+    assert {:error, :invalid_quantity, %{reason: :quantity_mismatch}} =
+             ReservationLedger.release(
+               @offer_id,
+               order_ref,
+               idem("refund-qty-release", run_id),
+               expected_quantity: 2,
+               require_unexpired?: true
+             )
+
+    assert availability!().available_quantity == 8
+    assert availability!().reserved_quantity == 2
+    assert availability!().consumed_quantity == 0
+  end
+
+  test "strict release rejects a hold that expired after preflight", %{run_id: run_id} do
+    order_ref = "ORD-REFUND-EXP-#{run_id}"
+
+    assert {:ok, _hold} =
+             ReservationLedger.reserve(
+               @offer_id,
+               order_ref,
+               2,
+               120,
+               idem("refund-exp-reserve", run_id)
+             )
+
+    assert {:ok, 0} =
+             Redix.command(FastCheck.Redix, [
+               "HSET",
+               ReservationLedger.hold_key(order_ref),
+               "expires_at",
+               Integer.to_string(System.system_time(:millisecond) - 1)
+             ])
+
+    assert {:error, :hold_expired, _meta} =
+             ReservationLedger.release(
+               @offer_id,
+               order_ref,
+               idem("refund-exp-release", run_id),
+               expected_quantity: 2,
+               require_unexpired?: true
+             )
+
+    assert availability!().available_quantity == 8
+    assert availability!().reserved_quantity == 2
+    assert availability!().consumed_quantity == 0
+  end
+
   test "lock contention returns lock_timeout", %{run_id: run_id} do
     order_ref = "ORD-LOCK"
     lock_key = order_lock_key(order_ref)

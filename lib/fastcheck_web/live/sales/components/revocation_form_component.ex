@@ -11,6 +11,9 @@ defmodule FastCheckWeb.Sales.Components.RevocationFormComponent do
   attr :ticket_issue_id, :integer, default: nil
   attr :show_bulk_confirmation, :boolean, default: false
   attr :show_password, :boolean, default: false
+  attr :show_refund_evidence, :boolean, default: false
+  attr :refund_amount_cents, :integer, default: nil
+  attr :refund_currency, :string, default: nil
   attr :issued_count, :integer, default: 0
 
   def revocation_form(assigns) do
@@ -37,6 +40,73 @@ defmodule FastCheckWeb.Sales.Components.RevocationFormComponent do
           required
           class="mt-1 w-full rounded border border-fc-border px-3 py-2 text-sm"
         ></textarea>
+      </div>
+      <div :if={@show_refund_evidence} class="space-y-3 rounded border border-fc-border p-3">
+        <p class="text-sm text-fc-text-secondary">
+          Full-order refunds only. Process the refund in the Paystack Dashboard first. FastCheck records your evidence and does not call Paystack's refund API.
+        </p>
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="admin_action[provider_status]"
+            value="processed"
+            required
+          /> I confirm Paystack shows this refund as processed.
+        </label>
+        <div>
+          <label class="block text-sm font-medium" for={"#{@id}-provider-reference"}>
+            Paystack refund RRN/reference
+          </label>
+          <input
+            id={"#{@id}-provider-reference"}
+            type="text"
+            name="admin_action[provider_refund_reference]"
+            required
+            maxlength="255"
+            class="mt-1 w-full rounded border border-fc-border px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium" for={"#{@id}-provider-refunded-at"}>
+            Paystack refund timestamp (ISO 8601 with timezone)
+          </label>
+          <input
+            id={"#{@id}-provider-refunded-at"}
+            type="text"
+            name="admin_action[provider_refunded_at]"
+            placeholder="2026-09-29T10:15:00+02:00"
+            required
+            class="mt-1 w-full rounded border border-fc-border px-3 py-2 text-sm"
+          />
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="block text-sm font-medium" for={"#{@id}-amount-cents"}>
+              Full order amount (cents)
+            </label>
+            <input
+              id={"#{@id}-amount-cents"}
+              type="number"
+              name="admin_action[amount_cents]"
+              value={@refund_amount_cents}
+              readonly
+              required
+              class="mt-1 w-full rounded border border-fc-border px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium" for={"#{@id}-currency"}>Currency</label>
+            <input
+              id={"#{@id}-currency"}
+              type="text"
+              name="admin_action[currency]"
+              value={@refund_currency}
+              readonly
+              required
+              class="mt-1 w-full rounded border border-fc-border px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
       </div>
       <div :if={@show_password}>
         <label class="block text-sm font-medium" for={"#{@id}-password"}>Admin password</label>

@@ -12,7 +12,11 @@
 **Source docs:** `docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Ash_Atlas_Planning_Pack_v0.2.3_HARDENED.md`, `docs/fastcheck_sales/SOURCE_DOCS/FastCheck_Sales_Vertical_Slice_Roadmap_v1.1.3_HARDENED.md`  
 **Normalization:** Batch `0035_0037`, normalized 2026-06-14  
 **Depends on:** VS-13, VS-15A, VS-12, VS-10, VS-09D, VS-07C, VS-00A, VS-00B, VS-01F, VS-21A  
-**Blocks:** VS-20, VS-21B, VS-22, VS-23B, paid-event launch if admin refund/revoke is launch-supported  
+**Blocks:** VS-20, VS-21B, VS-22, VS-23B, paid-event launch if admin refund/revoke is launch-supported
+
+**Implementation update:** P1-C supersedes the manual refund-marker behavior;
+current refund evidence and financial finalization are defined in the
+[P1-C feature pack](../0056_P1-C_durable-refund-evidence/0056_P1-C-FEATURE_PACK.md).
 
 ---
 
