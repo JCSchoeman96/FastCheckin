@@ -26,6 +26,10 @@ defmodule FastCheck.Events do
 
   alias Plug.Crypto, as: PlugCrypto
 
+  @whatsapp_sales_status_fields [:id, :status, :whatsapp_sales_enabled]
+  @whatsapp_sales_enabled_fields [:id, :whatsapp_sales_enabled]
+  @whatsapp_quantity_cap_fields [:id, :status, :whatsapp_max_tickets_per_order]
+
   @attr_atom_lookup %{
     "site_url" => :site_url,
     "tickera_site_url" => :tickera_site_url,
@@ -259,7 +263,7 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       0 ->
-        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+        case get_event_projection(event_id, @whatsapp_sales_status_fields) do
           nil ->
             Logger.info(
               "WhatsApp sales gate event_id=#{event_id} action=enable outcome=not_found"
@@ -324,7 +328,7 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       0 ->
-        case Repo.get(Event, event_id, select: [:id, :whatsapp_sales_enabled]) do
+        case get_event_projection(event_id, @whatsapp_sales_enabled_fields) do
           nil ->
             Logger.info(
               "WhatsApp sales gate event_id=#{event_id} action=disable outcome=not_found"
@@ -428,7 +432,7 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       0 ->
-        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_max_tickets_per_order]) do
+        case get_event_projection(event_id, @whatsapp_quantity_cap_fields) do
           nil ->
             Logger.info("WhatsApp quantity cap event_id=#{event_id} action=set outcome=not_found")
 
@@ -469,6 +473,15 @@ defmodule FastCheck.Events do
     _ = Cache.invalidate_event_cache(event_id)
     _ = Cache.invalidate_events_list_cache()
     :ok
+  end
+
+  defp get_event_projection(event_id, fields) do
+    Repo.one(
+      from(e in Event,
+        where: e.id == ^event_id,
+        select: struct(e, ^fields)
+      )
+    )
   end
 
   # Delegation Functions (Backwards Compatibility)
@@ -644,7 +657,7 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       {0, _} ->
-        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+        case get_event_projection(event_id, @whatsapp_sales_status_fields) do
           nil ->
             {:error, :not_found}
 
@@ -689,7 +702,7 @@ defmodule FastCheck.Events do
         {:ok, event}
 
       {0, _} ->
-        case Repo.get(Event, event_id, select: [:id, :status, :whatsapp_sales_enabled]) do
+        case get_event_projection(event_id, @whatsapp_sales_status_fields) do
           nil ->
             {:error, :not_found}
 
