@@ -5,6 +5,14 @@ verification, issuance recovery, expiry cleanup, manual review, revocation
 safety, and scanner/mobile sync running unless a developer/admin explicitly
 directs otherwise.
 
+## Global worker monitoring gap
+
+P1-F tracks the unresolved P0 launch blocker for global Oban backlog
+monitoring. No approved production source or procedure currently exists.
+`/dashboard/sales/ops` is Event-scoped and cannot show global worker backlog.
+Production launch remains NO-GO until P1-F is complete. Do not use ad-hoc SQL or
+an assumed platform dashboard as a substitute.
+
 ## Paystack webhook not arriving
 
 - Incident name: Paystack webhook not arriving.
@@ -12,8 +20,8 @@ directs otherwise.
 - Severity: High.
 - First checks: Confirm `PAYSTACK_WEBHOOK_URL`, app deploy health, and provider
   retry status.
-- What to inspect in Ops Dashboard: Payment failures, awaiting payment growth,
-  Oban backlog.
+- What to inspect in Ops Dashboard: Payment failures and awaiting-payment
+  growth for the granted Event.
 - What to inspect in Audit Timeline: Order and payment attempt entries.
 - Safe immediate action: Pause new checkouts if payments cannot be observed.
 - Unsafe actions to avoid: Do not manually mark payment verified.
@@ -43,10 +51,11 @@ directs otherwise.
 - Symptoms: Payment events exist but attempts do not reach verified success.
 - Severity: High.
 - First checks: Paystack API health, `PAYSTACK_TIMEOUT_MS`, network egress.
-- What to inspect in Ops Dashboard: Retry backlog and payment failures.
+- What to inspect in Ops Dashboard: Payment failures and manual-review state for
+  the granted Event.
 - What to inspect in Audit Timeline: Payment attempt verification entries.
-- Safe immediate action: Keep retries running; pause new checkouts if backlog
-  grows.
+- Safe immediate action: Keep retries running; pause new checkouts if payment
+  failures persist or verified attempts remain unresolved.
 - Unsafe actions to avoid: Do not issue tickets from webhook alone.
 - Recovery procedure: Restore API connectivity, allow retry, manually assign
   unresolved orders to review.
@@ -59,10 +68,11 @@ directs otherwise.
 - Symptoms: Many repeat webhook deliveries for the same provider event.
 - Severity: Medium to high.
 - First checks: Redis dedupe health and provider retry reason.
-- What to inspect in Ops Dashboard: Payment event pressure and Oban backlog.
+- What to inspect in Ops Dashboard: Payment event pressure and recent
+  Event-owned failures.
 - What to inspect in Audit Timeline: Payment event and order idempotency.
 - Safe immediate action: Keep dedupe and workers running; pause new checkouts if
-  worker backlog threatens recovery.
+  payment effects are delayed or duplicate effects appear.
 - Unsafe actions to avoid: Do not delete duplicate evidence.
 - Recovery procedure: Resolve provider retry cause and let idempotency collapse
   duplicates.
@@ -74,8 +84,9 @@ directs otherwise.
 - Incident name: Payment verified but ticket not issued.
 - Symptoms: Payment attempt verified success, order not ticket issued.
 - Severity: Critical.
-- First checks: `IssueTicketsWorker`, Oban backlog, order state, inventory state.
-- What to inspect in Ops Dashboard: Ticket issuance failures and retry backlog.
+- First checks: `IssueTicketsWorker` outcome, order state, and inventory state.
+- What to inspect in Ops Dashboard: Event-owned ticket issuance failures and
+  recent failures. It does not show global worker backlog.
 - What to inspect in Audit Timeline: Order, payment attempt, and ticket issue.
 - Safe immediate action: Keep issuance recovery running; pause new checkouts if
   repeated.
@@ -118,7 +129,7 @@ directs otherwise.
 - Incident name: WhatsApp outbound sends failing.
 - Symptoms: Payment or ticket messages are not delivered.
 - Severity: High.
-- First checks: Meta auth, rate limits, provider status, outbound worker backlog.
+- First checks: Meta auth, rate limits, provider status, and delivery attempts.
 - What to inspect in Ops Dashboard: Delivery failure/fallback counts.
 - What to inspect in Audit Timeline: Delivery attempt entries.
 - Safe immediate action: Assign manual review; pause new WhatsApp checkouts if
@@ -148,7 +159,8 @@ directs otherwise.
 - Symptoms: Inventory, dedupe, session, or cache operations fail.
 - Severity: Critical.
 - First checks: Redis health, `REDIS_URL`, network, app connection errors.
-- What to inspect in Ops Dashboard: Checkout failures, webhook storm, backlog.
+- What to inspect in Ops Dashboard: Checkout failures and recent Event-owned
+  failures.
 - What to inspect in Audit Timeline: Orders stuck before payment or delivery.
 - Safe immediate action: Pause new checkouts and WhatsApp entrypoints.
 - Unsafe actions to avoid: Do not manually reconstruct inventory keys.
@@ -162,8 +174,9 @@ directs otherwise.
 - Incident name: Checkout expiry backlog.
 - Symptoms: Expired sessions remain reserved or awaiting payment.
 - Severity: Medium.
-- First checks: Checkout expiry worker and Oban backlog.
-- What to inspect in Ops Dashboard: Expired/awaiting counts and worker backlog.
+- First checks: Checkout expiry worker outcome and expired sessions.
+- What to inspect in Ops Dashboard: Expired and awaiting-payment counts for the
+  granted Event. It does not show global worker backlog.
 - What to inspect in Audit Timeline: Checkout session state transitions.
 - Safe immediate action: Keep expiry cleanup running; pause new checkouts if
   inventory is blocked.
@@ -236,7 +249,8 @@ directs otherwise.
 - Incident name: DeliveryAttempt fallback/manual-review spike.
 - Symptoms: Many deliveries enter failed, fallback-required, or manual review.
 - Severity: High.
-- First checks: Meta auth, template approval, rate limits, worker backlog.
+- First checks: Meta auth, template approval, rate limits, and delivery
+  attempts.
 - What to inspect in Ops Dashboard: Delivery failure/fallback counts.
 - What to inspect in Audit Timeline: Delivery attempt sample timelines.
 - Safe immediate action: Assign manual review and pause new WhatsApp sales if
@@ -249,16 +263,26 @@ directs otherwise.
 ## Oban queue backlog
 
 - Incident name: Oban queue backlog.
-- Symptoms: Worker retry or available backlog grows.
+- Symptoms: A worker-dependent Sales flow stalls or does not recover after a
+  transient failure.
 - Severity: High if payment, issuance, expiry, or delivery queues are affected.
-- First checks: Oban process health, database connectivity, retry reasons.
-- What to inspect in Ops Dashboard: Worker retry backlog by queue.
+- First checks: Global backlog cannot currently be inspected through an
+  approved production monitoring source. This is the unresolved P1-F P0 launch
+  blocker.
+- What to inspect in Ops Dashboard: Nothing for global worker backlog. Sales
+  Ops is Event-scoped and does not expose Oban queue totals.
 - What to inspect in Audit Timeline: Stalled order/payment/delivery entities.
-- Safe immediate action: Pause new sales if backlog affects paid flow.
+- Safe immediate action: Pause new sales if payment, issuance, or delivery
+  recovery is uncertain.
 - Unsafe actions to avoid: Do not delete jobs blindly.
-- Recovery procedure: Restore worker capacity and clear root error.
-- Verification after recovery: Backlog drains and state transitions resume.
-- Escalation trigger: Backlog grows for two monitoring intervals.
+- Recovery procedure: Production launch must remain NO-GO until P1-F provides
+  an approved source and rehearsed procedure. Do not substitute ad-hoc SQL or an
+  assumed platform dashboard.
+- Verification after recovery: Confirm the affected Event-owned order, payment,
+  ticket, or delivery state. Queue-wide recovery cannot be verified until P1-F
+  provides an approved source and procedure.
+- Escalation trigger: A worker-dependent Sales flow stalls or a global backlog
+  cannot be assessed.
 
 ## Ops dashboard unavailable
 
@@ -306,4 +330,3 @@ directs otherwise.
   logs according to policy, and fix redaction outside this docs slice.
 - Verification after recovery: New logs are redacted and audit views are safe.
 - Escalation trigger: Any customer token or provider secret is exposed.
-

@@ -83,5 +83,13 @@
     "core_operator_capability": "Retained in FastCheck.Tickets.Revocation as a domain capability; the core does not authenticate callers.",
     "production_operator_entry_point": "None.",
     "follow_up": "FastCheckin-iuaq: establish trusted operator identity and Event authority before adding a production entry point."
+  },
+  "global_worker_monitoring": {
+    "event_scoped_sales_ops_exposes_global_backlog": false,
+    "reason": "Global and unattributable Oban jobs have no safe Event owner.",
+    "p1_d_provides_global_monitoring": false,
+    "status": "open_p0_launch_readiness_blocker",
+    "follow_up": "P1-F - Global Worker Backlog Monitoring",
+    "launch_readiness": "NO-GO until an approved global monitoring source and rehearsed procedure exist."
   }
 }

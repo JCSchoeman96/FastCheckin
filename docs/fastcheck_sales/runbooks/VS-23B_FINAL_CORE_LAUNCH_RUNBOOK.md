@@ -30,6 +30,9 @@ Use VS-21B operator views as the visibility truth:
 - Oban is running and processing the Sales queues.
 - Assigned staff use the configured dashboard-admin identity; no separate Sales operator login exists.
 - Ops Dashboard opens at `/dashboard/sales/ops`.
+- Global Oban backlog monitoring is an unresolved P0 launch blocker owned by
+  P1-F. An approved production source and rehearsed procedure must exist before
+  launch. Event-scoped Sales Ops is not a substitute.
 - Audit Timeline opens at `/dashboard/sales/audit/:entity_type/:entity_id`.
 - Mobile login, attendee sync, and scan upload are verified.
 - At least one active event exists.
@@ -224,8 +227,12 @@ Open `/dashboard/sales/ops` and verify:
 - Manual review queue count is visible.
 - Delivery failures and fallback-required counts are visible.
 - Scanner visibility pending count is visible.
-- Oban retry backlog is visible.
+- Recent Event-owned failures are visible.
 - Filters by event and source channel work.
+
+Global Oban backlog monitoring cannot currently be verified through an
+approved production source. P1-F must resolve this P0 launch blocker before
+production GO. Do not use Event-scoped Sales Ops as a global backlog source.
 
 Open `/dashboard/sales/audit/:entity_type/:entity_id` and verify:
 

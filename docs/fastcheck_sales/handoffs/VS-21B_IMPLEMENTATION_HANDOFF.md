@@ -11,16 +11,23 @@ Branch: `vs-21b-operational-metrics-audit-views`
 
 ## What Changed
 
-VS-21B added read-only Sales operational visibility: bounded Postgres query modules,
-dashboard-auth LiveViews, Sales telemetry metric definitions, and query-path indexes.
+At the VS-21B merge, the slice added read-only Sales operational visibility:
+bounded Postgres query modules, dashboard-auth LiveViews, Sales telemetry metric
+definitions, and query-path indexes.
 
-`FastCheck.Sales.OpsMetrics` returns safe display maps for checkout/payment/ticket/
-delivery/manual-review pressure, scanner-visibility invalidation counts, and Oban
-retry backlog. `FastCheck.Sales.AuditViews` returns allowlisted, paginated, redacted
-audit timelines from `sales_state_transitions` plus entity-specific summary rows.
+At that time, `FastCheck.Sales.OpsMetrics` returned safe display maps for
+checkout/payment/ticket/delivery/manual-review pressure, scanner-visibility
+invalidation counts, and Oban retry backlog. `FastCheck.Sales.AuditViews`
+returned allowlisted, paginated, redacted audit timelines from
+`sales_state_transitions` plus entity-specific summary rows.
 
 Routes `/dashboard/sales/ops` and `/dashboard/sales/audit/:entity_type/:entity_id`
 live under the existing `[:browser, :dashboard_auth]` scope.
+
+P1-D later removed the global `worker_retry_backlog_by_queue/0` field from
+Event-scoped Sales Ops because Oban jobs have no safe Event owner. Global
+backlog monitoring is deferred to P1-F and remains a P0 launch blocker until an
+approved production source and procedure exist.
 
 No provider calls, ticket issuing, scanner mutation, Redis inventory mutation,
 checkout/order/payment/ticket transitions, Android/mobile API changes, new Ash
@@ -180,7 +187,9 @@ Results reported at merge:
 - No slice doc under `docs/fastcheck_sales/slices/`; feature pack remains planning
   reference.
 - Ops dashboard loads on mount/filter change only; no polling interval.
-- `worker_retry_backlog_by_queue/0` returns `%{}` if Oban query fails (rescued).
+- In the original VS-21B implementation, `worker_retry_backlog_by_queue/0`
+  returned `%{}` if the Oban query failed. P1-D later removed this global
+  metric from Event-scoped Sales Ops; P1-F tracks the deferred monitoring.
 
 ## Next Agent Guidance
 

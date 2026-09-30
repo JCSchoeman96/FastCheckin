@@ -20,6 +20,7 @@ launch safety, customer trust, payment integrity, scanner validity, or privacy.
 | Launch scope unclear | P0 | VS-00D must lock channel priority and launch scope. | VS-00D |
 | Operators see all events by default | P0 | First release must use `event_scoped_first` access, not role-only access. | VS-00B, VS-00D |
 | Dashboard identity crosses Sales Event boundaries | P0 | Resolve server-configured `DASHBOARD_ALLOWED_EVENT_IDS` and constrain every Sales query and action to that grant set. | P1-D |
+| Global Oban backlog has no production monitoring authority | P0 | Keep global/unattributable job data out of Event-scoped Sales Ops. Production launch is NO-GO until an approved global source and rehearsed procedure expose bounded queue/backlog health without job arguments or sensitive data. | P1-F |
 | No trusted Sales operator authority | P2 | Keep dashboard revocation admin-only. Before exposing operator single-ticket revocation, add trusted operator identity, server-established Event binding, cross-Event and forged-grant denial, audit actor attribution, and an explicit production entry point. | FastCheckin-iuaq |
 | General BrowserAuth routes lack Event isolation | P0 | Separately scope root Event administration/sync, CSV exports, browser scanner, and occupancy before treating application-wide dashboard access as isolated. | BrowserAuth event-isolation follow-up |
 | Public web checkout becomes accidental primary product | P0 | `web_checkout_sales` is deferred until after WhatsApp-first launch stability. | VS-00D |

@@ -88,3 +88,15 @@ tracked security slice.
 
 No scanner/mobile redesign, payment/refund state change, inventory change,
 ticket authority change, or customer-session change is included.
+
+## P1-D-REV-02 global worker monitoring boundary
+
+Event-scoped `OpsMetrics` excludes global and unattributable Oban backlog data.
+This is an intentional security boundary because Oban jobs do not have a safe
+Event owner. P1-D does not provide global operational monitoring, and its
+Sales Ops dashboard must not be used as a global backlog source.
+
+Global Oban backlog monitoring remains an open P0 launch-readiness blocker.
+Production launch is NO-GO until an approved global monitoring source and
+rehearsed procedure exist. P1-F owns that follow-up. P1-D does not establish
+launch readiness.

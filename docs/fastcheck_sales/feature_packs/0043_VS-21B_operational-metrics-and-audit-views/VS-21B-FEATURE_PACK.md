@@ -206,6 +206,12 @@ manual_review_oldest_age_seconds
 worker_retry_backlog_by_queue
 ```
 
+VS-21B originally implemented `worker_retry_backlog_by_queue` as an OpsMetrics
+capability. P1-D later removed this global field from Event-scoped Sales Ops
+because Oban jobs have no safe Event owner. Global backlog monitoring is
+deferred to P1-F and remains a P0 launch-readiness blocker until an approved
+source and procedure exist.
+
 ### 7.2 Time windows
 
 Support bounded windows only:
