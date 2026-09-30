@@ -26,7 +26,7 @@
 | `verification_started` | `verified_currency_mismatch` | `mark_currency_mismatch` | `system` | Verification currency differs from expected. | Move order/payment to review. | yes | Same mismatch is idempotent. | no |
 | `verification_started` | `failed` | `mark_verification_failed` | `system` | Provider says failed or verifier fails safely. | Store safe reason. | yes | Duplicate failure is idempotent. | conditional |
 | `verification_started` | `manual_review` | `review_verification` | `system/admin` | Ambiguous provider/local state. | Preserve raw evidence under restricted access. | yes | Existing review remains. | no |
-| `verified_success` | `refunded` | `mark_payment_refunded` | `admin/system` | Refund/revocation policy approves. | Trigger ticket revocation if applicable. | yes | Duplicate refund returns refunded. | yes |
+| `verified_success` | `refunded` | `mark_payment_refunded` | `admin/system` | A matching Refund has accepted manual Paystack Dashboard evidence: provider `paystack`, status `processed`, non-empty refund RRN/reference, `refunded_at`, exact full amount and currency, admin identity, reason, and existing admin-password verification. Order-level revocation is complete and zero issued TicketIssues remain. | Under the existing Order advisory lock, atomically mark PaymentAttempt refunded, Order refunded, Refund inventory_pending, and insert the unique RefundInventoryWorker. | yes | A repeated matching transition is idempotent; provider verification evidence is preserved. | yes |
 | `verified_amount_mismatch` | `manual_review` | `review_amount_mismatch` | `admin/system` | Admin/system review is required. | Record reason and allowed target. | yes | Existing review remains. | no |
 | `verified_currency_mismatch` | `manual_review` | `review_currency_mismatch` | `admin/system` | Admin/system review is required. | Record reason and allowed target. | yes | Existing review remains. | no |
 | `failed` | `manual_review` | `review_failed_payment_attempt` | `admin/system` | Failure may be recoverable. | Record reason. | yes | Existing review remains. | no |
@@ -38,3 +38,12 @@
 - Duplicate verification after `verified_success` returns idempotent success.
 - Duplicate handling must not downgrade, overwrite, or replace
   `verified_success`.
+- `mark_payment_refunded` is the only named PaymentAttempt transition to
+  `refunded`. It cannot run before Refund evidence and complete revocation.
+- `manual_review` cannot target `refunded` through
+  `resolve_payment_attempt_review`; use `mark_payment_refunded` with the
+  matching Refund and finalization proofs.
+- The finalization transaction does not call Redis. Inventory resolution runs in
+  `RefundInventoryWorker` after the financial transaction commits.
+- Exact held inventory may be released with the Refund idempotency key;
+  exact consumed inventory remains unavailable without a Redis mutation.

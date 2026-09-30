@@ -55,6 +55,14 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
     end)
   end
 
+  def handle_event("retry_refund_inventory", %{"admin_action" => params}, socket) do
+    order_id = socket.assigns.context.sales_order_id
+
+    run_action(socket, fn ->
+      AdminRefunds.retry_refund_inventory(socket.assigns.actor, order_id, params)
+    end)
+  end
+
   def handle_event("mark_cancelled", %{"admin_action" => params}, socket) do
     order_id = socket.assigns.context.sales_order_id
 
@@ -248,6 +256,32 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
               id="mark-refunded"
               action="mark_refunded"
               submit_label="Mark refunded"
+              show_password
+              show_refund_evidence
+              refund_amount_cents={@context.order_total_amount_cents}
+              refund_currency={@context.order_currency}
+            />
+          </.card_content>
+        </.card>
+
+        <.card
+          :if={@context.available_actions.can_retry_refund_inventory}
+          variant="outline"
+          color="natural"
+          rounded="large"
+          padding="large"
+        >
+          <.card_content>
+            <h2 class="mb-2 text-base font-semibold text-fc-text-primary">
+              Retry refund inventory resolution
+            </h2>
+            <p class="mb-3 text-sm text-fc-text-secondary">
+              Retry after reviewing the inventory hold and recording the reason for this action.
+            </p>
+            <RevocationFormComponent.revocation_form
+              id="retry-refund-inventory"
+              action="retry_refund_inventory"
+              submit_label="Retry inventory resolution"
               show_password
             />
           </.card_content>

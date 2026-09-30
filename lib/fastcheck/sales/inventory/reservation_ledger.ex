@@ -197,8 +197,17 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   end
 
   @spec release(integer(), String.t(), String.t()) :: {:ok, map()} | {:error, atom(), map()}
-  def release(offer_id, order_public_reference, idempotency_key) do
-    with :ok <- validate_idempotency(idempotency_key, offer_id) do
+  def release(offer_id, order_public_reference, idempotency_key),
+    do: release(offer_id, order_public_reference, idempotency_key, [])
+
+  @spec release(integer(), String.t(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, atom(), map()}
+  def release(offer_id, order_public_reference, idempotency_key, opts) when is_list(opts) do
+    expected_quantity = Keyword.get(opts, :expected_quantity)
+    require_unexpired? = Keyword.get(opts, :require_unexpired?, false)
+
+    with :ok <- validate_idempotency(idempotency_key, offer_id),
+         :ok <- validate_release_options(expected_quantity, require_unexpired?, offer_id) do
       RedisScripts.release(
         offer_id: offer_id,
         keys: [
@@ -211,17 +220,26 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
         argv: [
           order_public_reference,
           Integer.to_string(now_ms()),
-          args_sig("release", [offer_id, order_public_reference]),
+          release_args_sig(
+            offer_id,
+            order_public_reference,
+            expected_quantity,
+            require_unexpired?
+          ),
           Integer.to_string(RedisScripts.dedupe_ttl_seconds()),
           Integer.to_string(RedisScripts.order_lock_ttl_ms()),
           Integer.to_string(offer_id),
+          Integer.to_string(expected_quantity || 0),
           "0",
-          "0"
+          if(require_unexpired?, do: "1", else: "0")
         ]
       )
       |> map_release_snapshot(offer_id, order_public_reference)
     end
   end
+
+  def release(offer_id, _order_public_reference, _idempotency_key, _opts),
+    do: {:error, :invalid_release_precondition, %{offer_id: offer_id}}
 
   @doc false
   @spec release_late_payment_reservation(
@@ -737,6 +755,15 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   defp validate_ttl(_value, offer_id),
     do: {:error, :invalid_quantity, %{offer_id: offer_id, field: :ttl_seconds}}
 
+  defp validate_release_options(nil, false, _offer_id), do: :ok
+
+  defp validate_release_options(quantity, require_unexpired?, _offer_id)
+       when is_integer(quantity) and quantity > 0 and is_boolean(require_unexpired?),
+       do: :ok
+
+  defp validate_release_options(_quantity, _require_unexpired?, offer_id),
+    do: {:error, :invalid_release_precondition, %{offer_id: offer_id}}
+
   defp validate_idempotency(value, offer_id) when is_binary(value) do
     if String.trim(value) == "",
       do: {:error, :invalid_idempotency_key, %{offer_id: offer_id}},
@@ -778,6 +805,18 @@ defmodule FastCheck.Sales.Inventory.ReservationLedger do
   defp parse_ledger_state(_), do: :reconciliation_required
 
   defp args_sig(operation, parts), do: Enum.join([operation | Enum.map(parts, &to_string/1)], "|")
+
+  defp release_args_sig(offer_id, order_public_reference, nil, false),
+    do: args_sig("release", [offer_id, order_public_reference])
+
+  defp release_args_sig(offer_id, order_public_reference, expected_quantity, require_unexpired?),
+    do:
+      args_sig("release", [
+        offer_id,
+        order_public_reference,
+        expected_quantity,
+        require_unexpired?
+      ])
 
   defp inventory_key(offer_id), do: "sales:offer:#{offer_id}:inventory"
   defp holds_key(offer_id), do: "sales:offer:#{offer_id}:holds"

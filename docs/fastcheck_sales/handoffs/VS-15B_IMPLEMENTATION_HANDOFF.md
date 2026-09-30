@@ -11,6 +11,13 @@ Merged at: 2026-06-25T19:01:03Z
 Branch: `vs-15b-admin-refund-revocation`  
 CI: GitHub Actions run 28192438625 green on merge
 
+P1-C supersedes the refund-marker flow described below. Current refunds require
+durable processed Paystack evidence, completed ticket revocation, and the
+`Order.finalize_refund` / `Refund.mark_inventory_pending` transaction described
+in [the P1-C feature pack](../feature_packs/0056_P1-C_durable-refund-evidence/0056_P1-C-FEATURE_PACK.md).
+`Order` no longer exposes `:mark_refunded_manual`; cancellation and revocation
+remain on the VS-15B path.
+
 ## What Changed
 
 VS-15B added dashboard admin orchestration for manual order refund/cancel markers and

@@ -12,6 +12,7 @@ defmodule FastCheck.Sales.PaymentAttempt do
     authorizers: [Ash.Policy.Authorizer]
 
   alias Ash.Changeset
+  alias FastCheck.Repo
   alias FastCheck.Sales.StateTransitionSupport
 
   postgres do
@@ -191,6 +192,45 @@ defmodule FastCheck.Sales.PaymentAttempt do
             "verified_success",
             allowed_from: ["verification_started"]
           )
+        end
+      end)
+    end
+
+    update :mark_payment_refunded do
+      require_atomic?(false)
+      accept([])
+
+      argument :refund_id, :integer do
+        allow_nil?(false)
+      end
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+        refund_id = Changeset.get_argument(changeset, :refund_id)
+
+        cond do
+          from_state not in ["verified_success", "refunded"] ->
+            Changeset.add_error(changeset,
+              field: :status,
+              message: "only a verified-success PaymentAttempt can be refunded"
+            )
+
+          not matching_refund?(changeset, refund_id) ->
+            Changeset.add_error(changeset,
+              field: :status,
+              message: "a matching completed-revocation Refund is required"
+            )
+
+          from_state == "refunded" ->
+            changeset
+
+          true ->
+            transition_status(
+              changeset,
+              context,
+              "refunded",
+              allowed_from: ["verified_success"]
+            )
         end
       end)
     end
@@ -519,6 +559,63 @@ defmodule FastCheck.Sales.PaymentAttempt do
       changeset
     end
   end
+
+  defp matching_refund?(changeset, refund_id) when is_integer(refund_id) do
+    payment_attempt_id = Changeset.get_data(changeset, :id)
+
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM sales_payment_attempts p
+             INNER JOIN sales_orders o ON o.id = p.sales_order_id
+             INNER JOIN sales_refunds r
+               ON r.sales_order_id = o.id AND r.payment_attempt_id = p.id
+             WHERE p.id = $1
+               AND r.id = $2
+               AND p.provider = 'paystack'
+               AND p.status IN ('verified_success', 'refunded')
+               AND o.status IN (
+                 'paid_verified', 'fulfillment_queued', 'partially_issued',
+                 'issuance_retry_queued', 'ticket_issued', 'manual_review',
+                 'manual_review_held', 'refunded'
+               )
+               AND r.provider = 'paystack'
+               AND r.provider_status = 'processed'
+               AND r.provider_refund_reference IS NOT NULL
+               AND btrim(r.provider_refund_reference) <> ''
+               AND r.provider_refunded_at IS NOT NULL
+               AND r.recorded_by IS NOT NULL
+               AND btrim(r.recorded_by) <> ''
+               AND r.reason IS NOT NULL
+               AND btrim(r.reason) <> ''
+               AND r.status IN ('inventory_pending', 'completed')
+               AND r.revocation_completed_at IS NOT NULL
+               AND r.amount_cents = o.total_amount_cents
+               AND p.amount_cents = o.total_amount_cents
+               AND r.currency = o.currency
+               AND p.currency = o.currency
+               AND (SELECT count(*)
+                    FROM sales_payment_attempts candidates
+                    WHERE candidates.sales_order_id = o.id
+                      AND candidates.status IN ('verified_success', 'refunded')) = 1
+               AND NOT EXISTS (
+                 SELECT 1 FROM sales_ticket_issues issues
+                 WHERE issues.sales_order_id = o.id AND issues.status = 'issued'
+               )
+           )
+           """,
+           [payment_attempt_id, refund_id]
+         ) do
+      {:ok, %{rows: [[true]]}} ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp matching_refund?(_changeset, _refund_id), do: false
 
   defp transition_correlation_id(context) do
     actor = Map.get(context, :actor, %{})

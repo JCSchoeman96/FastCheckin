@@ -187,12 +187,66 @@ defmodule FastCheckWeb.Sales.OrderShowLiveTest do
         "admin_action" => %{
           "reason" => "External refund processed",
           "admin_password" => Fixtures.dashboard_password(),
+          "provider_status" => "processed",
+          "provider_refund_reference" => "LV-RRN-#{System.unique_integer([:positive])}",
+          "provider_refunded_at" =>
+            DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+          "amount_cents" => "12500",
+          "currency" => "ZAR",
           "idempotency_key" => "lv-refund-1"
         }
       })
 
     assert html =~ "Action completed" || html =~ "External refund"
     assert Fixtures.order_status(order_id) == "refunded"
+  end
+
+  test "refund form collects processed Paystack evidence and full-order amount" do
+    %{order_id: order_id} = Fixtures.issued_order_fixture()
+
+    {:ok, _view, html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{order_id}")
+
+    assert html =~ "I confirm Paystack shows this refund as processed."
+    assert html =~ ~s(name="admin_action[provider_refund_reference]")
+    assert html =~ ~s(name="admin_action[provider_refunded_at]")
+    assert html =~ ~s(name="admin_action[amount_cents]" value="12500")
+    assert html =~ ~s(name="admin_action[currency]" value="ZAR")
+    assert html =~ "Full-order refunds only"
+  end
+
+  test "admin can retry refund inventory from manual review" do
+    fixture = Fixtures.inventory_pending_refund_fixture()
+
+    Repo.query!(
+      "UPDATE sales_refunds SET status = 'inventory_manual_review', manual_review_reason = 'review' WHERE id = $1",
+      [fixture.refund_id]
+    )
+
+    {:ok, view, html} =
+      build_conn()
+      |> WebFixtures.authenticated_conn()
+      |> live(~p"/dashboard/sales/orders/#{fixture.order_id}")
+
+    assert html =~ "Retry refund inventory resolution"
+
+    html =
+      render_submit(view, "retry_refund_inventory", %{
+        "admin_action" => %{
+          "reason" => "Confirmed the original refund record",
+          "admin_password" => Fixtures.dashboard_password()
+        }
+      })
+
+    assert html =~ "Action completed successfully."
+
+    assert Repo.one!(
+             from refund in "sales_refunds",
+               where: refund.id == ^fixture.refund_id,
+               select: refund.status
+           ) == "inventory_pending"
   end
 
   test "order revoke failure surfaces blocking error instead of success" do

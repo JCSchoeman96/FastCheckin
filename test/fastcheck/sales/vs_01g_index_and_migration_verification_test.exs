@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     "sales_orders",
     "sales_payment_attempts",
     "sales_payment_events",
+    "sales_refunds",
     "sales_state_transitions",
     "sales_ticket_delivery_intents",
     "sales_ticket_issues",
@@ -26,6 +27,7 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     FastCheck.Sales.CheckoutSession,
     FastCheck.Sales.PaymentAttempt,
     FastCheck.Sales.PaymentEvent,
+    FastCheck.Sales.Refund,
     FastCheck.Sales.ManualReviewAction,
     FastCheck.Sales.TicketIssue,
     FastCheck.Sales.TicketDeliveryIntent,
@@ -187,6 +189,15 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     assert_index("sales_payment_attempts_status_inserted_at_idx", ["status", "inserted_at"])
     assert_index("sales_payment_attempts_last_verified_at_idx", ["last_verified_at"])
 
+    assert_index("sales_refunds_order_uidx", ["sales_order_id"], unique?: true)
+    assert_index("sales_refunds_payment_attempt_uidx", ["payment_attempt_id"], unique?: true)
+
+    assert_index("sales_refunds_provider_reference_uidx", ["provider_refund_reference"],
+      unique?: true
+    )
+
+    assert_index("sales_refunds_status_sales_order_id_index", ["status", "sales_order_id"])
+
     assert_index(
       "sales_payment_events_provider_event_id_uidx",
       [
@@ -299,11 +310,29 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
     assert_index("sales_manual_review_actions_action_idx", ["action", "inserted_at"])
   end
 
+  test "refund admin identity has a database nonblank constraint" do
+    assert [[definition]] =
+             Repo.query!(
+               """
+               SELECT pg_get_constraintdef(oid)
+               FROM pg_constraint
+               WHERE conrelid = 'sales_refunds'::regclass
+                 AND conname = 'sales_refunds_recorded_by_nonblank'
+               """,
+               []
+             ).rows
+
+    assert definition =~ "recorded_by"
+    assert definition =~ "btrim"
+  end
+
   test "relationship paths use foreign keys where the accepted contract requires them" do
     assert_foreign_key("sales_order_lines", "sales_order_id", "sales_orders")
     assert_foreign_key("sales_order_lines", "ticket_offer_id", "sales_ticket_offers")
     assert_foreign_key("sales_checkout_sessions", "sales_order_id", "sales_orders")
     assert_foreign_key("sales_payment_attempts", "sales_order_id", "sales_orders")
+    assert_foreign_key("sales_refunds", "sales_order_id", "sales_orders")
+    assert_foreign_key("sales_refunds", "payment_attempt_id", "sales_payment_attempts")
     assert_foreign_key("sales_ticket_issues", "sales_order_id", "sales_orders")
     assert_foreign_key("sales_ticket_issues", "sales_order_line_id", "sales_order_lines")
     assert_foreign_key("sales_delivery_attempts", "sales_order_id", "sales_orders")
@@ -360,6 +389,21 @@ defmodule FastCheck.Sales.Vs01gIndexAndMigrationVerificationTest do
         :provider_reference
       ],
       index_name: "sales_payment_attempts_provider_reference_uidx"
+    )
+
+    assert_identity(FastCheck.Sales.Refund, :unique_order, [:sales_order_id],
+      index_name: "sales_refunds_order_uidx"
+    )
+
+    assert_identity(FastCheck.Sales.Refund, :unique_payment_attempt, [:payment_attempt_id],
+      index_name: "sales_refunds_payment_attempt_uidx"
+    )
+
+    assert_identity(
+      FastCheck.Sales.Refund,
+      :unique_provider_reference,
+      [:provider_refund_reference],
+      index_name: "sales_refunds_provider_reference_uidx"
     )
 
     assert_identity(

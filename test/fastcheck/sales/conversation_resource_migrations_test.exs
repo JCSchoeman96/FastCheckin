@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.ConversationResourceMigrationsTest do
     "sales_orders",
     "sales_payment_attempts",
     "sales_payment_events",
+    "sales_refunds",
     "sales_state_transitions",
     "sales_ticket_delivery_intents",
     "sales_ticket_issues",

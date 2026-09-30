@@ -41,9 +41,26 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
         "reason" => "Customer requested refund",
         "admin_password" => @dashboard_password,
         "confirmed_bulk" => "true",
+        "provider_status" => "processed",
+        "provider_refund_reference" => "FC-RRN-#{System.unique_integer([:positive])}",
+        "provider_refunded_at" =>
+          DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
         "idempotency_key" => "admin-#{System.unique_integer([:positive])}"
       },
       overrides
+    )
+  end
+
+  def admin_attrs_for_order(order_id, overrides \\ %{}) do
+    %{total_amount_cents: amount_cents, currency: currency} =
+      Repo.one!(
+        from o in "sales_orders",
+          where: o.id == ^order_id,
+          select: %{total_amount_cents: o.total_amount_cents, currency: o.currency}
+      )
+
+    admin_attrs(
+      Map.merge(%{"amount_cents" => to_string(amount_cents), "currency" => currency}, overrides)
     )
   end
 
@@ -56,7 +73,7 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
     order_id = insert_order!(event.id, "paid_verified", total)
     line_id = insert_order_line!(order_id, offer_id, quantity, unit_amount, total)
     insert_checkout_session!(order_id, "paid", quantity)
-    insert_payment_attempt!(order_id, "verified_success", total)
+    payment_attempt_id = insert_payment_attempt!(order_id, "verified_success", total)
     queue_fulfillment!(order_id)
 
     case Issuer.issue_order(order_id) do
@@ -77,7 +94,62 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
       event: event,
       order_id: order_id,
       line_id: line_id,
+      payment_attempt_id: payment_attempt_id,
+      amount_cents: total,
+      currency: "ZAR",
       ticket_issue_ids: ticket_issue_ids(order_id)
+    }
+  end
+
+  def inventory_pending_refund_fixture(opts \\ []) do
+    quantity = Keyword.get(opts, :quantity, 2)
+    event = Fixtures.create_event()
+    unit_amount = 12_500
+    total = quantity * unit_amount
+    offer_id = insert_offer!(event.id, unit_amount)
+    order_id = insert_order!(event.id, "refunded", total)
+    _line_id = insert_order_line!(order_id, offer_id, quantity, unit_amount, total)
+    insert_checkout_session!(order_id, "paid", quantity)
+    payment_attempt_id = insert_payment_attempt!(order_id, "refunded", total)
+
+    order =
+      Repo.one!(
+        from order in "sales_orders",
+          where: order.id == ^order_id,
+          select: %{public_reference: order.public_reference}
+      )
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    %{rows: [[refund_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_refunds
+          (sales_order_id, payment_attempt_id, provider, provider_status,
+           provider_refund_reference, provider_refunded_at, amount_cents, currency,
+           status, recorded_by, reason, revocation_completed_at, inserted_at, updated_at)
+        VALUES ($1, $2, 'paystack', 'processed', $3, $4, $5, 'ZAR', 'inventory_pending',
+                'admin-fixture', 'Customer requested refund', $4, $4, $4)
+        RETURNING id
+        """,
+        [
+          order_id,
+          payment_attempt_id,
+          "RRN-#{System.unique_integer([:positive])}",
+          now,
+          total
+        ]
+      )
+
+    %{
+      event: event,
+      offer_id: offer_id,
+      order_id: order_id,
+      order_public_reference: order.public_reference,
+      payment_attempt_id: payment_attempt_id,
+      refund_id: refund_id,
+      quantity: quantity,
+      total_amount_cents: total
     }
   end
 
@@ -184,14 +256,24 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
   end
 
   defp insert_payment_attempt!(order_id, status, amount_cents) do
-    Repo.query!(
-      """
-      INSERT INTO sales_payment_attempts
-        (sales_order_id, provider, provider_reference, status, amount_cents, currency,
-         verification_attempt_count, inserted_at, updated_at)
-      VALUES ($1, 'paystack', $2, $3, $4, 'ZAR', 0, now(), now())
-      """,
-      [order_id, "ref-#{order_id}", status, amount_cents]
-    )
+    %{rows: [[payment_attempt_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_payment_attempts
+          (sales_order_id, provider, provider_reference, status, amount_cents, currency,
+           verification_attempt_count, provider_status, provider_paid_at, verified_at,
+           raw_verify_response, inserted_at, updated_at)
+        VALUES ($1, 'paystack', $2, $3, $4, 'ZAR', 0,
+              CASE WHEN $3::varchar = 'verified_success' THEN 'success' ELSE NULL END,
+              CASE WHEN $3::varchar = 'verified_success' THEN now() ELSE NULL END,
+              CASE WHEN $3::varchar = 'verified_success' THEN now() ELSE NULL END,
+              CASE WHEN $3::varchar = 'verified_success' THEN '{"status":"success","fixture":true}'::jsonb ELSE NULL END,
+                now(), now())
+        RETURNING id
+        """,
+        [order_id, "ref-#{order_id}", status, amount_cents]
+      )
+
+    payment_attempt_id
   end
 end

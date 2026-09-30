@@ -1,0 +1,107 @@
+{
+  "pack_id": "0056_P1-C",
+  "slice": "P1-C",
+  "name": "Durable Refund Evidence",
+  "version": "1.0",
+  "status": "implemented",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0056_P1-C_durable-refund-evidence",
+  "goal": "Record manual full Paystack Dashboard refund evidence, revoke issued tickets before financial finalization, and resolve held inventory without reclaiming consumed capacity.",
+  "dependencies": [
+    "P0-B Paid Order Fulfillment",
+    "P0-D Revocation Completeness and Purchase Ceiling",
+    "VS-04B Atomic Inventory Ledger",
+    "VS-07B Paystack Transaction Verification",
+    "VS-15A Core Revocation and Scanner Visibility",
+    "VS-15B Admin Refund and Revocation Operations"
+  ],
+  "provider_evidence": {
+    "source": "manual Paystack Dashboard entry",
+    "provider": "paystack",
+    "provider_status": "processed",
+    "provider_reference": "required non-empty refund RRN or reference",
+    "refunded_at": "required Dashboard timestamp",
+    "amount": "exact full Order/payment amount",
+    "currency": "exact full Order/payment currency",
+    "admin": "existing event-scoped admin identity",
+    "reason": "required non-blank audit reason",
+    "password": "existing admin password verified by the current authentication boundary",
+    "partial_refunds": false,
+    "provider_api_call": false
+  },
+  "refund_states": [
+    "evidence_recorded",
+    "revocation_complete",
+    "inventory_pending",
+    "revocation_manual_review",
+    "inventory_manual_review",
+    "completed"
+  ],
+  "named_transitions": {
+    "record_evidence": "record_full_refund_evidence",
+    "revocation_success": "mark_revocation_complete",
+    "revocation_failure": "mark_revocation_manual_review",
+    "revocation_retry": "retry_refund_revocation",
+    "financial_finalization": {
+      "order_action": "finalize_refund",
+      "refund_action": "mark_inventory_pending"
+    },
+    "inventory_success": {
+      "released_unconsumed": "complete_released_unconsumed",
+      "retained_consumed": "complete_retained_consumed"
+    },
+    "inventory_manual_review": "mark_inventory_manual_review",
+    "inventory_retry": "retry_refund_inventory"
+  },
+  "financial_finalization": {
+    "order_lock": "existing pg_advisory_xact_lock(order_id)",
+    "precondition": "revocation_complete and authoritative issued TicketIssue count is zero",
+    "transaction_writes": [
+      "PaymentAttempt refunded",
+      "Order refunded",
+      "Refund inventory_pending",
+      "unique RefundInventoryWorker insertion"
+    ],
+    "redis_called_in_transaction": false,
+    "worker_args": ["refund_id"]
+  },
+  "inventory_resolution": {
+    "held": "release exact unexpired hold and authoritative quantity with refund:release:<refund_id>; resolution released_unconsumed",
+    "consumed": "no Redis mutation or counter adjustment; resolution retained_consumed",
+    "ambiguous": "inventory_manual_review and unavailable capacity",
+    "retry_exhaustion": "inventory_manual_review"
+  },
+  "reconciliation": {
+    "available_only_when": "Refund state completed and resolution released_unconsumed",
+    "unavailable_states": [
+      "retained_consumed",
+      "inventory_pending",
+      "inventory_manual_review",
+      "revocation_manual_review"
+    ],
+    "legacy_refunded_behavior": "unavailable with anomaly legacy_refund_without_provider_evidence",
+    "legacy_refunded_manual_review_required": true,
+    "ambiguous_behavior": "manual_review_required true and no upward availability repair"
+  },
+  "consumed_capacity": {
+    "reclaim": false,
+    "reason": "Browser admission, asynchronous mobile database persistence, and Android local-first queue/overlay do not provide one global unused-ticket proof.",
+    "future_blocker": "FastCheckin-52n8 unified admission/usage authority and fencing"
+  },
+  "migration_required": true,
+  "documentation": [
+    "docs/fastcheck_sales/feature_packs/0056_P1-C_durable-refund-evidence/0056_P1-C-FEATURE_PACK.md",
+    "docs/fastcheck_sales/state_machines/ORDER_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/PAYMENT_ATTEMPT_STATE_MACHINE.md",
+    "docs/fastcheck_sales/state_machines/STATE_MACHINE_MASTER.md",
+    "docs/fastcheck_sales/inventory/REDIS_POSTGRES_RECONCILIATION_POLICY.md"
+  ],
+  "out_of_scope": [
+    "Paystack refund API or refund polling",
+    "partial refunds",
+    "consumed inventory reclaim",
+    "scanner or Android runtime changes",
+    "generic state mutation actions"
+  ]
+}

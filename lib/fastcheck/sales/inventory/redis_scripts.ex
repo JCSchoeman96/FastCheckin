@@ -484,6 +484,7 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   local expected_quantity = tonumber(ARGV[7]) or 0
   local clear_reserve_dedupe = ARGV[8] == "1"
   local reserve_dedupe_key = KEYS[6]
+  local require_unexpired = ARGV[9] == "1"
 
   -- Idempotent release replay still has to prove that the persisted hold is
   -- the hold named by this request. Validate before consulting the dedupe
@@ -597,6 +598,15 @@ defmodule FastCheck.Sales.Inventory.RedisScripts do
   if hold_status ~= "held" then
     redis.call("DEL", lock_key)
     return {"UNEXPECTED_RESPONSE"}
+  end
+
+  if require_unexpired then
+    local hold_expires_at_raw = redis.call("HGET", hold_key, "expires_at")
+    local hold_expires_at = tonumber(hold_expires_at_raw or "")
+    if not hold_expires_at or hold_expires_at <= now_ms then
+      redis.call("DEL", lock_key)
+      return {"ALREADY_EXPIRED"}
+    end
   end
 
   local available = tonumber(redis.call("HGET", inventory_key, "available_quantity") or "0")

@@ -398,39 +398,55 @@ defmodule FastCheck.Sales.Order do
       end)
     end
 
-    update :mark_refunded_manual do
+    update :finalize_refund do
       require_atomic?(false)
       transaction?(true)
       accept([:manual_review_reason])
       argument(:reason, :string)
+
+      argument :refund_id, :integer do
+        allow_nil?(false)
+      end
+
       change(&ensure_no_issued_tickets_before_finalization/2)
 
       change(fn changeset, context ->
+        refund_id = Changeset.get_argument(changeset, :refund_id)
+
         reason =
           Changeset.get_argument(changeset, :reason) ||
             Changeset.get_attribute(changeset, :manual_review_reason)
 
-        from_state = Changeset.get_data(changeset, :status)
+        if valid_refund_authority?(changeset, refund_id) do
+          from_state = Changeset.get_data(changeset, :status)
 
-        if from_state == "refunded" do
-          changeset
+          if from_state == "refunded" do
+            changeset
+          else
+            transition_status(
+              changeset,
+              context,
+              "refunded",
+              allowed_from: [
+                "ticket_issued",
+                "partially_issued",
+                "paid_verified",
+                "fulfillment_queued",
+                "issuance_retry_queued",
+                "manual_review",
+                "manual_review_held"
+              ],
+              reason: reason,
+              extra_attrs: %{
+                refunded_at: DateTime.utc_now() |> DateTime.truncate(:second),
+                manual_review_reason: reason
+              }
+            )
+          end
         else
-          transition_status(
-            changeset,
-            context,
-            "refunded",
-            allowed_from: [
-              "ticket_issued",
-              "partially_issued",
-              "paid_verified",
-              "manual_review",
-              "manual_review_held"
-            ],
-            reason: reason,
-            extra_attrs: %{
-              refunded_at: DateTime.utc_now() |> DateTime.truncate(:second),
-              manual_review_reason: reason
-            }
+          Changeset.add_error(changeset,
+            field: :status,
+            message: "a matching full Refund with completed revocation is required"
           )
         end
       end)
@@ -503,7 +519,7 @@ defmodule FastCheck.Sales.Order do
              :return_to_fulfillment_queue,
              :return_held_to_manual_review,
              :retry_failed_manual_review,
-             :mark_refunded_manual,
+             :finalize_refund,
              :mark_cancelled_manual
            ]) do
       access_type(:strict)
@@ -522,7 +538,7 @@ defmodule FastCheck.Sales.Order do
              :return_to_fulfillment_queue,
              :return_held_to_manual_review,
              :retry_failed_manual_review,
-             :mark_refunded_manual,
+             :finalize_refund,
              :mark_cancelled_manual
            ]) do
       authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, actor_types: [:admin]})
@@ -719,6 +735,63 @@ defmodule FastCheck.Sales.Order do
       changeset
     end
   end
+
+  defp valid_refund_authority?(changeset, refund_id) when is_integer(refund_id) do
+    order_id = Changeset.get_data(changeset, :id)
+
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM sales_refunds r
+             INNER JOIN sales_payment_attempts p
+               ON p.id = r.payment_attempt_id AND p.sales_order_id = r.sales_order_id
+             INNER JOIN sales_orders o ON o.id = r.sales_order_id
+             WHERE r.id = $1
+               AND r.sales_order_id = $2
+               AND o.status IN (
+                 'paid_verified', 'fulfillment_queued', 'ticket_issued', 'partially_issued',
+                 'manual_review', 'manual_review_held', 'issuance_retry_queued'
+               )
+               AND r.provider = 'paystack'
+               AND r.provider_status = 'processed'
+               AND r.provider_refund_reference IS NOT NULL
+               AND btrim(r.provider_refund_reference) <> ''
+               AND r.provider_refunded_at IS NOT NULL
+               AND r.recorded_by IS NOT NULL
+               AND btrim(r.recorded_by) <> ''
+               AND r.reason IS NOT NULL
+               AND btrim(r.reason) <> ''
+               AND r.status = 'inventory_pending'
+               AND r.inventory_resolution_status IS NULL
+               AND r.revocation_completed_at IS NOT NULL
+               AND p.provider = 'paystack'
+               AND p.status = 'refunded'
+               AND r.amount_cents = o.total_amount_cents
+               AND p.amount_cents = o.total_amount_cents
+               AND r.currency = o.currency
+               AND p.currency = o.currency
+               AND (SELECT count(*)
+                    FROM sales_payment_attempts candidates
+                    WHERE candidates.sales_order_id = o.id
+                      AND candidates.status IN ('verified_success', 'refunded')) = 1
+               AND NOT EXISTS (
+                 SELECT 1 FROM sales_ticket_issues issues
+                 WHERE issues.sales_order_id = o.id AND issues.status = 'issued'
+               )
+           )
+           """,
+           [refund_id, order_id]
+         ) do
+      {:ok, %{rows: [[true]]}} ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp valid_refund_authority?(_changeset, _refund_id), do: false
 
   defp ensure_no_issued_tickets_before_finalization(changeset, _context) do
     if changeset.valid? do

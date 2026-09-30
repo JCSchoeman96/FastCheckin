@@ -30,6 +30,22 @@ the purchase flow while the Order remains permanently linked to its
 Conversation. `no_fulfillment_closed` is the additional terminal state used
 when manual review closes without fulfillment.
 
+## P1-C refund finalization invariant
+
+An Order reaches `refunded` only through the named `finalize_refund` action.
+The action requires a durable Refund with accepted full-refund evidence, one
+matching `verified_success` PaymentAttempt, completed order-level revocation,
+and an authoritative zero issued `TicketIssue` count. Revocation must finish
+before financial finalization.
+
+The finalization transaction acquires the existing
+`pg_advisory_xact_lock(order_id)`, reloads and rechecks the Order, Refund,
+PaymentAttempt, and issued-ticket count, then atomically marks the
+PaymentAttempt `refunded`, the Order `refunded`, the Refund `inventory_pending`,
+and inserts the unique `RefundInventoryWorker`. It does not call Redis. A
+Refund that cannot complete revocation stays in `revocation_manual_review` and
+cannot finalize the Order.
+
 ## Transition Matrix
 
 | From state | To state | Named action | Actor type | Preconditions | Required side effects | Audit required? | Idempotency rule | Terminal? |
@@ -51,18 +67,22 @@ when manual review closes without fulfillment.
 | `paid_unverified` | `manual_review` | `flag_unverified_payment_review` | `system` | Verification mismatch, provider ambiguity, or missing local ownership. | Record review reason. | yes | Same mismatch is idempotent. | no |
 | `paid_verified` | `fulfillment_queued` | `queue_fulfillment` | `system` | Verified attempt amount/currency match the Order; CheckoutSession is paid; exactly one OrderLine exists; its exact inventory hold is consumed. | Set `fulfillment_queued_at` and insert `IssueTicketsWorker` in the same Postgres transaction under the order advisory lock. | yes | Exact consumed holds are accepted on retry; transition and issuer enqueue are idempotent. | no |
 | `paid_verified` | `manual_review` | `flag_verified_payment_review` | `system/admin` | Inventory or issuance precondition cannot be safely met. | Preserve verified payment evidence. | yes | Duplicate review preserves original evidence. | no |
-| `paid_verified` | `refunded` | `mark_verified_order_refunded` | `admin/system` | Admin refund flow completes revocation under the Order advisory lock and confirms zero issued TicketIssues. | Revoke every issued ticket and update scanner visibility before the transition. | yes | Duplicate refund action returns refunded only after the zero-issued invariant is confirmed. | yes |
+| `paid_verified` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
+| `fulfillment_queued` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
+| `issuance_retry_queued` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
+| `manual_review` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
+| `manual_review_held` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
 | `fulfillment_queued` | `ticket_issued` | `mark_ticket_issued` | `system` | All attendee and TicketIssue rows created idempotently. | Enqueue event sync aggregation and, for WhatsApp orders, insert `TicketDeliveryCoordinatorWorker` in the same Postgres transaction. | yes | Duplicate issuer returns existing tickets and repairs a missing WhatsApp coordinator handoff. | yes |
 | `fulfillment_queued` | `partially_issued` | `mark_partially_issued` | `system` | Some, but not all, ticket rows or attendee rows exist. | Record partial failure metadata; enqueue retry/review. | yes | Retry links existing rows. | no |
 | `fulfillment_queued` | `manual_review` | `flag_fulfillment_review` | `system/admin` | Issuance cannot safely continue automatically. | Record reason and preserve partial artifacts. | yes | Existing review remains. | no |
 | `partially_issued` | `ticket_issued` | `complete_partial_issuance` | `system` | Missing ticket artifacts are safely completed. | Enqueue event sync aggregation and, for WhatsApp orders, insert `TicketDeliveryCoordinatorWorker` in the same Postgres transaction. | yes | Existing issued rows reused and the WhatsApp coordinator handoff is restored. | yes |
 | `partially_issued` | `manual_review` | `flag_partial_issuance_review` | `system/admin` | Retry cannot safely complete. | Preserve partial artifacts and reason. | yes | Existing review remains. | no |
-| `partially_issued` | `refunded` | `refund_partially_issued_order` | `admin/system` | Admin refund flow completes revocation under the Order advisory lock and confirms zero issued TicketIssues. | Revoke every issued artifact and update scanner visibility before the transition. | yes | Duplicate refund action returns refunded only after the zero-issued invariant is confirmed. | yes |
-| `ticket_issued` | `refunded` | `refund_issued_order` | `admin/system` | Admin refund flow completes revocation under the Order advisory lock, confirms zero issued TicketIssues, and has an audit reason. | Revoke every ticket, invalidate tokens, and update scanner visibility before the transition. | yes | Duplicate refund action returns refunded only after the zero-issued invariant is confirmed. | yes |
+| `partially_issued` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
+| `ticket_issued` | `refunded` | `finalize_refund` | `admin/system` | Durable Refund evidence is accepted, exactly one matching verified-success PaymentAttempt exists, revocation is complete, and zero issued TicketIssues remain. | Under the existing Order advisory lock, mark PaymentAttempt refunded, Refund inventory_pending, and insert RefundInventoryWorker in the same transaction. | yes | Matching finalization is idempotent; it cannot bypass revocation or the zero-issued check. | yes |
 | post-payment eligible state | `cancelled` | `mark_order_cancelled_manual` | `admin` | Admin cancellation completes revocation under the Order advisory lock and confirms zero issued TicketIssues. | Revoke every issued ticket and update scanner visibility before the transition. | yes | Duplicate cancellation action returns cancelled only after the zero-issued invariant is confirmed. | yes |
 | `ticket_issued` | `manual_review` | `flag_issued_order_review` | `admin/system` | Support issue requires review without invalidating issued ticket yet. | Record reason; do not mutate scanner validity unless explicit revocation. | yes | Duplicate review preserves issued evidence. | no |
 | `manual_review` | `paid_verified` | `retry_paid_fulfillment` | `admin/system` | No prior fulfillment boundary; allowed pre-fulfillment inventory failure reason; one exact verified-success attempt, matching amount/currency, paid CheckoutSession, one OrderLine, and no issued TicketIssue. | Preserve `paid_at`, clear the current failure markers, record `retry_paid_order_fulfillment`, and insert `PaidOrderFulfillmentWorker` in the same Postgres transaction. | yes | State transition prevents a second operator retry; worker remains independently idempotent. | no |
-| `manual_review` | approved target | `resolve_manual_review_to_target` | `admin/system` | Target is explicitly allowed by policy and reason exists. | Record recovery metadata and target side effects. | yes | Same resolution idempotent by review id. | target-dependent |
+| `manual_review` | approved target | `resolve_manual_review_to_target` | `admin/system` | Target is explicitly allowed by policy and reason exists. `refunded` is not an approved target for this generic action. | Record recovery metadata and target side effects. | yes | Same resolution idempotent by review id. | target-dependent |
 
 | `expired` | `paid_verified` | `recover_expired_paid_order` | `system` | Server-side payment verification succeeds; late recovery re-establishes the exact valid hold; amount, currency, paid session, and one OrderLine match. | Record `paid_at` and insert `PaidOrderFulfillmentWorker` with paid-state and PaymentEvent updates in the same Postgres transaction. Keep inventory held until the worker consumes after commit. | yes | Same recovery key reuses the exact held reservation; duplicate verification restores only a missing worker handoff. | no |
 
@@ -70,6 +90,9 @@ when manual review closes without fulfillment.
 
 - Any transition from `refunded`, `cancelled`, or `expired` without explicit
   admin/system recovery policy.
+- `manual_review` to `refunded` through `resolve_manual_review_to_target`.
+- Any Order refund transition without a matching durable Refund, accepted full
+  Paystack evidence, completed revocation, and zero issued TicketIssues.
 - `paid_unverified` to `fulfillment_queued`.
 - `payment_pending` to `ticket_issued`.
 - Issuing tickets directly from `paid_verified`; inventory consumption and the
@@ -161,6 +184,18 @@ remaining-issued count before their final state transition. Immediately before
 that transition they reacquire the same Order advisory lock, reload the Order,
 and check the issued count again. An incomplete attempt stays out of `refunded`
 and `cancelled` and follows the existing manual-review path.
+
+## P1-C inventory handoff
+
+After `finalize_refund`, `RefundInventoryWorker` reloads the authoritative
+OrderLine and exact hold identity. It releases an exact held hold through
+`ReservationLedger` with `refund:release:<refund_id>`, the authoritative
+quantity, and an atomic unexpired-hold check, or records `retained_consumed`
+for an exact consumed hold without Redis mutation. Missing, expired, malformed,
+mismatched, or unverifiable holds move the Refund to `inventory_manual_review`
+and keep capacity unavailable. Reconciliation may make capacity available only
+for a completed Refund with `released_unconsumed`; `Order = refunded` alone
+never changes inventory.
 
 ## P0-D Customer Purchase Ceiling
 
