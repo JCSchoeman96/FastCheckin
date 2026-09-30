@@ -5,6 +5,7 @@ defmodule FastCheck.Sales.RefundFulfillmentRaceTest do
   import Ecto.Query
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.AdminRefundFixtures, as: RefundFixtures
   alias FastCheck.Sales.AdminRefunds
@@ -289,17 +290,24 @@ defmodule FastCheck.Sales.RefundFulfillmentRaceTest do
         )
 
       redis_keys = [
-        "sales:offer:#{fixture.offer_id}:inventory",
-        "sales:offer:#{fixture.offer_id}:holds",
-        "sales:inventory:events:#{fixture.offer_id}",
+        Namespace.key("sales:offer:#{fixture.offer_id}:inventory"),
+        Namespace.key("sales:offer:#{fixture.offer_id}:holds"),
+        Namespace.key("sales:inventory:events:#{fixture.offer_id}"),
         ReservationLedger.hold_key(fixture.public_reference),
-        "sales:order:#{fixture.public_reference}:lock",
-        "sales:inventory:dedupe:reserve:refund-race-reserve-#{fixture.payment_attempt_id}",
-        "sales:inventory:dedupe:consume:paid_order_fulfillment:consume:#{fixture.payment_attempt_id}",
-        "sales:inventory:dedupe:release:refund:release:#{refund_id}"
+        Namespace.key("sales:order:#{fixture.public_reference}:lock"),
+        Namespace.key(
+          "sales:inventory:dedupe:reserve:refund-race-reserve-#{fixture.payment_attempt_id}"
+        ),
+        Namespace.key(
+          "sales:inventory:dedupe:consume:paid_order_fulfillment:consume:#{fixture.payment_attempt_id}"
+        ),
+        Namespace.key("sales:inventory:dedupe:release:refund:release:#{refund_id}")
       ]
 
-      _ = Redix.command(FastCheck.Redix, ["DEL" | Enum.reject(redis_keys, &is_nil/1)])
+      _ =
+        Redix.command(FastCheck.Redix, [
+          "DEL" | Namespace.ensure_scoped_keys!(Enum.reject(redis_keys, &is_nil/1))
+        ])
 
       assert {:ok, :cleaned} =
                Repo.transaction(fn ->

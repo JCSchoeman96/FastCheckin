@@ -19,13 +19,16 @@ REPORT_PATH = RESULTS_DIR / (
 )
 BASE_URL = "http://127.0.0.1:4100"
 DEVICE_ID = "device-0000"
+COMPOSE_PROJECT = os.environ.get("PERF_COMPOSE_PROJECT", "fastcheckin")
+COMPOSE_FILE = ROOT / "docker-compose.yml"
+COMPOSE_PROFILE = "perf-small"
 
 
 with MANIFEST.open("r", encoding="utf-8") as file_handle:
     manifest = json.load(file_handle)
 
 
-def run(cmd, timeout=120, check=True, capture=True, cwd=ROOT):
+def run(cmd, timeout=120, check=True, capture=True, cwd=ROOT, env=None, redactions=None):
     completed = subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -33,25 +36,59 @@ def run(cmd, timeout=120, check=True, capture=True, cwd=ROOT):
         capture_output=capture,
         timeout=timeout,
         shell=isinstance(cmd, str),
-        env=os.environ.copy(),
+        env=env or os.environ.copy(),
     )
     if check and completed.returncode != 0:
+        display_cmd = str(cmd)
+        for secret in redactions or []:
+            if secret:
+                display_cmd = display_cmd.replace(secret, "<redacted>")
         raise RuntimeError(
-            f"command failed: {cmd}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            f"command failed: {display_cmd}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
     return completed
 
 
-def rpc_scrape():
-    cmd = [
+def required_env(name):
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is required for the isolated perf stack")
+    return value
+
+
+def compose_exec(service, args, password_env=None, timeout=30):
+    command = [
         "docker",
+        "compose",
+        "--project-name",
+        COMPOSE_PROJECT,
+        "--file",
+        str(COMPOSE_FILE),
+        "--profile",
+        COMPOSE_PROFILE,
         "exec",
-        "fastcheck-app-perf",
-        "/app/bin/fastcheck",
-        "rpc",
-        "IO.puts(TelemetryMetricsPrometheus.Core.scrape())",
+        "--no-TTY",
     ]
-    return run(cmd, timeout=30).stdout
+    redactions = []
+
+    if password_env:
+        password = required_env(password_env)
+        command.extend(["--env", f"PGPASSWORD={password}"])
+        redactions.append(password)
+
+    command.extend([service, *args])
+    return run(command, timeout=timeout, redactions=redactions)
+
+
+def rpc_scrape():
+    return compose_exec(
+        "app-perf",
+        [
+            "/app/bin/fastcheck",
+            "rpc",
+            "IO.puts(TelemetryMetricsPrometheus.Core.scrape())",
+        ],
+    ).stdout
 
 
 def parse_metric(text, name, suffix):
@@ -61,23 +98,49 @@ def parse_metric(text, name, suffix):
 
 
 def pgbouncer_query(sql):
-    cmd = (
-        "docker exec fastcheck-postgres sh -lc "
-        + json.dumps(
-            f"PGPASSWORD=postgres psql -A -F ',' -h pgbouncer -p 5432 -U postgres pgbouncer -c \"{sql}\""
-        )
-    )
-    return run(cmd, timeout=30).stdout
+    return compose_exec(
+        "postgres",
+        [
+            "psql",
+            "-A",
+            "-F",
+            ",",
+            "-h",
+            "pgbouncer",
+            "-p",
+            "5432",
+            "-U",
+            "fastcheck_perf",
+            "-d",
+            "pgbouncer",
+            "-c",
+            sql,
+        ],
+        password_env="FASTCHECK_PERF_DB_PASSWORD",
+    ).stdout
 
 
 def postgres_query(sql):
-    cmd = (
-        "docker exec fastcheck-postgres sh -lc "
-        + json.dumps(
-            f"PGPASSWORD=postgres psql -A -F ',' -U postgres -d fastcheck_prod -c \"{sql}\""
-        )
-    )
-    return run(cmd, timeout=30).stdout
+    return compose_exec(
+        "postgres",
+        [
+            "psql",
+            "-A",
+            "-F",
+            ",",
+            "-U",
+            "postgres",
+            "-d",
+            "fastcheck_prod",
+            "-c",
+            sql,
+        ],
+        password_env="PERF_ADMIN_DB_PASSWORD",
+    ).stdout
+
+
+def redact_database_url(value):
+    return re.sub(r"(ecto://[^:]+:)[^@]+@", r"\1<redacted>@", value)
 
 
 def parse_csv_output(text):
@@ -325,21 +388,17 @@ def main():
         "base_url": BASE_URL,
         "manifest": str(MANIFEST),
         "mode_proof": {
-            "mobile_scan_ingestion_mode": run(
-                ["docker", "exec", "fastcheck-app-perf", "printenv", "MOBILE_SCAN_INGESTION_MODE"],
-                timeout=10,
+            "mobile_scan_ingestion_mode": compose_exec(
+                "app-perf", ["printenv", "MOBILE_SCAN_INGESTION_MODE"], timeout=10
             ).stdout.strip(),
-            "database_url": run(
-                ["docker", "exec", "fastcheck-app-perf", "printenv", "DATABASE_URL"],
-                timeout=10,
+            "database_url": redact_database_url(
+                compose_exec("app-perf", ["printenv", "DATABASE_URL"], timeout=10).stdout.strip()
+            ),
+            "database_pooling_mode": compose_exec(
+                "app-perf", ["printenv", "DATABASE_POOLING_MODE"], timeout=10
             ).stdout.strip(),
-            "database_pooling_mode": run(
-                ["docker", "exec", "fastcheck-app-perf", "printenv", "DATABASE_POOLING_MODE"],
-                timeout=10,
-            ).stdout.strip(),
-            "oban_notifier": run(
-                ["docker", "exec", "fastcheck-app-perf", "printenv", "OBAN_NOTIFIER"],
-                timeout=10,
+            "oban_notifier": compose_exec(
+                "app-perf", ["printenv", "OBAN_NOTIFIER"], timeout=10
             ).stdout.strip(),
         },
         "slices": {},

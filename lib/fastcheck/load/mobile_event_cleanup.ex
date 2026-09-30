@@ -10,11 +10,11 @@ defmodule FastCheck.Load.MobileEventCleanup do
   alias FastCheck.Events.Event
   alias FastCheck.Load.MobileEventSeed
   alias FastCheck.Mobile.MobileIdempotencyLog
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Scans.ScanAttempt
 
   @redis_key_count 500
-  @redis_prefix "fastcheck:mobile_scans"
 
   @type delete_counts :: %{
           attendees: non_neg_integer(),
@@ -28,7 +28,7 @@ defmodule FastCheck.Load.MobileEventCleanup do
   @type redis_result :: %{
           deleted_keys: non_neg_integer(),
           status: :ok | :skipped,
-          strategy: :flushdb | :targeted
+          strategy: :targeted
         }
 
   @type cleanup_result :: %{
@@ -154,46 +154,29 @@ defmodule FastCheck.Load.MobileEventCleanup do
         )
   end
 
-  defp cleanup_redis(event_ids, opts) do
-    strategy = if opts[:flush_redis], do: :flushdb, else: :targeted
-
+  defp cleanup_redis(event_ids, _opts) do
     case Process.whereis(FastCheck.Redix) do
       pid when is_pid(pid) ->
-        case strategy do
-          :flushdb ->
-            case Redix.command(FastCheck.Redix, ["FLUSHDB"]) do
-              {:ok, "OK"} ->
-                {:ok, %{deleted_keys: 0, status: :ok, strategy: :flushdb}}
+        case delete_targeted_redis_keys(event_ids) do
+          {:ok, deleted_keys} ->
+            {:ok, %{deleted_keys: deleted_keys, status: :ok, strategy: :targeted}}
 
-              {:error, %Redix.ConnectionError{reason: :closed}} ->
-                {:ok, %{deleted_keys: 0, status: :skipped, strategy: :flushdb}}
+          {:error, %Redix.ConnectionError{reason: :closed}} ->
+            {:ok, %{deleted_keys: 0, status: :skipped, strategy: :targeted}}
 
-              {:error, reason} ->
-                {:error, "unable to flush redis: #{inspect(reason)}"}
-            end
-
-          :targeted ->
-            case delete_targeted_redis_keys(event_ids) do
-              {:ok, deleted_keys} ->
-                {:ok, %{deleted_keys: deleted_keys, status: :ok, strategy: :targeted}}
-
-              {:error, %Redix.ConnectionError{reason: :closed}} ->
-                {:ok, %{deleted_keys: 0, status: :skipped, strategy: :targeted}}
-
-              {:error, reason} ->
-                {:error, reason}
-            end
+          {:error, reason} ->
+            {:error, reason}
         end
 
       _ ->
-        {:ok, %{deleted_keys: 0, status: :skipped, strategy: strategy}}
+        {:ok, %{deleted_keys: 0, status: :skipped, strategy: :targeted}}
     end
   end
 
   defp delete_targeted_redis_keys(event_ids) do
     event_ids
     |> Enum.reduce_while({:ok, 0}, fn event_id, {:ok, total} ->
-      pattern = "#{@redis_prefix}:*:event:#{event_id}:*"
+      pattern = Namespace.pattern("fastcheck:mobile_scans:*:event:#{event_id}:*")
 
       with {:ok, keys} <- scan_redis_keys(pattern),
            {:ok, deleted} <- delete_redis_keys(keys) do
@@ -232,6 +215,8 @@ defmodule FastCheck.Load.MobileEventCleanup do
   defp delete_redis_keys([]), do: {:ok, 0}
 
   defp delete_redis_keys(keys) do
+    keys = Namespace.ensure_scoped_keys!(keys)
+
     case Redix.command(FastCheck.Redix, ["DEL" | keys]) do
       {:ok, deleted} when is_integer(deleted) -> {:ok, deleted}
       {:error, reason} -> {:error, reason}

@@ -1,6 +1,7 @@
 defmodule FastCheck.Sales.CheckoutResumabilityTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Checkout
   alias FastCheck.Sales.Inventory.Reconciler
   alias FastCheck.Sales.Inventory.ReservationLedger
@@ -55,7 +56,10 @@ defmodule FastCheck.Sales.CheckoutResumabilityTest do
     assert {:ok, 0} =
              Redix.command(
                FastCheck.Redix,
-               ["EXISTS", "sales:inventory:dedupe:reserve:#{input.idempotency_key}"]
+               [
+                 "EXISTS",
+                 Namespace.key("sales:inventory:dedupe:reserve:#{input.idempotency_key}")
+               ]
              )
   end
 
@@ -236,7 +240,7 @@ defmodule FastCheck.Sales.CheckoutResumabilityTest do
         end)
 
       order_reference = await_single_hold!(offer.id)
-      lock_key = "sales:order:#{order_reference}:lock"
+      lock_key = Namespace.key("sales:order:#{order_reference}:lock")
       assert {:ok, "OK"} = Redix.command(FastCheck.Redix, ["SET", lock_key, "test", "PX", "5000"])
 
       try do

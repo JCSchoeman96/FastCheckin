@@ -10,6 +10,7 @@ defmodule FastCheck.Messaging.WhatsApp.InboundCheckpoint do
   alias Ash.Query
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.SessionStore
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Conversation
 
@@ -64,7 +65,7 @@ defmodule FastCheck.Messaging.WhatsApp.InboundCheckpoint do
       phone_e164: command.phone_e164,
       wa_id: command.wa_id,
       session_key: SessionStore.key_for_wa_id(command.wa_id),
-      rate_limit_key: "whatsapp_webhook:#{hash(command.wa_id)}",
+      rate_limit_key: Namespace.key("whatsapp_webhook:#{hash(command.wa_id)}"),
       preferred_language: "af",
       state: "new",
       state_data: %{},

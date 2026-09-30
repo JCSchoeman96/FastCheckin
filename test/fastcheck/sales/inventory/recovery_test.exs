@@ -1,6 +1,7 @@
 defmodule FastCheck.Sales.Inventory.RecoveryTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Checkout
   alias FastCheck.Sales.Inventory.Recovery
@@ -26,7 +27,12 @@ defmodule FastCheck.Sales.Inventory.RecoveryTest do
                effective_sales_channel: "whatsapp"
              )
 
-    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{offer.id}:inventory"])
+    assert {:ok, _} =
+             Redix.command(
+               FastCheck.Redix,
+               ["DEL", Namespace.key("sales:offer:#{offer.id}:inventory")]
+             )
+
     assert {:error, :reconciliation_required, _} = ReservationLedger.get_availability(offer.id)
 
     assert {:ok, report} =

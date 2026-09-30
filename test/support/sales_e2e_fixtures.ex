@@ -10,6 +10,7 @@ defmodule FastCheck.SalesE2EFixtures do
   alias FastCheck.Events
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Checkout
   alias FastCheck.Sales.CheckoutSession
@@ -243,7 +244,7 @@ defmodule FastCheck.SalesE2EFixtures do
   def update_inventory_quantity!(offer_id, available_quantity) do
     Redix.command!(FastCheck.Redix, [
       "HSET",
-      "sales:offer:#{offer_id}:inventory",
+      Namespace.key("sales:offer:#{offer_id}:inventory"),
       "available_quantity",
       Integer.to_string(available_quantity)
     ])

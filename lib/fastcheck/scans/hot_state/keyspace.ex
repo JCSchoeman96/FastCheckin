@@ -3,6 +3,8 @@ defmodule FastCheck.Scans.HotState.Keyspace do
   Redis key helpers for mobile scan hot state.
   """
 
+  alias FastCheck.Redis.Namespace
+
   @prefix "fastcheck:mobile_scans"
 
   @spec active_version(String.t(), integer()) :: String.t()
@@ -25,5 +27,6 @@ defmodule FastCheck.Scans.HotState.Keyspace do
     "#{base(namespace, event_id)}:version:#{version}:ticket:#{ticket_code}"
   end
 
-  defp base(namespace, event_id), do: "#{@prefix}:#{namespace}:event:#{event_id}"
+  defp base(namespace, event_id),
+    do: Namespace.key("#{@prefix}:#{namespace}:event:#{event_id}")
 end

@@ -1,22 +1,24 @@
 import Config
 
-# Configure your database
-database_url = System.get_env("DATABASE_URL")
+# Configure the shared workstation development database.
+dev_db_password =
+  case System.get_env("FASTCHECK_DEV_DB_PASSWORD") do
+    nil ->
+      raise "FASTCHECK_DEV_DB_PASSWORD is required for development"
 
-username = System.get_env("DB_USERNAME", "postgres")
-password = System.get_env("DB_PASSWORD", "postgres")
-hostname = System.get_env("DB_HOST", "localhost")
-port = String.to_integer(System.get_env("DB_PORT") || "6432")
-database = System.get_env("DB_NAME", "fastcheck_prod")
+    value ->
+      value
+  end
+
+username = "fastcheck_dev"
+hostname = "127.0.0.1"
+port = 55_432
+database = "fastcheck_dev"
 
 database_pooling_mode =
   case System.get_env("DATABASE_POOLING_MODE") do
     nil ->
-      if is_nil(database_url) and port == 6432 do
-        :pgbouncer_transaction
-      else
-        :direct
-      end
+      :direct
 
     value ->
       case String.trim(value) |> String.downcase() do
@@ -62,18 +64,13 @@ oban_notifier =
     :postgres -> {Oban.Notifiers.Postgres, []}
   end
 
-repo_connection_opts =
-  if database_url do
-    [url: database_url]
-  else
-    [
-      username: username,
-      password: password,
-      hostname: hostname,
-      port: port,
-      database: database
-    ]
-  end
+repo_connection_opts = [
+  username: username,
+  password: dev_db_password,
+  hostname: hostname,
+  port: port,
+  database: database
+]
 
 config :fastcheck,
        FastCheck.Repo,
@@ -81,7 +78,7 @@ config :fastcheck,
        |> Keyword.merge(
          prepare: database_prepare_mode,
          stacktrace: true,
-         show_sensitive_data_on_connection_error: true,
+         show_sensitive_data_on_connection_error: false,
          pool_size: 20,
          queue_target: 50,
          queue_interval: 1_000,

@@ -1,24 +1,55 @@
 import Config
 
-# Configure your database
-#
-# The MIX_TEST_PARTITION environment variable can be used
-# to provide built-in test partitioning in CI environment.
-# Run `mix help test` for more information.
+test_namespace_nonce =
+  :crypto.strong_rand_bytes(16)
+  |> Base.encode16(case: :lower)
 
-# GitHub Actions CI uses DATABASE_URL environment variable
-# For local development, use standard PostgreSQL config
+test_namespace_partition =
+  case System.get_env("MIX_TEST_PARTITION") do
+    partition when is_binary(partition) and partition != "" ->
+      ":" <> Regex.replace(~r/[^A-Za-z0-9_.-]/, partition, "_")
+
+    _ ->
+      ""
+  end
+
+config :fastcheck,
+  redis_namespace: "fastcheck:test:#{test_namespace_nonce}#{test_namespace_partition}"
+
+test_redis_url =
+  if System.get_env("GITHUB_ACTIONS") == "true" do
+    System.get_env("REDIS_URL", "redis://127.0.0.1:6379")
+  else
+    "redis://127.0.0.1:56380"
+  end
+
+config :fastcheck, redis_url: test_redis_url
+
+# Local tests are locked to the separate workstation TEST cluster. GitHub Actions
+# uses its job-owned ephemeral PostgreSQL service on the fixed service endpoint.
+{test_database_host, test_database_port} =
+  if System.get_env("GITHUB_ACTIONS") == "true" do
+    {"127.0.0.1", 5432}
+  else
+    {"127.0.0.1", 55_433}
+  end
+
+test_db_password =
+  case System.get_env("FASTCHECK_TEST_DB_PASSWORD") do
+    nil ->
+      raise "FASTCHECK_TEST_DB_PASSWORD is required for tests"
+
+    value ->
+      value
+  end
+
 config :fastcheck, FastCheck.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: if(System.get_env("GITHUB_ACTIONS"), do: "localhost", else: "localhost"),
-  # Docker-for-Windows local Postgres is exposed on 5434 (container 5432).
-  port:
-    if(System.get_env("GITHUB_ACTIONS"),
-      do: 5432,
-      else: String.to_integer(System.get_env("DB_PORT") || "5434")
-    ),
-  database: "fastcheck_test#{System.get_env("MIX_TEST_PARTITION")}",
+  username: "fastcheck_test",
+  password: test_db_password,
+  hostname: test_database_host,
+  port: test_database_port,
+  database: "fastcheck_test#{System.get_env("MIX_TEST_PARTITION", "")}",
+  show_sensitive_data_on_connection_error: false,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 

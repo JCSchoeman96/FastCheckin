@@ -1,6 +1,7 @@
 defmodule FastCheck.Sales.Inventory.HealthTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Inventory.Health
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
@@ -22,7 +23,12 @@ defmodule FastCheck.Sales.Inventory.HealthTest do
 
   test "offer_health reports missing redis keys after simulated redis loss", %{offer: offer} do
     assert {:ok, _} = ReservationLedger.get_availability(offer.id)
-    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{offer.id}:inventory"])
+
+    assert {:ok, _} =
+             Redix.command(
+               FastCheck.Redix,
+               ["DEL", Namespace.key("sales:offer:#{offer.id}:inventory")]
+             )
 
     assert {:ok, report} = Health.offer_health(offer.id)
     assert report.status == :missing_redis_inventory

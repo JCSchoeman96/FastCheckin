@@ -1,0 +1,39 @@
+name: fastcheckin-app
+
+services:
+  app:
+    image: fastcheckin:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.perf
+    init: true
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the application database}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL to the direct migration database}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL to the application Redis service}
+      FASTCHECK_REDIS_NAMESPACE: ${FASTCHECK_REDIS_NAMESPACE:-}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?Set SECRET_KEY_BASE}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY}
+      MOBILE_JWT_SECRET: ${MOBILE_JWT_SECRET:?Set MOBILE_JWT_SECRET}
+      SALES_HOLD_TOKEN_PEPPER: ${SALES_HOLD_TOKEN_PEPPER:?Set SALES_HOLD_TOKEN_PEPPER}
+      TICKET_TOKEN_PEPPER: ${TICKET_TOKEN_PEPPER:?Set TICKET_TOKEN_PEPPER}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:?Set DASHBOARD_USERNAME}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD}
+      DASHBOARD_ALLOWED_EVENT_IDS: ${DASHBOARD_ALLOWED_EVENT_IDS:-}
+      DATABASE_POOLING_MODE: ${DATABASE_POOLING_MODE:-direct}
+      DATABASE_SSL: ${DATABASE_SSL:-true}
+      DB_PREPARE_MODE: ${DB_PREPARE_MODE:-named}
+      OBAN_NOTIFIER: ${OBAN_NOTIFIER:-postgres}
+      POOL_SIZE: ${POOL_SIZE:-20}
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+      PORT: "4000"
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+    ports:
+      - "${FASTCHECK_HTTP_BIND:-127.0.0.1}:${FASTCHECK_HTTP_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:4000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s

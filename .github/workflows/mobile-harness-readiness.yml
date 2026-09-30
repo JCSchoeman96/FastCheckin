@@ -33,6 +33,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Validate harness runner shell syntax
         run: bash -n scripts/integration/run-mobile-integration-harness.sh
