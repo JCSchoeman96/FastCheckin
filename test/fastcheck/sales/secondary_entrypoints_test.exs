@@ -1,15 +1,17 @@
 defmodule FastCheck.Sales.SecondaryEntrypointsTest do
   use FastCheck.DataCase, async: false
 
+  import Ecto.Query
+
   require Ash.Query
 
   alias Ash.Query
+  alias FastCheck.Repo
+  alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.SecondaryEntrypoints
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
   alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
-
-  @user %{id: "admin", username: "admin"}
 
   setup do
     event = WebFixtures.insert_event!()
@@ -28,7 +30,12 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
     }
 
     assert {:ok, %{order_id: order_id, public_reference: ref}} =
-             SecondaryEntrypoints.start_admin_checkout(@user, offer.event_id, params, idem)
+             SecondaryEntrypoints.start_admin_checkout(
+               actor(offer.event_id),
+               offer.event_id,
+               params,
+               idem
+             )
 
     assert is_binary(ref)
 
@@ -54,7 +61,12 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
     }
 
     assert {:ok, %{order_id: order_id}} =
-             SecondaryEntrypoints.start_admin_checkout(@user, offer.event_id, params, idem)
+             SecondaryEntrypoints.start_admin_checkout(
+               actor(offer.event_id),
+               offer.event_id,
+               params,
+               idem
+             )
 
     order =
       Order
@@ -79,7 +91,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
 
     assert {:ok, %{order_id: order_id}} =
              SecondaryEntrypoints.start_internal_pilot_checkout(
-               @user,
+               actor(offer.event_id),
                offer.event_id,
                params,
                idem
@@ -102,17 +114,32 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
     }
 
     assert {:ok, %{order_id: first_id}} =
-             SecondaryEntrypoints.start_admin_checkout(@user, offer.event_id, params, idem)
+             SecondaryEntrypoints.start_admin_checkout(
+               actor(offer.event_id),
+               offer.event_id,
+               params,
+               idem
+             )
 
     assert {:ok, %{order_id: second_id}} =
-             SecondaryEntrypoints.start_admin_checkout(@user, offer.event_id, params, idem)
+             SecondaryEntrypoints.start_admin_checkout(
+               actor(offer.event_id),
+               offer.event_id,
+               params,
+               idem
+             )
 
     assert first_id == second_id
 
     new_idem = SecondaryEntrypoints.generate_idempotency_key()
 
     assert {:ok, %{order_id: third_id}} =
-             SecondaryEntrypoints.start_admin_checkout(@user, offer.event_id, params, new_idem)
+             SecondaryEntrypoints.start_admin_checkout(
+               actor(offer.event_id),
+               offer.event_id,
+               params,
+               new_idem
+             )
 
     assert third_id != first_id
   end
@@ -136,7 +163,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
       Fixtures.flush_inventory_keys(internal_offer.id)
     end)
 
-    actor = Fixtures.admin_actor([event_id])
+    actor = actor(event_id)
 
     assert {:ok, offers} =
              SecondaryEntrypoints.list_offers_for_channel(actor, event_id, "admin")
@@ -165,7 +192,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
       Fixtures.flush_inventory_keys(admin_offer2.id)
     end)
 
-    actor = Fixtures.admin_actor([event_id])
+    actor = actor(event_id)
 
     assert {:ok, offers} =
              SecondaryEntrypoints.list_offers_for_channel(actor, event_id, "internal")
@@ -198,7 +225,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
       Fixtures.flush_inventory_keys(archived.id)
     end)
 
-    actor = Fixtures.admin_actor([event_id])
+    actor = actor(event_id)
 
     assert {:ok, offers} =
              SecondaryEntrypoints.list_offers_for_channel(actor, event_id, "admin")
@@ -209,7 +236,68 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
   end
 
   test "safe_fetch_event returns not_found for missing event" do
-    assert {:error, :not_found} = SecondaryEntrypoints.safe_fetch_event(99_999_999)
+    assert {:error, :not_found} =
+             SecondaryEntrypoints.safe_fetch_event(actor(99_999_999), 99_999_999)
+  end
+
+  test "ungranted Event checkout and offer reads fail before checkout side effects", %{
+    offer: offer,
+    event_id: ungranted_event_id
+  } do
+    granted_event = WebFixtures.insert_event!()
+    actor = WebFixtures.dashboard_actor([granted_event.id])
+    previous_pilot = Application.get_env(:fastcheck, :sales_internal_pilot_enabled)
+    Application.put_env(:fastcheck, :sales_internal_pilot_enabled, true)
+
+    on_exit(fn ->
+      if is_nil(previous_pilot) do
+        Application.delete_env(:fastcheck, :sales_internal_pilot_enabled)
+      else
+        Application.put_env(:fastcheck, :sales_internal_pilot_enabled, previous_pilot)
+      end
+    end)
+
+    {:ok, inventory_before} = ReservationLedger.get_availability(offer.id)
+
+    orders_before =
+      Repo.aggregate(
+        from(o in "sales_orders", where: o.event_id == ^ungranted_event_id),
+        :count,
+        :id
+      )
+
+    jobs_before = Repo.aggregate(Oban.Job, :count, :id)
+    params = %{"ticket_offer_id" => to_string(offer.id), "quantity" => "1"}
+
+    assert {:error, :not_found} = SecondaryEntrypoints.safe_fetch_event(actor, ungranted_event_id)
+
+    assert {:error, :not_found} =
+             SecondaryEntrypoints.list_offers_for_channel(actor, ungranted_event_id, "admin")
+
+    assert {:error, :not_found} =
+             SecondaryEntrypoints.start_admin_checkout(
+               actor,
+               ungranted_event_id,
+               params,
+               SecondaryEntrypoints.generate_idempotency_key()
+             )
+
+    assert {:error, :not_found} =
+             SecondaryEntrypoints.start_internal_pilot_checkout(
+               actor,
+               ungranted_event_id,
+               params,
+               SecondaryEntrypoints.generate_idempotency_key()
+             )
+
+    assert Repo.aggregate(
+             from(o in "sales_orders", where: o.event_id == ^ungranted_event_id),
+             :count,
+             :id
+           ) == orders_before
+
+    assert Repo.aggregate(Oban.Job, :count, :id) == jobs_before
+    assert {:ok, ^inventory_before} = ReservationLedger.get_availability(offer.id)
   end
 
   test "internal pilot returns pilot_disabled when config is false" do
@@ -231,7 +319,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
 
     assert {:error, :pilot_disabled} =
              SecondaryEntrypoints.start_internal_pilot_checkout(
-               @user,
+               actor(pilot_offer.event_id),
                pilot_offer.event_id,
                %{"ticket_offer_id" => to_string(pilot_offer.id), "quantity" => "1"},
                SecondaryEntrypoints.generate_idempotency_key()
@@ -254,7 +342,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
       for invalid_quantity <- ["1abc", " 1x", "abc", "0", "-1"] do
         assert {:error, :invalid_quantity} =
                  SecondaryEntrypoints.start_admin_checkout(
-                   @user,
+                   actor(offer.event_id),
                    offer.event_id,
                    %{"ticket_offer_id" => to_string(offer.id), "quantity" => invalid_quantity},
                    idem
@@ -264,7 +352,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
       for invalid_offer_id <- ["1abc", " 1x", "abc", "0", "-1"] do
         assert {:error, :invalid_offer} =
                  SecondaryEntrypoints.start_admin_checkout(
-                   @user,
+                   actor(offer.event_id),
                    offer.event_id,
                    %{"ticket_offer_id" => invalid_offer_id, "quantity" => "1"},
                    idem
@@ -272,4 +360,6 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
       end
     end
   end
+
+  defp actor(event_id), do: WebFixtures.dashboard_actor([event_id])
 end

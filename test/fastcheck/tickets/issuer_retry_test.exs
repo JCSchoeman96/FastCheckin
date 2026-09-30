@@ -9,8 +9,7 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
   alias FastCheck.Tickets.Issuer
   alias FastCheck.Workers.IssueTicketsWorker
   alias FastCheck.Workers.TicketDeliveryCoordinatorWorker
-
-  @actor %{id: "p0c-recovery-admin", username: "p0c-recovery-admin"}
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   describe "issue_order/2 duplicate retries" do
     test "sequential duplicate calls create exactly one attendee and ticket issue per unit" do
@@ -177,8 +176,13 @@ defmodule FastCheck.Tickets.IssuerRetryTest do
 
       before = %{attendees: attendee_count(order_id), issues: ticket_issue_count(order_id)}
 
+      event_id =
+        Repo.one!(from(o in "sales_orders", where: o.id == ^order_id, select: o.event_id))
+
+      actor = WebFixtures.dashboard_actor([event_id])
+
       assert {:ok, _review_action} =
-               ManualReview.retry_ticket_issuance(order_id, @actor, %{
+               ManualReview.retry_ticket_issuance(order_id, actor, %{
                  "reason_code" => "retry_ticket_issuance"
                })
 

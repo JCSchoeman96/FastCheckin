@@ -18,7 +18,7 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLiveTest do
 
   defp mount_admin_checkout(conn, event_id) do
     conn
-    |> Fixtures.authenticated_conn()
+    |> Fixtures.authenticated_conn([event_id])
     |> live(~p"/dashboard/sales/checkout/#{event_id}")
   end
 
@@ -79,6 +79,18 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLiveTest do
   test "invalid event_id redirects safely without 500", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/dashboard"}}} =
              mount_admin_checkout(conn, 99_999_999)
+  end
+
+  test "an ungranted Event route cannot display its admin checkout", %{
+    conn: conn,
+    event: ungranted_event
+  } do
+    granted_event = Fixtures.insert_event!()
+
+    assert {:error, {:live_redirect, %{to: "/dashboard"}}} =
+             conn
+             |> Fixtures.authenticated_conn([granted_event.id])
+             |> live(~p"/dashboard/sales/checkout/#{ungranted_event.id}")
   end
 
   defp idempotency_key(view) do

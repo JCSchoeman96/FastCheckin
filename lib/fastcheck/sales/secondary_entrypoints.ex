@@ -9,10 +9,9 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
 
   alias FastCheck.Events
   alias FastCheck.Sales.Checkout
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
-
-  @type dashboard_user :: %{required(:username) => String.t(), optional(:id) => String.t()}
 
   @spec generate_idempotency_key() :: String.t()
   def generate_idempotency_key do
@@ -27,14 +26,24 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
   def parse_event_id(value) when is_integer(value) and value > 0, do: {:ok, value}
   def parse_event_id(_), do: {:error, :invalid}
 
-  @spec safe_fetch_event(pos_integer()) :: {:ok, struct()} | {:error, :not_found}
-  def safe_fetch_event(event_id) when is_integer(event_id) and event_id > 0 do
+  @spec safe_fetch_event(map(), pos_integer()) :: {:ok, struct()} | {:error, :not_found}
+  def safe_fetch_event(actor, event_id)
+      when is_integer(event_id) and event_id > 0 do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         true <- DashboardAccess.event_granted?(actor, event_id) do
+      do_fetch_event(event_id)
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  def safe_fetch_event(_actor, _event_id), do: {:error, :not_found}
+
+  defp do_fetch_event(event_id) do
     {:ok, Events.get_event_with_stats(event_id)}
   rescue
     Ecto.NoResultsError -> {:error, :not_found}
   end
-
-  def safe_fetch_event(_), do: {:error, :not_found}
 
   @spec internal_pilot_enabled?() :: boolean()
   def internal_pilot_enabled? do
@@ -45,35 +54,33 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
           {:ok, [struct()]} | {:error, term()}
   def list_offers_for_channel(actor, event_id, sales_channel)
       when is_integer(event_id) and is_binary(sales_channel) do
-    TicketOffer
-    |> Ash.Query.for_read(
-      :list_active_for_event,
-      %{
-        event_id: event_id,
-        sales_channel: sales_channel,
-        as_of: DateTime.utc_now()
-      },
-      actor: actor
-    )
-    |> Ash.read(authorize?: true)
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, _event} <- safe_fetch_event(actor, event_id) do
+      TicketOffer
+      |> Ash.Query.for_read(
+        :list_active_for_event,
+        %{
+          event_id: event_id,
+          sales_channel: sales_channel,
+          as_of: DateTime.utc_now()
+        },
+        actor: actor
+      )
+      |> Ash.read(authorize?: true)
+    end
   end
 
-  @spec admin_actor_from_user(dashboard_user(), pos_integer()) :: map()
-  def admin_actor_from_user(%{username: username}, event_id) do
-    %{actor_type: :admin, user_id: username, allowed_event_ids: [event_id]}
-  end
-
-  @spec start_admin_checkout(dashboard_user(), pos_integer(), map(), String.t()) ::
+  @spec start_admin_checkout(map(), pos_integer(), map(), String.t()) ::
           {:ok, %{order_id: integer(), public_reference: String.t()}} | {:error, term()}
-  def start_admin_checkout(user, event_id, params, idempotency_key) do
-    start_checkout(user, event_id, params, idempotency_key, "admin")
+  def start_admin_checkout(actor, event_id, params, idempotency_key) do
+    start_checkout(actor, event_id, params, idempotency_key, "admin")
   end
 
-  @spec start_internal_pilot_checkout(dashboard_user(), pos_integer(), map(), String.t()) ::
+  @spec start_internal_pilot_checkout(map(), pos_integer(), map(), String.t()) ::
           {:ok, %{order_id: integer(), public_reference: String.t()}} | {:error, term()}
-  def start_internal_pilot_checkout(user, event_id, params, idempotency_key) do
+  def start_internal_pilot_checkout(actor, event_id, params, idempotency_key) do
     if internal_pilot_enabled?() do
-      start_checkout(user, event_id, params, idempotency_key, "internal_pilot")
+      start_checkout(actor, event_id, params, idempotency_key, "internal_pilot")
     else
       {:error, :pilot_disabled}
     end
@@ -109,11 +116,11 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
 
   def safe_error_message(_), do: "Unable to start checkout. Check the details and try again."
 
-  defp start_checkout(user, event_id, params, idempotency_key, source_channel) do
-    with {:ok, _event} <- safe_fetch_event(event_id),
-         {:ok, input} <- build_checkout_input(params, event_id, idempotency_key, source_channel) do
-      actor = admin_actor_from_user(user, event_id)
-
+  defp start_checkout(actor, event_id, params, idempotency_key, source_channel) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, event} <- safe_fetch_event(actor, event_id),
+         {:ok, input} <-
+           build_checkout_input(params, event, idempotency_key, source_channel) do
       case Checkout.start_checkout(input, actor, []) do
         {:ok, %{order: order}} ->
           {:ok, %{order_id: order.id, public_reference: order.public_reference}}
@@ -124,13 +131,12 @@ defmodule FastCheck.Sales.SecondaryEntrypoints do
     end
   end
 
-  defp build_checkout_input(params, event_id, idempotency_key, source_channel) do
-    with {:ok, event} <- safe_fetch_event(event_id),
-         {:ok, ticket_offer_id} <- parse_offer_id(params),
+  defp build_checkout_input(params, event, idempotency_key, source_channel) do
+    with {:ok, ticket_offer_id} <- parse_offer_id(params),
          {:ok, quantity} <- parse_quantity(params) do
       {:ok,
        %{
-         event_id: event_id,
+         event_id: event.id,
          ticket_offer_id: ticket_offer_id,
          quantity: quantity,
          buyer_name: blank_to_nil(param(params, "buyer_name")),

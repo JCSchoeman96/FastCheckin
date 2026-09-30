@@ -10,6 +10,7 @@ defmodule FastCheck.Sales.AdminRevocations do
 
   alias FastCheck.Observability.{Correlation, Redactor, TelemetryNames}
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.ManualReview
   alias FastCheck.Sales.Order
   alias FastCheck.Tickets.Revocation
@@ -34,7 +35,8 @@ defmodule FastCheck.Sales.AdminRevocations do
     )
 
     with :ok <- require_reason(attrs),
-         {:ok, order} <- load_order_for_ticket_issue(ticket_issue_id),
+         {:ok, actor} <- verified_actor(actor),
+         {:ok, order} <- load_order_for_ticket_issue(actor, ticket_issue_id),
          :ok <- authorize_dashboard_actor(actor, order.event_id),
          :ok <- maybe_require_admin_password(attrs, required?: false),
          opts = revocation_opts(actor, order.event_id, attrs),
@@ -82,7 +84,8 @@ defmodule FastCheck.Sales.AdminRevocations do
     with :ok <- require_reason(attrs),
          :ok <- require_bulk_confirmation(attrs),
          :ok <- maybe_require_admin_password(attrs, required?: true),
-         {:ok, order} <- load_order(order_id),
+         {:ok, actor} <- verified_actor(actor),
+         {:ok, order} <- load_order(actor, order_id),
          :ok <- require_admin_actor(actor),
          :ok <- authorize_dashboard_actor(actor, order.event_id),
          opts = revocation_opts(actor, order.event_id, attrs),
@@ -236,38 +239,19 @@ defmodule FastCheck.Sales.AdminRevocations do
   end
 
   defp require_admin_actor(actor) do
-    if actor_type(actor) == :admin, do: :ok, else: {:error, :forbidden}
+    case verified_actor(actor) do
+      {:ok, _actor} -> :ok
+      _ -> {:error, :forbidden}
+    end
   end
 
   defp authorize_dashboard_actor(actor, event_id) do
-    case actor_type(actor) do
-      type when type in [:admin, :operator] ->
-        cond do
-          not is_integer(event_id) ->
-            {:error, :forbidden}
-
-          event_allowed?(actor, event_id) ->
-            :ok
-
-          true ->
-            {:error, :forbidden}
-        end
-
-      _ ->
-        {:error, :forbidden}
-    end
+    if DashboardAccess.event_granted?(actor, event_id), do: :ok, else: {:error, :forbidden}
   end
 
-  defp event_allowed?(actor, event_id) do
-    case allowed_event_ids(actor) do
-      ids when is_list(ids) and ids != [] -> event_id in ids
-      _ -> false
-    end
-  end
+  defp verified_actor(actor), do: DashboardAccess.actor_for_identity(actor)
 
-  defp allowed_event_ids(actor) do
-    Map.get(actor, :allowed_event_ids) || Map.get(actor, "allowed_event_ids")
-  end
+  defp allowed_event_ids(actor), do: DashboardAccess.allowed_event_ids(actor)
 
   defp revocation_opts(actor, _event_id, attrs) do
     [
@@ -290,42 +274,49 @@ defmodule FastCheck.Sales.AdminRevocations do
     end
   end
 
-  defp load_order(order_id) do
+  defp load_order(actor, order_id) do
     with {:ok, id} <- parse_integer(order_id) do
-      Order
-      |> Ash.Query.for_read(:get_by_id, %{id: id})
-      |> Ash.read_one(authorize?: false)
-      |> case do
-        {:ok, nil} -> {:error, :not_found}
-        {:ok, order} -> {:ok, order}
-        {:error, reason} -> {:error, reason}
+      event_ids = DashboardAccess.allowed_event_ids(actor)
+
+      case Repo.one(from o in Order, where: o.id == ^id and o.event_id in ^event_ids) do
+        nil -> {:error, :not_found}
+        order -> {:ok, order}
       end
     end
   end
 
-  defp load_order_for_ticket_issue(ticket_issue_id) do
+  defp load_order_for_ticket_issue(actor, ticket_issue_id) do
+    event_ids = DashboardAccess.allowed_event_ids(actor)
+
     with {:ok, id} <- parse_integer(ticket_issue_id),
-         row <-
+         order <-
            Repo.one(
              from t in "sales_ticket_issues",
-               where: t.id == ^id,
-               select: %{sales_order_id: t.sales_order_id}
+               join: o in Order,
+               on: o.id == t.sales_order_id,
+               where: t.id == ^id and o.event_id in ^event_ids,
+               select: o
            ),
-         nil <- row do
+         nil <- order do
       {:error, :not_found}
     else
-      %{sales_order_id: order_id} -> load_order(order_id)
+      %Order{} = order -> {:ok, order}
       {:error, _} = error -> error
     end
   end
 
   defp actor_type(actor) do
-    Map.get(actor, :actor_type) || Map.get(actor, "actor_type") || :admin
+    case verified_actor(actor) do
+      {:ok, verified} -> verified.actor_type
+      _ -> :unknown
+    end
   end
 
   defp actor_id(actor) do
-    Map.get(actor, :id) || Map.get(actor, "id") || Map.get(actor, :username) ||
-      Map.get(actor, "username") || "dashboard"
+    case verified_actor(actor) do
+      {:ok, verified} -> verified.id
+      _ -> "unknown"
+    end
   end
 
   defp parse_integer(value) when is_integer(value), do: {:ok, value}

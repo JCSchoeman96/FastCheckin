@@ -8,6 +8,7 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
   alias FastCheck.Events.Event
   alias FastCheck.Fixtures
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.TicketIssue
   alias FastCheck.Tickets.Artifact
   alias FastCheck.Tickets.ArtifactError
@@ -15,6 +16,20 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
   alias FastCheck.Tickets.DeliveryToken
   alias FastCheck.Tickets.QrPayload
   alias FastCheck.Tickets.TokenHash
+  alias FastCheckWeb.SalesWebFixtures
+
+  setup do
+    previous_auth = Application.get_env(:fastcheck, :dashboard_auth, %{})
+
+    Application.put_env(
+      :fastcheck,
+      :dashboard_auth,
+      previous_auth |> Map.put(:username, "admin") |> Map.put(:allowed_event_ids, [])
+    )
+
+    on_exit(fn -> Application.put_env(:fastcheck, :dashboard_auth, previous_auth) end)
+    :ok
+  end
 
   describe "resolve_from_delivery_token/1" do
     test "valid token returns a safe artifact with scanner payload available as data" do
@@ -256,6 +271,39 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
                ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), 999_999_999)
     end
 
+    test "a guessed TicketIssue from an ungranted event is indistinguishable from missing" do
+      %{event: event_a} = issued_ticket_fixture()
+
+      %{ticket_issue_id: issue_b, ticket_code: ticket_code_b, event: event_b} =
+        issued_ticket_fixture()
+
+      SalesWebFixtures.configure_dashboard_grants([event_a.id])
+      actor = admin_actor()
+
+      assert {:error, %ArtifactError{state: :not_found} = error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(actor, issue_b)
+
+      refute_error_inspect_leaks(error, [issue_b, ticket_code_b, event_b.name])
+    end
+
+    test "admin resolution rejects an attendee linked to a different event than its Order" do
+      %{ticket_issue_id: ticket_issue_id, event: order_event, attendee: attendee} =
+        issued_ticket_fixture()
+
+      other_event = Fixtures.create_event()
+
+      Repo.query!("UPDATE attendees SET event_id = $1 WHERE id = $2", [
+        other_event.id,
+        attendee.id
+      ])
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready} = error} =
+               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), ticket_issue_id)
+
+      refute_error_inspect_leaks(error, [ticket_issue_id, attendee.email, other_event.name])
+      assert order_event.id != other_event.id
+    end
+
     test "revoked and non-issued ticket issues are rejected without payload" do
       %{ticket_issue_id: revoked_id, ticket_code: revoked_code} =
         issued_ticket_fixture(status: "revoked", revoked_at: DateTime.utc_now())
@@ -375,6 +423,7 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
 
   defp issued_ticket_fixture(opts \\ []) do
     event = Fixtures.create_event()
+    SalesWebFixtures.configure_dashboard_grants([event.id])
     attendee = Fixtures.create_attendee(event, %{payment_status: "completed"})
     ticket_code = attendee.ticket_code
 
@@ -566,6 +615,7 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
   defp system_actor, do: %{actor_type: :system, actor_id: "artifact_resolver_test"}
 
   defp admin_actor do
-    %{actor_type: :admin, id: "dashboard", username: "dashboard", scope: :global_dashboard}
+    {:ok, actor} = DashboardAccess.actor_for_identity("admin")
+    actor
   end
 end

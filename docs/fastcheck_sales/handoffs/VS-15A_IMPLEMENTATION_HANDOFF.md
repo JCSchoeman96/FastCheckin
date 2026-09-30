@@ -11,6 +11,14 @@ Merged at: 2026-06-23T21:16:10Z
 Branch: `cursor/vs-15a-core-revocation-scanner-visibility`  
 CI: run 28057290508 green on implementation head
 
+## Current actor authority clarification
+
+The VS-15A core API retains operator domain support when a caller has already established trusted Event
+authority. The core validates actor type, reason, and supplied Event scope; it does not authenticate an
+operator or validate grant provenance. The current production Sales dashboard exposes revocation through
+the configured dashboard-admin identity only. A production operator entry point is deferred until trusted
+operator identity and Event authority are available. Track this as FastCheckin-iuaq.
+
 ## What Changed
 
 VS-15A added the core Sales revocation path so issued `TicketIssue` rows can be
@@ -155,10 +163,10 @@ Results reported:
 - `mix precommit` — 888 tests, 0 failures
 - CI run 28057290508 — success on head `a162c9f`
 
-## Known Limitations
+## Known Limitations at the VS-15A merge
 
-- No operator/admin UI to trigger refund/revocation; callers must invoke
-  `Revocation` directly until VS-15B.
+- At the VS-15A merge, no operator/admin UI triggered refund or revocation; callers invoked
+  `Revocation` directly until VS-15B. VS-15B added a dashboard-admin entry point only.
 - No Paystack refund integration or automated payment reversal.
 - No dedicated revocation worker; synchronous service calls only.
 - Order-level revoke partial failures move order to `manual_review` but do not

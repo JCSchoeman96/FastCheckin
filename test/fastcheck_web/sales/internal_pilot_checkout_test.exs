@@ -25,7 +25,7 @@ defmodule FastCheckWeb.Sales.InternalPilotCheckoutTest do
 
   defp mount_pilot_checkout(conn, event_id) do
     conn
-    |> Fixtures.authenticated_conn()
+    |> Fixtures.authenticated_conn([event_id])
     |> live(~p"/dashboard/sales/internal-pilot/checkout/#{event_id}")
   end
 
@@ -45,5 +45,17 @@ defmodule FastCheckWeb.Sales.InternalPilotCheckoutTest do
 
     assert {:error, {:live_redirect, %{to: "/dashboard"}}} =
              mount_pilot_checkout(conn, event.id)
+  end
+
+  test "an ungranted Event route cannot display internal pilot checkout", %{
+    conn: conn,
+    event: ungranted_event
+  } do
+    granted_event = Fixtures.insert_event!()
+
+    assert {:error, {:live_redirect, %{to: "/dashboard"}}} =
+             conn
+             |> Fixtures.authenticated_conn([granted_event.id])
+             |> live(~p"/dashboard/sales/internal-pilot/checkout/#{ungranted_event.id}")
   end
 end

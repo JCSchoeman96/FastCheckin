@@ -6,22 +6,23 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.Sales.{AdminRefunds, AdminRevocations}
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheckWeb.Sales.Components.RevocationFormComponent
 
   @impl true
   def mount(%{"id" => order_id}, session, socket) do
-    case AdminRefunds.get_order_operations_context(order_id) do
-      {:ok, context} ->
-        actor = actor_from_session(session, context.event_id)
+    identity = Map.get(session, "dashboard_username") || Map.get(session, :dashboard_username)
 
-        {:ok,
-         socket
-         |> assign(:page_title, "Sales order")
-         |> assign(:actor, actor)
-         |> assign(:context, context)
-         |> assign(:action_error, nil)
-         |> assign(:action_notice, nil)}
-
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(identity),
+         {:ok, context} <- AdminRefunds.get_order_operations_context(actor, order_id) do
+      {:ok,
+       socket
+       |> assign(:page_title, "Sales order")
+       |> assign(:actor, actor)
+       |> assign(:context, context)
+       |> assign(:action_error, nil)
+       |> assign(:action_notice, nil)}
+    else
       {:error, _} ->
         {:ok,
          socket
@@ -329,7 +330,7 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
       {:ok, _result} ->
         order_id = socket.assigns.context.sales_order_id
 
-        case AdminRefunds.get_order_operations_context(order_id) do
+        case AdminRefunds.get_order_operations_context(socket.assigns.actor, order_id) do
           {:ok, context} ->
             {:noreply,
              socket
@@ -348,17 +349,6 @@ defmodule FastCheckWeb.Sales.OrderShowLive do
          |> assign(:action_notice, nil)
          |> assign(:action_error, format_error(reason))}
     end
-  end
-
-  defp actor_from_session(session, event_id) do
-    username = session["dashboard_username"] || "dashboard"
-
-    %{
-      id: username,
-      username: username,
-      actor_type: :admin,
-      allowed_event_ids: [event_id]
-    }
   end
 
   defp format_status(nil), do: "None"

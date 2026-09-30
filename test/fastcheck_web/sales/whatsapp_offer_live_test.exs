@@ -21,7 +21,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
 
   defp mount_offers(conn, event_id) do
     conn
-    |> Fixtures.authenticated_conn()
+    |> Fixtures.authenticated_conn([event_id])
     |> live(~p"/dashboard/events/#{event_id}/whatsapp-offers")
   end
 
@@ -56,6 +56,18 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
 
   test "invalid event redirects safely", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/dashboard"}}} = mount_offers(conn, 99_999_999)
+  end
+
+  test "an ungranted Event route cannot display WhatsApp offers", %{
+    conn: conn,
+    event: ungranted_event
+  } do
+    granted_event = Fixtures.insert_event!()
+
+    assert {:error, {:live_redirect, %{to: "/dashboard"}}} =
+             conn
+             |> Fixtures.authenticated_conn([granted_event.id])
+             |> live(~p"/dashboard/events/#{ungranted_event.id}/whatsapp-offers")
   end
 
   test "archived event is read-only", %{conn: conn, event: event} do
@@ -288,7 +300,13 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
   end
 
   test "archived event shows event cap read-only", %{conn: conn, event: event} do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               Fixtures.dashboard_actor([event.id]),
+               event.id,
+               4
+             )
+
     assert {:ok, _} = Events.archive_event(event.id)
 
     assert {:ok, _view, html} = mount_offers(conn, event.id)
@@ -326,7 +344,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLiveTest do
   test "dashboard contains manage whatsapp tickets link", %{conn: conn, event: event} do
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([event.id])
       |> live(~p"/dashboard")
 
     assert has_element?(view, "#manage-whatsapp-offers-#{event.id}", "Manage WhatsApp tickets")

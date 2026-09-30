@@ -3,6 +3,7 @@ defmodule FastCheck.Sales.OpsMetricsTest do
 
   alias FastCheck.Repo
   alias FastCheck.Sales.OpsMetrics
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   @event_id 21_021
   @raw_email "ops.raw@example.com"
@@ -29,7 +30,8 @@ defmodule FastCheck.Sales.OpsMetricsTest do
     insert_attendee_invalidation!()
     insert_retryable_oban_job!("payments")
 
-    summary = OpsMetrics.summary(%{"event_id" => to_string(@event_id), "window" => "1h"})
+    actor = WebFixtures.dashboard_actor([@event_id])
+    summary = OpsMetrics.summary(actor, %{"event_id" => to_string(@event_id), "window" => "1h"})
 
     assert summary.window == "1h"
     assert summary.orders_by_status == %{"manual_review" => 1}
@@ -38,15 +40,15 @@ defmodule FastCheck.Sales.OpsMetricsTest do
     assert summary.checkout_expired_unreleased_count == 0
     assert summary.payment_attempts_by_status == %{"verified_amount_mismatch" => 1}
     assert summary.payment_mismatch_count == 1
-    assert summary.payment_unmatched_event_count == 1
-    assert summary.payment_webhook_duplicate_count == 1
+    refute Map.has_key?(summary, :payment_unmatched_event_count)
+    refute Map.has_key?(summary, :payment_webhook_duplicate_count)
     assert summary.tickets_revoked_count == 1
     assert summary.scanner_visibility_pending_count == 1
     assert summary.delivery_attempts_by_status == %{"fallback_required" => 1}
     assert summary.delivery_fallback_required_count == 1
     assert summary.manual_review_open_count == 1
     assert summary.manual_review_oldest_age_seconds >= 0
-    assert summary.worker_retry_backlog_by_queue == %{"payments" => 1}
+    refute Map.has_key?(summary, :worker_retry_backlog_by_queue)
     refute_unsafe(summary)
   end
 
@@ -58,13 +60,35 @@ defmodule FastCheck.Sales.OpsMetricsTest do
     insert_payment_attempt!(newer.id, "manual_review")
 
     assert [failure] =
-             OpsMetrics.recent_failures(%{"event_id" => to_string(@event_id), "window" => "1h"},
+             OpsMetrics.recent_failures(
+               WebFixtures.dashboard_actor([@event_id]),
+               %{"event_id" => to_string(@event_id), "window" => "1h"},
                limit: 1
              )
 
     assert failure.order_public_reference == "FC-OPS-NEWER"
     assert failure.kind == "payment_attempt"
     refute_unsafe(failure)
+  end
+
+  test "summary filters and failure rows cannot widen an event grant" do
+    event_b_id = @event_id + 1
+    insert_event!(@event_id)
+    insert_event!(event_b_id)
+    _order_a = insert_order!("FC-OPS-A", "manual_review", "admin", event_id: @event_id)
+    order_b = insert_order!("FC-OPS-B", "manual_review", "admin", event_id: event_b_id)
+    insert_payment_attempt!(order_b.id, "failed")
+    actor_a = WebFixtures.dashboard_actor([@event_id])
+
+    summary_a = OpsMetrics.summary(actor_a)
+    summary_for_b = OpsMetrics.summary(actor_a, %{"event_id" => to_string(event_b_id)})
+
+    assert summary_a.orders_by_status == %{"manual_review" => 1}
+    assert summary_for_b.orders_by_status == %{}
+    assert summary_for_b.payment_attempts_by_status == %{}
+
+    assert [] ==
+             OpsMetrics.recent_failures(actor_a, %{"event_id" => to_string(event_b_id)})
   end
 
   defp refute_unsafe(term) do
@@ -106,7 +130,7 @@ defmodule FastCheck.Sales.OpsMetricsTest do
     id
   end
 
-  defp insert_event! do
+  defp insert_event!(event_id \\ @event_id) do
     Repo.query!(
       """
       INSERT INTO events
@@ -120,8 +144,8 @@ defmodule FastCheck.Sales.OpsMetricsTest do
       ON CONFLICT (id) DO NOTHING
       """,
       [
-        @event_id,
-        "AA#{rem(@event_id, 10_000) |> Integer.to_string() |> String.pad_leading(4, "0")}"
+        event_id,
+        "AA#{rem(event_id, 10_000) |> Integer.to_string() |> String.pad_leading(4, "0")}"
       ]
     )
   end
@@ -141,7 +165,15 @@ defmodule FastCheck.Sales.OpsMetricsTest do
            now() AT TIME ZONE 'utc' - make_interval(secs => $7::int))
         RETURNING id
         """,
-        [public_reference, @event_id, @raw_phone, @raw_email, source_channel, status, seconds_ago]
+        [
+          public_reference,
+          Keyword.get(opts, :event_id, @event_id),
+          @raw_phone,
+          @raw_email,
+          source_channel,
+          status,
+          seconds_ago
+        ]
       )
 
     %{id: id}

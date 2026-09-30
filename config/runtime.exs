@@ -445,9 +445,21 @@ dashboard_auth =
       raise "DASHBOARD_PASSWORD must be at least 16 bytes in production."
   end
 
+dashboard_allowed_event_ids =
+  case FastCheck.RuntimeConfiguration.dashboard_event_ids(
+         System.get_env("DASHBOARD_ALLOWED_EVENT_IDS")
+       ) do
+    {:ok, event_ids} ->
+      event_ids
+
+    {:error, :invalid_dashboard_event_ids} ->
+      raise "DASHBOARD_ALLOWED_EVENT_IDS must be a comma-separated list of positive integer event IDs."
+  end
+
 config :fastcheck, :dashboard_auth, %{
   username: dashboard_auth.username,
-  password: dashboard_auth.password
+  password: dashboard_auth.password,
+  allowed_event_ids: dashboard_allowed_event_ids
 }
 
 default_tickera_site_url =

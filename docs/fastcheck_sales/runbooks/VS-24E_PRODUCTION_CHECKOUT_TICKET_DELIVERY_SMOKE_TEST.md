@@ -93,8 +93,11 @@ Record evidence in the VS-24E evidence template using redacted IDs only.
 - Action: Confirm Oban is running.
 - Expected result: Paystack webhook, payment verification, ticket issuance,
   checkout expiry, payment link, and ticket link workers are processing.
-- Where to verify: Ops dashboard and Oban admin surface if available.
-- Failure response: Stop; do not start manual payment if workers are paused.
+- Where to verify: Controlled worker-backed smoke transitions and their
+  Event-scoped Sales records. The Ops dashboard does not show global queue
+  backlog.
+- Failure response: This production smoke and GO remain blocked until P1-F
+  provides an approved global monitoring source and rehearsed procedure.
 
 - Action: Confirm Paystack mode deliberately.
 - Expected result: Sandbox/test-mode for sandbox smoke; live mode only for
@@ -109,10 +112,10 @@ Record evidence in the VS-24E evidence template using redacted IDs only.
 - Failure response: Stop if customer messages might go to wrong environment.
 
 - Action: Confirm dashboard authentication works.
-- Expected result: Assigned operator can open `/dashboard/sales/ops`,
-  `/dashboard/sales/orders/:id`, and audit timeline surfaces.
+- Expected result: Assigned staff using the configured dashboard-admin identity and Event grant can open
+  `/dashboard/sales/ops`, `/dashboard/sales/orders/:id`, and audit timeline surfaces.
 - Where to verify: Browser session.
-- Failure response: Stop; operator visibility is required.
+- Failure response: Stop if assigned staff with the configured dashboard identity and Event grant cannot see the required operational state.
 
 - Action: Confirm scanner/mobile configuration.
 - Expected result: Approved scanner device/session can authenticate for the test
@@ -265,8 +268,8 @@ Rules:
 Run destructive revocation/refund checks only in sandbox/test-mode or if explicit
 production approval exists.
 
-- Action: Revoke, refund/cancel, or mark not-scannable through approved operator
-  path.
+- Action: Revoke or refund/cancel through the Sales dashboard using the configured admin identity with a
+  server grant for the Event.
 - Expected result: Ticket/attendee scanner visibility changes and invalidation
   is visible.
 - Where to verify: Order page, audit timeline, scanner sync.
@@ -351,9 +354,16 @@ delivery token, token hash, or QR hash.
 
 - Action: Open `/dashboard/sales/ops`.
 - Expected result: Status counts, failures, manual review, delivery failures,
-  scanner visibility, and Oban backlog are visible and redacted.
+  scanner visibility, and recent Event-owned failures are visible and redacted.
 - Evidence: page status, relevant IDs/statuses only.
 - Failure response: Stop if operator cannot observe launch state.
+
+- Action: Verify the global worker backlog monitoring prerequisite.
+- Expected result: This step is blocked under P1-F. No approved production
+  source or procedure currently exists, and Event-scoped Sales Ops is not a
+  substitute.
+- Evidence: None until P1-F establishes and rehearses the source and procedure.
+- Failure response: Production GO remains blocked.
 
 - Action: Open order operations page.
 - Expected result: Order, payment, ticket, delivery, scanner, and resend states

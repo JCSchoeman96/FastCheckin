@@ -28,16 +28,19 @@ Use VS-21B operator views as the visibility truth:
 - Redis is reachable.
 - Postgres is reachable and all migrations are applied.
 - Oban is running and processing the Sales queues.
-- Dashboard auth works for an assigned operator.
+- Assigned staff use the configured dashboard-admin identity; no separate Sales operator login exists.
 - Ops Dashboard opens at `/dashboard/sales/ops`.
+- Global Oban backlog monitoring is an unresolved P0 launch blocker owned by
+  P1-F. An approved production source and rehearsed procedure must exist before
+  launch. Event-scoped Sales Ops is not a substitute.
 - Audit Timeline opens at `/dashboard/sales/audit/:entity_type/:entity_id`.
 - Mobile login, attendee sync, and scan upload are verified.
 - At least one active event exists.
 - At least one active ticket offer exists for the launch event.
 - Inventory quantity is configured for the launch offer.
-- Admin/operator access is confirmed.
-- Manual review operator is assigned.
-- Refund/revocation operator is assigned.
+- The configured dashboard-admin identity and Event grants are confirmed for assigned staff.
+- Manual-review staff member is assigned and uses the configured dashboard-admin identity.
+- Refund/revocation staff member is assigned and uses the configured dashboard-admin identity.
 - Incident contact list is confirmed.
 
 ## Environment Checklist
@@ -54,7 +57,13 @@ Core production secrets and runtime:
 - `DATABASE_URL` points at the intended production database.
 - `REDIS_URL` points at the intended Redis instance.
 - `SALES_INTERNAL_PILOT_ENABLED` is set deliberately for launch posture.
-- `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` are set for operator access.
+- `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` are configured for assigned staff using the dashboard-admin identity.
+- `DASHBOARD_ALLOWED_EVENT_IDS` contains exactly the Event IDs the dashboard
+  may access for Sales. An absent or blank value grants no Sales Events; a
+  malformed nonblank value must prevent the release from starting.
+- Verify the Sales grant list against the intended launch Events after deploy;
+  this setting does not grant Event administration, exports, scanner, or
+  occupancy access.
 - `SENTRY_DSN` is present if Sentry is part of the release.
 
 Paystack:
@@ -218,8 +227,12 @@ Open `/dashboard/sales/ops` and verify:
 - Manual review queue count is visible.
 - Delivery failures and fallback-required counts are visible.
 - Scanner visibility pending count is visible.
-- Oban retry backlog is visible.
+- Recent Event-owned failures are visible.
 - Filters by event and source channel work.
+
+Global Oban backlog monitoring cannot currently be verified through an
+approved production source. P1-F must resolve this P0 launch blocker before
+production GO. Do not use Event-scoped Sales Ops as a global backlog source.
 
 Open `/dashboard/sales/audit/:entity_type/:entity_id` and verify:
 
@@ -257,8 +270,7 @@ it or if verified payments are not issuing tickets.
 
 ## Refund And Revocation Workflow
 
-- Only the assigned refund/revocation operator may perform revocation/refund
-  actions.
+- Only the assigned staff member using the configured dashboard-admin identity with a server grant for the Event may perform revocation/refund actions. No separate production operator entry point exists.
 - A concrete reason is required.
 - Expected final state: ticket issue revoked, attendee not scannable, invalidation
   event appended, event sync version changed, secure ticket page no longer
@@ -309,4 +321,3 @@ inventory except through the documented recovery procedure.
 - If approved for launch rehearsal, revoke/refund the test ticket and confirm
   scanner denial.
 - Confirm `/dashboard/sales/ops` and Audit Timeline show safe, redacted state.
-

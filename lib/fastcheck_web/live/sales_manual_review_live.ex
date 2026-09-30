@@ -5,6 +5,7 @@ defmodule FastCheckWeb.SalesManualReviewLive do
 
   use FastCheckWeb, :live_view
 
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.ManualReview
 
   @impl true
@@ -43,7 +44,7 @@ defmodule FastCheckWeb.SalesManualReviewLive do
         %{"subject-type" => subject_type, "subject-id" => subject_id},
         socket
       ) do
-    case ManualReview.get_context(subject_type, subject_id) do
+    case ManualReview.get_context(socket.assigns.actor, subject_type, subject_id) do
       {:ok, context} ->
         {:noreply,
          socket
@@ -420,7 +421,8 @@ defmodule FastCheckWeb.SalesManualReviewLive do
     """
   end
 
-  defp load_queue(socket, filters), do: assign(socket, :queue, ManualReview.list_queue(filters))
+  defp load_queue(socket, filters),
+    do: assign(socket, :queue, ManualReview.list_queue(socket.assigns.actor, filters))
 
   defp run_subject_action(socket, nil, _fun) do
     {:noreply, assign(socket, :action_error, "Select a review item first")}
@@ -463,7 +465,7 @@ defmodule FastCheckWeb.SalesManualReviewLive do
   defp reload_selected_context(socket) do
     %{subject_type: subject_type, subject_id: subject_id} = socket.assigns.selected_subject
 
-    case ManualReview.get_context(subject_type, subject_id) do
+    case ManualReview.get_context(socket.assigns.actor, subject_type, subject_id) do
       {:ok, context} ->
         assign(socket, :selected_context, context)
 
@@ -475,8 +477,12 @@ defmodule FastCheckWeb.SalesManualReviewLive do
   end
 
   defp actor_from_session(session) do
-    username = session["dashboard_username"] || "dashboard"
-    %{id: username, username: username}
+    username = session["dashboard_username"] || session[:dashboard_username]
+
+    case DashboardAccess.actor_for_identity(username) do
+      {:ok, actor} -> actor
+      {:error, :unauthorized} -> nil
+    end
   end
 
   defp format_error(reason), do: reason |> to_string() |> String.replace("_", " ")

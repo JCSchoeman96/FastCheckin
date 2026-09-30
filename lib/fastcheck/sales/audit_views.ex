@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.AuditViews do
 
   alias FastCheck.Observability.Redactor
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
 
   @default_limit 25
   @max_limit 50
@@ -27,15 +28,28 @@ defmodule FastCheck.Sales.AuditViews do
   }
 
   @doc "Returns a safe timeline page for an allowed entity type and id."
-  def timeline(entity_type, entity_id, opts \\ []) do
+  def timeline(actor, entity_type, entity_id, opts \\ []) do
     with {:ok, transition_entity_type} <- transition_entity_type(entity_type),
-         {:ok, id} <- parse_id(entity_id) do
+         {:ok, id} <- parse_id(entity_id),
+         {:ok, resolved} <- resolve_entity(actor, entity_type, id) do
       limit = opts |> Keyword.get(:limit, @default_limit) |> clamp(1, @max_limit)
       page = opts |> Keyword.get(:page, 1) |> clamp(1, 10_000)
       offset = (page - 1) * limit
 
-      summary_entries = summary_entries(entity_type, id, page)
-      transition_entries = transition_entries(transition_entity_type, id, limit + 1, offset)
+      summary_entries =
+        case resolved do
+          %{transition_id: _id} -> []
+          _ -> summary_entries(resolved.entity_type, resolved.entity_id, page)
+        end
+
+      transition_entries =
+        case resolved do
+          %{transition_id: transition_id} ->
+            transition_entry_by_id(transition_id)
+
+          _ ->
+            transition_entries(transition_entity_type, resolved.entity_id, limit + 1, offset)
+        end
 
       {visible_transition_entries, next_page} =
         if length(transition_entries) > limit do
@@ -73,6 +87,171 @@ defmodule FastCheck.Sales.AuditViews do
 
   defp parse_id(_), do: {:error, :invalid_entity_id}
 
+  defp resolve_entity(actor, "state_transition", id) do
+    case Repo.one(
+           from s in "sales_state_transitions",
+             where: s.id == ^id,
+             select: %{entity_type: s.entity_type, entity_id: s.entity_id}
+         ) do
+      %{entity_type: entity_type, entity_id: entity_id} ->
+        with {:ok, entity_key} <- entity_key(entity_type),
+             {:ok, parsed_entity_id} <- parse_id(entity_id),
+             {:ok, _owner} <- resolve_entity(actor, entity_key, parsed_entity_id) do
+          {:ok,
+           %{
+             entity_type: entity_key,
+             entity_id: parsed_entity_id,
+             transition_id: id
+           }}
+        end
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
+  defp resolve_entity(actor, entity_type, id) do
+    event_ids = DashboardAccess.allowed_event_ids(actor)
+
+    if event_ids == [] do
+      {:error, :not_found}
+    else
+      with {:ok, event_id} <- resolve_entity_owner(entity_type, id, event_ids) do
+        {:ok, %{entity_type: entity_type, entity_id: id, event_id: event_id}}
+      end
+    end
+  end
+
+  defp resolve_entity_owner("order", id, event_ids) do
+    from(o in "sales_orders",
+      where: o.id == ^id and o.event_id in ^event_ids,
+      select: o.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("checkout_session", id, event_ids) do
+    from(c in "sales_checkout_sessions",
+      join: o in "sales_orders",
+      on: o.id == c.sales_order_id,
+      where: c.id == ^id and o.event_id in ^event_ids,
+      select: o.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("payment_attempt", id, event_ids) do
+    from(p in "sales_payment_attempts",
+      join: o in "sales_orders",
+      on: o.id == p.sales_order_id,
+      where: p.id == ^id and o.event_id in ^event_ids,
+      select: o.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("refund", id, event_ids) do
+    from(r in "sales_refunds",
+      join: o in "sales_orders",
+      on: o.id == r.sales_order_id,
+      where: r.id == ^id and o.event_id in ^event_ids,
+      select: o.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("ticket_issue", id, event_ids) do
+    from(t in "sales_ticket_issues",
+      join: o in "sales_orders",
+      on: o.id == t.sales_order_id,
+      where: t.id == ^id and o.event_id in ^event_ids,
+      select: o.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("delivery_attempt", id, event_ids) do
+    from(d in "sales_delivery_attempts",
+      join: o in "sales_orders",
+      on: o.id == d.sales_order_id,
+      where: d.id == ^id and o.event_id in ^event_ids,
+      select: o.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("conversation", id, event_ids) do
+    # Current orders use the sales_conversation_id FK. Keep the legacy
+    # WhatsApp-ID link in the same owner set so it cannot hide cross-event
+    # ambiguity in older Orders.
+    owner_query =
+      from(c in "sales_conversations",
+        join: o in "sales_orders",
+        on: o.sales_conversation_id == c.id or o.whatsapp_conversation_id == c.wa_id,
+        where: c.id == ^id,
+        distinct: true,
+        select: o.event_id
+      )
+
+    case unique_event_owner(owner_query) do
+      {:ok, event_id} when is_integer(event_id) ->
+        if event_id in event_ids, do: {:ok, event_id}, else: {:error, :not_found}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  defp resolve_entity_owner("attendee_invalidation_event", id, event_ids) do
+    from(i in "attendee_invalidation_events",
+      where: i.id == ^id and i.event_id in ^event_ids,
+      select: i.event_id
+    )
+    |> unique_event_owner()
+  end
+
+  defp resolve_entity_owner("payment_event", id, event_ids) do
+    attempts =
+      from(e in "sales_payment_events",
+        join: p in "sales_payment_attempts",
+        on: p.provider == e.provider and p.provider_reference == e.provider_reference,
+        join: o in "sales_orders",
+        on: o.id == p.sales_order_id,
+        where: e.id == ^id,
+        select: %{payment_attempt_id: p.id, event_id: o.event_id},
+        limit: 2
+      )
+
+    case Repo.all(attempts) do
+      [%{payment_attempt_id: _attempt_id, event_id: event_id}] ->
+        if event_id in event_ids, do: {:ok, event_id}, else: {:error, :not_found}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  defp resolve_entity_owner(_unsupported, _id, _event_ids), do: {:error, :not_found}
+
+  defp unique_event_owner(query) do
+    case query |> limit(2) |> Repo.all() do
+      [event_id] -> {:ok, event_id}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp entity_key("Order"), do: {:ok, "order"}
+  defp entity_key("CheckoutSession"), do: {:ok, "checkout_session"}
+  defp entity_key("PaymentAttempt"), do: {:ok, "payment_attempt"}
+  defp entity_key("Refund"), do: {:ok, "refund"}
+  defp entity_key("PaymentEvent"), do: {:ok, "payment_event"}
+  defp entity_key("TicketIssue"), do: {:ok, "ticket_issue"}
+  defp entity_key("DeliveryAttempt"), do: {:ok, "delivery_attempt"}
+  defp entity_key("Conversation"), do: {:ok, "conversation"}
+  defp entity_key("conversation"), do: {:ok, "conversation"}
+  defp entity_key("AttendeeInvalidationEvent"), do: {:ok, "attendee_invalidation_event"}
+  defp entity_key(_), do: {:error, :not_found}
+
   defp summary_entries(_entity_type, _id, page) when page > 1, do: []
 
   defp summary_entries("payment_attempt", id, _page),
@@ -102,6 +281,27 @@ defmodule FastCheck.Sales.AuditViews do
     |> order_by([s], desc: s.inserted_at, desc: s.id)
     |> offset(^offset)
     |> limit(^limit)
+    |> select([s], %{
+      sort_id: s.id,
+      timestamp: s.inserted_at,
+      entity_type: s.entity_type,
+      entity_id: s.entity_id,
+      from_state: s.from_state,
+      to_state: s.to_state,
+      reason_code: s.reason,
+      actor_type: s.actor_type,
+      actor_id: s.actor_id,
+      source: s.source,
+      correlation_id: s.correlation_id,
+      idempotency_key: s.idempotency_key,
+      metadata: s.metadata
+    })
+    |> Repo.all()
+  end
+
+  defp transition_entry_by_id(id) do
+    "sales_state_transitions"
+    |> where([s], s.id == ^id)
     |> select([s], %{
       sort_id: s.id,
       timestamp: s.inserted_at,

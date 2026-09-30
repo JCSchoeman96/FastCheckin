@@ -16,8 +16,14 @@ traffic.
 - [ ] Paystack account owner or incident contact is reachable.
 - [ ] Meta/WhatsApp account owner or incident contact is reachable.
 - [ ] Refund/revocation policy for the test ticket is approved.
+- [ ] P1-F global worker backlog monitoring source is approved and its procedure
+  has been rehearsed.
 - [ ] Hidden/internal event and low-value offer are confirmed.
 - [ ] Evidence template is ready and contains no protected values.
+
+Global worker monitoring is currently blocked by P1-F. Do not begin this
+production smoke or declare launch GO until an approved source and procedure
+exist. Event-scoped Sales Ops is not a substitute.
 
 ## Production Constraints
 
@@ -57,7 +63,8 @@ traffic.
 - [ ] Oban queues are running.
 - [ ] Paystack live mode is deliberate.
 - [ ] Meta/WhatsApp live mode is deliberate.
-- [ ] Dashboard auth works for assigned operator.
+- [ ] Dashboard auth works for staff using the configured dashboard-admin
+  identity and Event grant.
 - [ ] Scanner/mobile auth works for hidden/internal event.
 
 ### 2. Hidden Event And Offer
@@ -125,6 +132,7 @@ ID.
 ### 8. Ops And Redaction
 
 - [ ] `/dashboard/sales/ops` shows safe statuses.
+- [ ] Event-scoped Ops is not used as evidence of global Oban backlog health.
 - [ ] Order page shows safe order/payment/ticket/delivery/scanner state.
 - [ ] Audit timeline shows safe redacted entries.
 - [ ] Logs/Sentry/evidence spot check contains no protected values.

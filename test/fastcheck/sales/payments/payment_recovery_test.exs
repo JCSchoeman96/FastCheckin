@@ -21,6 +21,7 @@ defmodule FastCheck.Sales.Payments.PaymentRecoveryTest do
   alias FastCheck.SalesCheckoutFixtures
   alias FastCheck.SalesE2EFixtures, as: E2E
   alias FastCheck.Workers.PaidOrderFulfillmentWorker
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   setup do
     paystack_cleanup = TestSupport.setup_paystack!()
@@ -333,11 +334,12 @@ defmodule FastCheck.Sales.Payments.PaymentRecoveryTest do
     %{attempt: attempt} = E2E.start_initialized_checkout!(event, offer)
     set_attempt_manual_review!(attempt.id, "payment_state_conflict")
     age_attempt!(attempt.id, 7_200)
+    actor = WebFixtures.dashboard_actor([event.id])
 
     assert {:ok, _action} =
              ManualReview.retry_payment_verification(
                attempt.id,
-               %{id: "recovery-test-admin"},
+               actor,
                %{"reason_code" => "retry_payment_verification"}
              )
 

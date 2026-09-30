@@ -22,14 +22,16 @@ current refund evidence and financial finalization are defined in the
 
 ## 1. Purpose
 
-Add audited admin/operator operations for refund and revocation workflows.
+Add audited dashboard-admin operations for refund and revocation workflows. The VS-15A core domain retains
+operator actor support, but VS-15B does not establish a production operator identity or Event-authority
+boundary.
 
 This slice builds the **admin-facing control layer** over the VS-15A core revocation path. It must not implement a second scanner-revocation mechanism.
 
 Correct flow:
 
 ```text
-Admin/operator review action
+Configured dashboard-admin identity with a server-owned Event grant
   -> permission + reason challenge
   -> Sales manual-review / refund / revocation transition
   -> FastCheck.Tickets.Revocation core path from VS-15A
@@ -43,11 +45,21 @@ Admin/operator review action
 Key rule:
 
 ```text
-VS-15B is an admin/ops orchestration slice.
-VS-15A remains the scanner-safety authority.
+VS-15B is dashboard-admin orchestration. VS-15A remains the scanner-safety authority.
 ```
 
 ---
+
+## Authority correction recorded by P1-D-REV-01
+
+The earlier VS-15B plan and test used an operator-shaped actor map for single-ticket revocation. That map did
+not prove an authenticated operator identity or trusted Event grant. The current production AdminRevocations
+dashboard boundary accepts the configured dashboard-admin identity and server-owned Event grants only.
+FastCheck.Tickets.Revocation retains :operator support at the domain layer when an upstream caller has
+already established trusted identity and Event scope. Core support does not create a production operator
+entry point. Add one only after a separate authority design establishes operator identity, Event binding,
+and audit attribution. Scanner shared credentials and mutable operator names do not satisfy that
+requirement. Track the follow-up as FastCheckin-iuaq.
 
 ## 2. FastCheckin Current-State Findings
 
@@ -75,7 +87,8 @@ After VS-15B:
 
 ```text
 Admin users can revoke/refund Sales-issued tickets through audited actions.
-Operators can only perform the limited actions allowed by VS-01F/VS-13 policy.
+The current production Sales dashboard has no operator entry point. A future operator path must use trusted
+identity and Event authority before applying the action permissions in VS-01F/VS-13.
 Every admin/manual action requires a reason.
 Sensitive actions may require password confirmation using BrowserAuth.valid_admin_password?/1.
 Revocation always calls FastCheck.Tickets.Revocation.
@@ -97,7 +110,8 @@ Admin Sales review/detail actions for revoking all tickets on an order.
 Manual mark-refunded state transition only after required policy checks.
 Manual refund-record note/state tracking if provider refund is external/manual.
 Retry-safe use of FastCheck.Tickets.Revocation from VS-15A.
-Reason-required operator/admin action forms.
+Reason-required dashboard-admin action forms. Core operator calls also require a reason, but no production
+operator entry point exists.
 Optional password confirmation for destructive actions.
 Masked order/ticket details in LiveView.
 StateTransition audit rows for every non-idempotent admin action.
@@ -194,7 +208,9 @@ explicit checkbox/confirmation text for bulk order-level revocation
 Operator behavior:
 
 ```text
-Operators may request/queue review actions only if VS-01F/VS-13 permits.
+No production Sales operator revocation entry point exists. Do not turn an operator name, actor map, or
+caller-supplied allowed_event_ids into authority. A future operator entry point must first establish
+trusted identity and Event scope.
 Operators must not be treated as admins.
 Operators must not view raw provider payloads by default.
 Operators must not force mark-refunded if policy restricts this to admin.
@@ -398,7 +414,9 @@ RED: order-level revocation is bounded and idempotent under retry.
 RED: admin can mark order refunded_manual only after verified payment context exists.
 RED: operator cannot perform admin-only refund action.
 RED: customer_session cannot access or mutate admin actions.
-RED: reason is required for every admin/operator action.
+RED: reason is required for every dashboard-admin action and every core operator domain call.
+RED: dashboard AdminRevocations rejects an operator-shaped actor without DashboardAccess authority.
+RED: core Revocation retains operator reason and Event-scope behavior; the core does not authenticate callers.
 RED: destructive action requires password confirmation if configured.
 RED: repeated revoke/refund actions return idempotent result, not duplicate destructive writes.
 RED: LiveView masks buyer phone/email by default.
@@ -414,7 +432,8 @@ RED: no Redis inventory mutation occurs.
 ```text
 GREEN: Admin revocation uses the core VS-15A path only.
 GREEN: Admin refund/cancel operations cannot leave scanner-acceptable refunded tickets.
-GREEN: Policy boundaries distinguish admin, operator, system, and customer_session.
+GREEN: Core policy distinguishes admin, operator, system, and customer_session. The production dashboard
+entry point accepts only the configured admin identity and server-owned Event grants.
 GREEN: Support UI is useful but safe by default.
 GREEN: Audit trail is sufficient for disputes and incident review.
 ```
@@ -427,7 +446,8 @@ Required policies:
 
 ```text
 admin can perform revoke/refund actions with reason.
-operator can only perform actions explicitly allowed by VS-13/VS-01F.
+no production operator entry point exists; future operator actions require trusted identity and Event
+authority.
 operator cannot view raw provider payloads by default.
 customer_session cannot access LiveView/admin action routes.
 system can call underlying service for automated/manual-review recovery if needed.
@@ -561,10 +581,10 @@ full QR payload
 | Field | Content |
 |---|---|
 | Task | Implement VS-15B Admin Refund and Revocation Operations in `JCSchoeman96/FastCheckin`. |
-| Objective | Add audited admin/operator actions for refund/revocation workflows that call the VS-15A core revocation path and make refunded/cancelled/revoked Sales tickets scanner-non-acceptable without duplicating scanner logic. |
+| Objective | Add audited dashboard-admin actions for refund/revocation workflows that call the VS-15A core path. The core retains operator domain support, but no production operator entry point exists without trusted identity and Event authority. |
 | Output | Sales admin service modules such as `lib/fastcheck/sales/admin_revocations.ex` and `lib/fastcheck/sales/admin_refunds.ex`; LiveView additions under `lib/fastcheck_web/live/sales/`; dashboard-auth routes; tests for permissions, required reasons, idempotency, scanner denial, masked PII, and forbidden side effects. |
 | Note | Use existing FastCheckin dashboard auth: routes must be under `[:browser, :dashboard_auth]`; use `BrowserAuth.valid_admin_password?/1` for destructive confirmation if the existing UI pattern supports it. All revocation must call `FastCheck.Tickets.Revocation` from VS-15A; do not mutate Attendee, invalidation rows, or scanner fields directly from LiveView. Required indexes: `sales_orders(event_id,status,inserted_at)`, `sales_ticket_issues(sales_order_id,status)`, `sales_ticket_issues(attendee_id)`, `sales_state_transitions(entity_type,entity_id,inserted_at)`, `attendees(event_id,ticket_code)`, `attendee_invalidation_events(event_id,id)`. Cache/TTL: no new Redis TTLs; no inventory Redis mutation; call VS-15A/VS-10 cache/sync helpers only. PubSub: use existing dashboard refresh conventions if available; no polling. Security: reason required; mask phone/email; never render raw payloads, Paystack access_code/authorization_url, plaintext tokens, token hashes, or QR internals. Forbidden: Paystack refund API, WhatsApp/email sends, DeliveryAttempt creation, direct scanner rewrite, direct Redis inventory/mobile key mutation, generic status update. |
-| Success | Admins can safely refund/revoke via audited UI/service actions, operators remain constrained, scanner-visible revocation is guaranteed through VS-15A, duplicate submits are safe, and the dashboard remains PII/token safe. |
+| Success | Configured dashboard admins can use audited, Event-scoped UI/service actions. Core operator support remains available for a future trusted entry point. Scanner-visible revocation remains on VS-15A, duplicate submits are safe, and the dashboard remains PII/token safe. |
 
 ---
 
@@ -574,7 +594,7 @@ full QR payload
 You are implementing FastCheck Sales VS-15B — Admin Refund and Revocation Operations in JCSchoeman96/FastCheckin.
 
 Goal:
-Add admin/operator UI and service actions for refund/revocation workflows. These actions must call the VS-15A core revocation path and must not duplicate scanner mutation logic.
+Add dashboard-admin UI and service actions for refund/revocation workflows. Use DashboardAccess for server-owned Event grants and call the VS-15A core path. Do not add an operator dashboard entry point until trusted operator identity and Event authority exist.
 
 Use FastCheckin truths:
 - Dashboard routes use `[:browser, :dashboard_auth]`.
@@ -609,7 +629,9 @@ Do not:
 Tests:
 - Write RED tests first.
 - Prove admin can revoke with reason.
-- Prove operator/customer_session forbidden paths.
+- Prove dashboard orchestration rejects operator-shaped actors without trusted DashboardAccess authority.
+- Preserve core operator domain reason and Event-scope tests; they do not prove caller identity.
+- Prove customer_session cannot access dashboard actions.
 - Prove missing reason blocks mutation.
 - Prove duplicate submit/idempotency safety.
 - Prove scanner denies revoked ticket via VS-15A.
@@ -627,7 +649,9 @@ Tests:
 [ ] Revocation calls FastCheck.Tickets.Revocation only.
 [ ] LiveView does not mutate Attendee directly.
 [ ] Reason is mandatory.
-[ ] Admin/operator permissions are distinct.
+[ ] Dashboard revocation accepts only configured admin identity and server Event grants.
+[ ] Core operator domain support remains without treating actor maps as authenticated identities.
+[ ] Trusted operator authority remains a separately tracked future requirement.
 [ ] Sensitive action confirmation exists where required.
 [ ] StateTransition rows include actor and reason.
 [ ] Single-ticket revoke is idempotent.

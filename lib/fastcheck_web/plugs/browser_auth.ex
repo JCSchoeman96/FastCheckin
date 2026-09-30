@@ -11,6 +11,7 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
   import Plug.Conn
   import Phoenix.Controller, only: [redirect: 2]
 
+  alias FastCheck.Sales.DashboardAccess
   alias Plug.BasicAuth
   alias Plug.Crypto
 
@@ -35,23 +36,12 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
   redirected to the login page with a `redirect_to` return path.
   """
   def call(conn, _opts) do
-    if authenticated_session?(conn) do
-      assign_current_user(conn)
-    else
-      case credentials_from_header(conn) do
-        {:ok, username, password} ->
-          if valid_credentials?(username, password) do
-            conn
-            |> put_session(@session_key, true)
-            |> put_session(@session_username_key, username)
-            |> assign(:current_user, %{id: username, username: username})
-          else
-            unauthorized_redirect(conn)
-          end
+    case session_identity(conn) do
+      {:ok, username} ->
+        assign_current_user(conn, username)
 
-        _ ->
-          unauthorized_redirect(conn)
-      end
+      :error ->
+        authenticate_basic_auth(conn)
     end
   end
 
@@ -61,14 +51,50 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
     |> halt()
   end
 
-  defp authenticated_session?(conn) do
-    get_session(conn, @session_key) == true
+  defp session_identity(conn) do
+    if get_session(conn, @session_key) == true do
+      case get_session(conn, @session_username_key) do
+        username when is_binary(username) ->
+          case DashboardAccess.actor_for_identity(username) do
+            {:ok, _actor} -> {:ok, username}
+            {:error, :unauthorized} -> :error
+          end
+
+        _ ->
+          :error
+      end
+    else
+      :error
+    end
   end
 
-  defp assign_current_user(conn) do
-    username = get_session(conn, @session_username_key) || configured_credentials().username
+  defp authenticate_basic_auth(conn) do
+    case credentials_from_header(conn) do
+      {:ok, username, password} ->
+        if valid_credentials?(username, password) do
+          assign_current_user(
+            conn
+            |> put_session(@session_key, true)
+            |> put_session(@session_username_key, username),
+            username
+          )
+        else
+          unauthorized_redirect(conn)
+        end
 
-    assign(conn, :current_user, %{id: username, username: username})
+      _ ->
+        unauthorized_redirect(conn)
+    end
+  end
+
+  defp assign_current_user(conn, username) do
+    case DashboardAccess.actor_for_identity(username) do
+      {:ok, _actor} ->
+        assign(conn, :current_user, %{id: username, username: username})
+
+      {:error, :unauthorized} ->
+        unauthorized_redirect(conn)
+    end
   end
 
   defp credentials_from_header(conn) do

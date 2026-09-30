@@ -1,0 +1,95 @@
+{
+  "pack_id": "0057_P1-D",
+  "slice": "P1-D",
+  "name": "Event-Scoped Sales Dashboard Authorization",
+  "version": "1.0",
+  "status": "implemented_unmerged",
+  "severity": "P0",
+  "repository": "JCSchoeman96/FastCheckin",
+  "default_branch": "main",
+  "repository_path": "docs/fastcheck_sales/feature_packs/0057_P1-D_event-scoped-sales-dashboard-authorization",
+  "goal": "Constrain every existing Sales dashboard read and mutation to server-configured Event grants derived from the authenticated dashboard identity.",
+  "dependencies": [
+    "P1-C Durable Refund Evidence",
+    "P0-D Revocation Completeness and Purchase Ceiling",
+    "FastCheck.Sales.DashboardAccess"
+  ],
+  "authority": {
+    "configuration": "DASHBOARD_ALLOWED_EVENT_IDS",
+    "missing_or_blank": [],
+    "valid_value": "Comma-separated positive integer Event IDs, trimmed, sorted, and deduplicated.",
+    "malformed_nonblank": "Runtime configuration error; reject the entire value and prevent startup.",
+    "constructor": "FastCheck.Sales.DashboardAccess.actor_for_identity/1",
+    "forbidden_sources": [
+      "browser parameters",
+      "LiveView state",
+      "requested Event or record",
+      "loaded Order or TicketIssue",
+      "implicit all-Events fallback"
+    ]
+  },
+  "covered_surfaces": [
+    "Sales dashboard and AdminDashboard",
+    "ManualReview",
+    "OrderShowLive, AdminRefunds, and AdminRevocations",
+    "admin ticket PDF resolution",
+    "OpsMetrics",
+    "AuditViews",
+    "admin-assisted and internal-pilot checkout",
+    "Event overview and WhatsApp offers",
+    "Event WhatsApp quantity-cap mutation",
+    "root-dashboard WhatsApp Sales controls"
+  ],
+  "audit_ownership": {
+    "Order": "direct event_id",
+    "CheckoutSession": "sales_order_id to Order.event_id",
+    "PaymentAttempt": "sales_order_id to Order.event_id",
+    "TicketIssue": "sales_order_id to Order.event_id",
+    "DeliveryAttempt": "direct sales_order_id to Order.event_id",
+    "Conversation": "uniquely related sales_orders.whatsapp_conversation_id to Order.event_id; state_data is not authority",
+    "PaymentEvent": "unique provider/reference match to PaymentAttempt then Order; unmatched or ambiguous rows are hidden",
+    "AttendeeInvalidationEvent": "direct event_id",
+    "StateTransition": "resolve referenced entity owner; unsupported or ambiguous owner is denied"
+  },
+  "performance": {
+    "permission_database": false,
+    "redis_authority": false,
+    "per_row_grant_lookup": false,
+    "per_event_query_loop": false,
+    "query_filter": "SQL/Ash Event ownership filters using existing Event and Order indexes",
+    "migration_required": false
+  },
+  "general_browserauth_event_isolation": {
+    "included": false,
+    "deferred_surfaces": [
+      "general root-dashboard Event administration and sync",
+      "/export/attendees/:event_id",
+      "/export/check-ins/:event_id",
+      "/scan/:event_id",
+      "/dashboard/occupancy/:event_id"
+    ],
+    "tracking": "Separate BrowserAuth event-isolation security slice"
+  },
+  "acceptance": [
+    "A-only grant permits Event A and denies Event B across Sales reads and mutations",
+    "Explicit A+B grants permit both Events",
+    "Empty grants fail closed for Sales Event-owned data",
+    "Malformed runtime grants reject the complete configuration",
+    "Rejected cross-event mutations create no successful audit action or Oban job and perform no Redis mutation",
+    "Existing payment, refund, revocation, inventory, and scanner authority remains unchanged"
+  ],
+  "operator_authority_decision": {
+    "dashboard_revocation": "Configured dashboard-admin identity with server-owned Event grants only.",
+    "core_operator_capability": "Retained in FastCheck.Tickets.Revocation as a domain capability; the core does not authenticate callers.",
+    "production_operator_entry_point": "None.",
+    "follow_up": "FastCheckin-iuaq: establish trusted operator identity and Event authority before adding a production entry point."
+  },
+  "global_worker_monitoring": {
+    "event_scoped_sales_ops_exposes_global_backlog": false,
+    "reason": "Global and unattributable Oban jobs have no safe Event owner.",
+    "p1_d_provides_global_monitoring": false,
+    "status": "open_p0_launch_readiness_blocker",
+    "follow_up": "P1-F - Global Worker Backlog Monitoring",
+    "launch_readiness": "NO-GO until an approved global monitoring source and rehearsed procedure exist."
+  }
+}

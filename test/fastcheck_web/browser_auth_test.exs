@@ -43,6 +43,29 @@ defmodule FastCheckWeb.BrowserAuthTest do
 
       assert html_response(conn, 200)
     end
+
+    test "rejects an authenticated session whose username no longer matches configuration", %{
+      conn: conn
+    } do
+      conn =
+        conn
+        |> init_test_session(%{
+          dashboard_authenticated: true,
+          dashboard_username: "former-admin"
+        })
+        |> get(~p"/")
+
+      assert redirected_to(conn) == ~p"/login?redirect_to=%2F"
+    end
+
+    test "rejects an authenticated session without a dashboard identity", %{conn: conn} do
+      conn =
+        conn
+        |> init_test_session(%{dashboard_authenticated: true})
+        |> get(~p"/")
+
+      assert redirected_to(conn) == ~p"/login?redirect_to=%2F"
+    end
   end
 
   describe "login" do

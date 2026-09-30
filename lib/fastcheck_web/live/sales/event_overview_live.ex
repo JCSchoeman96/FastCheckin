@@ -7,23 +7,25 @@ defmodule FastCheckWeb.Sales.EventOverviewLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.Sales.AdminDashboard
+  alias FastCheck.Sales.DashboardAccess
 
   @impl true
-  def mount(%{"event_id" => event_id_param}, _session, socket) do
-    case AdminDashboard.event_overview(event_id_param) do
-      {:ok, overview} ->
-        event = overview.event
+  def mount(%{"event_id" => event_id_param}, session, socket) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(session),
+         {:ok, overview} <- AdminDashboard.event_overview(actor, event_id_param) do
+      event = overview.event
 
-        {:ok,
-         socket
-         |> assign(:page_title, "Event overview")
-         |> assign(:overview, overview)
-         |> assign(:event_id, event.id)
-         |> assign(:event_name, event.name)
-         |> assign(:event_status, event.status)
-         |> assign(:whatsapp_sales_enabled, event.whatsapp_sales_enabled)}
-
-      {:error, :not_found} ->
+      {:ok,
+       socket
+       |> assign(:page_title, "Event overview")
+       |> assign(:dashboard_actor, actor)
+       |> assign(:overview, overview)
+       |> assign(:event_id, event.id)
+       |> assign(:event_name, event.name)
+       |> assign(:event_status, event.status)
+       |> assign(:whatsapp_sales_enabled, event.whatsapp_sales_enabled)}
+    else
+      _error ->
         {:ok,
          socket
          |> put_flash(:error, "Event not found.")

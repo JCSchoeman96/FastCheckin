@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
   alias FastCheck.SalesCheckoutFixtures, as: CheckoutFixtures
   alias FastCheck.Workers.IssueTicketsWorker
   alias FastCheck.Workers.PaidOrderFulfillmentWorker
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   @raw_email "manual.review@example.com"
   @raw_phone "+27123456789"
@@ -19,12 +20,11 @@ defmodule FastCheck.Sales.ManualReviewTest do
   @ticket_code "TICKET-SECRET"
   @qr_hash "qr-secret"
   @delivery_hash "delivery-secret"
-  @actor %{id: "dashboard-admin", username: "dashboard-admin"}
 
   test "list_queue returns bounded safe review rows" do
     order_id = insert_review_order!()
 
-    assert %{entries: entries} = ManualReview.list_queue(%{}, limit: 50)
+    assert %{entries: entries} = ManualReview.list_queue(actor(), %{}, limit: 50)
     assert [entry | _] = Enum.filter(entries, &(&1.subject_type == "order"))
 
     assert entry.subject_id == Integer.to_string(order_id)
@@ -69,7 +69,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
       |> Enum.map(fn {_, subject_type, subject_id} -> {subject_type, subject_id} end)
 
     assert %{entries: entries, limit: ^queue_limit} =
-             ManualReview.list_queue(%{}, limit: queue_limit)
+             ManualReview.list_queue(actor(), %{}, limit: queue_limit)
 
     assert length(entries) == queue_limit
 
@@ -82,7 +82,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     attempt_id = insert_payment_attempt!(order_id, "manual_review")
     ticket_issue_id = insert_ticket_issue!(order_id)
 
-    entries = ManualReview.list_queue(%{}, limit: 50).entries
+    entries = ManualReview.list_queue(actor(), %{}, limit: 50).entries
 
     assert Enum.any?(
              entries,
@@ -107,15 +107,95 @@ defmodule FastCheck.Sales.ManualReviewTest do
     attempt_id = insert_payment_attempt!(order_id, "manual_review")
     ticket_issue_id = insert_ticket_issue!(order_id)
 
-    assert {:ok, payment_context} = ManualReview.get_context("payment_attempt", attempt_id)
+    assert {:ok, payment_context} =
+             ManualReview.get_context(actor(), "payment_attempt", attempt_id)
+
     assert payment_context.payment_attempt_id == attempt_id
     assert payment_context.payment_summary.status == "manual_review"
     assert payment_context.payment_summary.provider_reference_masked != "provider-ref"
     refute unsafe_value_present?(payment_context)
 
-    assert {:ok, ticket_context} = ManualReview.get_context("ticket_issue", ticket_issue_id)
+    assert {:ok, ticket_context} =
+             ManualReview.get_context(actor(), "ticket_issue", ticket_issue_id)
+
     assert String.starts_with?(ticket_context.ticket_issue_summary.ticket_code_suffix, "***")
     refute unsafe_value_present?(ticket_context)
+  end
+
+  test "ungranted manual-review subjects and actions fail before writes or jobs" do
+    order_id = insert_review_order!(event_id: 91_002)
+    attempt_id = insert_payment_attempt!(order_id, "manual_review")
+    ticket_issue_id = insert_ticket_issue!(order_id)
+    actor = actor()
+    jobs_before = Repo.aggregate(Oban.Job, :count, :id)
+
+    assert %{entries: []} = ManualReview.list_queue(actor, %{})
+    assert %{entries: []} = ManualReview.list_queue(actor, %{"event_id" => "91002"})
+    assert {:error, :not_found} = ManualReview.get_context(actor, "order", order_id)
+    assert {:error, :not_found} = ManualReview.get_context(actor, "payment_attempt", attempt_id)
+    assert {:error, :not_found} = ManualReview.get_context(actor, "ticket_issue", ticket_issue_id)
+
+    assert {:error, :not_found} =
+             ManualReview.assign("order", order_id, actor, %{"reason_code" => "operator_assigned"})
+
+    assert {:error, :not_found} =
+             ManualReview.unassign("order", order_id, actor, %{
+               "reason_code" => "operator_unassigned"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.add_note("order", order_id, actor, %{
+               "reason_code" => "operator_note",
+               "note" => "Cross-event note"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.retry_payment_verification(attempt_id, actor, %{
+               "reason_code" => "retry_payment_verification"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.retry_ticket_issuance(order_id, actor, %{
+               "reason_code" => "retry_ticket_issuance"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.retry_paid_order_fulfillment(order_id, actor, %{
+               "reason_code" => "retry_paid_order_fulfillment"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.hold_for_investigation(order_id, actor, %{
+               "reason_code" => "hold_for_investigation"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.close_no_fulfillment(order_id, actor, %{
+               "reason_code" => "close_no_fulfillment",
+               "note" => "Cross-event close"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.return_held_to_manual_review(order_id, actor, %{
+               "reason_code" => "return_held_to_manual_review"
+             })
+
+    assert {:error, :not_found} =
+             ManualReview.return_to_fulfillment_queue(order_id, actor, %{
+               "reason_code" => "return_to_fulfillment_queue",
+               "note" => "Cross-event return"
+             })
+
+    assert_order_status(order_id, "manual_review")
+    assert_attempt_status(attempt_id, "manual_review")
+
+    assert Repo.one!(
+             from t in "sales_ticket_issues", where: t.id == ^ticket_issue_id, select: t.status
+           ) ==
+             "manual_review"
+
+    assert review_actions(order_id) == []
+    assert Repo.aggregate(Oban.Job, :count, :id) == jobs_before
   end
 
   test "return_to_fulfillment_queue succeeds when preconditions are safe" do
@@ -125,7 +205,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     set_fulfillment_queued_at!(order_id)
 
     assert {:ok, _} =
-             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+             ManualReview.return_to_fulfillment_queue(order_id, actor(), %{
                "reason_code" => "return_to_fulfillment_queue",
                "note" => "safe after review"
              })
@@ -139,20 +219,20 @@ defmodule FastCheck.Sales.ManualReviewTest do
     order_id = insert_review_order!()
 
     assert {:ok, _} =
-             ManualReview.add_note("order", order_id, @actor, %{
+             ManualReview.add_note("order", order_id, actor(), %{
                "reason_code" => "operator_note",
                "note" => "Needs finance review\u0000"
              })
 
     assert {:ok, _} =
-             ManualReview.assign("order", order_id, @actor, %{
+             ManualReview.assign("order", order_id, actor(), %{
                "reason_code" => "operator_assigned"
              })
 
     actions = review_actions(order_id)
     assert Enum.map(actions, & &1.action) == ["add_note", "assign_to_self"]
     assert hd(actions).note == "Needs finance review"
-    assert Enum.all?(actions, &(&1.actor_id == "dashboard-admin"))
+    assert Enum.all?(actions, &(&1.actor_id == WebFixtures.dashboard_username()))
   end
 
   test "payment retry requires reason, audits transition, and enqueues VerifyPaymentWorker" do
@@ -160,10 +240,10 @@ defmodule FastCheck.Sales.ManualReviewTest do
     attempt_id = insert_payment_attempt!(order_id, "manual_review")
 
     assert {:error, :reason_required} =
-             ManualReview.retry_payment_verification(attempt_id, @actor, %{})
+             ManualReview.retry_payment_verification(attempt_id, actor(), %{})
 
     assert {:ok, _} =
-             ManualReview.retry_payment_verification(attempt_id, @actor, %{
+             ManualReview.retry_payment_verification(attempt_id, actor(), %{
                "reason_code" => "retry_payment_verification"
              })
 
@@ -186,7 +266,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     set_fulfillment_queued_at!(order_id)
 
     assert {:ok, _} =
-             ManualReview.retry_ticket_issuance(order_id, @actor, %{
+             ManualReview.retry_ticket_issuance(order_id, actor(), %{
                "reason_code" => "retry_ticket_issuance"
              })
 
@@ -202,7 +282,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     insert_payment_attempt!(order_id, "verified_success")
 
     assert {:error, :unsafe_manual_review_transition} =
-             ManualReview.retry_ticket_issuance(order_id, @actor, %{
+             ManualReview.retry_ticket_issuance(order_id, actor(), %{
                "reason_code" => "retry_ticket_issuance"
              })
 
@@ -217,7 +297,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     assert {:ok, action} =
              ManualReview.retry_paid_order_fulfillment(
                order_id,
-               @actor,
+               actor(),
                %{"reason_code" => "retry_paid_order_fulfillment"}
              )
 
@@ -240,7 +320,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     assert {:error, :unsafe_manual_review_transition} =
              ManualReview.retry_paid_order_fulfillment(
                order_id,
-               @actor,
+               actor(),
                %{"reason_code" => "retry_paid_order_fulfillment"}
              )
 
@@ -264,7 +344,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
       assert {:error, :unsafe_manual_review_transition} =
                ManualReview.retry_paid_order_fulfillment(
                  order_id,
-                 @actor,
+                 actor(),
                  %{"reason_code" => "retry_paid_order_fulfillment"}
                )
 
@@ -285,7 +365,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
       assert {:error, _reason} =
                ManualReview.retry_paid_order_fulfillment(
                  order_id,
-                 @actor,
+                 actor(),
                  %{"reason_code" => "retry_paid_order_fulfillment"}
                )
 
@@ -304,7 +384,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     assert {:ok, _action} =
              ManualReview.retry_paid_order_fulfillment(
                order_id,
-               @actor,
+               actor(),
                %{"reason_code" => "retry_paid_order_fulfillment"}
              )
 
@@ -356,7 +436,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     assert {:ok, _action} =
              ManualReview.retry_paid_order_fulfillment(
                order_id,
-               @actor,
+               actor(),
                %{"reason_code" => "retry_paid_order_fulfillment"}
              )
 
@@ -393,11 +473,14 @@ defmodule FastCheck.Sales.ManualReviewTest do
 
   test "manual-review context exposes retry only for an eligible pre-fulfillment order" do
     %{order_id: order_id} = insert_fulfillment_review_case!()
-    assert {:ok, context} = ManualReview.get_context("order", order_id)
+    assert {:ok, context} = ManualReview.get_context(actor(), "order", order_id)
     assert context.can_retry_paid_order_fulfillment?
 
     ineligible_order_id = insert_review_order!()
-    assert {:ok, ineligible_context} = ManualReview.get_context("order", ineligible_order_id)
+
+    assert {:ok, ineligible_context} =
+             ManualReview.get_context(actor(), "order", ineligible_order_id)
+
     refute ineligible_context.can_retry_paid_order_fulfillment?
   end
 
@@ -407,7 +490,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     insert_payment_attempt!(order_id, "verified_amount_mismatch")
 
     assert {:error, :unsafe_manual_review_transition} =
-             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+             ManualReview.return_to_fulfillment_queue(order_id, actor(), %{
                "reason_code" => "return_to_fulfillment_queue",
                "note" => "safe after review"
              })
@@ -422,7 +505,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     insert_payment_attempt!(order_id, "verified_success")
 
     assert {:error, :unsafe_manual_review_transition} =
-             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+             ManualReview.return_to_fulfillment_queue(order_id, actor(), %{
                "reason_code" => "return_to_fulfillment_queue",
                "note" => "must have previously fulfilled"
              })
@@ -441,7 +524,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     Repo.query!("ALTER TABLE oban_jobs ADD CONSTRAINT #{constraint} CHECK (false) NOT VALID")
 
     assert {:error, _reason} =
-             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+             ManualReview.return_to_fulfillment_queue(order_id, actor(), %{
                "reason_code" => "return_to_fulfillment_queue",
                "note" => "safe after review"
              })
@@ -452,7 +535,7 @@ defmodule FastCheck.Sales.ManualReviewTest do
     Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT #{constraint}")
 
     assert {:ok, _} =
-             ManualReview.return_to_fulfillment_queue(order_id, @actor, %{
+             ManualReview.return_to_fulfillment_queue(order_id, actor(), %{
                "reason_code" => "return_to_fulfillment_queue",
                "note" => "safe after review"
              })
@@ -465,18 +548,18 @@ defmodule FastCheck.Sales.ManualReviewTest do
     order_id = insert_review_order!()
 
     assert {:error, :note_required} =
-             ManualReview.close_no_fulfillment(order_id, @actor, %{
+             ManualReview.close_no_fulfillment(order_id, actor(), %{
                "reason_code" => "close_no_fulfillment"
              })
 
     assert {:error, :note_too_long} =
-             ManualReview.close_no_fulfillment(order_id, @actor, %{
+             ManualReview.close_no_fulfillment(order_id, actor(), %{
                "reason_code" => "close_no_fulfillment",
                "note" => String.duplicate("a", 1001)
              })
 
     assert {:ok, _} =
-             ManualReview.close_no_fulfillment(order_id, @actor, %{
+             ManualReview.close_no_fulfillment(order_id, actor(), %{
                "reason_code" => "close_no_fulfillment",
                "note" => "No safe fulfillment path"
              })
@@ -536,8 +619,11 @@ defmodule FastCheck.Sales.ManualReviewTest do
              status
   end
 
+  defp actor, do: WebFixtures.dashboard_actor([91_001])
+
   defp insert_review_order!(opts \\ []) do
-    CheckoutFixtures.ensure_event_for_sales!(91_001)
+    event_id = Keyword.get(opts, :event_id, 91_001)
+    CheckoutFixtures.ensure_event_for_sales!(event_id)
 
     status = Keyword.get(opts, :status, "manual_review")
     reason = Keyword.get(opts, :manual_review_reason, "payment_state_conflict")
@@ -551,14 +637,15 @@ defmodule FastCheck.Sales.ManualReviewTest do
            status, total_amount_cents, currency, manual_review_reason, lock_version,
            inserted_at, updated_at)
         VALUES
-          ($1, 91001, 'Manual Buyer', $2, $3, 'admin', $4, 10000, 'ZAR',
-           $5, 1,
-           now() AT TIME ZONE 'utc' - ($6 * interval '1 second'),
-           now() AT TIME ZONE 'utc' - ($6 * interval '1 second'))
+          ($1, $2, 'Manual Buyer', $3, $4, 'admin', $5, 10000, 'ZAR',
+           $6, 1,
+           now() AT TIME ZONE 'utc' - ($7 * interval '1 second'),
+           now() AT TIME ZONE 'utc' - ($7 * interval '1 second'))
         RETURNING id
         """,
         [
           "MR-#{System.unique_integer([:positive])}",
+          event_id,
           @raw_phone,
           @raw_email,
           status,
@@ -722,7 +809,10 @@ defmodule FastCheck.Sales.ManualReviewTest do
   end
 
   defp insert_ticket_issue!(order_id, opts \\ []) do
-    CheckoutFixtures.ensure_event_for_sales!(91_001)
+    event_id =
+      Repo.one!(from o in "sales_orders", where: o.id == ^order_id, select: o.event_id)
+
+    CheckoutFixtures.ensure_event_for_sales!(event_id)
 
     seconds_ago = Keyword.get(opts, :seconds_ago, 0)
     offer_name = "Manual Offer #{System.unique_integer([:positive])}"
@@ -735,12 +825,12 @@ defmodule FastCheck.Sales.ManualReviewTest do
            initial_quantity, max_per_order, sales_enabled, sales_channel, starts_at, ends_at,
            lock_version, inserted_at, updated_at)
         VALUES
-          (91001, $1, 'General', 10000, 'ZAR', 100, 100, 4, true, 'admin',
+          ($1, $2, 'General', 10000, 'ZAR', 100, 100, 4, true, 'admin',
            now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc' + interval '30 days',
            1, now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
         RETURNING id
         """,
-        [offer_name]
+        [event_id, offer_name]
       )
 
     %{rows: [[order_line_id]]} =

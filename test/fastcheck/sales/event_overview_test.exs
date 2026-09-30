@@ -77,8 +77,9 @@ defmodule FastCheck.Sales.EventOverviewTest do
     }
   end
 
-  test "event_overview returns mixed-source aggregates for the event", %{event_a: event_a} do
-    assert {:ok, overview} = AdminDashboard.event_overview(event_a.id)
+  test "event_overview returns mixed-source aggregates for a granted event", %{event_a: event_a} do
+    actor = Fixtures.dashboard_actor([event_a.id])
+    assert {:ok, overview} = AdminDashboard.event_overview(actor, event_a.id)
 
     assert overview.event.id == event_a.id
     assert overview.event.name == "Overview Event A"
@@ -122,9 +123,17 @@ defmodule FastCheck.Sales.EventOverviewTest do
     refute unsafe_value_present?(overview)
   end
 
-  test "event_overview excludes other events", %{event_a: event_a, event_b: event_b} do
-    assert {:ok, overview_a} = AdminDashboard.event_overview(event_a.id)
-    assert {:ok, overview_b} = AdminDashboard.event_overview(event_b.id)
+  test "event_overview denies an ungranted event and supports explicit multi-event grants", %{
+    event_a: event_a,
+    event_b: event_b
+  } do
+    actor_a = Fixtures.dashboard_actor([event_a.id])
+    assert AdminDashboard.event_overview(actor_a, event_b.id) == {:error, :not_found}
+
+    actor_ab = Fixtures.dashboard_actor([event_a.id, event_b.id])
+
+    assert {:ok, overview_a} = AdminDashboard.event_overview(actor_ab, event_a.id)
+    assert {:ok, overview_b} = AdminDashboard.event_overview(actor_ab, event_b.id)
 
     assert overview_a.attendees.tickera.total == 3
     assert overview_b.attendees.tickera.total == 1
@@ -133,8 +142,9 @@ defmodule FastCheck.Sales.EventOverviewTest do
   end
 
   test "event_overview returns not_found for unknown event" do
-    assert AdminDashboard.event_overview(9_999_999) == {:error, :not_found}
-    assert AdminDashboard.event_overview("not-an-id") == {:error, :not_found}
+    actor = Fixtures.dashboard_actor([])
+    assert AdminDashboard.event_overview(actor, 9_999_999) == {:error, :not_found}
+    assert AdminDashboard.event_overview(actor, "not-an-id") == {:error, :not_found}
   end
 
   defp unsafe_value_present?(term) do

@@ -11,6 +11,7 @@ defmodule FastCheck.Events do
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.TickeraClient
 
@@ -295,6 +296,15 @@ defmodule FastCheck.Events do
 
   def enable_whatsapp_sales(_event_id), do: {:error, :invalid_event_id}
 
+  @doc "Dashboard-authorized WhatsApp Sales enablement for an already granted event."
+  def enable_whatsapp_sales_for_dashboard(actor, event_id) do
+    if DashboardAccess.event_granted?(actor, event_id) do
+      enable_whatsapp_sales(event_id)
+    else
+      {:error, :forbidden}
+    end
+  end
+
   @doc "Disables new WhatsApp sales for an event."
   @spec disable_whatsapp_sales(integer()) ::
           {:ok, Event.t()} | {:error, :invalid_event_id | :not_found}
@@ -344,6 +354,15 @@ defmodule FastCheck.Events do
 
   def disable_whatsapp_sales(_event_id), do: {:error, :invalid_event_id}
 
+  @doc "Dashboard-authorized WhatsApp Sales disablement for an already granted event."
+  def disable_whatsapp_sales_for_dashboard(actor, event_id) do
+    if DashboardAccess.event_granted?(actor, event_id) do
+      disable_whatsapp_sales(event_id)
+    else
+      {:error, :forbidden}
+    end
+  end
+
   @doc "Reads the durable event gate used to authorize new WhatsApp checkouts."
   @spec whatsapp_sales_enabled?(integer()) :: boolean()
   def whatsapp_sales_enabled?(event_id) when is_integer(event_id) and event_id > 0 do
@@ -361,33 +380,37 @@ defmodule FastCheck.Events do
 
   Operator-owned configuration; does not alter WhatsApp sales enablement or offers.
   """
-  @spec set_whatsapp_max_tickets_per_order(integer(), integer()) ::
+  @spec set_whatsapp_max_tickets_per_order(map(), integer(), integer()) ::
           {:ok, Event.t()}
           | {:error,
              :invalid_event_id
              | :invalid_limit
              | :platform_max_per_order_exceeded
              | :not_found
+             | :forbidden
              | :event_archived}
-  def set_whatsapp_max_tickets_per_order(event_id, limit)
+  def set_whatsapp_max_tickets_per_order(actor, event_id, limit)
       when is_integer(event_id) and event_id > 0 and is_integer(limit) and limit > 0 do
-    with :ok <- PurchaseLimits.validate_quantity(limit) do
-      do_set_whatsapp_max_tickets_per_order(event_id, limit)
+    with true <- DashboardAccess.event_granted?(actor, event_id) || {:error, :forbidden},
+         :ok <- PurchaseLimits.validate_quantity(limit) do
+      do_set_whatsapp_max_tickets_per_order(actor, event_id, limit)
     end
   end
 
-  def set_whatsapp_max_tickets_per_order(_event_id, limit) when is_integer(limit) and limit > 0,
-    do: {:error, :invalid_event_id}
+  def set_whatsapp_max_tickets_per_order(_actor, _event_id, limit)
+      when is_integer(limit) and limit > 0,
+      do: {:error, :invalid_event_id}
 
-  def set_whatsapp_max_tickets_per_order(_event_id, _limit), do: {:error, :invalid_limit}
+  def set_whatsapp_max_tickets_per_order(_actor, _event_id, _limit), do: {:error, :invalid_limit}
 
-  defp do_set_whatsapp_max_tickets_per_order(event_id, limit) do
+  defp do_set_whatsapp_max_tickets_per_order(actor, event_id, limit) do
+    allowed_event_ids = DashboardAccess.allowed_event_ids(actor)
     now = NaiveDateTime.utc_now()
 
     updated_count =
       from(e in Event,
         where:
-          e.id == ^event_id and e.status != "archived" and
+          e.id == ^event_id and e.id in ^allowed_event_ids and e.status != "archived" and
             e.whatsapp_max_tickets_per_order != ^limit
       )
       |> Repo.update_all(set: [whatsapp_max_tickets_per_order: limit, updated_at: now])

@@ -9,6 +9,7 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.OrderLine
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   test "platform ceiling permits 50 tickets when offer and inventory allow it" do
     event = create_event(%{name: "Platform quantity fifty"})
@@ -113,7 +114,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   test "fresh WhatsApp checkout rejects quantity above the event cap with zero side effects" do
     event = create_event(%{name: "Event cap checkout"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     offer =
       Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 5)
@@ -145,7 +152,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   test "fresh WhatsApp checkout succeeds at double-digit effective cap" do
     event = create_event(%{name: "Double digit cap success"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer =
       Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 12)
@@ -193,7 +206,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   test "fresh WhatsApp checkout succeeds within the event cap" do
     event = create_event(%{name: "Event cap success"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     offer =
       Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 5)
@@ -219,7 +238,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   test "offer max still applies when it is lower than the event cap" do
     event = create_event(%{name: "Offer max lower"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 5)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               5
+             )
 
     offer =
       Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 2)
@@ -242,7 +267,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
 
   test "admin checkout ignores the WhatsApp event cap" do
     event = create_event(%{name: "Admin ignores cap"})
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     offer = Fixtures.insert_offer!(event_id: event.id, sales_channel: "admin", max_per_order: 3)
     on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
@@ -266,7 +297,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   test "system checkout with effective WhatsApp channel is constrained by the event cap" do
     event = create_event(%{name: "Effective whatsapp cap"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     offer =
       Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 5)
@@ -292,7 +329,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
   test "exact idempotent replay survives a later event cap decrease" do
     event = create_event(%{name: "Idempotent cap replay"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 5)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               5
+             )
 
     offer =
       Fixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp", max_per_order: 5)
@@ -312,7 +355,13 @@ defmodule FastCheck.Sales.CheckoutEventQuantityLimitTest do
     actor = Fixtures.customer_session_actor([event.id])
     assert {:ok, first} = Checkout.start_checkout(input, actor)
     reserved_before = availability_snapshot!(offer.id).reserved_quantity
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     assert {:ok, replay} = Checkout.start_checkout(input, actor)
     assert replay.order.id == first.order.id

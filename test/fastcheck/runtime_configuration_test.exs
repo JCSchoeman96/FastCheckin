@@ -71,6 +71,33 @@ defmodule FastCheck.RuntimeConfigurationTest do
     end
   end
 
+  describe "dashboard_event_ids/1" do
+    test "treats a missing or blank setting as an empty grant" do
+      assert {:ok, []} = RuntimeConfiguration.dashboard_event_ids(nil)
+      assert {:ok, []} = RuntimeConfiguration.dashboard_event_ids("")
+      assert {:ok, []} = RuntimeConfiguration.dashboard_event_ids(" \t\n ")
+    end
+
+    test "trims values and returns sorted, deduplicated positive event ids" do
+      assert {:ok, [12, 14, 27]} =
+               RuntimeConfiguration.dashboard_event_ids(" 14, 12,14,27 ")
+    end
+
+    test "rejects zero, negative ids, wildcards, and non-integer values" do
+      for raw_value <- ["0", "-1", "*", "all", "12x", "12.5"] do
+        assert {:error, :invalid_dashboard_event_ids} =
+                 RuntimeConfiguration.dashboard_event_ids(raw_value)
+      end
+    end
+
+    test "rejects empty entries and never partially accepts malformed input" do
+      for raw_value <- ["12,,14", "12,", ",12", "12,garbage,14", " , "] do
+        assert {:error, :invalid_dashboard_event_ids} =
+                 RuntimeConfiguration.dashboard_event_ids(raw_value)
+      end
+    end
+  end
+
   defp dashboard_credentials(environment, username, password) do
     RuntimeConfiguration.dashboard_credentials(environment, username, password)
   end

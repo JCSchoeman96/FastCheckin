@@ -173,12 +173,24 @@ source for the order of operations.
 ### 19. Ops dashboard verification
 
 - Action: Open `/dashboard/sales/ops`.
-- Expected result: Status counts, failures, manual review, delivery failures,
-  scanner visibility, and Oban backlog are visible and redacted.
+- Expected result: Event-scoped status counts, payment and ticket health,
+  delivery health, manual review, scanner visibility, and recent Event-owned
+  failures are visible and redacted.
 - Where to verify: Ops Dashboard.
-- Failure response: Escalate if operator cannot see launch state.
+- Failure response: Escalate if staff cannot see the granted Event's Sales
+  state. This dashboard does not show global Oban backlog.
 
-### 20. Audit timeline verification
+### 20. Global worker monitoring gate
+
+- Action: Confirm that an approved production global Oban monitoring source
+  exists and that its bounded procedure has been rehearsed.
+- Expected result: This gate is currently blocked by P1-F because no approved
+  source or procedure exists.
+- Where to verify: No production source is currently approved.
+- Failure response: Production GO remains blocked until P1-F is complete. Do not
+  use Event-scoped Sales Ops as a substitute.
+
+### 21. Audit timeline verification
 
 - Action: Open Audit Timeline for order, payment attempt, ticket issue, delivery
   attempt, and conversation.
@@ -187,7 +199,7 @@ source for the order of operations.
 - Failure response: Escalate if timeline is unavailable or exposes sensitive
   data.
 
-### 21. Log redaction spot checks
+### 22. Log redaction spot checks
 
 - Action: Inspect application logs for rehearsal correlation.
 - Expected result: No phone numbers, emails, payment links, ticket links, access
@@ -195,7 +207,7 @@ source for the order of operations.
 - Where to verify: App logs and Sentry if enabled.
 - Failure response: Treat as PII/token leak incident and follow incident runbook.
 
-### 22. Pass/fail signoff
+### 23. Pass/fail signoff
 
 - Action: Launch owner, operator, and developer/admin review all checklist
   evidence.
@@ -203,4 +215,3 @@ source for the order of operations.
 - Where to verify: Go/No-Go checklist.
 - Failure response: No production launch until failures are resolved or formally
   accepted.
-

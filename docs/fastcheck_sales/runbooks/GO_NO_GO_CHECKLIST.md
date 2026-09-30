@@ -7,8 +7,6 @@
 - [ ] `mix format --check-formatted` passes.
 - [ ] `mix compile --warnings-as-errors` passes.
 - [ ] VS-22 E2E suite is green or the release owner accepts documented risk.
-- [ ] No production code, config, migration, dependency, router, worker, or test
-  changes are included in this docs-only PR.
 
 ## Environment And Secrets
 
@@ -16,8 +14,13 @@
 - [ ] `ENCRYPTION_KEY` is present and not logged.
 - [ ] `SALES_HOLD_TOKEN_PEPPER` is present and not logged.
 - [ ] `TICKET_TOKEN_PEPPER` is present and not logged.
-- [ ] `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` authenticate the assigned
-  operator.
+- [ ] `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` authenticate the
+  configured dashboard-admin identity.
+- [ ] `DASHBOARD_ALLOWED_EVENT_IDS` is configured with only the Event IDs the
+  dashboard should access for Sales; blank means no Sales Event access, and a
+  malformed nonblank value must fail startup.
+- [ ] Event administration/sync, CSV exports, scanner, and occupancy remain a
+  separate BrowserAuth event-isolation review; P1-D does not cover those routes.
 - [ ] Paystack secret variables are present and not logged.
 - [ ] Meta/WhatsApp secret variables are present and not logged.
 - [ ] `MOBILE_JWT_SECRET` is present and not logged.
@@ -46,8 +49,14 @@
 - [ ] Oban is running.
 - [ ] Paystack webhook, verification, issuance, checkout expiry, and WhatsApp
   send workers are processing.
-- [ ] Oban retry backlog is visible in `/dashboard/sales/ops`.
-- [ ] No unexpected retry backlog exists before launch.
+- [ ] An approved production source for global Oban queue and backlog health
+  exists and is available to launch staff.
+- [ ] The bounded, read-only global monitoring procedure has been rehearsed for
+  critical queues.
+- [ ] No unexpected backlog exists, based on that approved monitoring source.
+- Current gate status is BLOCKED. P1-F must provide and verify the source and
+  procedure before production launch. `/dashboard/sales/ops` is Event-scoped
+  and is not a global backlog source.
 
 ## Paystack
 
@@ -110,8 +119,8 @@
 
 ## Admin And Manual Review
 
-- [ ] Manual review operator is assigned.
-- [ ] Refund/revocation operator is assigned.
+- [ ] Manual-review staff member is assigned and uses the configured dashboard-admin identity.
+- [ ] Refund/revocation staff member is assigned and uses the configured dashboard-admin identity with a server grant for the target Event.
 - [ ] `/dashboard/sales/reviews` is reachable.
 - [ ] Admin-assisted checkout uses shared Sales core.
 - [ ] Internal pilot checkout uses shared Sales core.
@@ -126,7 +135,8 @@
 - [ ] Manual review count is visible.
 - [ ] Delivery failure/fallback count is visible.
 - [ ] Scanner visibility pending count is visible.
-- [ ] Oban retry backlog is visible.
+- [ ] Recent Event-owned failures are visible.
+- `/dashboard/sales/ops` does not show global or unattributable Oban backlog.
 - [ ] `/dashboard/sales/audit/:entity_type/:entity_id` loads redacted timeline.
 
 ## Monitoring And Logging
@@ -144,7 +154,7 @@
 - [ ] Developer/admin escalation contact is assigned.
 - [ ] Paystack account owner is assigned.
 - [ ] Meta/WhatsApp account owner is assigned.
-- [ ] Refund/revocation operator is assigned.
+- [ ] Refund/revocation staff member is assigned and uses the configured dashboard-admin identity with a server grant for the target Event.
 
 ## Rollback/Pause-Sales Readiness
 
@@ -160,4 +170,3 @@
 - [ ] Manual review coverage is active for launch window.
 - [ ] Incident response owner is active for launch window.
 - [ ] Launch owner signs go.
-

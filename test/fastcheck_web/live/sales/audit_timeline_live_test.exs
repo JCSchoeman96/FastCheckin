@@ -24,7 +24,7 @@ defmodule FastCheckWeb.Sales.AuditTimelineLiveTest do
 
     {:ok, _view, html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([21_023])
       |> live(~p"/dashboard/sales/audit/order/#{order_id}")
 
     assert html =~ "Audit timeline"

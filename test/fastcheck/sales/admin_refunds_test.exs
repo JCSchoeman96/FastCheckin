@@ -12,6 +12,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   alias FastCheck.Sales.AdminRevocations
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.Refund
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   setup do
     Application.put_env(:fastcheck, :dashboard_auth, %{
@@ -185,7 +186,7 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   test "admin without allowed_event_ids cannot mark order refunded" do
     %{order_id: order_id} = Fixtures.issued_order_fixture()
 
-    assert {:error, :forbidden} =
+    assert {:error, :not_found} =
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.admin_actor(),
                order_id,
@@ -196,12 +197,42 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   test "admin out of scope event cannot mark order refunded" do
     %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
 
-    assert {:error, :forbidden} =
+    assert {:error, :not_found} =
              AdminRefunds.mark_order_refunded_manual(
                Fixtures.out_of_scope_admin_actor(event.id),
                order_id,
                Fixtures.admin_attrs_for_order(order_id)
              )
+  end
+
+  test "a real grant for Event B cannot refund Event A or enqueue work" do
+    fixture = Fixtures.issued_order_fixture()
+    event_b = WebFixtures.insert_event!(%{name: "Refund Grant Event B"})
+    actor_b = Fixtures.admin_actor(event_id: event_b.id)
+    attrs = Fixtures.admin_attrs_for_order(fixture.order_id)
+    jobs_before = Repo.aggregate(Oban.Job, :count, :id)
+
+    assert {:error, :not_found} =
+             AdminRefunds.mark_order_refunded_manual(actor_b, fixture.order_id, attrs)
+
+    assert Fixtures.order_status(fixture.order_id) == "ticket_issued"
+
+    assert Repo.one!(
+             from p in "sales_payment_attempts",
+               where: p.sales_order_id == ^fixture.order_id,
+               select: p.status
+           ) == "verified_success"
+
+    assert Repo.aggregate(
+             from(t in "sales_ticket_issues",
+               where: t.sales_order_id == ^fixture.order_id and t.status == "issued"
+             ),
+             :count,
+             :id
+           ) == length(fixture.ticket_issue_ids)
+
+    refute Repo.exists?(from r in "sales_refunds", where: r.sales_order_id == ^fixture.order_id)
+    assert Repo.aggregate(Oban.Job, :count, :id) == jobs_before
   end
 
   test "operator cannot mark order refunded" do
@@ -491,9 +522,14 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   end
 
   test "get_order_operations_context is bounded and uses SQL counts" do
-    %{order_id: order_id} = Fixtures.issued_order_fixture(quantity: 2)
+    %{order_id: order_id, event: event} = Fixtures.issued_order_fixture(quantity: 2)
 
-    assert {:ok, context} = AdminRefunds.get_order_operations_context(order_id, limit: 1)
+    assert {:ok, context} =
+             AdminRefunds.get_order_operations_context(
+               Fixtures.admin_actor(event_id: event.id),
+               order_id,
+               limit: 1
+             )
 
     assert context.issued_ticket_count == 2
     assert length(context.ticket_rows) == 1

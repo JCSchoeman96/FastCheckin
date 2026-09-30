@@ -24,7 +24,8 @@ defmodule FastCheckWeb.Sales.TicketPdfControllerTest do
   setup do
     Application.put_env(:fastcheck, :dashboard_auth, %{
       username: WebFixtures.dashboard_username(),
-      password: "fastcheck"
+      password: "fastcheck",
+      allowed_event_ids: []
     })
 
     :ok
@@ -103,6 +104,23 @@ defmodule FastCheckWeb.Sales.TicketPdfControllerTest do
       assert content_type =~ "text/plain"
       assert conn.resp_body == @failure
     end
+  end
+
+  test "admin PDF denies a guessed TicketIssue from an ungranted event", %{conn: conn} do
+    %{event: event_a} = issued_ticket_fixture()
+
+    %{ticket_issue_id: issue_b, event: event_b, ticket_code: ticket_code_b} =
+      issued_ticket_fixture()
+
+    conn =
+      conn
+      |> WebFixtures.authenticated_conn([event_a.id])
+      |> get(~p"/dashboard/sales/tickets/#{issue_b}/pdf")
+
+    assert conn.status == 404
+    assert conn.resp_body == @failure
+    refute conn.resp_body =~ ticket_code_b
+    refute conn.resp_body =~ event_b.name
   end
 
   test "revoked not scannable archived and not issued tickets do not download PDFs", %{conn: conn} do
@@ -199,10 +217,19 @@ defmodule FastCheckWeb.Sales.TicketPdfControllerTest do
   end
 
   defp assert_failure(conn, ticket_issue_id, status) do
+    event_id =
+      Repo.one(
+        from t in "sales_ticket_issues",
+          join: o in "sales_orders",
+          on: o.id == t.sales_order_id,
+          where: t.id == ^ticket_issue_id,
+          select: o.event_id
+      )
+
     conn =
       conn
       |> recycle()
-      |> WebFixtures.authenticated_conn()
+      |> WebFixtures.authenticated_conn(List.wrap(event_id))
       |> get(~p"/dashboard/sales/tickets/#{ticket_issue_id}/pdf")
 
     assert conn.status == status
@@ -253,6 +280,7 @@ defmodule FastCheckWeb.Sales.TicketPdfControllerTest do
 
   defp issued_ticket_fixture(opts \\ []) do
     event = Fixtures.create_event()
+    WebFixtures.configure_dashboard_grants([event.id])
     attendee = Fixtures.create_attendee(event, %{payment_status: "completed"})
     ticket_code = attendee.ticket_code
 

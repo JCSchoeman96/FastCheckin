@@ -23,13 +23,14 @@ defmodule FastCheckWeb.Sales.OpsDashboardLiveTest do
 
     {:ok, _view, html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([event.id])
       |> live(~p"/dashboard/sales/ops")
 
     assert html =~ "Sales operations"
     assert html =~ "Payment health"
     assert html =~ "Manual review"
-    assert html =~ "Worker backlog"
+    refute html =~ "Worker backlog"
+    refute html =~ "Unmatched webhooks"
     refute_unsafe_html(html)
     refute String.downcase(html) =~ "mark paid"
     refute String.downcase(html) =~ "issue ticket"

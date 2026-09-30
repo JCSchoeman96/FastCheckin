@@ -6,8 +6,6 @@ defmodule FastCheckWeb.Sales.SecondaryEntrypointsLogRedactionTest do
   alias FastCheck.Sales.SecondaryEntrypoints
   alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
-  @user %{id: "admin", username: "admin"}
-
   setup do
     event = WebFixtures.insert_event!()
 
@@ -33,7 +31,7 @@ defmodule FastCheckWeb.Sales.SecondaryEntrypointsLogRedactionTest do
       capture_log(fn ->
         assert {:ok, _} =
                  SecondaryEntrypoints.start_admin_checkout(
-                   @user,
+                   WebFixtures.dashboard_actor([offer.event_id]),
                    offer.event_id,
                    params,
                    idem

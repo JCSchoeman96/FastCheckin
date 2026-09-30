@@ -14,19 +14,13 @@ defmodule FastCheck.Sales.OfferManagement do
   alias Ash.Query
   alias FastCheck.Events
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.MoneyInput
   alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
 
   @currency "ZAR"
-
-  @type dashboard_user :: %{required(:username) => String.t(), optional(:id) => String.t()}
-
-  @spec admin_actor_from_user(dashboard_user(), pos_integer()) :: map()
-  def admin_actor_from_user(%{username: username}, event_id) do
-    %{actor_type: :admin, user_id: username, allowed_event_ids: [event_id]}
-  end
 
   @spec parse_event_id(term()) :: {:ok, pos_integer()} | {:error, :invalid_event_id}
   def parse_event_id(value) when is_binary(value) do
@@ -39,22 +33,25 @@ defmodule FastCheck.Sales.OfferManagement do
   def parse_event_id(value) when is_integer(value) and value > 0, do: {:ok, value}
   def parse_event_id(_), do: {:error, :invalid_event_id}
 
-  @spec fetch_event_context(pos_integer()) ::
+  @spec fetch_event_context(map(), pos_integer()) ::
           {:ok, %{event: struct(), archived?: boolean()}} | {:error, :not_found}
-  def fetch_event_context(event_id) when is_integer(event_id) and event_id > 0 do
-    case Events.get_event_with_stats(event_id) do
-      %{status: "archived"} = event -> {:ok, %{event: event, archived?: true}}
-      event -> {:ok, %{event: event, archived?: false}}
+  def fetch_event_context(actor, event_id) when is_integer(event_id) and event_id > 0 do
+    with {:ok, _actor} <- verified_event_actor(actor, event_id) do
+      case Events.get_event_with_stats(event_id) do
+        %{status: "archived"} = event -> {:ok, %{event: event, archived?: true}}
+        event -> {:ok, %{event: event, archived?: false}}
+      end
     end
   rescue
     Ecto.NoResultsError -> {:error, :not_found}
   end
 
-  def fetch_event_context(_), do: {:error, :not_found}
+  def fetch_event_context(_actor, _event_id), do: {:error, :not_found}
 
   @spec list_offers(map(), pos_integer()) :: {:ok, [struct()]} | {:error, term()}
   def list_offers(actor, event_id) do
-    with {:ok, _} <- fetch_event_context(event_id) do
+    with {:ok, actor} <- verified_event_actor(actor, event_id),
+         {:ok, _} <- fetch_event_context(actor, event_id) do
       TicketOffer
       |> Query.for_read(:list_manageable_for_event, %{event_id: event_id}, actor: actor)
       |> Ash.read(authorize?: true)
@@ -64,7 +61,8 @@ defmodule FastCheck.Sales.OfferManagement do
   @spec create_offer(map(), pos_integer(), map()) ::
           {:ok, struct()} | {:error, term()}
   def create_offer(actor, event_id, params) when is_map(params) do
-    with :ok <- ensure_manageable_event(event_id),
+    with {:ok, actor} <- verified_event_actor(actor, event_id),
+         :ok <- ensure_manageable_event(actor, event_id),
          {:ok, attrs} <- build_create_attrs(event_id, params),
          {:ok, offer} <- create_disabled_offer(actor, attrs),
          {:ok, init_result} <- initialize_inventory_for_create(offer),
@@ -82,7 +80,8 @@ defmodule FastCheck.Sales.OfferManagement do
   @spec update_offer(map(), pos_integer(), pos_integer(), map()) ::
           {:ok, struct()} | {:error, term()}
   def update_offer(actor, event_id, offer_id, params) when is_map(params) do
-    with :ok <- ensure_manageable_event(event_id),
+    with {:ok, actor} <- verified_event_actor(actor, event_id),
+         :ok <- ensure_manageable_event(actor, event_id),
          {:ok, offer} <- fetch_manageable_offer(actor, event_id, offer_id),
          :ok <- validate_submitted_lock_version(offer, params),
          {:ok, attrs} <- build_update_attrs(offer, params) do
@@ -93,7 +92,8 @@ defmodule FastCheck.Sales.OfferManagement do
   @spec enable_offer(map(), pos_integer(), pos_integer()) ::
           {:ok, struct()} | {:error, term()}
   def enable_offer(actor, event_id, offer_id) do
-    with :ok <- ensure_manageable_event(event_id),
+    with {:ok, actor} <- verified_event_actor(actor, event_id),
+         :ok <- ensure_manageable_event(actor, event_id),
          {:ok, offer} <- fetch_manageable_offer(actor, event_id, offer_id),
          :ok <- ensure_inventory_ready_for_enable(offer) do
       persist_enable(actor, offer)
@@ -103,7 +103,8 @@ defmodule FastCheck.Sales.OfferManagement do
   @spec disable_offer(map(), pos_integer(), pos_integer()) ::
           {:ok, struct()} | {:error, term()}
   def disable_offer(actor, event_id, offer_id) do
-    with :ok <- ensure_manageable_event(event_id),
+    with {:ok, actor} <- verified_event_actor(actor, event_id),
+         :ok <- ensure_manageable_event(actor, event_id),
          {:ok, offer} <- fetch_manageable_offer(actor, event_id, offer_id) do
       persist_disable(actor, offer)
     end
@@ -112,7 +113,8 @@ defmodule FastCheck.Sales.OfferManagement do
   @spec retry_inventory_initialization(map(), pos_integer(), pos_integer()) ::
           {:ok, struct()} | {:error, term()}
   def retry_inventory_initialization(actor, event_id, offer_id) do
-    with :ok <- ensure_manageable_event(event_id),
+    with {:ok, actor} <- verified_event_actor(actor, event_id),
+         :ok <- ensure_manageable_event(actor, event_id),
          {:ok, offer} <- fetch_manageable_offer(actor, event_id, offer_id),
          :ok <- ensure_safe_retry_allowed(offer),
          :ok <- initialize_inventory_for_retry(offer) do
@@ -172,11 +174,20 @@ defmodule FastCheck.Sales.OfferManagement do
     end
   end
 
-  defp ensure_manageable_event(event_id) do
-    case fetch_event_context(event_id) do
+  defp ensure_manageable_event(actor, event_id) do
+    case fetch_event_context(actor, event_id) do
       {:ok, %{archived?: true}} -> {:error, :event_archived}
       {:ok, _} -> :ok
       {:error, :not_found} -> {:error, :not_found}
+    end
+  end
+
+  defp verified_event_actor(actor, event_id) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         true <- DashboardAccess.event_granted?(actor, event_id) do
+      {:ok, actor}
+    else
+      _ -> {:error, :not_found}
     end
   end
 

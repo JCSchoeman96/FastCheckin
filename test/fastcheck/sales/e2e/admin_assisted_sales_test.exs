@@ -10,13 +10,12 @@ defmodule FastCheck.Sales.E2E.AdminAssistedSalesTest do
   alias FastCheck.SalesE2EFixtures, as: E2E
   alias FastCheck.Workers.IssueTicketsWorker
   alias FastCheck.Workers.PaidOrderFulfillmentWorker
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   @moduletag :e2e
   @moduletag :sales
   @moduletag :payments
   @moduletag :slow
-
-  @admin_user %{id: "admin", username: "admin"}
 
   setup do
     paystack_cleanup = PaystackSupport.setup_paystack!()
@@ -38,7 +37,7 @@ defmodule FastCheck.Sales.E2E.AdminAssistedSalesTest do
 
     assert {:ok, %{order_id: order_id}} =
              SecondaryEntrypoints.start_admin_checkout(
-               @admin_user,
+               WebFixtures.dashboard_actor([event.id]),
                event.id,
                %{
                  "ticket_offer_id" => to_string(offer.id),
@@ -110,7 +109,7 @@ defmodule FastCheck.Sales.E2E.AdminAssistedSalesTest do
 
     assert {:ok, %{order_id: order_id}} =
              SecondaryEntrypoints.start_internal_pilot_checkout(
-               @admin_user,
+               WebFixtures.dashboard_actor([offer.event_id]),
                offer.event_id,
                %{
                  "ticket_offer_id" => to_string(offer.id),

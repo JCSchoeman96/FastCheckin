@@ -100,11 +100,11 @@ WhatsApp-specific immediate responses:
 - Meta API auth failure: pause outbound sends, rotate or restore credentials,
   move affected deliveries to manual review.
 - Meta API rate limit: slow outbound sends, keep payment verification and ticket
-  issuance running, review retry backlog.
+  issuance running, review Event-owned delivery attempts and manual review.
 - Template missing/unapproved: keep ticket issuance running, mark deliveries for
   manual review, do not invent a non-approved template.
-- Outbound provider timeout: allow retryable jobs to retry; pause only if backlog
-  grows faster than recovery.
+- Outbound provider timeout: allow approved retries; pause new WhatsApp sales if
+  paid customers do not receive ticket links through the normal delivery path.
 - Duplicate inbound messages: verify dedupe and conversation checkpoint state.
 - Duplicate outbound jobs: verify outbound dedupe and delivery attempts.
 - Customer paid but no ticket link delivered: verify payment, issue state, and
@@ -136,4 +136,3 @@ WhatsApp-specific immediate responses:
 - [ ] Scanner accepts valid issued ticket.
 - [ ] Revoked/refunded ticket is denied by scanner.
 - [ ] Ops Dashboard and Audit Timeline show safe redacted state.
-

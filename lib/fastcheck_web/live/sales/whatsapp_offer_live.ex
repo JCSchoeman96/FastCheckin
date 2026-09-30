@@ -9,6 +9,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.Events
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.MoneyInput
   alias FastCheck.Sales.OfferManagement
   alias FastCheck.Sales.PurchaseLimits
@@ -17,12 +18,11 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
 
   @impl true
   def mount(%{"event_id" => event_id_param}, session, socket) do
-    with {:ok, user} <- dashboard_user_from_session(session),
+    with {:ok, actor} <- dashboard_actor_from_session(session),
          {:ok, event_id} <- OfferManagement.parse_event_id(event_id_param),
          {:ok, %{event: event, archived?: archived?}} <-
-           OfferManagement.fetch_event_context(event_id) do
+           OfferManagement.fetch_event_context(actor, event_id) do
       event = event_with_authoritative_quantity_cap(event)
-      actor = OfferManagement.admin_actor_from_user(user, event_id)
 
       case OfferManagement.list_offers(actor, event_id) do
         {:ok, offers} ->
@@ -32,7 +32,6 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
            |> assign(:event, event)
            |> assign(:event_id, event_id)
            |> assign(:archived?, archived?)
-           |> assign(:dashboard_user, user)
            |> assign(:actor, actor)
            |> assign(:offers, offers)
            |> assign(:edit_forms, edit_forms_for(offers))
@@ -52,7 +51,7 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
            |> push_navigate(to: ~p"/dashboard")}
       end
     else
-      {:error, :unauthenticated} ->
+      {:error, :unauthorized} ->
         {:ok,
          socket
          |> put_flash(:error, "Sign in to manage WhatsApp ticket offers.")
@@ -147,7 +146,11 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
     else
       case parse_ui_quantity_cap(params["whatsapp_max_tickets_per_order"]) do
         {:ok, limit} ->
-          case Events.set_whatsapp_max_tickets_per_order(socket.assigns.event_id, limit) do
+          case Events.set_whatsapp_max_tickets_per_order(
+                 socket.assigns.actor,
+                 socket.assigns.event_id,
+                 limit
+               ) do
             {:ok, event} ->
               {:noreply,
                socket
@@ -480,13 +483,13 @@ defmodule FastCheckWeb.Sales.WhatsAppOfferLive do
     end)
   end
 
-  defp dashboard_user_from_session(session) do
+  defp dashboard_actor_from_session(session) do
     case session["dashboard_username"] || session[:dashboard_username] do
       username when is_binary(username) and username != "" ->
-        {:ok, %{id: username, username: username}}
+        DashboardAccess.actor_for_identity(username)
 
       _ ->
-        {:error, :unauthenticated}
+        {:error, :unauthorized}
     end
   end
 

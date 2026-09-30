@@ -4,17 +4,44 @@ defmodule FastCheckWeb.SalesWebFixtures do
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.SalesCheckoutFixtures, as: SalesFixtures
 
   @dashboard_username "admin"
 
   def dashboard_username, do: @dashboard_username
 
-  def authenticated_conn(conn) do
+  def authenticated_conn(conn, event_ids \\ nil) do
+    if is_list(event_ids), do: configure_dashboard_grants(event_ids)
+
     Plug.Test.init_test_session(conn, %{
       dashboard_authenticated: true,
       dashboard_username: @dashboard_username
     })
+  end
+
+  def dashboard_actor(event_ids) when is_list(event_ids) do
+    configure_dashboard_grants(event_ids)
+    {:ok, actor} = DashboardAccess.actor_for_identity(@dashboard_username)
+    actor
+  end
+
+  def configure_dashboard_grants(event_ids) when is_list(event_ids) do
+    previous_auth = Application.get_env(:fastcheck, :dashboard_auth, %{})
+
+    Application.put_env(
+      :fastcheck,
+      :dashboard_auth,
+      previous_auth
+      |> Map.put(:username, @dashboard_username)
+      |> Map.put(:allowed_event_ids, event_ids)
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.put_env(:fastcheck, :dashboard_auth, previous_auth)
+    end)
+
+    :ok
   end
 
   def insert_event!(attrs \\ %{}) do

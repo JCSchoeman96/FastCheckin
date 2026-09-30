@@ -9,6 +9,7 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
   alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   setup do
     _ = Cache.invalidate_events_list_cache()
@@ -36,14 +37,39 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
 
   test "positive cap can be changed explicitly" do
     event = create_event(%{name: "Quantity change"})
-    assert {:ok, updated} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+
+    assert {:ok, updated} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               4
+             )
+
     assert updated.whatsapp_max_tickets_per_order == 4
     assert Events.whatsapp_max_tickets_per_order(event.id) == 4
   end
 
+  test "a dashboard grant cannot change another Event's WhatsApp quantity cap" do
+    granted_event = create_event(%{name: "Granted quantity event"})
+    ungranted_event = create_event(%{name: "Un granted quantity event"})
+    actor = WebFixtures.dashboard_actor([granted_event.id])
+    before_cap = Events.whatsapp_max_tickets_per_order(ungranted_event.id)
+
+    assert {:error, :forbidden} =
+             Events.set_whatsapp_max_tickets_per_order(actor, ungranted_event.id, before_cap + 1)
+
+    assert Events.whatsapp_max_tickets_per_order(ungranted_event.id) == before_cap
+  end
+
   test "same-value update is idempotent and does not fake updated_at" do
     event = create_event(%{name: "Quantity no-op"})
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 3)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               3
+             )
 
     old_timestamp =
       NaiveDateTime.utc_now()
@@ -51,7 +77,14 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
       |> NaiveDateTime.truncate(:second)
 
     set_updated_at!(event.id, old_timestamp)
-    assert {:ok, unchanged} = Events.set_whatsapp_max_tickets_per_order(event.id, 3)
+
+    assert {:ok, unchanged} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               3
+             )
+
     assert unchanged.whatsapp_max_tickets_per_order == 3
     assert unchanged.updated_at == old_timestamp
   end
@@ -65,28 +98,62 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
       |> NaiveDateTime.truncate(:second)
 
     set_updated_at!(event.id, old_timestamp)
-    assert {:ok, updated} = Events.set_whatsapp_max_tickets_per_order(event.id, 5)
+
+    assert {:ok, updated} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               5
+             )
+
     assert NaiveDateTime.compare(updated.updated_at, old_timestamp) == :gt
   end
 
   test "archived events cannot change the cap" do
     event = create_event(%{name: "Quantity archive"})
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               4
+             )
+
     assert {:ok, archived} = Events.archive_event(event.id)
     assert archived.whatsapp_max_tickets_per_order == 4
-    assert {:error, :event_archived} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:error, :event_archived} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
   end
 
   test "archive preserves configured cap" do
     event = create_event(%{name: "Quantity archive preserve"})
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 6)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               6
+             )
+
     assert {:ok, archived} = Events.archive_event(event.id)
     assert archived.whatsapp_max_tickets_per_order == 6
   end
 
   test "unarchive preserves configured cap" do
     event = create_event(%{name: "Quantity unarchive preserve"})
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 7)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               7
+             )
+
     assert {:ok, archived} = Events.archive_event(event.id)
     assert archived.whatsapp_max_tickets_per_order == 7
     assert {:ok, active} = Events.unarchive_event(event.id)
@@ -101,7 +168,13 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
     assert [_event] = Events.list_events()
     assert {:ok, _events} = CacheManager.get("events:all")
 
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
+
     assert :not_found == EtsLayer.get_event_config(event.id)
     assert {:ok, nil} = CacheManager.get("event_config:#{event.id}")
     assert {:ok, nil} = CacheManager.get("events:all")
@@ -134,18 +207,35 @@ defmodule FastCheck.Events.WhatsAppQuantityCapTest do
 
   test "domain setter accepts a positive value greater than 9" do
     event = create_event(%{name: "Quantity future"})
-    assert {:ok, updated} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    assert {:ok, updated} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
+
     assert updated.whatsapp_max_tickets_per_order == 12
   end
 
   test "domain setter accepts 50 and rejects 51 without changing the event" do
     event = create_event(%{name: "Quantity platform boundary"})
 
-    assert {:ok, at_ceiling} = Events.set_whatsapp_max_tickets_per_order(event.id, 50)
+    assert {:ok, at_ceiling} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               50
+             )
+
     assert at_ceiling.whatsapp_max_tickets_per_order == 50
 
     assert {:error, :platform_max_per_order_exceeded} =
-             Events.set_whatsapp_max_tickets_per_order(event.id, 51)
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               51
+             )
 
     assert Events.whatsapp_max_tickets_per_order(event.id) == 50
   end

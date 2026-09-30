@@ -11,6 +11,7 @@ defmodule FastCheck.Sales.AdminDashboard do
 
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.Inventory.Health
 
   @attendee_sources ~w(tickera fastcheck_sales)
@@ -27,8 +28,8 @@ defmodule FastCheck.Sales.AdminDashboard do
   @doc """
   Returns bounded dashboard summary counts.
   """
-  def summary(filters \\ %{}) do
-    filters = normalize_filters(filters)
+  def summary(actor, filters \\ %{}) do
+    filters = normalize_filters(filters, actor)
     {from_dt, to_dt} = date_window(filters)
     order_query = filtered_orders_query(filters, from_dt, to_dt)
 
@@ -47,8 +48,8 @@ defmodule FastCheck.Sales.AdminDashboard do
   @doc """
   Returns recent safe order summaries.
   """
-  def recent_orders(filters \\ %{}, opts \\ []) do
-    filters = normalize_filters(filters)
+  def recent_orders(actor, filters \\ %{}, opts \\ []) do
+    filters = normalize_filters(filters, actor)
     limit = limit(opts)
     {from_dt, to_dt} = date_window(filters)
 
@@ -81,8 +82,8 @@ defmodule FastCheck.Sales.AdminDashboard do
   @doc """
   Returns bounded manual review rows.
   """
-  def manual_review_queue(filters \\ %{}, opts \\ []) do
-    filters = normalize_filters(filters)
+  def manual_review_queue(actor, filters \\ %{}, opts \\ []) do
+    filters = normalize_filters(filters, actor)
     limit = limit(opts)
     {from_dt, to_dt} = date_window(filters)
 
@@ -93,7 +94,7 @@ defmodule FastCheck.Sales.AdminDashboard do
       |> Repo.all()
 
     review_order_ids
-    |> orders_by_ids()
+    |> orders_by_ids(filters.event_ids)
     |> enrich_order_rows()
     |> Enum.map(&review_row/1)
   end
@@ -101,9 +102,11 @@ defmodule FastCheck.Sales.AdminDashboard do
   @doc """
   Returns one safe order detail map.
   """
-  def order_detail(order_id) do
+  def order_detail(actor, order_id) do
+    event_ids = DashboardAccess.allowed_event_ids(actor)
+
     with {:ok, id} <- parse_integer(order_id),
-         [row] <- orders_by_ids([id]) do
+         [row] <- orders_by_ids([id], event_ids) do
       [detail] = enrich_order_rows([row])
 
       {:ok,
@@ -120,11 +123,14 @@ defmodule FastCheck.Sales.AdminDashboard do
 
   Aggregate counts only — no attendee or buyer PII, provider references, or secrets.
   """
-  @spec event_overview(term()) ::
+  @spec event_overview(term(), term()) ::
           {:ok, map()} | {:error, :not_found}
-  def event_overview(event_id) do
+  def event_overview(actor, event_id) do
+    allowed_event_ids = DashboardAccess.allowed_event_ids(actor)
+
     with {:ok, id} <- parse_integer(event_id),
-         %Event{} = event <- Repo.get(Event, id) do
+         true <- id in allowed_event_ids,
+         %Event{} = event <- granted_event(id, allowed_event_ids) do
       attendee_by_source = attendee_source_metrics(id)
       orders_by_status = whatsapp_orders_by_status(id)
       ticket_issues_by_status = whatsapp_ticket_issues_by_status(id)
@@ -158,13 +164,13 @@ defmodule FastCheck.Sales.AdminDashboard do
   @doc """
   Returns capped read-only inventory health summaries for visible offers.
   """
-  def inventory_summary(filters \\ %{}, opts \\ []) do
-    filters = normalize_filters(filters)
+  def inventory_summary(actor, filters \\ %{}, opts \\ []) do
+    filters = normalize_filters(filters, actor)
     limit = opts |> Keyword.get(:limit, @max_inventory_limit) |> clamp(1, @max_inventory_limit)
 
     "sales_ticket_offers"
     |> where([o], is_nil(o.archived_at))
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> order_by([o], desc: o.inserted_at, desc: o.id)
     |> limit(^limit)
     |> select([o], %{
@@ -206,6 +212,13 @@ defmodule FastCheck.Sales.AdminDashboard do
          currently_inside: row.currently_inside
        }}
     end)
+  end
+
+  defp granted_event(event_id, allowed_event_ids) do
+    Repo.one(
+      from event in Event,
+        where: event.id == ^event_id and event.id in ^allowed_event_ids
+    )
   end
 
   defp whatsapp_orders_by_status(event_id) do
@@ -269,7 +282,7 @@ defmodule FastCheck.Sales.AdminDashboard do
   defp filtered_orders_query(filters, from_dt, to_dt) do
     "sales_orders"
     |> where([o], o.inserted_at >= ^from_dt and o.inserted_at <= ^to_dt)
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> maybe_filter_status(filters.status)
     |> maybe_filter_source_channel(filters.source_channel)
     |> maybe_filter_public_reference(filters.search)
@@ -294,7 +307,7 @@ defmodule FastCheck.Sales.AdminDashboard do
 
     "sales_orders"
     |> where([o], o.inserted_at >= ^from_dt and o.inserted_at <= ^to_dt)
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> maybe_filter_public_reference(filters.search)
     |> where(
       [o],
@@ -307,11 +320,11 @@ defmodule FastCheck.Sales.AdminDashboard do
     |> select([o], o.id)
   end
 
-  defp orders_by_ids([]), do: []
+  defp orders_by_ids([], _event_ids), do: []
 
-  defp orders_by_ids(ids) do
+  defp orders_by_ids(ids, event_ids) do
     "sales_orders"
-    |> where([o], o.id in ^ids)
+    |> where([o], o.id in ^ids and o.event_id in ^event_ids)
     |> order_by([o], fragment("array_position(?, ?)", ^ids, o.id))
     |> select([o], %{
       id: o.id,
@@ -481,7 +494,7 @@ defmodule FastCheck.Sales.AdminDashboard do
   defp count_open_manual_review(filters) do
     "sales_orders"
     |> where([o], o.status == "manual_review")
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -490,7 +503,7 @@ defmodule FastCheck.Sales.AdminDashboard do
     |> join(:inner, [p], o in "sales_orders", on: o.id == p.sales_order_id)
     |> where([p, o], p.status in ^@payment_review_statuses)
     |> where([p, o], o.inserted_at >= ^from_dt and o.inserted_at <= ^to_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> select([p, _o], p.sales_order_id)
     |> distinct(true)
     |> Repo.aggregate(:count)
@@ -501,7 +514,7 @@ defmodule FastCheck.Sales.AdminDashboard do
     |> join(:inner, [c], o in "sales_orders", on: o.id == c.sales_order_id)
     |> where([c, o], c.status == ^status)
     |> where([c, o], o.inserted_at >= ^from_dt and o.inserted_at <= ^to_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count)
   end
 
@@ -510,7 +523,7 @@ defmodule FastCheck.Sales.AdminDashboard do
     |> join(:inner, [t], o in "sales_orders", on: o.id == t.sales_order_id)
     |> where([t, o], t.status == "issued")
     |> where([t, o], o.inserted_at >= ^from_dt and o.inserted_at <= ^to_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count)
   end
 
@@ -573,10 +586,9 @@ defmodule FastCheck.Sales.AdminDashboard do
     end
   end
 
-  defp normalize_filters(filters) when is_map(filters) do
+  defp normalize_filters(filters, actor) when is_map(filters) do
     %{
-      event_id:
-        parse_optional_integer(Map.get(filters, "event_id") || Map.get(filters, :event_id)),
+      event_ids: selected_event_ids(filters, actor),
       status: clean_allowed(Map.get(filters, "status") || Map.get(filters, :status)),
       source_channel:
         clean_allowed(Map.get(filters, "source_channel") || Map.get(filters, :source_channel)),
@@ -590,7 +602,25 @@ defmodule FastCheck.Sales.AdminDashboard do
     }
   end
 
-  defp normalize_filters(_), do: normalize_filters(%{})
+  defp normalize_filters(_filters, actor), do: normalize_filters(%{}, actor)
+
+  defp selected_event_ids(filters, actor) do
+    allowed_event_ids = DashboardAccess.allowed_event_ids(actor)
+
+    case Map.get(filters, "event_id") || Map.get(filters, :event_id) do
+      nil ->
+        allowed_event_ids
+
+      "" ->
+        allowed_event_ids
+
+      value ->
+        case parse_integer(value) do
+          {:ok, event_id} -> if(event_id in allowed_event_ids, do: [event_id], else: [])
+          {:error, _reason} -> []
+        end
+    end
+  end
 
   defp date_window(%{from_date: nil, to_date: nil}) do
     today = Date.utc_today()
@@ -618,13 +648,10 @@ defmodule FastCheck.Sales.AdminDashboard do
   defp date_start(date), do: DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
   defp date_end(date), do: DateTime.new!(date, ~T[23:59:59], "Etc/UTC")
 
-  defp maybe_filter_event(query, nil), do: query
-  defp maybe_filter_event(query, event_id), do: where(query, [o], o.event_id == ^event_id)
+  defp maybe_filter_event(query, event_ids), do: where(query, [o], o.event_id in ^event_ids)
 
-  defp maybe_filter_joined_event(query, nil), do: query
-
-  defp maybe_filter_joined_event(query, event_id),
-    do: where(query, [_left, o], o.event_id == ^event_id)
+  defp maybe_filter_joined_event(query, event_ids),
+    do: where(query, [_left, o], o.event_id in ^event_ids)
 
   defp maybe_filter_status(query, nil), do: query
   defp maybe_filter_status(query, status), do: where(query, [o], o.status == ^status)
@@ -666,13 +693,6 @@ defmodule FastCheck.Sales.AdminDashboard do
     do: value |> Kernel.max(min) |> Kernel.min(max)
 
   defp clamp(_value, min, _max), do: min
-
-  defp parse_optional_integer(value) do
-    case parse_integer(value) do
-      {:ok, int} -> int
-      _ -> nil
-    end
-  end
 
   defp parse_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
 
