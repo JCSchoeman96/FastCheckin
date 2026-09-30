@@ -44,6 +44,17 @@ VS-15A must not rewrite scanner acceptance logic unless tests prove a tiny compa
 
 ---
 
+## Actor authority boundary
+
+`FastCheck.Tickets.Revocation` is a domain mutation path. It retains `:operator` support when an
+upstream caller has already established trusted identity and Event scope. The core validates actor type,
+reason, and supplied Event scope; it does not authenticate the actor or prove grant provenance.
+
+The current production Sales dashboard reaches revocation through the configured dashboard-admin identity and
+server-owned Event grants. No authenticated production Sales operator entry point exists. Do not treat a
+caller-supplied actor map, scanner shared credential, or mutable scanner name as Sales operator authority.
+Track a trusted operator identity and Event-authority boundary as FastCheckin-iuaq.
+
 ## 2. FastCheckin Current-State Findings
 
 The implementation must use the current FastCheckin scanner model.
@@ -435,9 +446,10 @@ Required actor behavior:
 ```text
 system can revoke with reason.
 admin can revoke with reason.
-operator can request allowed revocation only if VS-01F/VS-13 permits it.
+operator domain calls remain subject to VS-01F/VS-13 policy and require an upstream trusted identity and
+Event grant; this core path does not establish grant provenance.
 customer_session cannot revoke.
-unauthenticated actor cannot revoke.
+an actor with a missing or unknown domain type cannot revoke; the caller must establish authenticated identity.
 admin/operator cannot access raw provider payloads through this path.
 ```
 

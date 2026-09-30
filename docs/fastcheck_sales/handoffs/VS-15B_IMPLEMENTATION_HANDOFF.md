@@ -18,14 +18,24 @@ in [the P1-C feature pack](../feature_packs/0056_P1-C_durable-refund-evidence/00
 `Order` no longer exposes `:mark_refunded_manual`; cancellation and revocation
 remain on the VS-15B path.
 
+## P1-D-REV-01 authority correction
+
+The original VS-15B service contract and test allowed an operator-shaped actor map to revoke one ticket.
+That map did not establish operator identity or grant provenance. The current production dashboard
+orchestration is admin-only: DashboardAccess resolves the configured dashboard identity and
+`DASHBOARD_ALLOWED_EVENT_IDS`. FastCheck.Tickets.Revocation retains `:operator` domain support
+for a caller that has already established trusted identity and Event authority. The core does not
+authenticate that caller. No production Sales operator entry point currently exists. A future entry point
+requires a separate trusted operator-authority design. Track it as FastCheckin-iuaq.
+
 ## What Changed
 
-VS-15B added dashboard admin orchestration for manual order refund/cancel markers and
-ticket revocation. LiveViews call `AdminRevocations` / `AdminRefunds` — not
+VS-15B added dashboard-admin orchestration for manual order refund/cancel markers and ticket revocation.
+P1-D resolves Event grants from the configured admin identity. LiveViews call `AdminRevocations` / `AdminRefunds` — not
 `FastCheck.Tickets.Revocation` directly.
 
 `AdminRevocations` wraps VS-15A `Revocation` for single-ticket and order-batch revoke,
-enforces `actor_type` + `allowed_event_ids`, requires reason (and bulk confirmation +
+revalidates the dashboard identity and server-owned Event grant, requires reason (and bulk confirmation +
 admin password for order-level revoke), and emits admin telemetry. Order-batch revoke
 returns `{:error, {:revoke_failures, failures}}` when any ticket fails.
 
@@ -51,17 +61,21 @@ Planning context (not implementation truth):
   bounded `get_order_operations_context/2`; revoke-first fail-closed semantics.
 - `lib/fastcheck/sales/order.ex` — Ash `:mark_refunded_manual` and
   `:mark_cancelled_manual` (idempotent, admin-only policies, `StateTransition` audit).
-- `lib/fastcheck_web/live/sales/order_show_live.ex` — order operations LiveView;
-  builds actor with `allowed_event_ids: [context.event_id]`.
+- `lib/fastcheck_web/live/sales/order_show_live.ex` — order operations LiveView.
+  P1-D supersedes the original target-derived actor construction; the LiveView now resolves
+  DashboardAccess from session identity before the scoped order lookup.
 - `lib/fastcheck_web/live/sales/components/revocation_form_component.ex` — shared
   reason / bulk-confirm / password form.
 - `lib/fastcheck_web/live/sales_dashboard_live.ex` — navigation link to order show.
 - `lib/fastcheck_web/router.ex` — `live "/dashboard/sales/orders/:id"`.
 - `lib/fastcheck/observability/telemetry_names.ex` — five admin events (27 → 32).
-- `test/fastcheck/sales/admin_revocations_test.exs` — revoke auth, scope, password,
-  sync-failure passthrough, missing-attendee `revoke_failures` error.
-- `test/fastcheck/sales/admin_refunds_test.exs` — refund/cancel happy path, scope
-  denial, verified-payment gate, revoke-failure blocking, idempotency.
+- `test/fastcheck/sales/admin_revocations_test.exs` — admin single/batch revoke, Event-scope denial,
+  operator-shaped dashboard actor denial, password/bulk gates, sync-failure passthrough, and missing-
+  attendee batch error. The earlier operator success case used a synthetic map and did not prove
+  production operator authority.
+- `test/fastcheck/sales/admin_refunds_test.exs` — refund/cancel success, scope denial,
+  operator-shaped caller denied, verified-payment required, revoke-failure blocking, idempotent
+  transition, and bounded context.
 - `test/fastcheck_web/live/sales/order_show_live_test.exs` — masked context, revoke
   and refund flows, order-revoke failure surfaces blocking error (not success).
 - `test/support/admin_refund_fixtures.ex` — issued-order and scoped-actor fixtures.
@@ -71,9 +85,12 @@ Planning context (not implementation truth):
 
 ## Contracts Now Available
 
-- `FastCheck.Sales.AdminRevocations.revoke_ticket_issue/3` — single-ticket revoke
-  (admin or in-scope operator); requires `reason` and `order.event_id in
-  actor.allowed_event_ids`.
+- `FastCheck.Sales.AdminRevocations.revoke_ticket_issue/3` — current dashboard single-ticket revoke.
+  It accepts the configured admin identity and server-owned Event grants, requires a reason, and
+  checks the Order Event.
+- `FastCheck.Tickets.Revocation.revoke_ticket_issue/2` — core domain operation retains
+  `:operator` support when an upstream caller has established trusted identity and Event scope.
+  The core does not authenticate callers.
 - `FastCheck.Sales.AdminRevocations.revoke_order_tickets/3` — admin-only order-batch
   revoke; requires `confirmed_bulk`, `admin_password`, and event scope; returns
   `{:error, {:revoke_failures, failures}}` on partial failure.
@@ -90,13 +107,12 @@ Planning context (not implementation truth):
 
 ## Decisions Applied
 
-- VS-15B is admin orchestration only; VS-15A `Revocation` remains scanner-safety
-  authority.
+- VS-15B production dashboard orchestration is configured-admin-only. VS-15A Revocation remains the
+  scanner-safety authority and retains core operator domain support.
 - Order-level refund/cancel only (no per-ticket refund marker API).
 - Revoke-before-refund/cancel; fail closed on revoke failures.
-- Service-layer `actor_type` + non-empty `allowed_event_ids` required; services do not
-  inject scope the caller lacks. LiveView maps single dashboard credential to admin
-  with `allowed_event_ids: [order.event_id]`.
+- Dashboard service boundaries re-resolve identity through DashboardAccess and use server-configured
+  Event grants; route and record IDs never create authority. The configured dashboard identity maps to admin.
 - Order-level revoke failures are service errors (`{:revoke_failures, _}`), not UI
   success.
 - Sensitive actions use `BrowserAuth.valid_admin_password?/1`.
@@ -118,12 +134,13 @@ Planning context (not implementation truth):
 
 ## Tests Added Or Updated
 
-- `test/fastcheck/sales/admin_revocations_test.exs` — single/batch revoke, scope
-  denial, operator single-ticket success, operator bulk forbidden, password/bulk
-  gates, sync aggregation failure passthrough, missing-attendee batch error.
-- `test/fastcheck/sales/admin_refunds_test.exs` — refund/cancel success, scope
-  denial, operator forbidden, verified-payment required, revoke-failure blocking,
-  idempotent refunded transition, bounded context.
+- `test/fastcheck/sales/admin_revocations_test.exs` — admin single/batch revoke, Event-scope denial,
+  operator-shaped dashboard actor denial, password/bulk gates, sync-failure passthrough, and missing-
+  attendee batch error. The earlier operator success case used a synthetic map and did not prove
+  production operator authority.
+- `test/fastcheck/sales/admin_refunds_test.exs` — refund/cancel success, scope denial,
+  operator-shaped caller denied, verified-payment required, revoke-failure blocking, idempotent
+  transition, and bounded context.
 - `test/fastcheck_web/live/sales/order_show_live_test.exs` — auth redirect, masked
   HTML, ticket revoke, mark refunded, order-revoke failure error messaging.
 - `test/support/admin_refund_fixtures.ex` — shared issued-order fixture and scoped
@@ -151,9 +168,11 @@ Results reported:
 
 ## Known Limitations
 
-- Manual order `refunded` / `cancelled` markers only; no Paystack refund orchestration.
-- Dashboard auth is still a single credential; event scope is assigned per order page,
-  not full multi-admin RBAC.
+- No trusted production Sales operator identity/Event-authority boundary or operator revocation entry
+  point exists. The core operator capability is not exposed through the dashboard.
+- Manual order refunded / cancelled markers only; no Paystack refund orchestration.
+- Dashboard auth uses one configured identity and a server-owned Event grant list; it does not yet have
+  per-user membership or multi-admin RBAC.
 - `AdminRevocations.invoke_order_ticket_revocation/2` normalizes some VS-15A batch
   `{:error, :rollback}` / `{:missing_attendee, _}` outcomes into failure collections
   at the admin layer (Revocation module unchanged).
@@ -167,9 +186,11 @@ Results reported:
 
 - `AdminRevocations` / `AdminRefunds` from LiveView and future admin APIs — do not
   call `Revocation` directly from UI.
-- Pass actors with explicit `allowed_event_ids` matching the target order’s `event_id`.
+- Resolve dashboard actors through DashboardAccess; never pass a target-derived or caller-supplied
+  grant as authority.
 - `get_order_operations_context/2` for bounded read models on order show pages.
-- VS-15A `Revocation` for all scanner-visible ticket mutation.
+- VS-15A Revocation for all scanner-visible ticket mutation. Its `:operator` domain capability
+  requires trusted upstream authority; do not expose it through an unverified map.
 - VS-13 `ManualReview` for hold/close investigation flows.
 
 **Do not:**

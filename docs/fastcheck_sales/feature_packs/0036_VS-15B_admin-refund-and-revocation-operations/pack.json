@@ -95,13 +95,16 @@
       "duplicate submit is idempotent",
       "PII masked in LiveView",
       "raw payloads/token hashes absent from HTML/logs",
-      "no Paystack/WhatsApp/DeliveryAttempt/Redis inventory side effects"
+      "no Paystack/WhatsApp/DeliveryAttempt/Redis inventory side effects",
+      "dashboard AdminRevocations rejects operator-shaped actors without DashboardAccess authority",
+      "core Revocation retains operator reason and Event-scope domain behavior without claiming to authenticate the caller"
     ],
     "green": [
       "admin revocation uses core VS-15A path",
       "refunded/cancelled tickets cannot remain scanner-acceptable",
       "policies distinguish admin/operator/system/customer_session",
-      "audit trail is dispute-ready"
+      "audit trail is dispute-ready",
+      "dashboard revocation is configured-admin-only while core operator domain support remains"
     ]
   },
   "performance_scaling": {
@@ -161,5 +164,11 @@
     "notes": [
       "Structural normalization only."
     ]
+  },
+  "authority_boundary": {
+    "dashboard_entry_point": "Configured dashboard-admin identity with server-owned DASHBOARD_ALLOWED_EVENT_IDS grants.",
+    "dashboard_operator_access": "AdminRevocations is admin-only in the current production dashboard; arbitrary operator-shaped actors and caller-supplied grants are rejected.",
+    "core_domain": "FastCheck.Tickets.Revocation retains operator actor support when an upstream caller has already established trusted identity and Event scope; the core does not authenticate the caller.",
+    "deferred_requirement": "Trusted operator identity and Event authority must exist before adding a production operator single-ticket revocation entry point."
   }
 }

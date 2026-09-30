@@ -61,6 +61,8 @@ audit, manual review, order/refund/revocation, admin ticket PDF, secondary
 checkout, Event overview, WhatsApp offer management, and the Sales-specific
 WhatsApp controls in the root dashboard.
 
+The production Sales dashboard has one configured admin identity. AdminRevocations resolves that identity through DashboardAccess and uses server-owned Event grants. No authenticated production Sales operator entry point exists. Core :operator support does not authenticate a caller or establish grant provenance. Do not treat actor maps, scanner names, or shared scanner credentials as Sales operator authority. Track trusted operator identity and Event binding as FastCheckin-iuaq.
+
 ## Separate BrowserAuth Event-Isolation Work
 
 P1-D does not establish application-wide event isolation. The root dashboard's

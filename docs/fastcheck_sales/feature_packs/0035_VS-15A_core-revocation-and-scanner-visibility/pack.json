@@ -185,5 +185,11 @@
       ],
       "sales_side_status_note": "Sales TicketIssue.status may record Sales-side validity/audit state; scanner/mobile runtime acceptance must be projected through existing Attendee scan_eligibility."
     }
+  },
+  "actor_authority": {
+    "core_operator_support": "FastCheck.Tickets.Revocation may accept an operator actor with a required reason and Event scope supplied by an upstream caller.",
+    "authentication_boundary": "The core validates actor type, reason, and Event scope; it does not authenticate the actor or establish allowed_event_ids provenance.",
+    "current_production_entry_point": "Sales dashboard revocation uses the configured dashboard-admin identity and server-owned Event grants only.",
+    "deferred_requirement": "Add trusted operator identity and Event authority before exposing production operator Sales single-ticket revocation."
   }
 }

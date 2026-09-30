@@ -77,5 +77,11 @@
     "Malformed runtime grants reject the complete configuration",
     "Rejected cross-event mutations create no successful audit action or Oban job and perform no Redis mutation",
     "Existing payment, refund, revocation, inventory, and scanner authority remains unchanged"
-  ]
+  ],
+  "operator_authority_decision": {
+    "dashboard_revocation": "Configured dashboard-admin identity with server-owned Event grants only.",
+    "core_operator_capability": "Retained in FastCheck.Tickets.Revocation as a domain capability; the core does not authenticate callers.",
+    "production_operator_entry_point": "None.",
+    "follow_up": "FastCheckin-iuaq: establish trusted operator identity and Event authority before adding a production entry point."
+  }
 }

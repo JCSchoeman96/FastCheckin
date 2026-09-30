@@ -30,6 +30,10 @@ dashboard identity-to-Sales actor constructor. Service boundaries resolve
 grants from the identity and may narrow a query to an Event only after proving
 that Event is in the configured grant set.
 
+## P1-D-REV-01 authority decision
+
+The current production Sales dashboard revocation entry point is admin-only. DashboardAccess resolves the configured dashboard identity and server-owned Event grants. FastCheck.Tickets.Revocation retains domain-level :operator support for callers that already established trusted identity and Event scope; the core does not authenticate callers. No production operator entry point exists. Track trusted operator identity and Event authority as FastCheckin-iuaq.
+
 ## Covered Surfaces
 
 - Sales dashboard lists, summaries, filters, and order detail.

@@ -60,7 +60,7 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
     assert Fixtures.order_status(order_id) == "ticket_issued"
   end
 
-  test "operator without a configured dashboard identity cannot revoke a ticket" do
+  test "dashboard revocation rejects operator-shaped actors without trusted production authority" do
     %{ticket_issue_ids: [ticket_issue_id | _], event: event} = Fixtures.issued_order_fixture()
 
     assert {:error, :unauthorized} =

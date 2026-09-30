@@ -109,10 +109,10 @@ Record evidence in the VS-24E evidence template using redacted IDs only.
 - Failure response: Stop if customer messages might go to wrong environment.
 
 - Action: Confirm dashboard authentication works.
-- Expected result: Assigned operator can open `/dashboard/sales/ops`,
-  `/dashboard/sales/orders/:id`, and audit timeline surfaces.
+- Expected result: Assigned staff using the configured dashboard-admin identity and Event grant can open
+  `/dashboard/sales/ops`, `/dashboard/sales/orders/:id`, and audit timeline surfaces.
 - Where to verify: Browser session.
-- Failure response: Stop; operator visibility is required.
+- Failure response: Stop if assigned staff with the configured dashboard identity and Event grant cannot see the required operational state.
 
 - Action: Confirm scanner/mobile configuration.
 - Expected result: Approved scanner device/session can authenticate for the test
@@ -265,8 +265,8 @@ Rules:
 Run destructive revocation/refund checks only in sandbox/test-mode or if explicit
 production approval exists.
 
-- Action: Revoke, refund/cancel, or mark not-scannable through approved operator
-  path.
+- Action: Revoke or refund/cancel through the Sales dashboard using the configured admin identity with a
+  server grant for the Event.
 - Expected result: Ticket/attendee scanner visibility changes and invalidation
   is visible.
 - Where to verify: Order page, audit timeline, scanner sync.

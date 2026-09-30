@@ -115,8 +115,8 @@
 
 ## Admin And Manual Review
 
-- [ ] Manual review operator is assigned.
-- [ ] Refund/revocation operator is assigned.
+- [ ] Manual-review staff member is assigned and uses the configured dashboard-admin identity.
+- [ ] Refund/revocation staff member is assigned and uses the configured dashboard-admin identity with a server grant for the target Event.
 - [ ] `/dashboard/sales/reviews` is reachable.
 - [ ] Admin-assisted checkout uses shared Sales core.
 - [ ] Internal pilot checkout uses shared Sales core.
@@ -149,7 +149,7 @@
 - [ ] Developer/admin escalation contact is assigned.
 - [ ] Paystack account owner is assigned.
 - [ ] Meta/WhatsApp account owner is assigned.
-- [ ] Refund/revocation operator is assigned.
+- [ ] Refund/revocation staff member is assigned and uses the configured dashboard-admin identity with a server grant for the target Event.
 
 ## Rollback/Pause-Sales Readiness
 
