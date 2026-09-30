@@ -9,9 +9,9 @@ defmodule FastCheck.Sales.ManualReview do
   import Ecto.Query
 
   alias Ash.Changeset
-  alias Ash.Query
   alias FastCheck.Observability.Redactor
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.ManualReviewAction
   alias FastCheck.Sales.Order
   alias FastCheck.Sales.PaidOrderFulfillment
@@ -49,15 +49,15 @@ defmodule FastCheck.Sales.ManualReview do
   )
 
   @doc "Returns a bounded, safe manual-review queue."
-  def list_queue(filters \\ %{}, opts \\ []) do
+  def list_queue(actor, filters \\ %{}, opts \\ []) do
     limit = opts |> Keyword.get(:limit, @default_limit) |> clamp(1, @max_limit)
-    event_id = parse_optional_integer(Map.get(filters, "event_id") || Map.get(filters, :event_id))
+    event_ids = scoped_event_ids(actor, filters)
 
     entries =
       [
-        order_queue_rows(event_id, limit),
-        payment_attempt_queue_rows(event_id, limit),
-        ticket_issue_queue_rows(event_id, limit)
+        order_queue_rows(event_ids, limit),
+        payment_attempt_queue_rows(event_ids, limit),
+        ticket_issue_queue_rows(event_ids, limit)
       ]
       |> List.flatten()
       |> Enum.sort(&queue_row_before?/2)
@@ -67,8 +67,11 @@ defmodule FastCheck.Sales.ManualReview do
     %{entries: entries, limit: limit}
   end
 
-  def get_context(subject_type, subject_id, _opts \\ []) do
-    get_context_for(subject_type, subject_id)
+  def get_context(actor, subject_type, subject_id, _opts \\ []) do
+    case DashboardAccess.actor_for_identity(actor) do
+      {:ok, actor} -> get_context_for(actor, subject_type, subject_id)
+      _ -> {:error, :not_found}
+    end
   end
 
   def assign(subject_type, subject_id, actor, attrs) do
@@ -84,17 +87,18 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   def retry_payment_verification(payment_attempt_id, actor, attrs) do
-    with {:ok, reason_code} <- require_reason(attrs, "retry_payment_verification"),
-         {:ok, loaded_attempt} <- load_payment_attempt(payment_attempt_id),
-         {:ok, loaded_order} <- load_order(loaded_attempt.sales_order_id),
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, reason_code} <- require_reason(attrs, "retry_payment_verification"),
+         {:ok, loaded_attempt} <- load_payment_attempt(actor, payment_attempt_id),
+         {:ok, loaded_order} <- load_order(actor, loaded_attempt.sales_order_id),
          :ok <- require_status(loaded_attempt.status, ["manual_review"]) do
       run_transaction(fn ->
         Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
 
-        with {:ok, attempt} <- load_payment_attempt(loaded_attempt.id),
-             {:ok, order} <- load_order(attempt.sales_order_id),
+        with {:ok, attempt} <- load_payment_attempt(actor, loaded_attempt.id),
+             {:ok, order} <- load_order(actor, attempt.sales_order_id),
              :ok <- require_status(attempt.status, ["manual_review"]),
-             ash_actor = ash_actor(actor, order.event_id),
+             ash_actor = ash_actor(actor),
              {:ok, updated_attempt} <-
                transition_payment_attempt(
                  attempt,
@@ -129,15 +133,16 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   def retry_ticket_issuance(order_id, actor, attrs) do
-    with {:ok, reason_code} <- require_reason(attrs, "retry_ticket_issuance"),
-         {:ok, loaded_order} <- load_order(order_id) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, reason_code} <- require_reason(attrs, "retry_ticket_issuance"),
+         {:ok, loaded_order} <- load_order(actor, order_id) do
       run_transaction(fn ->
         Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
 
-        with {:ok, order} <- load_order(loaded_order.id),
+        with {:ok, order} <- load_order(actor, loaded_order.id),
              :ok <- require_status(order.status, ["manual_review"]),
              :ok <- require_prior_fulfillment(order),
-             ash_actor = ash_actor(actor, order.event_id),
+             ash_actor = ash_actor(actor),
              {:ok, updated_order} <-
                transition_order(order, :queue_issuance_retry, reason_code, ash_actor),
              {:ok, review_action} <-
@@ -166,14 +171,15 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   def retry_paid_order_fulfillment(order_id, actor, attrs) do
-    with {:ok, reason_code} <- require_reason(attrs, "retry_paid_order_fulfillment"),
-         {:ok, loaded_order} <- load_order(order_id) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, reason_code} <- require_reason(attrs, "retry_paid_order_fulfillment"),
+         {:ok, loaded_order} <- load_order(actor, order_id) do
       run_transaction(fn ->
         Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
 
-        with {:ok, order} <- load_order(loaded_order.id),
+        with {:ok, order} <- load_order(actor, loaded_order.id),
              {:ok, attempt} <- pre_fulfillment_recovery_authority(order),
-             ash_actor = ash_actor(actor, order.event_id),
+             ash_actor = ash_actor(actor),
              {:ok, updated_order} <-
                transition_order(order, :retry_paid_fulfillment, reason_code, ash_actor),
              {:ok, review_action} <-
@@ -232,16 +238,17 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   def return_to_fulfillment_queue(order_id, actor, attrs) do
-    with {:ok, reason_code} <- require_reason(attrs, "return_to_fulfillment_queue"),
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, reason_code} <- require_reason(attrs, "return_to_fulfillment_queue"),
          {:ok, note} <- require_note(attrs),
-         {:ok, loaded_order} <- load_order(order_id) do
+         {:ok, loaded_order} <- load_order(actor, order_id) do
       result =
         run_transaction(fn ->
           Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
 
-          with {:ok, order} <- load_order(loaded_order.id),
+          with {:ok, order} <- load_order(actor, loaded_order.id),
                :ok <- safe_fulfillment_return?(order),
-               ash_actor = ash_actor(actor, order.event_id),
+               ash_actor = ash_actor(actor),
                {:ok, updated_order} <-
                  transition_order(order, :return_to_fulfillment_queue, reason_code, ash_actor),
                {:ok, review_action} <-
@@ -284,14 +291,15 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   defp transition_order_review_action(order_id, actor, attrs, action, ash_action, opts) do
-    with {:ok, reason_code} <- require_reason(attrs, action),
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, reason_code} <- require_reason(attrs, action),
          {:ok, note} <- maybe_require_note(attrs, Keyword.get(opts, :note_required?, false)),
-         {:ok, loaded_order} <- load_order(order_id) do
+         {:ok, loaded_order} <- load_order(actor, order_id) do
       run_transaction(fn ->
         Repo.query!("SELECT pg_advisory_xact_lock($1)", [loaded_order.id])
 
-        with {:ok, order} <- load_order(loaded_order.id),
-             ash_actor = ash_actor(actor, order.event_id),
+        with {:ok, order} <- load_order(actor, loaded_order.id),
+             ash_actor = ash_actor(actor),
              {:ok, updated_order} <-
                transition_order(order, ash_action, reason_code, ash_actor) do
           record_action(%{
@@ -313,8 +321,9 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   defp audit_only(subject_type, subject_id, actor, attrs, action) do
-    with {:ok, subject_id} <- parse_integer(subject_id),
-         {:ok, order} <- load_order_for_subject(subject_type, subject_id),
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, subject_id} <- parse_integer(subject_id),
+         {:ok, order} <- load_order_for_subject(actor, subject_type, subject_id),
          {:ok, reason_code} <- require_audit_reason(attrs, default_reason(action)),
          {:ok, note} <- optional_note(attrs) do
       record_action(%{
@@ -533,7 +542,7 @@ defmodule FastCheck.Sales.ManualReview do
   end
 
   defp maybe_record_blocked_return(order_id, actor, attrs) do
-    with {:ok, order} <- load_order(order_id),
+    with {:ok, order} <- load_order(actor, order_id),
          {:ok, reason_code} <- require_reason(attrs, "return_to_fulfillment_queue") do
       record_action(%{
         subject_type: "order",
@@ -552,36 +561,41 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
-  defp load_order_for_subject("order", id), do: load_order(id)
+  defp load_order_for_subject(actor, "order", id), do: load_order(actor, id)
 
-  defp load_order_for_subject("payment_attempt", id) do
-    with {:ok, attempt} <- load_payment_attempt(id), do: load_order(attempt.sales_order_id)
+  defp load_order_for_subject(actor, "payment_attempt", id) do
+    with {:ok, attempt} <- load_payment_attempt(actor, id),
+         do: load_order(actor, attempt.sales_order_id)
   end
 
-  defp load_order_for_subject("ticket_issue", id) do
-    with {:ok, issue} <- load_ticket_issue(id), do: load_order(issue.sales_order_id)
+  defp load_order_for_subject(actor, "ticket_issue", id) do
+    with {:ok, issue} <- load_ticket_issue(actor, id),
+         do: load_order(actor, issue.sales_order_id)
   end
 
-  defp load_order_for_subject(_subject_type, _id), do: {:error, :invalid_subject}
+  defp load_order_for_subject(_actor, _subject_type, _id), do: {:error, :invalid_subject}
 
-  defp load_order(id) do
+  defp load_order(actor, id) do
     with {:ok, id} <- parse_integer(id) do
-      Order
-      |> Query.for_read(:get_by_id, %{id: id})
-      |> Ash.read_one(authorize?: false)
-      |> case do
-        {:ok, nil} -> {:error, :not_found}
-        {:ok, order} -> {:ok, order}
-        {:error, reason} -> {:error, reason}
+      event_ids = DashboardAccess.allowed_event_ids(actor)
+
+      case Repo.one(from o in Order, where: o.id == ^id and o.event_id in ^event_ids) do
+        nil -> {:error, :not_found}
+        order -> {:ok, order}
       end
     end
   end
 
-  defp load_payment_attempt(id) do
+  defp load_payment_attempt(actor, id) do
     with {:ok, id} <- parse_integer(id) do
+      event_ids = DashboardAccess.allowed_event_ids(actor)
+
       case Repo.one(
              from p in PaymentAttempt,
-               where: p.id == ^id
+               join: o in "sales_orders",
+               on: o.id == p.sales_order_id,
+               where: p.id == ^id and o.event_id in ^event_ids,
+               select: p
            ) do
         nil -> {:error, :not_found}
         attempt -> {:ok, attempt}
@@ -589,11 +603,15 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
-  defp load_ticket_issue(id) do
+  defp load_ticket_issue(actor, id) do
     with {:ok, id} <- parse_integer(id) do
+      event_ids = DashboardAccess.allowed_event_ids(actor)
+
       case Repo.one(
              from t in "sales_ticket_issues",
-               where: t.id == ^id,
+               join: o in "sales_orders",
+               on: o.id == t.sales_order_id,
+               where: t.id == ^id and o.event_id in ^event_ids,
                select: %{
                  id: t.id,
                  sales_order_id: t.sales_order_id,
@@ -608,17 +626,17 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
-  defp get_context_for("order", subject_id) do
+  defp get_context_for(actor, "order", subject_id) do
     with {:ok, subject_id} <- parse_integer(subject_id),
-         {:ok, order} <- load_order(subject_id) do
+         {:ok, order} <- load_order(actor, subject_id) do
       {:ok, build_order_context(order, "order", Integer.to_string(order.id))}
     end
   end
 
-  defp get_context_for("payment_attempt", subject_id) do
+  defp get_context_for(actor, "payment_attempt", subject_id) do
     with {:ok, subject_id} <- parse_integer(subject_id),
-         {:ok, attempt} <- load_payment_attempt(subject_id),
-         {:ok, order} <- load_order(attempt.sales_order_id) do
+         {:ok, attempt} <- load_payment_attempt(actor, subject_id),
+         {:ok, order} <- load_order(actor, attempt.sales_order_id) do
       {:ok,
        order
        |> build_order_context("payment_attempt", Integer.to_string(attempt.id))
@@ -629,10 +647,10 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
-  defp get_context_for("ticket_issue", subject_id) do
+  defp get_context_for(actor, "ticket_issue", subject_id) do
     with {:ok, subject_id} <- parse_integer(subject_id),
-         {:ok, issue} <- load_ticket_issue(subject_id),
-         {:ok, order} <- load_order(issue.sales_order_id) do
+         {:ok, issue} <- load_ticket_issue(actor, subject_id),
+         {:ok, order} <- load_order(actor, issue.sales_order_id) do
       {:ok,
        order
        |> build_order_context("ticket_issue", Integer.to_string(issue.id))
@@ -641,7 +659,7 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
-  defp get_context_for(_subject_type, _subject_id), do: {:error, :invalid_subject}
+  defp get_context_for(_actor, _subject_type, _subject_id), do: {:error, :not_found}
 
   defp build_order_context(order, subject_type, subject_id) do
     order
@@ -658,10 +676,9 @@ defmodule FastCheck.Sales.ManualReview do
     |> Map.put(:timeline, timeline(subject_type, subject_id))
   end
 
-  defp order_queue_rows(event_id, source_limit) do
+  defp order_queue_rows(event_ids, source_limit) do
     "sales_orders"
-    |> where([o], o.status in ^@order_queue_statuses)
-    |> maybe_filter_event(event_id)
+    |> where([o], o.status in ^@order_queue_statuses and o.event_id in ^event_ids)
     |> order_by([o], desc: o.inserted_at, desc: o.id)
     |> limit(^source_limit)
     |> select([o], %{
@@ -680,11 +697,11 @@ defmodule FastCheck.Sales.ManualReview do
     |> Repo.all()
   end
 
-  defp payment_attempt_queue_rows(event_id, source_limit) do
+  defp payment_attempt_queue_rows(event_ids, source_limit) do
     from(p in "sales_payment_attempts",
       join: o in "sales_orders",
       on: o.id == p.sales_order_id,
-      where: p.status == "manual_review",
+      where: p.status == "manual_review" and o.event_id in ^event_ids,
       order_by: [desc: p.inserted_at, desc: p.id],
       limit: ^source_limit,
       select: %{
@@ -701,15 +718,14 @@ defmodule FastCheck.Sales.ManualReview do
         sort_id: p.id
       }
     )
-    |> maybe_filter_joined_event(event_id)
     |> Repo.all()
   end
 
-  defp ticket_issue_queue_rows(event_id, source_limit) do
+  defp ticket_issue_queue_rows(event_ids, source_limit) do
     from(t in "sales_ticket_issues",
       join: o in "sales_orders",
       on: o.id == t.sales_order_id,
-      where: t.status == "manual_review",
+      where: t.status == "manual_review" and o.event_id in ^event_ids,
       order_by: [desc: t.inserted_at, desc: t.id],
       limit: ^source_limit,
       select: %{
@@ -726,7 +742,6 @@ defmodule FastCheck.Sales.ManualReview do
         sort_id: t.id
       }
     )
-    |> maybe_filter_joined_event(event_id)
     |> Repo.all()
   end
 
@@ -952,12 +967,9 @@ defmodule FastCheck.Sales.ManualReview do
     if status in allowed, do: :ok, else: {:error, :unsafe_manual_review_transition}
   end
 
-  defp ash_actor(actor, event_id) do
-    %{
-      actor_type: :admin,
-      actor_id: actor_id(actor),
-      allowed_event_ids: [event_id]
-    }
+  defp ash_actor(actor) do
+    {:ok, verified_actor} = DashboardAccess.actor_for_identity(actor)
+    Map.put(verified_actor, :actor_id, actor_id(actor))
   end
 
   defp actor_id(actor) do
@@ -1004,21 +1016,19 @@ defmodule FastCheck.Sales.ManualReview do
     end
   end
 
-  defp maybe_filter_event(query, nil), do: query
-  defp maybe_filter_event(query, event_id), do: where(query, [o], o.event_id == ^event_id)
+  defp scoped_event_ids(actor, filters) do
+    granted = DashboardAccess.allowed_event_ids(actor)
+    filter = Map.get(filters, "event_id") || Map.get(filters, :event_id)
 
-  defp maybe_filter_joined_event(query, nil), do: query
+    case blank_to_nil(filter) do
+      nil ->
+        granted
 
-  defp maybe_filter_joined_event(query, event_id) do
-    where(query, [_row, o], o.event_id == ^event_id)
-  end
-
-  defp parse_optional_integer(nil), do: nil
-
-  defp parse_optional_integer(value) do
-    case parse_integer(value) do
-      {:ok, int} -> int
-      _ -> nil
+      value ->
+        case parse_integer(value) do
+          {:ok, event_id} when event_id > 0 -> if(event_id in granted, do: [event_id], else: [])
+          _ -> []
+        end
     end
   end
 

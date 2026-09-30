@@ -9,6 +9,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
   alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheckWeb.SalesWebFixtures, as: SalesWebFixtures
   alias Req.Response
 
   setup do
@@ -42,7 +43,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
     } do
       event = insert_event!(%{name: "Edit Modal WhatsApp Gate"})
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view |> element("#show-edit-event-#{event.id}") |> render_click()
 
@@ -258,7 +259,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       conn: conn
     } do
       event = insert_event!(%{name: "Section Layout Event"})
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view |> element("#show-edit-event-#{event.id}") |> render_click()
 
@@ -368,7 +369,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
     test "edit modal links to WhatsApp offer management", %{conn: conn} do
       event = insert_event!(%{name: "Offers Link Event"})
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view |> element("#show-edit-event-#{event.id}") |> render_click()
 
@@ -402,7 +403,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
     test "renders stable action labels without pending placeholder text", %{conn: conn} do
       event = insert_event!(%{name: "Actions Event"})
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       assert has_element?(view, "#open-scanner-#{event.id}", "Scanner")
       assert has_element?(view, "#show-sync-history-#{event.id}", "History")
@@ -421,7 +422,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
     test "operator can enable and disable WhatsApp Sales for an event", %{conn: conn} do
       event = insert_event!(%{name: "WhatsApp Gate Event"})
 
-      {:ok, view, html} = mount_dashboard(conn)
+      {:ok, view, html} = mount_dashboard(conn, [event.id])
 
       assert html =~ "WhatsApp Sales:"
       assert has_element?(view, "#whatsapp-sales-control-#{event.id}", "Disabled")
@@ -444,6 +445,26 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert has_element?(view, "#whatsapp-sales-control-#{event.id}", "Disabled")
       assert has_element?(view, "#enable-whatsapp-sales-#{event.id}", "Enable")
       refute Events.get_event!(event.id).whatsapp_sales_enabled
+    end
+
+    test "Sales controls are hidden and reject actions for an ungranted event", %{conn: conn} do
+      granted_event = insert_event!(%{name: "Granted Sales Event"})
+      ungranted_event = insert_event!(%{name: "Un granted Sales Event"})
+      assert {:ok, _} = Events.enable_whatsapp_sales(ungranted_event.id)
+
+      {:ok, view, _html} = mount_dashboard(conn, [granted_event.id])
+
+      assert has_element?(view, "#whatsapp-sales-control-#{granted_event.id}")
+      refute has_element?(view, "#whatsapp-sales-control-#{ungranted_event.id}")
+
+      render_click(view, "disable_whatsapp_sales", %{"event_id" => ungranted_event.id})
+      assert Events.get_event!(ungranted_event.id).whatsapp_sales_enabled
+
+      render_click(view, "enable_whatsapp_sales", %{"event_id" => ungranted_event.id})
+      assert Events.get_event!(ungranted_event.id).whatsapp_sales_enabled
+
+      view |> element("#show-edit-event-#{ungranted_event.id}") |> render_click()
+      refute has_element?(view, "#edit-whatsapp-sales-section-#{ungranted_event.id}")
     end
   end
 
@@ -526,7 +547,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert {:ok, _event} = Events.enable_whatsapp_sales(event.id)
       assert {:ok, _event} = Events.archive_event(event.id)
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view
       |> element("#events-tab-archived")
@@ -707,7 +728,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute Events.get_event!(created.id).whatsapp_sales_enabled
     end
 
-    test "create with WhatsApp sales checkbox enables gate after event creation", %{conn: conn} do
+    test "new event remains WhatsApp-disabled until it receives a server event grant", %{
+      conn: conn
+    } do
       mock_tickera_requests(
         %{
           "event_name" => "WhatsApp Enabled Create Event",
@@ -744,7 +767,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
         |> Enum.find(&(&1.name == "WhatsApp Enabled Create Event"))
 
       assert %Event{} = created
-      assert Events.get_event!(created.id).whatsapp_sales_enabled
+      refute Events.get_event!(created.id).whatsapp_sales_enabled
+      assert render(view) =~ "A server-side event grant is required"
       assert render(view) =~ "Starting full attendee sync"
       assert_sync_finishes(view)
     end
@@ -1041,7 +1065,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
     end
   end
 
-  defp mount_dashboard(conn) do
+  defp mount_dashboard(conn, event_ids \\ []) do
+    SalesWebFixtures.configure_dashboard_grants(event_ids)
+
     conn
     |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
     |> live(~p"/dashboard")

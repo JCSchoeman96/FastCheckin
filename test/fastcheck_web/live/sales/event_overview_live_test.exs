@@ -41,7 +41,7 @@ defmodule FastCheckWeb.Sales.EventOverviewLiveTest do
 
     {:ok, _view, html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([event.id])
       |> live(~p"/dashboard/events/#{event.id}/overview")
 
     assert html =~ "Live Overview Event"
@@ -61,7 +61,7 @@ defmodule FastCheckWeb.Sales.EventOverviewLiveTest do
 
     {:ok, _view, html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([event.id])
       |> live(~p"/dashboard/events/#{event.id}/overview")
 
     assert html =~ "No WordPress/Tickera attendees synced for this event."
@@ -76,8 +76,19 @@ defmodule FastCheckWeb.Sales.EventOverviewLiveTest do
     assert {:error,
             {:live_redirect, %{to: "/dashboard", flash: %{"error" => "Event not found."}}}} =
              conn
-             |> Fixtures.authenticated_conn()
+             |> Fixtures.authenticated_conn([])
              |> live(~p"/dashboard/events/9999999/overview")
+  end
+
+  test "a guessed ungranted event overview has the same safe not-found response", %{conn: conn} do
+    event_a = Fixtures.insert_event!(%{name: "Granted Event"})
+    event_b = Fixtures.insert_event!(%{name: "Private Event B"})
+
+    assert {:error,
+            {:live_redirect, %{to: "/dashboard", flash: %{"error" => "Event not found."}}}} =
+             conn
+             |> Fixtures.authenticated_conn([event_a.id])
+             |> live(~p"/dashboard/events/#{event_b.id}/overview")
   end
 
   defp refute_unsafe_html(html) do

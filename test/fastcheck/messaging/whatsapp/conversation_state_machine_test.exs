@@ -1687,7 +1687,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     conversation: conversation,
     event: event
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     at_quantity =
       conversation
@@ -1712,7 +1717,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               4
+             )
 
     offer
     |> Changeset.for_update(
@@ -1743,7 +1753,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     conversation: conversation,
     event: event
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               4
+             )
 
     at_quantity =
       conversation
@@ -1753,7 +1768,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("1", "cap-lower-4")
       |> progress("1", "cap-lower-5")
 
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
 
     assert {:ok, rejected} = handle(at_quantity.conversation, "3", "cap-lower-6")
     assert rejected.conversation.state == "collecting_quantity"
@@ -1804,7 +1824,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer
     |> Changeset.for_update(
@@ -1845,7 +1870,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 15)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               15
+             )
 
     offer
     |> Changeset.for_update(
@@ -1914,7 +1944,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 10)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               10
+             )
 
     offer
     |> Changeset.for_update(
@@ -1944,7 +1979,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer
     |> Changeset.for_update(
@@ -1964,7 +2004,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("2", "fresh-cap-back-6")
 
     assert at_buyer_name.conversation.state == "collecting_buyer_name"
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 6)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               6
+             )
 
     assert {:ok, at_quantity} = handle(at_buyer_name.conversation, "0", "fresh-cap-back-7")
     assert at_quantity.conversation.state == "collecting_quantity"
@@ -1977,7 +2023,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer
     |> Changeset.for_update(
@@ -2020,7 +2071,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer =
       offer
@@ -2088,7 +2144,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     event: event,
     offer: offer
   } do
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 4)
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               4
+             )
 
     confirming =
       conversation
@@ -2102,7 +2163,14 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("jan@example.com", "cap-confirm-8")
 
     assert confirming.conversation.state == "confirming_order"
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 2)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               SalesWebFixtures.dashboard_actor([event.id]),
+               event.id,
+               2
+             )
+
     assert {:ok, before_inventory} = ReservationLedger.get_availability(offer.id)
 
     assert {:ok, result} = handle(confirming.conversation, "1", "cap-confirm-9")

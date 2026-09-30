@@ -46,6 +46,7 @@ defmodule FastCheck.Sales.DomainShellTest do
              "lib/fastcheck/sales/checkout_expiry.ex",
              "lib/fastcheck/sales/checkout_session.ex",
              "lib/fastcheck/sales/conversation.ex",
+             "lib/fastcheck/sales/dashboard_access.ex",
              "lib/fastcheck/sales/delivery_attempt.ex",
              "lib/fastcheck/sales/manual_review.ex",
              "lib/fastcheck/sales/manual_review_action.ex",

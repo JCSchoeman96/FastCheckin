@@ -13,7 +13,7 @@ defmodule FastCheck.Sales.OfferManagementTest do
 
   setup do
     event = SalesWebFixtures.insert_event!(%{name: "Offer Management Event"})
-    actor = OfferManagement.admin_actor_from_user(%{username: "admin"}, event.id)
+    actor = SalesWebFixtures.dashboard_actor([event.id])
     {:ok, event: event, actor: actor}
   end
 
@@ -89,6 +89,60 @@ defmodule FastCheck.Sales.OfferManagementTest do
              OfferManagement.retry_inventory_initialization(actor, event.id, offer.id)
 
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+  end
+
+  test "ungranted Event offers cannot be read or changed", %{event: granted_event} do
+    ungranted_event = SalesWebFixtures.insert_event!(%{name: "Un granted Offer Event"})
+    actor = SalesWebFixtures.dashboard_actor([granted_event.id])
+
+    offer = SalesFixtures.insert_offer!(event_id: ungranted_event.id, sales_channel: "whatsapp")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+
+    before =
+      Repo.one!(
+        from o in "sales_ticket_offers",
+          where: o.id == ^offer.id,
+          select: %{sales_enabled: o.sales_enabled, lock_version: o.lock_version}
+      )
+
+    {:ok, inventory_before} = ReservationLedger.get_availability(offer.id)
+
+    assert {:error, :not_found} = OfferManagement.fetch_event_context(actor, ungranted_event.id)
+    assert {:error, :not_found} = OfferManagement.list_offers(actor, ungranted_event.id)
+
+    assert {:error, :not_found} =
+             OfferManagement.create_offer(actor, ungranted_event.id, %{
+               "name" => "Denied offer",
+               "price" => "10",
+               "initial_quantity" => "1",
+               "max_per_order" => "1"
+             })
+
+    assert {:error, :not_found} =
+             OfferManagement.update_offer(actor, ungranted_event.id, offer.id, %{})
+
+    assert {:error, :not_found} =
+             OfferManagement.enable_offer(actor, ungranted_event.id, offer.id)
+
+    assert {:error, :not_found} =
+             OfferManagement.disable_offer(actor, ungranted_event.id, offer.id)
+
+    assert {:error, :not_found} =
+             OfferManagement.retry_inventory_initialization(actor, ungranted_event.id, offer.id)
+
+    assert Repo.one!(
+             from o in "sales_ticket_offers",
+               where: o.id == ^offer.id,
+               select: %{sales_enabled: o.sales_enabled, lock_version: o.lock_version}
+           ) == before
+
+    assert Repo.aggregate(
+             from(o in "sales_ticket_offers", where: o.event_id == ^ungranted_event.id),
+             :count,
+             :id
+           ) == 1
+
+    assert {:ok, ^inventory_before} = ReservationLedger.get_availability(offer.id)
   end
 
   test "enable_offer refuses missing or inconsistent inventory", %{event: event, actor: actor} do

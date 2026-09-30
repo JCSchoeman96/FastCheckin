@@ -54,7 +54,7 @@ defmodule FastCheck.Integration.EndToEndTest do
     authed_conn =
       init_test_session(conn, %{
         dashboard_authenticated: true,
-        dashboard_username: "integration-admin"
+        dashboard_username: "admin"
       })
 
     {:ok, conn: authed_conn, event: event, bypass: bypass, api_key: api_key}

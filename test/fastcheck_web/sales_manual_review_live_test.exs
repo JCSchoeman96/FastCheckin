@@ -29,7 +29,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     {:ok, view, html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([91_002])
       |> live(~p"/dashboard/sales/reviews")
 
     assert html =~ "Manual review operations"
@@ -83,7 +83,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([91_002])
       |> live(~p"/dashboard/sales/reviews")
 
     detail =
@@ -112,7 +112,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([91_002])
       |> live(~p"/dashboard/sales/reviews")
 
     render_click(view, "select_subject", %{
@@ -141,7 +141,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([91_002])
       |> live(~p"/dashboard/sales/reviews")
 
     render_click(view, "select_subject", %{
@@ -165,7 +165,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([91_002])
       |> live(~p"/dashboard/sales/reviews")
 
     render_click(view, "select_subject", %{
@@ -189,7 +189,7 @@ defmodule FastCheckWeb.SalesManualReviewLiveTest do
 
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([91_002])
       |> live(~p"/dashboard/sales/reviews")
 
     render_click(view, "select_subject", %{

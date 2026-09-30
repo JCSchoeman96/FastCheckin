@@ -5,18 +5,26 @@ defmodule FastCheckWeb.Sales.OpsDashboardLive do
 
   use FastCheckWeb, :live_view
 
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.OpsMetrics
 
   @impl true
-  def mount(_params, _session, socket) do
-    filters = %{"window" => "1h"}
+  def mount(_params, session, socket) do
+    case DashboardAccess.actor_for_identity(session) do
+      {:ok, actor} ->
+        filters = %{"window" => "1h"}
 
-    {:ok,
-     socket
-     |> assign(:page_title, "Sales operations")
-     |> assign(:filters, filters)
-     |> assign(:form, to_form(filters, as: :filters))
-     |> load_dashboard(filters)}
+        {:ok,
+         socket
+         |> assign(:page_title, "Sales operations")
+         |> assign(:dashboard_actor, actor)
+         |> assign(:filters, filters)
+         |> assign(:form, to_form(filters, as: :filters))
+         |> load_dashboard(filters)}
+
+      {:error, :unauthorized} ->
+        {:ok, push_navigate(socket, to: ~p"/")}
+    end
   end
 
   @impl true
@@ -33,9 +41,11 @@ defmodule FastCheckWeb.Sales.OpsDashboardLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp load_dashboard(socket, filters) do
+    actor = socket.assigns.dashboard_actor
+
     socket
-    |> assign(:summary, OpsMetrics.summary(filters))
-    |> assign(:recent_failures, OpsMetrics.recent_failures(filters))
+    |> assign(:summary, OpsMetrics.summary(actor, filters))
+    |> assign(:recent_failures, OpsMetrics.recent_failures(actor, filters))
   end
 
   @impl true
@@ -46,7 +56,7 @@ defmodule FastCheckWeb.Sales.OpsDashboardLive do
         <header class="space-y-2">
           <h1 class="text-2xl font-semibold text-fc-text-primary">Sales operations</h1>
           <p class="text-sm text-fc-text-secondary">
-            Read-only Sales health, payment, ticket, delivery, review, and worker backlog.
+            Read-only Sales health, payment, ticket, delivery, and review status.
           </p>
         </header>
 
@@ -75,10 +85,9 @@ defmodule FastCheckWeb.Sales.OpsDashboardLive do
           </div>
         </.form>
 
-        <section class="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <section class="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
           <.metric label="Manual review" value={@summary.manual_review_open_count} />
           <.metric label="Payment mismatch" value={@summary.payment_mismatch_count} />
-          <.metric label="Unmatched webhooks" value={@summary.payment_unmatched_event_count} />
           <.metric label="Revoked tickets" value={@summary.tickets_revoked_count} />
           <.metric label="Delivery fallback" value={@summary.delivery_fallback_required_count} />
           <.metric label="Scanner visibility" value={@summary.scanner_visibility_pending_count} />
@@ -88,7 +97,6 @@ defmodule FastCheckWeb.Sales.OpsDashboardLive do
           <.panel title="Payment health" rows={@summary.payment_attempts_by_status} />
           <.panel title="Ticket health" rows={ticket_rows(@summary)} />
           <.panel title="Delivery health" rows={@summary.delivery_attempts_by_status} />
-          <.panel title="Worker backlog" rows={@summary.worker_retry_backlog_by_queue} />
         </section>
 
         <.card variant="outline" color="natural" rounded="large" padding="large">

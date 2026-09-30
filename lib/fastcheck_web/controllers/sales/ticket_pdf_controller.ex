@@ -8,6 +8,7 @@ defmodule FastCheckWeb.Sales.TicketPdfController do
 
   use FastCheckWeb, :controller
 
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Tickets.ArtifactError
   alias FastCheck.Tickets.ArtifactResolver
   alias FastCheck.Tickets.PdfTicket
@@ -32,19 +33,10 @@ defmodule FastCheckWeb.Sales.TicketPdfController do
   end
 
   defp dashboard_actor(conn) do
-    current_user = conn.assigns[:current_user] || %{}
-
-    username =
-      Map.get(current_user, :username) || Map.get(current_user, "username") || "dashboard"
-
-    id = Map.get(current_user, :id) || Map.get(current_user, "id") || username
-
-    %{
-      id: id,
-      username: username,
-      actor_type: :admin,
-      scope: :global_dashboard
-    }
+    case DashboardAccess.actor_for_identity(conn.assigns[:current_user]) do
+      {:ok, actor} -> actor
+      {:error, :unauthorized} -> nil
+    end
   end
 
   # sobelow_skip ["XSS.SendResp", "XSS.ContentType"]

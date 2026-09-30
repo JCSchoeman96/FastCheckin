@@ -9,13 +9,20 @@ defmodule FastCheck.Sales.CheckoutOrderTotalStorageTest do
   alias FastCheck.Sales.Inventory.ReservationLedger
   alias FastCheck.Sales.OrderLine
   alias FastCheck.SalesCheckoutFixtures, as: Fixtures
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   @max_postgres_integer 2_147_483_647
 
   test "fresh checkout rejects total above PostgreSQL INTEGER before any side effects" do
     event = create_event(%{name: "H07 overflow boundary"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer =
       Fixtures.insert_offer!(
@@ -132,7 +139,13 @@ defmodule FastCheck.Sales.CheckoutOrderTotalStorageTest do
   test "exact idempotent replay skips storage guard after later cap or price context changes" do
     event = create_event(%{name: "Idempotent storage replay"})
     assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
-    assert {:ok, _} = Events.set_whatsapp_max_tickets_per_order(event.id, 12)
+
+    assert {:ok, _} =
+             Events.set_whatsapp_max_tickets_per_order(
+               WebFixtures.dashboard_actor([event.id]),
+               event.id,
+               12
+             )
 
     offer =
       Fixtures.insert_offer!(

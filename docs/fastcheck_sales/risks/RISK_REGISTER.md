@@ -19,6 +19,8 @@ launch safety, customer trust, payment integrity, scanner validity, or privacy.
 | Agents start VS-01A before gates | P0 | Roadmap and docs must mark implementation blocked. | VS-00 |
 | Launch scope unclear | P0 | VS-00D must lock channel priority and launch scope. | VS-00D |
 | Operators see all events by default | P0 | First release must use `event_scoped_first` access, not role-only access. | VS-00B, VS-00D |
+| Dashboard identity crosses Sales Event boundaries | P0 | Resolve server-configured `DASHBOARD_ALLOWED_EVENT_IDS` and constrain every Sales query and action to that grant set. | P1-D |
+| General BrowserAuth routes lack Event isolation | P0 | Separately scope root Event administration/sync, CSV exports, browser scanner, and occupancy before treating application-wide dashboard access as isolated. | BrowserAuth event-isolation follow-up |
 | Public web checkout becomes accidental primary product | P0 | `web_checkout_sales` is deferred until after WhatsApp-first launch stability. | VS-00D |
 | Plaintext delivery or QR tokens are stored | P0 | Customer-facing tokens must be hash-only at rest, expiring, and revocable. | VS-00B |
 | Token-bearing URLs enter logs | P0 | Log redaction must cover customer links, provider URLs, access codes, and headers. | VS-00B |

@@ -15,6 +15,7 @@ defmodule FastCheck.Sales.AdminRefunds do
 
   alias FastCheck.Sales.{
     AdminRevocations,
+    DashboardAccess,
     ManualReview,
     Order,
     PaymentAttempt,
@@ -33,11 +34,12 @@ defmodule FastCheck.Sales.AdminRefunds do
   )
 
   @doc "Returns bounded, masked order context for admin refund/revoke operations."
-  def get_order_operations_context(order_id, opts \\ []) do
+  def get_order_operations_context(actor, order_id, opts \\ []) do
     limit = opts |> Keyword.get(:limit, @default_limit) |> clamp(1, @max_limit)
 
-    with {:ok, order} <- load_order(order_id),
-         {:ok, base} <- ManualReview.get_context("order", order.id),
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
+         {:ok, order} <- load_order(actor, order_id),
+         {:ok, base} <- ManualReview.get_context(actor, "order", order.id),
          {:ok, refund} <- load_refund_by_order(order.id) do
       ticket_counts = ticket_status_counts(order.id)
       tickets = bounded_ticket_summaries(order.id, limit)
@@ -72,7 +74,7 @@ defmodule FastCheck.Sales.AdminRefunds do
     with :ok <- require_admin_actor(actor),
          :ok <- require_reason(attrs),
          :ok <- maybe_require_admin_password(attrs),
-         {:ok, order} <- load_order(order_id),
+         {:ok, order} <- load_order(actor, order_id),
          :ok <- authorize_event(actor, order.event_id),
          {:ok, evidence} <- parse_provider_evidence(attrs),
          {:ok, authority} <- record_refund_evidence(actor, order, evidence, attrs),
@@ -96,7 +98,7 @@ defmodule FastCheck.Sales.AdminRefunds do
     with :ok <- require_admin_actor(actor),
          :ok <- require_reason(attrs),
          :ok <- maybe_require_admin_password(attrs),
-         {:ok, order} <- load_order(order_id),
+         {:ok, order} <- load_order(actor, order_id),
          :ok <- authorize_event(actor, order.event_id),
          {:ok, _refund} <- load_manual_review_refund(order.id) do
       retry_refund_inventory_under_lock(actor, order, attrs)
@@ -113,7 +115,7 @@ defmodule FastCheck.Sales.AdminRefunds do
   defp retry_refund_inventory_under_lock(actor, order, attrs) do
     Repo.transaction(fn ->
       Repo.query!("SELECT pg_advisory_xact_lock($1)", [order.id])
-      current_order = load_order!(order.id)
+      current_order = load_order!(actor, order.id)
       ensure_refunded_order!(current_order)
       authorize_event!(actor, current_order.event_id)
       current_refund = load_manual_review_refund!(order.id)
@@ -160,8 +162,8 @@ defmodule FastCheck.Sales.AdminRefunds do
     end
   end
 
-  defp load_order!(order_id) do
-    case load_order(order_id) do
+  defp load_order!(actor, order_id) do
+    case load_order(actor, order_id) do
       {:ok, order} -> order
       {:error, reason} -> Repo.rollback(reason)
     end
@@ -184,7 +186,7 @@ defmodule FastCheck.Sales.AdminRefunds do
     with :ok <- require_admin_actor(actor),
          :ok <- require_reason(attrs),
          :ok <- maybe_require_admin_password(attrs),
-         {:ok, order} <- load_order(order_id),
+         {:ok, order} <- load_order(actor, order_id),
          :ok <- authorize_event(actor, order.event_id),
          {:ok, revoke_result} <- revoke_issued_tickets(actor, order, attrs) do
       case incomplete_revocation_failures(revoke_result) do
@@ -264,7 +266,7 @@ defmodule FastCheck.Sales.AdminRefunds do
 
   defp record_refund_evidence_locked(actor, order, evidence, attrs) do
     Repo.query!("SELECT pg_advisory_xact_lock($1)", [order.id])
-    order = load_order!(order.id)
+    order = load_order!(actor, order.id)
     authorize_event!(actor, order.event_id)
 
     case load_refund_by_order(order.id) do
@@ -463,7 +465,7 @@ defmodule FastCheck.Sales.AdminRefunds do
     case Repo.transaction(fn ->
            Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
 
-           order = rollback_unwrap(load_order(order_id))
+           order = rollback_unwrap(load_order(actor, order_id))
            refund = rollback_unwrap(load_refund(refund_id))
            payment_attempt = rollback_unwrap(load_payment_attempt(refund.payment_attempt_id))
 
@@ -819,7 +821,7 @@ defmodule FastCheck.Sales.AdminRefunds do
       Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
 
       order =
-        case load_order(order_id) do
+        case load_order(actor, order_id) do
           {:ok, order} -> order
           {:error, reason} -> Repo.rollback(reason)
         end
@@ -873,9 +875,7 @@ defmodule FastCheck.Sales.AdminRefunds do
       "Revoke failures during admin refund: #{length(failures)} ticket(s) could not be revoked"
 
     _ =
-      order_id
-      |> load_order()
-      |> case do
+      case load_order(actor, order_id) do
         {:ok, order} ->
           order
           |> Changeset.for_update(
@@ -964,37 +964,14 @@ defmodule FastCheck.Sales.AdminRefunds do
   end
 
   defp require_admin_actor(actor) do
-    if actor_type(actor) == :admin, do: :ok, else: {:error, :forbidden}
+    case DashboardAccess.actor_for_identity(actor) do
+      {:ok, %{actor_type: :admin}} -> :ok
+      _ -> {:error, :forbidden}
+    end
   end
 
   defp authorize_event(actor, event_id) do
-    case actor_type(actor) do
-      :admin ->
-        cond do
-          not is_integer(event_id) ->
-            {:error, :forbidden}
-
-          event_allowed?(actor, event_id) ->
-            :ok
-
-          true ->
-            {:error, :forbidden}
-        end
-
-      _ ->
-        {:error, :forbidden}
-    end
-  end
-
-  defp event_allowed?(actor, event_id) do
-    case allowed_event_ids(actor) do
-      ids when is_list(ids) and ids != [] -> event_id in ids
-      _ -> false
-    end
-  end
-
-  defp allowed_event_ids(actor) do
-    Map.get(actor, :allowed_event_ids) || Map.get(actor, "allowed_event_ids")
+    if DashboardAccess.event_granted?(actor, event_id), do: :ok, else: {:error, :forbidden}
   end
 
   defp require_reason(attrs) do
@@ -1010,35 +987,40 @@ defmodule FastCheck.Sales.AdminRefunds do
   end
 
   defp ash_actor(actor, _event_id, attrs) do
+    {:ok, verified_actor} = DashboardAccess.actor_for_identity(actor)
+
     %{
-      actor_type: actor_type(actor),
+      actor_type: verified_actor.actor_type,
       actor_id: actor_id(actor),
-      allowed_event_ids: allowed_event_ids(actor),
+      allowed_event_ids: verified_actor.allowed_event_ids,
       correlation_id: Map.get(attrs, "correlation_id"),
       idempotency_key: Map.get(attrs, "idempotency_key")
     }
   end
 
-  defp load_order(order_id) do
+  defp load_order(actor, order_id) do
     with {:ok, id} <- parse_integer(order_id) do
-      Order
-      |> Ash.Query.for_read(:get_by_id, %{id: id})
-      |> Ash.read_one(authorize?: false)
-      |> case do
-        {:ok, nil} -> {:error, :not_found}
-        {:ok, order} -> {:ok, order}
-        {:error, reason} -> {:error, reason}
+      event_ids = DashboardAccess.allowed_event_ids(actor)
+
+      case Repo.one(from o in Order, where: o.id == ^id and o.event_id in ^event_ids) do
+        nil -> {:error, :not_found}
+        order -> {:ok, order}
       end
     end
   end
 
   defp actor_type(actor) do
-    Map.get(actor, :actor_type) || Map.get(actor, "actor_type") || :admin
+    case DashboardAccess.actor_for_identity(actor) do
+      {:ok, verified_actor} -> verified_actor.actor_type
+      _ -> :unknown
+    end
   end
 
   defp actor_id(actor) do
-    Map.get(actor, :id) || Map.get(actor, "id") || Map.get(actor, :username) ||
-      Map.get(actor, "username") || "dashboard"
+    case DashboardAccess.actor_for_identity(actor) do
+      {:ok, verified_actor} -> verified_actor.id
+      _ -> "unknown"
+    end
   end
 
   defp parse_integer(value) when is_integer(value), do: {:ok, value}

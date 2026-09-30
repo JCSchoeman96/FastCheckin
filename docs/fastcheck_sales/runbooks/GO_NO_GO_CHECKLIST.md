@@ -18,6 +18,11 @@
 - [ ] `TICKET_TOKEN_PEPPER` is present and not logged.
 - [ ] `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` authenticate the assigned
   operator.
+- [ ] `DASHBOARD_ALLOWED_EVENT_IDS` is configured with only the Event IDs the
+  dashboard should access for Sales; blank means no Sales Event access, and a
+  malformed nonblank value must fail startup.
+- [ ] Event administration/sync, CSV exports, scanner, and occupancy remain a
+  separate BrowserAuth event-isolation review; P1-D does not cover those routes.
 - [ ] Paystack secret variables are present and not logged.
 - [ ] Meta/WhatsApp secret variables are present and not logged.
 - [ ] `MOBILE_JWT_SECRET` is present and not logged.
@@ -160,4 +165,3 @@
 - [ ] Manual review coverage is active for launch window.
 - [ ] Incident response owner is active for launch window.
 - [ ] Launch owner signs go.
-

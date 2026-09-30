@@ -2,6 +2,7 @@ defmodule FastCheck.Sales.AdminDashboardTest do
   use FastCheck.DataCase, async: false
 
   alias FastCheck.Sales.AdminDashboard
+  alias FastCheckWeb.SalesWebFixtures, as: WebFixtures
 
   @raw_email "sensitive.buyer@example.com"
   @raw_phone "+27123456789"
@@ -28,7 +29,8 @@ defmodule FastCheck.Sales.AdminDashboardTest do
       manual_review_reason: "payment_state_conflict"
     )
 
-    summary = AdminDashboard.summary(%{"event_id" => to_string(event_id)})
+    actor = WebFixtures.dashboard_actor([event_id])
+    summary = AdminDashboard.summary(actor, %{"event_id" => to_string(event_id)})
 
     assert summary.orders_in_window == 1
     assert summary.paid_verified == 1
@@ -46,8 +48,11 @@ defmodule FastCheck.Sales.AdminDashboardTest do
     insert_payment_attempt!(newest.id, "verified_amount_mismatch")
     insert_payment_attempt!(old.id, "verified_success")
 
+    actor = WebFixtures.dashboard_actor([event_id])
+
     assert [order] =
              AdminDashboard.recent_orders(
+               actor,
                %{"event_id" => to_string(event_id), "search" => "FC-ORDER"},
                limit: 1
              )
@@ -64,6 +69,7 @@ defmodule FastCheck.Sales.AdminDashboardTest do
 
     assert [] =
              AdminDashboard.recent_orders(
+               actor,
                %{"event_id" => to_string(event_id), "search" => @raw_phone},
                limit: 25
              )
@@ -72,9 +78,11 @@ defmodule FastCheck.Sales.AdminDashboardTest do
   test "invalid date filters do not broaden recent order results" do
     event_id = 12_003
     _old = insert_sales_order!(event_id, "FC-DATE-OLD", "paid_verified", days_ago: 180)
+    actor = WebFixtures.dashboard_actor([event_id])
 
     assert [] =
              AdminDashboard.recent_orders(
+               actor,
                %{
                  "event_id" => to_string(event_id),
                  "from_date" => "not-a-date",
@@ -95,7 +103,10 @@ defmodule FastCheck.Sales.AdminDashboardTest do
 
     insert_payment_event!("provider-ref-#{order.id}", "manual_review")
 
-    assert [review] = AdminDashboard.manual_review_queue(%{"event_id" => to_string(event_id)})
+    actor = WebFixtures.dashboard_actor([event_id])
+
+    assert [review] =
+             AdminDashboard.manual_review_queue(actor, %{"event_id" => to_string(event_id)})
 
     assert review.order_public_reference == "FC-REVIEW"
     assert review.reason_code == "payment_state_conflict"
@@ -113,7 +124,9 @@ defmodule FastCheck.Sales.AdminDashboardTest do
     insert_payment_attempt!(order.id, "verified_success")
     insert_ticket_issue!(order.id, line_id, "issued")
 
-    assert {:ok, detail} = AdminDashboard.order_detail(order.id)
+    actor = WebFixtures.dashboard_actor([event_id])
+
+    assert {:ok, detail} = AdminDashboard.order_detail(actor, order.id)
 
     assert detail.order_public_reference == "FC-DETAIL"
     assert detail.ticket_issue_count == 1
@@ -121,6 +134,21 @@ defmodule FastCheck.Sales.AdminDashboardTest do
     assert detail.attendee_link_count == 1
     refute inspect(detail) =~ @raw_buyer_name
     refute unsafe_value_present?(detail)
+  end
+
+  test "default lists and guessed order lookups stay inside the configured event grants" do
+    event_a_id = 12_006
+    event_b_id = 12_007
+    order_a = insert_sales_order!(event_a_id, "FC-GRANTED-A", "paid_verified", days_ago: 0)
+    order_b = insert_sales_order!(event_b_id, "FC-UNGRANTED-B", "paid_verified", days_ago: 0)
+    actor = WebFixtures.dashboard_actor([event_a_id])
+
+    assert [%{id: id}] = AdminDashboard.recent_orders(actor)
+    assert id == order_a.id
+    assert AdminDashboard.order_detail(actor, order_b.id) == {:error, :not_found}
+
+    summary = AdminDashboard.summary(actor, %{"event_id" => to_string(event_b_id)})
+    assert summary.orders_in_window == 0
   end
 
   defp unsafe_value_present?(term) do

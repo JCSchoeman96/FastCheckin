@@ -6,20 +6,28 @@ defmodule FastCheckWeb.SalesDashboardLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.Sales.AdminDashboard
+  alias FastCheck.Sales.DashboardAccess
 
   @impl true
-  def mount(_params, _session, socket) do
-    filters = %{}
+  def mount(_params, session, socket) do
+    case DashboardAccess.actor_for_identity(session) do
+      {:ok, actor} ->
+        filters = %{}
 
-    {:ok,
-     socket
-     |> assign(:page_title, "Sales dashboard")
-     |> assign(:filters, filters)
-     |> assign(:form, to_form(filters, as: :filters))
-     |> assign(:selected_order_id, nil)
-     |> assign(:selected_order_detail, nil)
-     |> assign(:detail_error, nil)
-     |> load_dashboard(filters)}
+        {:ok,
+         socket
+         |> assign(:page_title, "Sales dashboard")
+         |> assign(:dashboard_actor, actor)
+         |> assign(:filters, filters)
+         |> assign(:form, to_form(filters, as: :filters))
+         |> assign(:selected_order_id, nil)
+         |> assign(:selected_order_detail, nil)
+         |> assign(:detail_error, nil)
+         |> load_dashboard(filters)}
+
+      {:error, :unauthorized} ->
+        {:ok, push_navigate(socket, to: ~p"/")}
+    end
   end
 
   @impl true
@@ -37,7 +45,7 @@ defmodule FastCheckWeb.SalesDashboardLive do
   end
 
   def handle_event("select_order", %{"order-id" => order_id}, socket) do
-    case AdminDashboard.order_detail(order_id) do
+    case AdminDashboard.order_detail(socket.assigns.dashboard_actor, order_id) do
       {:ok, detail} ->
         {:noreply,
          socket
@@ -57,11 +65,13 @@ defmodule FastCheckWeb.SalesDashboardLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp load_dashboard(socket, filters) do
+    actor = socket.assigns.dashboard_actor
+
     socket
-    |> assign(:summary, AdminDashboard.summary(filters))
-    |> assign(:recent_orders, AdminDashboard.recent_orders(filters))
-    |> assign(:manual_review_queue, AdminDashboard.manual_review_queue(filters))
-    |> assign(:inventory_summary, AdminDashboard.inventory_summary(filters))
+    |> assign(:summary, AdminDashboard.summary(actor, filters))
+    |> assign(:recent_orders, AdminDashboard.recent_orders(actor, filters))
+    |> assign(:manual_review_queue, AdminDashboard.manual_review_queue(actor, filters))
+    |> assign(:inventory_summary, AdminDashboard.inventory_summary(actor, filters))
   end
 
   @impl true

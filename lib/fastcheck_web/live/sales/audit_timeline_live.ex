@@ -6,17 +6,21 @@ defmodule FastCheckWeb.Sales.AuditTimelineLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.Sales.AuditViews
+  alias FastCheck.Sales.DashboardAccess
 
   @impl true
-  def mount(params, _session, socket) do
+  def mount(params, session, socket) do
     entity_type = Map.get(params, "entity_type")
     entity_id = Map.get(params, "entity_id")
+    identity = Map.get(session, "dashboard_username") || Map.get(session, :dashboard_username)
+    {:ok, actor} = DashboardAccess.actor_for_identity(identity)
 
     {:ok,
      socket
      |> assign(:page_title, "Audit timeline")
      |> assign(:entity_type, entity_type)
      |> assign(:entity_id, entity_id)
+     |> assign(:actor, actor)
      |> assign(:page, 1)
      |> load_timeline()}
   end
@@ -29,7 +33,10 @@ defmodule FastCheckWeb.Sales.AuditTimelineLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp load_timeline(socket) do
-    case AuditViews.timeline(socket.assigns.entity_type, socket.assigns.entity_id,
+    case AuditViews.timeline(
+           socket.assigns.actor,
+           socket.assigns.entity_type,
+           socket.assigns.entity_id,
            limit: 25,
            page: socket.assigns.page
          ) do

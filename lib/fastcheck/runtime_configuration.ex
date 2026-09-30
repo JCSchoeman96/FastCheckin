@@ -10,6 +10,8 @@ defmodule FastCheck.RuntimeConfiguration do
   @dashboard_password_default "fastcheck"
   @dashboard_password_min_bytes 16
 
+  @dashboard_event_id_pattern ~r/^[0-9]+$/
+
   @type dashboard_credentials_error ::
           :missing_username
           | :blank_username
@@ -35,6 +37,28 @@ defmodule FastCheck.RuntimeConfiguration do
        }}
     end
   end
+
+  @spec dashboard_event_ids(term()) ::
+          {:ok, [pos_integer()]} | {:error, :invalid_dashboard_event_ids}
+  def dashboard_event_ids(raw_value) when is_binary(raw_value) do
+    case String.trim(raw_value) do
+      "" ->
+        {:ok, []}
+
+      value ->
+        value
+        |> String.split(",", trim: false)
+        |> Enum.reduce_while({:ok, []}, &parse_dashboard_event_id/2)
+        |> case do
+          {:ok, ids} -> {:ok, ids |> Enum.uniq() |> Enum.sort()}
+          {:error, :invalid_dashboard_event_ids} = error -> error
+        end
+    end
+  end
+
+  def dashboard_event_ids(nil), do: {:ok, []}
+
+  def dashboard_event_ids(_raw_value), do: {:error, :invalid_dashboard_event_ids}
 
   @spec whatsapp_sandbox_mode(atom(), boolean(), term()) ::
           {:ok, boolean()} | {:error, :missing | :invalid}
@@ -91,6 +115,19 @@ defmodule FastCheck.RuntimeConfiguration do
        do: {:error, :password_too_short}
 
   defp validate_dashboard_password(_password), do: :ok
+
+  defp parse_dashboard_event_id(value, {:ok, ids}) do
+    value = String.trim(value)
+
+    if Regex.match?(@dashboard_event_id_pattern, value) do
+      case Integer.parse(value) do
+        {id, ""} when id > 0 -> {:cont, {:ok, [id | ids]}}
+        _ -> {:halt, {:error, :invalid_dashboard_event_ids}}
+      end
+    else
+      {:halt, {:error, :invalid_dashboard_event_ids}}
+    end
+  end
 
   defp trim_value(nil), do: nil
   defp trim_value(value) when is_binary(value), do: String.trim(value)

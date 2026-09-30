@@ -10,6 +10,7 @@ defmodule FastCheck.Sales.OpsMetrics do
   import Ecto.Query
 
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
 
   @default_window "1h"
   @windows %{
@@ -24,8 +25,8 @@ defmodule FastCheck.Sales.OpsMetrics do
   @active_checkout_statuses ~w(hold_attached payment_link_sent payment_started)
 
   @doc "Returns bounded Sales operational counters."
-  def summary(filters \\ %{}) do
-    filters = normalize_filters(filters)
+  def summary(actor, filters \\ %{}) do
+    filters = normalize_filters(filters, actor)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     from_dt = DateTime.add(now, -Map.fetch!(@windows, filters.window), :second)
 
@@ -39,8 +40,6 @@ defmodule FastCheck.Sales.OpsMetrics do
       checkout_expired_unreleased_count: checkout_expired_unreleased_count(filters, from_dt),
       payment_attempts_by_status: payment_attempts_by_status(filters, from_dt),
       payment_mismatch_count: payment_mismatch_count(filters, from_dt),
-      payment_unmatched_event_count: payment_event_count("unmatched", from_dt),
-      payment_webhook_duplicate_count: payment_event_count("duplicate", from_dt),
       tickets_issued_count: ticket_status_count("issued", filters, from_dt),
       tickets_partially_issued_count: order_status_count("partially_issued", filters, from_dt),
       ticket_issue_failure_count: ticket_status_count("manual_review", filters, from_dt),
@@ -50,14 +49,13 @@ defmodule FastCheck.Sales.OpsMetrics do
       delivery_fallback_required_count:
         delivery_status_count("fallback_required", filters, from_dt),
       manual_review_open_count: manual_review_open_count(filters, from_dt),
-      manual_review_oldest_age_seconds: manual_review_oldest_age_seconds(filters, from_dt, now),
-      worker_retry_backlog_by_queue: worker_retry_backlog_by_queue()
+      manual_review_oldest_age_seconds: manual_review_oldest_age_seconds(filters, from_dt, now)
     }
   end
 
   @doc "Returns bounded recent failure rows for the ops dashboard."
-  def recent_failures(filters \\ %{}, opts \\ []) do
-    filters = normalize_filters(filters)
+  def recent_failures(actor, filters \\ %{}, opts \\ []) do
+    filters = normalize_filters(filters, actor)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     from_dt = DateTime.add(now, -Map.fetch!(@windows, filters.window), :second)
     limit = opts |> Keyword.get(:limit, @default_limit) |> clamp(1, @max_limit)
@@ -66,7 +64,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     |> join(:inner, [p], o in "sales_orders", on: o.id == p.sales_order_id)
     |> where([p, _o], p.status in ^@review_payment_statuses)
     |> where([p, _o], p.inserted_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> order_by([p, _o], desc: p.inserted_at, desc: p.id)
     |> limit(^limit)
     |> select([p, o], %{
@@ -88,7 +86,7 @@ defmodule FastCheck.Sales.OpsMetrics do
 
     "sales_orders"
     |> where([o], o.inserted_at >= ^from_dt)
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> maybe_filter_source_channel(filters.source_channel)
     |> group_by([o], field(o, ^group_field))
     |> select([o], {field(o, ^group_field), count(o.id)})
@@ -103,7 +101,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     |> join(:inner, [c], o in "sales_orders", on: o.id == c.sales_order_id)
     |> where([c, _o], c.status in ^@active_checkout_statuses)
     |> where([c, _o], c.expires_at >= ^now and c.expires_at <= ^soon)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -112,7 +110,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     |> join(:inner, [c], o in "sales_orders", on: o.id == c.sales_order_id)
     |> where([c, _o], c.status == "expired" and is_nil(c.released_at))
     |> where([c, _o], c.expires_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -120,7 +118,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     "sales_payment_attempts"
     |> join(:inner, [p], o in "sales_orders", on: o.id == p.sales_order_id)
     |> where([p, _o], p.inserted_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> group_by([p, _o], p.status)
     |> select([p, _o], {p.status, count(p.id)})
     |> Repo.all()
@@ -132,14 +130,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     |> join(:inner, [p], o in "sales_orders", on: o.id == p.sales_order_id)
     |> where([p, _o], p.status in ["verified_amount_mismatch", "verified_currency_mismatch"])
     |> where([p, _o], p.inserted_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
-    |> Repo.aggregate(:count, :id)
-  end
-
-  defp payment_event_count(status, from_dt) do
-    "sales_payment_events"
-    |> where([e], e.processing_status == ^status)
-    |> where([e], e.inserted_at >= ^from_dt)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -148,7 +139,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     |> join(:inner, [t], o in "sales_orders", on: o.id == t.sales_order_id)
     |> where([t, _o], t.status == ^status)
     |> where([t, _o], t.inserted_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -156,14 +147,14 @@ defmodule FastCheck.Sales.OpsMetrics do
     "sales_orders"
     |> where([o], o.status == ^status)
     |> where([o], o.inserted_at >= ^from_dt)
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
   defp scanner_visibility_pending_count(filters, from_dt) do
     "attendee_invalidation_events"
     |> where([i], i.inserted_at >= ^from_dt)
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -171,7 +162,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     "sales_delivery_attempts"
     |> join(:inner, [d], o in "sales_orders", on: o.id == d.sales_order_id)
     |> where([d, _o], d.inserted_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> group_by([d, _o], d.status)
     |> select([d, _o], {d.status, count(d.id)})
     |> Repo.all()
@@ -183,7 +174,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     |> join(:inner, [d], o in "sales_orders", on: o.id == d.sales_order_id)
     |> where([d, _o], d.status == ^status)
     |> where([d, _o], d.inserted_at >= ^from_dt)
-    |> maybe_filter_joined_event(filters.event_id)
+    |> maybe_filter_joined_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -191,7 +182,7 @@ defmodule FastCheck.Sales.OpsMetrics do
     "sales_orders"
     |> where([o], o.status == "manual_review")
     |> where([o], o.inserted_at >= ^from_dt)
-    |> maybe_filter_event(filters.event_id)
+    |> maybe_filter_event(filters.event_ids)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -200,7 +191,7 @@ defmodule FastCheck.Sales.OpsMetrics do
       "sales_orders"
       |> where([o], o.status == "manual_review")
       |> where([o], o.inserted_at >= ^from_dt)
-      |> maybe_filter_event(filters.event_id)
+      |> maybe_filter_event(filters.event_ids)
       |> select([o], min(o.inserted_at))
       |> Repo.one()
 
@@ -216,23 +207,9 @@ defmodule FastCheck.Sales.OpsMetrics do
     end
   end
 
-  defp worker_retry_backlog_by_queue do
-    Oban.Job
-    |> where([j], j.state in ["retryable", "scheduled"] and j.attempt > 0)
-    |> group_by([j], j.queue)
-    |> select([j], {j.queue, count(j.id)})
-    |> Repo.all()
-    |> Map.new()
-  rescue
-    _ -> %{}
-  end
-
-  defp normalize_filters(filters) when is_map(filters) do
+  defp normalize_filters(filters, actor) when is_map(filters) do
     %{
-      event_id:
-        filters
-        |> get_filter("event_id")
-        |> parse_optional_integer(),
+      event_ids: selected_event_ids(filters, actor),
       source_channel:
         filters
         |> get_filter("source_channel")
@@ -244,7 +221,28 @@ defmodule FastCheck.Sales.OpsMetrics do
     }
   end
 
-  defp normalize_filters(_), do: normalize_filters(%{})
+  defp normalize_filters(_filters, actor), do: normalize_filters(%{}, actor)
+
+  defp selected_event_ids(filters, actor) do
+    allowed_event_ids = DashboardAccess.allowed_event_ids(actor)
+
+    case get_filter(filters, "event_id") do
+      nil ->
+        allowed_event_ids
+
+      "" ->
+        allowed_event_ids
+
+      value ->
+        case parse_optional_integer(value) do
+          event_id when is_integer(event_id) ->
+            if event_id in allowed_event_ids, do: [event_id], else: []
+
+          _ ->
+            []
+        end
+    end
+  end
 
   defp get_filter(map, "event_id"), do: Map.get(map, "event_id") || Map.get(map, :event_id)
 
@@ -282,13 +280,10 @@ defmodule FastCheck.Sales.OpsMetrics do
 
   defp clean_allowed(_), do: nil
 
-  defp maybe_filter_event(query, nil), do: query
-  defp maybe_filter_event(query, event_id), do: where(query, [row], row.event_id == ^event_id)
+  defp maybe_filter_event(query, event_ids), do: where(query, [row], row.event_id in ^event_ids)
 
-  defp maybe_filter_joined_event(query, nil), do: query
-
-  defp maybe_filter_joined_event(query, event_id),
-    do: where(query, [_left, o], o.event_id == ^event_id)
+  defp maybe_filter_joined_event(query, event_ids),
+    do: where(query, [_left, o], o.event_id in ^event_ids)
 
   defp maybe_filter_source_channel(query, nil), do: query
 

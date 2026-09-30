@@ -29,6 +29,16 @@ Masking examples:
 ## Forbidden Defaults
 
 - Operator sees all events by default.
-- Admin dashboards list all events by default without event permission checks.
+- Sales admin views list or aggregate records without the authenticated Event
+  grant filter.
 - Payment/order/ticket lookup is unscoped.
 - Public references resolve records without event/channel-safe checks.
+
+## Current Dashboard Boundary
+
+P1-D enforces server-configured Event grants across dedicated Sales dashboard
+surfaces and the root dashboard's Sales-specific controls. The root dashboard's
+general Event management and sync tools, CSV exports, browser scanner, and
+occupancy views still use the broader BrowserAuth boundary. They remain a
+separate event-isolation security follow-up; P1-D does not claim those routes
+are Event-isolated.

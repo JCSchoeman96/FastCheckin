@@ -39,7 +39,7 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
 
     {:ok, view, html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([event.id])
       |> live(~p"/dashboard/sales")
 
     assert html =~ "FC-LIVE-ORDER"
@@ -63,7 +63,7 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
 
     {:ok, view, _html} =
       conn
-      |> Fixtures.authenticated_conn()
+      |> Fixtures.authenticated_conn([event.id])
       |> live(~p"/dashboard/sales")
 
     filtered =
@@ -81,6 +81,48 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
 
     not_found = render_click(view, "select_order", %{"order-id" => "999999999"})
     assert not_found =~ "Order not found"
+  end
+
+  test "lists only granted events and hides guessed cross-event orders", %{conn: conn} do
+    event_a = Fixtures.insert_event!()
+    event_b = Fixtures.insert_event!()
+    _order_a = insert_dashboard_order!(event_a.id)
+    order_b_id = insert_cross_event_order!(event_b.id, "FC-LIVE-ORDER-B")
+
+    {:ok, view, html} =
+      conn
+      |> Fixtures.authenticated_conn([event_a.id])
+      |> live(~p"/dashboard/sales")
+
+    assert html =~ "FC-LIVE-ORDER"
+    refute html =~ "FC-LIVE-ORDER-B"
+
+    filtered =
+      render_submit(view, "apply_filters", %{
+        "filters" => %{"event_id" => to_string(event_b.id)}
+      })
+
+    refute filtered =~ "FC-LIVE-ORDER-B"
+    refute filtered =~ "FC-LIVE-ORDER"
+
+    guessed = render_click(view, "select_order", %{"order-id" => to_string(order_b_id)})
+    assert guessed =~ "Order not found"
+    refute guessed =~ "FC-LIVE-ORDER-B"
+  end
+
+  test "an explicit multi-event grant can read orders from both events", %{conn: conn} do
+    event_a = Fixtures.insert_event!()
+    event_b = Fixtures.insert_event!()
+    _order_a = insert_dashboard_order!(event_a.id)
+    _order_b = insert_cross_event_order!(event_b.id, "FC-LIVE-ORDER-B")
+
+    {:ok, _view, html} =
+      conn
+      |> Fixtures.authenticated_conn([event_a.id, event_b.id])
+      |> live(~p"/dashboard/sales")
+
+    assert html =~ "FC-LIVE-ORDER"
+    assert html =~ "FC-LIVE-ORDER-B"
   end
 
   defp refute_unsafe_html(html) do
@@ -121,6 +163,23 @@ defmodule FastCheckWeb.SalesDashboardLiveTest do
     insert_payment_attempt!(order_id)
     insert_payment_event!(order_id)
     insert_ticket_issue!(order_id, line_id)
+    order_id
+  end
+
+  defp insert_cross_event_order!(event_id, public_reference) do
+    %{rows: [[order_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO sales_orders
+          (public_reference, event_id, buyer_name, buyer_phone, buyer_email, source_channel,
+           status, total_amount_cents, currency, inserted_at, updated_at)
+        VALUES ($1, $2, 'Other Event Buyer', '555', 'other@example.com', 'admin',
+                'paid_verified', 10000, 'ZAR', now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc')
+        RETURNING id
+        """,
+        [public_reference, event_id]
+      )
+
     order_id
   end
 

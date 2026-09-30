@@ -55,6 +55,12 @@ Core production secrets and runtime:
 - `REDIS_URL` points at the intended Redis instance.
 - `SALES_INTERNAL_PILOT_ENABLED` is set deliberately for launch posture.
 - `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` are set for operator access.
+- `DASHBOARD_ALLOWED_EVENT_IDS` contains exactly the Event IDs the dashboard
+  may access for Sales. An absent or blank value grants no Sales Events; a
+  malformed nonblank value must prevent the release from starting.
+- Verify the Sales grant list against the intended launch Events after deploy;
+  this setting does not grant Event administration, exports, scanner, or
+  occupancy access.
 - `SENTRY_DSN` is present if Sentry is part of the release.
 
 Paystack:
@@ -309,4 +315,3 @@ inventory except through the documented recovery procedure.
 - If approved for launch rehearsal, revoke/refund the test ticket and confirm
   scanner denial.
 - Confirm `/dashboard/sales/ops` and Audit Timeline show safe, redacted state.
-

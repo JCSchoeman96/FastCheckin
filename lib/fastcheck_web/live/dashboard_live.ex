@@ -11,6 +11,7 @@ defmodule FastCheckWeb.DashboardLive do
   alias FastCheck.Events.Event
   alias FastCheck.Events.SyncState
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheckWeb.Plugs.BrowserAuth
   alias Phoenix.LiveView.JS
   require Logger
@@ -19,12 +20,20 @@ defmodule FastCheckWeb.DashboardLive do
   @sync_attempt_timeout_ms 120_000
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     events = Events.list_events()
     default_site_url = default_tickera_site_url()
+    identity = Map.get(session, "dashboard_username") || Map.get(session, :dashboard_username)
+
+    dashboard_actor =
+      case DashboardAccess.actor_for_identity(identity) do
+        {:ok, actor} -> actor
+        {:error, :unauthorized} -> nil
+      end
 
     {:ok,
      socket
+     |> assign(:dashboard_actor, dashboard_actor)
      |> assign(:events, events)
      |> assign(:filtered_events, events)
      |> assign(:events_tab, "active")
@@ -82,7 +91,11 @@ defmodule FastCheckWeb.DashboardLive do
     case Events.create_event(create_params) do
       {:ok, %Event{} = event} ->
         {event, whatsapp_enable_warning} =
-          maybe_enable_whatsapp_sales_after_create(event, enable_whatsapp_sales?)
+          maybe_enable_whatsapp_sales_after_create(
+            event,
+            enable_whatsapp_sales?,
+            socket.assigns.dashboard_actor
+          )
 
         refreshed_events = Events.list_events()
         scanner_code = event_scanner_code(event)
@@ -319,7 +332,8 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("enable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         {:ok, _event} <- Events.enable_whatsapp_sales(event_id) do
+         {:ok, _event} <-
+           Events.enable_whatsapp_sales_for_dashboard(socket.assigns.dashboard_actor, event_id) do
       {:noreply, refresh_events(socket, "WhatsApp Sales enabled for event #{event_id}")}
     else
       {:error, reason} ->
@@ -339,7 +353,8 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("disable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         {:ok, _event} <- Events.disable_whatsapp_sales(event_id) do
+         {:ok, _event} <-
+           Events.disable_whatsapp_sales_for_dashboard(socket.assigns.dashboard_actor, event_id) do
       {:noreply, refresh_events(socket, "WhatsApp Sales disabled for event #{event_id}")}
     else
       {:error, reason} ->
@@ -1233,6 +1248,7 @@ defmodule FastCheckWeb.DashboardLive do
 
                 <div class="mt-6 space-y-3">
                   <div
+                    :if={DashboardAccess.event_granted?(@dashboard_actor, event.id)}
                     id={"whatsapp-sales-control-#{event.id}"}
                     class="flex flex-col gap-2 rounded-xl border border-fc-border-default dark:border-glass-border p-3 sm:flex-row sm:items-center sm:justify-between"
                   >
@@ -1831,7 +1847,10 @@ defmodule FastCheckWeb.DashboardLive do
             </section>
 
             <div
-              :if={@editing_event}
+              :if={
+                @editing_event &&
+                  DashboardAccess.event_granted?(@dashboard_actor, @editing_event.id)
+              }
               id={"edit-whatsapp-sales-section-#{@editing_event.id}"}
               class="space-y-3 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
             >
@@ -2249,12 +2268,16 @@ defmodule FastCheckWeb.DashboardLive do
     end
   end
 
-  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, false), do: {event, ""}
+  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, false, _actor), do: {event, ""}
 
-  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, true) do
-    case Events.enable_whatsapp_sales(event.id) do
+  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, true, actor) do
+    case Events.enable_whatsapp_sales_for_dashboard(actor, event.id) do
       {:ok, enabled_event} ->
         {enabled_event, ""}
+
+      {:error, :forbidden} ->
+        {event,
+         " WhatsApp Sales remains disabled. A server-side event grant is required before it can be enabled."}
 
       {:error, reason} ->
         warning =
@@ -2927,6 +2950,7 @@ defmodule FastCheckWeb.DashboardLive do
 
   defp whatsapp_sales_error_message(:not_found), do: "Event not found"
   defp whatsapp_sales_error_message(:invalid_event_id), do: "Invalid event identifier"
+  defp whatsapp_sales_error_message(:forbidden), do: "A server-side event grant is required"
   defp whatsapp_sales_error_message(reason), do: format_error(reason)
 
   defp refresh_events(socket, status) do

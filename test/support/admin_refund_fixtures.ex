@@ -6,20 +6,21 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
   alias Ash.Changeset
   alias FastCheck.Fixtures
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.Order
   alias FastCheck.Tickets.Issuer
+  alias FastCheckWeb.SalesWebFixtures
 
   @dashboard_password "fastcheck"
 
   def dashboard_password, do: @dashboard_password
 
   def admin_actor(opts \\ []) do
-    base = %{id: "admin", username: "admin", actor_type: :admin}
-
-    case Keyword.get(opts, :event_id) do
-      nil -> base
-      event_id -> Map.put(base, :allowed_event_ids, [event_id])
-    end
+    event_ids = Keyword.get_values(opts, :event_id)
+    auth = Application.get_env(:fastcheck, :dashboard_auth, %{})
+    Application.put_env(:fastcheck, :dashboard_auth, Map.put(auth, :allowed_event_ids, event_ids))
+    {:ok, actor} = DashboardAccess.actor_for_identity("admin")
+    actor
   end
 
   def operator_actor(opts \\ []) do
@@ -67,6 +68,7 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
   def issued_order_fixture(opts \\ []) do
     quantity = Keyword.get(opts, :quantity, 1)
     event = Fixtures.create_event()
+    SalesWebFixtures.configure_dashboard_grants([event.id])
     unit_amount = 12_500
     total = quantity * unit_amount
     offer_id = insert_offer!(event.id, unit_amount)
@@ -104,6 +106,7 @@ defmodule FastCheck.Sales.AdminRefundFixtures do
   def inventory_pending_refund_fixture(opts \\ []) do
     quantity = Keyword.get(opts, :quantity, 2)
     event = Fixtures.create_event()
+    SalesWebFixtures.configure_dashboard_grants([event.id])
     unit_amount = 12_500
     total = quantity * unit_amount
     offer_id = insert_offer!(event.id, unit_amount)

@@ -11,6 +11,7 @@ defmodule FastCheck.Tickets.ArtifactResolver do
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.TicketIssue
   alias FastCheck.Tickets.Artifact
   alias FastCheck.Tickets.ArtifactError
@@ -62,19 +63,20 @@ defmodule FastCheck.Tickets.ArtifactResolver do
   """
   @spec resolve_for_admin_ticket_issue(map(), term()) :: result()
   def resolve_for_admin_ticket_issue(actor, ticket_issue_id) do
-    with :ok <- require_admin_actor(actor),
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(actor),
          {:ok, id} <- parse_positive_integer(ticket_issue_id),
-         {:ok, ticket_issue} <- fetch_ticket_issue_by_id(id),
+         {:ok, ticket_issue} <- fetch_ticket_issue_by_id(id, actor),
          :ok <- ensure_issued_status(ticket_issue),
          :ok <- ensure_scanner_not_revoked(ticket_issue),
          {:ok, order} <- load_order(ticket_issue),
-         :ok <- ensure_admin_order_available(order),
-         {:ok, attendee} <- load_attendee(ticket_issue),
+         :ok <- ensure_admin_order_available(actor, order),
+         {:ok, attendee} <- load_admin_attendee(ticket_issue, order.event_id),
          {:ok, event} <- load_event_from_order(order),
          :ok <- ensure_event_available(event),
          :ok <- ensure_scannable(attendee) do
       {:ok, artifact(ticket_issue, attendee, event)}
     else
+      {:error, :unauthorized} -> {:error, error(:not_found)}
       {:error, state} -> {:error, error(state)}
       :error -> {:error, error(:not_found)}
     end
@@ -106,13 +108,18 @@ defmodule FastCheck.Tickets.ArtifactResolver do
     end
   end
 
-  defp fetch_ticket_issue_by_id(id) do
-    case TicketIssue
-         |> Ash.Query.for_read(:get_by_id, %{id: id})
-         |> Ash.read_one(authorize?: false) do
-      {:ok, nil} -> {:error, :not_found}
-      {:ok, ticket_issue} -> {:ok, ticket_issue}
-      {:error, _reason} -> {:error, :not_found}
+  defp fetch_ticket_issue_by_id(id, actor) do
+    event_ids = DashboardAccess.allowed_event_ids(actor)
+
+    case Repo.one(
+           from t in TicketIssue,
+             join: o in "sales_orders",
+             on: o.id == t.sales_order_id,
+             where: t.id == ^id and o.event_id in ^event_ids,
+             select: t
+         ) do
+      %TicketIssue{} = ticket_issue -> {:ok, ticket_issue}
+      _ -> {:error, :not_found}
     end
   end
 
@@ -124,16 +131,6 @@ defmodule FastCheck.Tickets.ArtifactResolver do
       {:error, :invalid} -> {:error, :not_found}
     end
   end
-
-  defp require_admin_actor(actor) do
-    if actor_type(actor) == :admin, do: :ok, else: {:error, :not_found}
-  end
-
-  defp actor_type(actor) when is_map(actor) do
-    Map.get(actor, :actor_type) || Map.get(actor, "actor_type")
-  end
-
-  defp actor_type(_actor), do: nil
 
   defp parse_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
 
@@ -162,6 +159,19 @@ defmodule FastCheck.Tickets.ArtifactResolver do
 
   defp load_attendee(_ticket_issue), do: {:error, :ticket_not_ready}
 
+  defp load_admin_attendee(%{attendee_id: attendee_id}, event_id)
+       when is_integer(attendee_id) and is_integer(event_id) do
+    case Repo.one(
+           from a in Attendee,
+             where: a.id == ^attendee_id and a.event_id == ^event_id
+         ) do
+      %Attendee{} = attendee -> {:ok, attendee}
+      nil -> {:error, :ticket_not_ready}
+    end
+  end
+
+  defp load_admin_attendee(_ticket_issue, _event_id), do: {:error, :ticket_not_ready}
+
   defp load_order(%{sales_order_id: sales_order_id}) when is_integer(sales_order_id) do
     case Repo.one(
            from o in "sales_orders",
@@ -175,10 +185,15 @@ defmodule FastCheck.Tickets.ArtifactResolver do
 
   defp load_order(_ticket_issue), do: {:error, :ticket_not_ready}
 
-  defp ensure_admin_order_available(%{status: status}) when status in ["refunded", "cancelled"],
-    do: {:error, :ticket_revoked}
+  defp ensure_admin_order_available(actor, %{event_id: event_id, status: status}) do
+    cond do
+      not DashboardAccess.event_granted?(actor, event_id) -> {:error, :not_found}
+      status in ["refunded", "cancelled"] -> {:error, :ticket_revoked}
+      true -> :ok
+    end
+  end
 
-  defp ensure_admin_order_available(_order), do: :ok
+  defp ensure_admin_order_available(_actor, _order), do: {:error, :not_found}
 
   defp load_event_from_order(%{event_id: event_id}) when is_integer(event_id) do
     case Repo.get(Event, event_id) do

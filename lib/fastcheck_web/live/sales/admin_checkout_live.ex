@@ -8,15 +8,14 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLive do
 
   use FastCheckWeb, :live_view
 
+  alias FastCheck.Sales.DashboardAccess
   alias FastCheck.Sales.SecondaryEntrypoints
 
   @impl true
   def mount(%{"event_id" => event_id_param}, session, socket) do
-    with {:ok, user} <- dashboard_user_from_session(session),
+    with {:ok, actor} <- dashboard_actor_from_session(session),
          {:ok, event_id} <- SecondaryEntrypoints.parse_event_id(event_id_param),
-         {:ok, event} <- SecondaryEntrypoints.safe_fetch_event(event_id) do
-      actor = SecondaryEntrypoints.admin_actor_from_user(user, event_id)
-
+         {:ok, event} <- SecondaryEntrypoints.safe_fetch_event(actor, event_id) do
       case SecondaryEntrypoints.list_offers_for_channel(actor, event_id, "admin") do
         {:ok, offers} ->
           {:ok,
@@ -25,7 +24,7 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLive do
            |> assign(:event, event)
            |> assign(:event_id, event_id)
            |> assign(:offers, offers)
-           |> assign(:dashboard_user, user)
+           |> assign(:actor, actor)
            |> assign(:idempotency_key, SecondaryEntrypoints.generate_idempotency_key())
            |> assign(:form, to_form(default_form_params(offers), as: :checkout))}
 
@@ -36,7 +35,7 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLive do
            |> push_navigate(to: ~p"/dashboard")}
       end
     else
-      {:error, :unauthenticated} ->
+      {:error, :unauthorized} ->
         {:ok,
          socket
          |> put_flash(:error, "Sign in to start admin checkout.")
@@ -58,11 +57,11 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLive do
 
   @impl true
   def handle_event("start_checkout", %{"checkout" => params}, socket) do
-    user = socket.assigns.dashboard_user
+    actor = socket.assigns.actor
     event_id = socket.assigns.event_id
     idempotency_key = socket.assigns.idempotency_key
 
-    case SecondaryEntrypoints.start_admin_checkout(user, event_id, params, idempotency_key) do
+    case SecondaryEntrypoints.start_admin_checkout(actor, event_id, params, idempotency_key) do
       {:ok, %{public_reference: ref}} ->
         {:noreply,
          socket
@@ -117,13 +116,13 @@ defmodule FastCheckWeb.Sales.AdminCheckoutLive do
     """
   end
 
-  defp dashboard_user_from_session(session) do
+  defp dashboard_actor_from_session(session) do
     case session["dashboard_username"] || session[:dashboard_username] do
       username when is_binary(username) and username != "" ->
-        {:ok, %{id: username, username: username}}
+        DashboardAccess.actor_for_identity(username)
 
       _ ->
-        {:error, :unauthenticated}
+        {:error, :unauthorized}
     end
   end
 
