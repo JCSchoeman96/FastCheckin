@@ -4,6 +4,7 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLiveTest do
   import Phoenix.LiveViewTest
 
   alias FastCheck.Operations.ObanSnapshot.Store
+  alias Plug.Test, as: PlugTest
 
   setup do
     previous_access = Application.get_env(:fastcheck, :operations_global_access)
@@ -25,7 +26,7 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLiveTest do
 
   test "global admin sees read-only worker health without an Event selector", %{conn: conn} do
     conn =
-      Plug.Test.init_test_session(conn, %{
+      PlugTest.init_test_session(conn, %{
         dashboard_authenticated: true,
         dashboard_username: "admin"
       })
@@ -44,7 +45,7 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLiveTest do
     Application.put_env(:fastcheck, :operations_global_access, allowed_usernames: ["ops"])
 
     conn =
-      Plug.Test.init_test_session(conn, %{
+      PlugTest.init_test_session(conn, %{
         dashboard_authenticated: true,
         dashboard_username: "admin"
       })
@@ -58,7 +59,7 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLiveTest do
     on_exit(fn -> Store.set_distribution_mode("unavailable") end)
 
     conn =
-      Plug.Test.init_test_session(conn, %{
+      PlugTest.init_test_session(conn, %{
         dashboard_authenticated: true,
         dashboard_username: "admin"
       })
