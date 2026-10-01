@@ -7,6 +7,9 @@
 # General application configuration
 import Config
 
+# Ash 3.32+ requires explicit string length counting for constraints and validations.
+config :ash, default_string_length_count: :codepoints
+
 config :fastcheck,
   ecto_repos: [FastCheck.Repo],
   ash_domains: [FastCheck.Sales],
