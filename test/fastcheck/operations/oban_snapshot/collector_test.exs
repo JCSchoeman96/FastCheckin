@@ -164,5 +164,32 @@ defmodule FastCheck.Operations.ObanSnapshot.CollectorTest do
 
     assert {:error, :invalid_shared_snapshot} =
              Collector.validate_shared_snapshot(snapshot, @base)
+
+    assert {:error, :invalid_shared_snapshot} =
+             Collector.validate_shared_snapshot(
+               snapshot,
+               @base,
+               %{collected_at: DateTime.add(@base, 10, :second)}
+             )
+  end
+
+  test "equal and older shared snapshots are ignored" do
+    snapshot = %{
+      version: 1,
+      collected_at: @base,
+      collector_node: "node-a",
+      distribution_mode: "shared",
+      queues: []
+    }
+
+    assert {:ignore, :older_or_equal} =
+             Collector.validate_shared_snapshot(snapshot, @base, %{collected_at: @base})
+
+    assert {:ignore, :older_or_equal} =
+             Collector.validate_shared_snapshot(
+               %{snapshot | collected_at: DateTime.add(@base, -1, :second)},
+               @base,
+               %{collected_at: @base}
+             )
   end
 end

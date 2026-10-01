@@ -146,27 +146,23 @@ defmodule FastCheck.Operations.ObanSnapshot.Collector do
           {:ok, map()} | {:ignore, :older_or_equal} | {:error, atom()}
   def validate_shared_snapshot(snapshot, now, current_snapshot \\ nil) do
     with {:ok, normalized} <- ObanSnapshot.normalize(snapshot),
-         true <-
-           DateTime.compare(
-             normalized.collected_at,
-             DateTime.add(now, @future_skew_seconds, :second)
-           ) != :gt,
-         true <- newer_than_local?(normalized, current_snapshot) do
-      {:ok, normalized}
+         :ok <- validate_future_skew(normalized, now) do
+      if newer_than_local?(normalized, current_snapshot) do
+        {:ok, normalized}
+      else
+        {:ignore, :older_or_equal}
+      end
     else
-      false ->
-        case ObanSnapshot.normalize(snapshot) do
-          {:ok, normalized} when not is_nil(current_snapshot) ->
-            if DateTime.compare(normalized.collected_at, current_snapshot.collected_at) != :gt,
-              do: {:ignore, :older_or_equal},
-              else: {:error, :invalid_shared_snapshot}
+      {:error, _reason} -> {:error, :invalid_shared_snapshot}
+    end
+  end
 
-          _ ->
-            {:error, :invalid_shared_snapshot}
-        end
-
-      {:error, _reason} ->
-        {:error, :invalid_shared_snapshot}
+  defp validate_future_skew(snapshot, now) do
+    if DateTime.compare(snapshot.collected_at, DateTime.add(now, @future_skew_seconds, :second)) ==
+         :gt do
+      {:error, :future_skew}
+    else
+      :ok
     end
   end
 

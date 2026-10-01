@@ -36,7 +36,13 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLive do
   end
 
   defp refresh(socket) do
-    assign(socket, snapshot: Store.snapshot(), store_state: Store.state())
+    snapshot = Store.snapshot()
+
+    assign(socket,
+      snapshot: snapshot,
+      store_state: Store.state(),
+      rows: rows(snapshot)
+    )
   end
 
   @impl true

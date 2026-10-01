@@ -51,6 +51,15 @@ defmodule FastCheck.Operations.ObanSnapshot.StoreTest do
     assert :stale = Store.recompute_freshness(DateTime.add(@base, 31, :second), name)
   end
 
+  test "a failed cycle does not discard accepted snapshot freshness" do
+    name = unique_name()
+    {:ok, _pid} = start_supervised({Store, name: name})
+
+    assert {:ok, :accepted} = Store.apply_snapshot(snapshot(@base), server: name, now: @base)
+    assert :current = Store.mark_failure(:db_collection_failed, server: name, now: @base)
+    assert %{lifecycle: :current, failed_cycles: 1} = Store.state(name)
+  end
+
   test "rejects shared snapshots that contain job payload fields" do
     name = unique_name()
     {:ok, _pid} = start_supervised({Store, name: name})
