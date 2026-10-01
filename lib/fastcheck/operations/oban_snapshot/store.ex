@@ -135,6 +135,7 @@ defmodule FastCheck.Operations.ObanSnapshot.Store do
   def handle_call({:mark_failure, reason, now}, _from, state) do
     previous_lifecycle = state.lifecycle
     state = %{state | failed_cycles: state.failed_cycles + 1, last_error: reason}
+
     lifecycle =
       case state.accepted_collected_at do
         %DateTime{} = collected_at -> lifecycle_for(collected_at, now)
