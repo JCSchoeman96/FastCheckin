@@ -238,28 +238,42 @@ defmodule FastCheckWeb.Telemetry do
       # Global read-only Oban monitoring. Each node exports the accepted
       # snapshot, so dashboards aggregate replicated gauges with max by instance.
       last_value("fastcheck.operations.oban.jobs",
+        event_name: [:fastcheck, :operations, :oban, :jobs],
+        measurement: :value,
         tags: [:queue, :state],
         description: "Accepted global Oban job counts by normalized queue and state"
       ),
       last_value("fastcheck.operations.oban.oldest_age_seconds",
+        event_name: [:fastcheck, :operations, :oban, :oldest_age_seconds],
+        measurement: :value,
         tags: [:queue, :state],
         description: "Accepted global Oban oldest available, executing, or retryable age"
       ),
       last_value("fastcheck.operations.oban.next_scheduled_in_seconds",
+        event_name: [:fastcheck, :operations, :oban, :next_scheduled_in_seconds],
+        measurement: :value,
         tags: [:queue],
         description: "Accepted global Oban next scheduled delay"
       ),
       last_value("fastcheck.operations.oban.discarded_recent",
+        event_name: [:fastcheck, :operations, :oban, :discarded_recent],
+        measurement: :value,
         tags: [:queue],
         description: "Accepted global Oban discarded jobs in the recent window"
       ),
       last_value("fastcheck.operations.oban.snapshot_age_seconds",
+        event_name: [:fastcheck, :operations, :oban, :snapshot_age_seconds],
+        measurement: :value,
         description: "Age of the accepted global Oban snapshot"
       ),
       last_value("fastcheck.operations.oban.snapshot_freshness",
+        event_name: [:fastcheck, :operations, :oban, :snapshot_freshness],
+        measurement: :value,
         description: "Freshness of the accepted global Oban snapshot"
       ),
       counter("fastcheck.operations.oban.collection_errors_total",
+        event_name: [:fastcheck, :operations, :oban, :collection_errors_total],
+        measurement: :count,
         tags: [:reason],
         description: "Bounded global Oban monitoring collection errors"
       ),

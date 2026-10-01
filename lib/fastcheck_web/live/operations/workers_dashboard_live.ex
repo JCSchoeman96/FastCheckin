@@ -35,6 +35,10 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLive do
     {:noreply, refresh(socket)}
   end
 
+  def handle_info({:oban_snapshot, {:distribution, _distribution_mode}}, socket) do
+    {:noreply, refresh(socket)}
+  end
+
   defp refresh(socket) do
     snapshot = Store.snapshot()
 

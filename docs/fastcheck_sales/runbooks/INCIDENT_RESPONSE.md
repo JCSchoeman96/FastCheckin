@@ -281,23 +281,28 @@ retry jobs, pause queues, or delete jobs as a monitoring response.
 - Symptoms: A worker-dependent Sales flow stalls or does not recover after a
   transient failure.
 - Severity: High if payment, issuance, expiry, or delivery queues are affected.
-- First checks: Global backlog cannot currently be inspected through an
-  approved production monitoring source. This is the unresolved P1-F P0 launch
-  blocker.
-- What to inspect in Ops Dashboard: Nothing for global worker backlog. Sales
-  Ops is Event-scoped and does not expose Oban queue totals.
+- First checks: Open `/dashboard/system/workers`. It is the global queue-health
+  source for configured queues and the `Unexpected queues` aggregate.
+- What to inspect in Ops Dashboard: `/dashboard/sales/ops` remains Event-scoped
+  and does not expose global Oban queue totals. The worker page is read-only.
 - What to inspect in Audit Timeline: Stalled order/payment/delivery entities.
 - Safe immediate action: Pause new sales if payment, issuance, or delivery
   recovery is uncertain.
 - Unsafe actions to avoid: Do not delete jobs blindly.
-- Recovery procedure: Production launch must remain NO-GO until P1-F provides
-  an approved source and rehearsed procedure. Do not substitute ad-hoc SQL or an
-  assumed platform dashboard.
+- Recovery procedure: Keep the worker page read-only and escalate when its
+  status is `Stale`, `Unavailable`, or degraded. Do not substitute ad-hoc SQL
+  or an assumed platform dashboard.
 - Verification after recovery: Confirm the affected Event-owned order, payment,
-  ticket, or delivery state. Queue-wide recovery cannot be verified until P1-F
-  provides an approved source and procedure.
+  ticket, or delivery state, then verify the worker page reports current
+  monitoring. Launch clearance remains open pending query-plan evidence and the
+  runbook rehearsal.
 - Escalation trigger: A worker-dependent Sales flow stalls or a global backlog
   cannot be assessed.
+
+P1F_QUERY_PLAN_EVIDENCE=OPEN
+P1F_RUNBOOK_REHEARSAL=OPEN
+P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=OPEN
 
 ## Ops dashboard unavailable
 

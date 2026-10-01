@@ -127,7 +127,6 @@ defmodule FastCheck.Operations.ObanSnapshot.Collector do
 
         {:error, _reason} ->
           error_fun.(:lease_unavailable)
-          set_distribution_mode(opts, "coordination_degraded")
           handle_degraded_collection(collect_fun, apply_fun, error_fun, failure_fun, opts)
       end
     rescue
@@ -201,6 +200,7 @@ defmodule FastCheck.Operations.ObanSnapshot.Collector do
       {:ok, snapshot} ->
         case apply_fun.(snapshot) do
           {:ok, :accepted} ->
+            set_distribution_mode(opts, "coordination_degraded")
             emit_full_snapshot(opts, snapshot)
 
           _ ->
@@ -209,9 +209,11 @@ defmodule FastCheck.Operations.ObanSnapshot.Collector do
         end
 
       :skipped ->
+        set_distribution_mode(opts, "coordination_degraded")
         :ok
 
       {:error, _reason} ->
+        set_distribution_mode(opts, "coordination_degraded")
         failure_fun.(:db_collection_failed)
         error_fun.(:db_collection_failed)
     end

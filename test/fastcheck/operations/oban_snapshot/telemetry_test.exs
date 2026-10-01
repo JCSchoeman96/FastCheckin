@@ -5,6 +5,51 @@ defmodule FastCheck.Operations.ObanSnapshot.TelemetryTest do
 
   @base ~U[2026-10-01 10:00:00Z]
 
+  test "metric definitions bind the full event names and emitted measurements" do
+    expected = [
+      {[:fastcheck, :operations, :oban, :jobs], [:fastcheck, :operations, :oban, :jobs], :value},
+      {
+        [:fastcheck, :operations, :oban, :oldest_age_seconds],
+        [:fastcheck, :operations, :oban, :oldest_age_seconds],
+        :value
+      },
+      {
+        [:fastcheck, :operations, :oban, :next_scheduled_in_seconds],
+        [:fastcheck, :operations, :oban, :next_scheduled_in_seconds],
+        :value
+      },
+      {
+        [:fastcheck, :operations, :oban, :discarded_recent],
+        [:fastcheck, :operations, :oban, :discarded_recent],
+        :value
+      },
+      {
+        [:fastcheck, :operations, :oban, :snapshot_age_seconds],
+        [:fastcheck, :operations, :oban, :snapshot_age_seconds],
+        :value
+      },
+      {
+        [:fastcheck, :operations, :oban, :snapshot_freshness],
+        [:fastcheck, :operations, :oban, :snapshot_freshness],
+        :value
+      },
+      {
+        [:fastcheck, :operations, :oban, :collection_errors_total],
+        [:fastcheck, :operations, :oban, :collection_errors_total],
+        :count
+      }
+    ]
+
+    metrics = FastCheckWeb.Telemetry.metrics()
+
+    for {name, event_name, measurement} <- expected do
+      metric = Enum.find(metrics, &(&1.name == name))
+      assert metric, "missing metric #{inspect(name)}"
+      assert metric.event_name == event_name
+      assert metric.measurement == measurement
+    end
+  end
+
   test "full snapshot emits a complete zero-reset matrix" do
     handler = "oban-telemetry-test-#{System.unique_integer([:positive])}"
     parent = self()

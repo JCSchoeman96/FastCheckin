@@ -150,13 +150,17 @@ defmodule FastCheck.Operations.ObanSnapshot.Store do
 
   @impl true
   def handle_call({:set_distribution_mode, mode}, _from, state) do
+    previous_mode = state.distribution_mode
+
     snapshot =
       case state.snapshot do
         nil -> nil
         snapshot -> %{snapshot | distribution_mode: mode}
       end
 
-    {:reply, :ok, %{state | snapshot: snapshot, distribution_mode: mode} |> put_projection()}
+    state = %{state | snapshot: snapshot, distribution_mode: mode} |> put_projection()
+    if mode != previous_mode, do: broadcast({:distribution, mode})
+    {:reply, :ok, state}
   end
 
   defp newer?(%{collected_at: _incoming}, nil), do: true

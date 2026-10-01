@@ -60,6 +60,18 @@ defmodule FastCheck.Operations.ObanSnapshot.StoreTest do
     assert %{lifecycle: :current, failed_cycles: 1} = Store.state(name)
   end
 
+  test "distribution changes update ETS and publish to subscribers" do
+    name = unique_name()
+    {:ok, _pid} = start_supervised({Store, name: name})
+    assert :ok = Store.subscribe()
+
+    assert :ok =
+             Store.set_distribution_mode("shared_mirror_degraded", server: name)
+
+    assert_receive {:oban_snapshot, {:distribution, "shared_mirror_degraded"}}
+    assert %{distribution_mode: "shared_mirror_degraded"} = Store.state(name)
+  end
+
   test "rejects shared snapshots that contain job payload fields" do
     name = unique_name()
     {:ok, _pid} = start_supervised({Store, name: name})

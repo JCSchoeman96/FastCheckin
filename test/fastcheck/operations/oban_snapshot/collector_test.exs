@@ -2,6 +2,7 @@ defmodule FastCheck.Operations.ObanSnapshot.CollectorTest do
   use ExUnit.Case, async: false
 
   alias FastCheck.Operations.ObanSnapshot.Collector
+  alias FastCheck.Operations.ObanSnapshot.Store
 
   @base ~U[2026-10-01 10:00:00Z]
 
@@ -88,6 +89,35 @@ defmodule FastCheck.Operations.ObanSnapshot.CollectorTest do
     assert_received :collected
   end
 
+  test "a lease outage keeps a fresh DB snapshot marked coordination degraded" do
+    name = String.to_atom("oban_store_#{System.unique_integer([:positive])}")
+    {:ok, _pid} = start_supervised({Store, name: name})
+
+    snapshot = %{
+      version: 1,
+      collected_at: @base,
+      collector_node: "node-a",
+      distribution_mode: "shared",
+      queues: []
+    }
+
+    assert :ok =
+             Collector.tick_once(
+               now: @base,
+               node_id: "node-a",
+               store_server: name,
+               lease_fun: fn -> {:error, :redis_unavailable} end,
+               collect_fun: fn -> {:ok, snapshot} end,
+               error_fun: fn _reason -> :ok end,
+               freshness_fun: fn _state, _now -> :ok end
+             )
+
+    assert %{lifecycle: :current, distribution_mode: "coordination_degraded"} =
+             Store.state(name)
+
+    assert %{distribution_mode: "coordination_degraded"} = Store.snapshot(name)
+  end
+
   test "a healthy non-holder reads Redis once and does not query Postgres" do
     parent = self()
 
@@ -151,6 +181,41 @@ defmodule FastCheck.Operations.ObanSnapshot.CollectorTest do
 
     assert_received :accepted
     assert_received {:distribution, "shared_mirror_degraded"}
+  end
+
+  test "a mirror write failure keeps the accepted snapshot current and publishes degradation" do
+    parent = self()
+    name = String.to_atom("oban_store_#{System.unique_integer([:positive])}")
+    {:ok, _pid} = start_supervised({Store, name: name})
+    assert :ok = Store.subscribe()
+
+    snapshot = %{
+      version: 1,
+      collected_at: @base,
+      collector_node: "node-a",
+      distribution_mode: "shared",
+      queues: []
+    }
+
+    assert :ok =
+             Collector.tick_once(
+               now: @base,
+               node_id: "node-a",
+               store_server: name,
+               lease_fun: fn -> {:ok, true} end,
+               collect_fun: fn -> {:ok, snapshot} end,
+               write_fun: fn _snapshot -> {:error, :redis_unavailable} end,
+               error_fun: fn reason -> send(parent, {:collection_error, reason}) end,
+               freshness_fun: fn _state, _now -> :ok end
+             )
+
+    assert %{lifecycle: :current, distribution_mode: "shared_mirror_degraded"} =
+             Store.state(name)
+
+    assert %{distribution_mode: "shared_mirror_degraded"} = Store.snapshot(name)
+    assert_receive {:oban_snapshot, {:snapshot, _snapshot}}
+    assert_receive {:oban_snapshot, {:distribution, "shared_mirror_degraded"}}
+    assert_receive {:collection_error, :snapshot_write_failed}
   end
 
   test "future shared snapshots are rejected using UTC wall-clock skew" do

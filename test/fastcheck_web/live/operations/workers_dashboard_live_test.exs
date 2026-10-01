@@ -3,6 +3,8 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias FastCheck.Operations.ObanSnapshot.Store
+
   setup do
     previous_access = Application.get_env(:fastcheck, :operations_global_access)
     Application.put_env(:fastcheck, :operations_global_access, allowed_usernames: ["admin"])
@@ -49,5 +51,20 @@ defmodule FastCheckWeb.Operations.WorkersDashboardLiveTest do
 
     conn = get(conn, ~p"/dashboard/system/workers")
     assert response(conn, 403) == "Forbidden"
+  end
+
+  test "refreshes distribution status after a mirror failure", %{conn: conn} do
+    assert :ok = Store.set_distribution_mode("unavailable")
+    on_exit(fn -> Store.set_distribution_mode("unavailable") end)
+
+    conn =
+      Plug.Test.init_test_session(conn, %{
+        dashboard_authenticated: true,
+        dashboard_username: "admin"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/dashboard/system/workers")
+    assert :ok = Store.set_distribution_mode("shared_mirror_degraded")
+    assert render(view) =~ "shared_mirror_degraded"
   end
 end
