@@ -462,6 +462,32 @@ config :fastcheck, :dashboard_auth, %{
   allowed_event_ids: dashboard_allowed_event_ids
 }
 
+operations_global_monitoring_usernames =
+  case FastCheck.RuntimeConfiguration.operations_global_monitoring_usernames(
+         System.get_env("OPERATIONS_GLOBAL_MONITORING_USERNAMES"),
+         dashboard_auth.username
+       ) do
+    {:ok, usernames} ->
+      usernames
+
+    {:error, :wildcard_not_allowed} ->
+      raise "OPERATIONS_GLOBAL_MONITORING_USERNAMES must not contain wildcard entries."
+
+    {:error, :invalid_operations_global_monitoring_usernames} ->
+      raise "OPERATIONS_GLOBAL_MONITORING_USERNAMES must be a comma-separated list of usernames."
+  end
+
+config :fastcheck, :operations_global_access,
+  allowed_usernames: operations_global_monitoring_usernames
+
+p1f_redis_fallback = String.upcase(String.trim(System.get_env("P1F_REDIS_FALLBACK", "DISABLED")))
+
+if p1f_redis_fallback != "DISABLED" do
+  raise "P1F_REDIS_FALLBACK must be DISABLED."
+end
+
+config :fastcheck, :p1f_redis_fallback, :disabled
+
 default_tickera_site_url =
   case System.get_env("DEFAULT_TICKERA_SITE_URL", "https://voelgoed.co.za") do
     nil ->

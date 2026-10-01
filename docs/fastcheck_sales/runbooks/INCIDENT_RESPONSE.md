@@ -5,13 +5,28 @@ verification, issuance recovery, expiry cleanup, manual review, revocation
 safety, and scanner/mobile sync running unless a developer/admin explicitly
 directs otherwise.
 
-## Global worker monitoring gap
+## Global worker monitoring
 
-P1-F tracks the unresolved P0 launch blocker for global Oban backlog
-monitoring. No approved production source or procedure currently exists.
-`/dashboard/sales/ops` is Event-scoped and cannot show global worker backlog.
-Production launch remains NO-GO until P1-F is complete. Do not use ad-hoc SQL or
-an assumed platform dashboard as a substitute.
+Open `/dashboard/system/workers` for the global, read-only Oban snapshot. It
+shows configured queues plus one `Unexpected queues` aggregate, with counts for
+available, executing, retryable, and scheduled jobs. Available, executing, and
+retryable fields show the oldest age for that state. Scheduled work shows the
+next scheduled delay, not an age. Empty-state timing values are zero.
+
+The page uses the server-owned global monitoring allowlist. Event grants do not
+grant access. It does not expose job arguments, errors, metadata, customer
+data, or mutation controls. `/dashboard/sales/ops` remains Event-scoped and
+must not be used for global queue health.
+
+Prometheus exports replicated global gauges from every node. Use
+`max without(instance)` for a global view. Never sum these gauges across
+instances. Treat `Stale` and `Unavailable` monitoring status as an escalation,
+not as proof that workers are stopped.
+
+If the page is unavailable or remains stale for more than one collection
+interval, notify the developer/admin, record the time and observed status, and
+continue the Sales and scanner checks. Do not run ad-hoc SQL, restart workers,
+retry jobs, pause queues, or delete jobs as a monitoring response.
 
 ## Paystack webhook not arriving
 
@@ -266,23 +281,28 @@ an assumed platform dashboard as a substitute.
 - Symptoms: A worker-dependent Sales flow stalls or does not recover after a
   transient failure.
 - Severity: High if payment, issuance, expiry, or delivery queues are affected.
-- First checks: Global backlog cannot currently be inspected through an
-  approved production monitoring source. This is the unresolved P1-F P0 launch
-  blocker.
-- What to inspect in Ops Dashboard: Nothing for global worker backlog. Sales
-  Ops is Event-scoped and does not expose Oban queue totals.
+- First checks: Open `/dashboard/system/workers`. It is the global queue-health
+  source for configured queues and the `Unexpected queues` aggregate.
+- What to inspect in Ops Dashboard: `/dashboard/sales/ops` remains Event-scoped
+  and does not expose global Oban queue totals. The worker page is read-only.
 - What to inspect in Audit Timeline: Stalled order/payment/delivery entities.
 - Safe immediate action: Pause new sales if payment, issuance, or delivery
   recovery is uncertain.
 - Unsafe actions to avoid: Do not delete jobs blindly.
-- Recovery procedure: Production launch must remain NO-GO until P1-F provides
-  an approved source and rehearsed procedure. Do not substitute ad-hoc SQL or an
-  assumed platform dashboard.
+- Recovery procedure: Keep the worker page read-only and escalate when its
+  status is `Stale`, `Unavailable`, or degraded. Do not substitute ad-hoc SQL
+  or an assumed platform dashboard.
 - Verification after recovery: Confirm the affected Event-owned order, payment,
-  ticket, or delivery state. Queue-wide recovery cannot be verified until P1-F
-  provides an approved source and procedure.
+  ticket, or delivery state, then verify the worker page reports current
+  monitoring. Launch clearance remains open pending query-plan evidence and the
+  runbook rehearsal.
 - Escalation trigger: A worker-dependent Sales flow stalls or a global backlog
   cannot be assessed.
+
+P1F_QUERY_PLAN_EVIDENCE=OPEN
+P1F_RUNBOOK_REHEARSAL=OPEN
+P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=OPEN
 
 ## Ops dashboard unavailable
 

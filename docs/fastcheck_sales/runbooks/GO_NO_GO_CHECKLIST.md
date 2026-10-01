@@ -19,6 +19,8 @@
 - [ ] `DASHBOARD_ALLOWED_EVENT_IDS` is configured with only the Event IDs the
   dashboard should access for Sales; blank means no Sales Event access, and a
   malformed nonblank value must fail startup.
+- [ ] `OPERATIONS_GLOBAL_MONITORING_USERNAMES` is configured for global worker
+  monitoring, or is blank to use only `DASHBOARD_USERNAME`.
 - [ ] Event administration/sync, CSV exports, scanner, and occupancy remain a
   separate BrowserAuth event-isolation review; P1-D does not cover those routes.
 - [ ] Paystack secret variables are present and not logged.
@@ -49,14 +51,17 @@
 - [ ] Oban is running.
 - [ ] Paystack webhook, verification, issuance, checkout expiry, and WhatsApp
   send workers are processing.
-- [ ] An approved production source for global Oban queue and backlog health
-  exists and is available to launch staff.
+- [ ] `/dashboard/system/workers` is reachable for an allowlisted global admin.
+- [ ] The page shows all configured queues and the `Unexpected queues` aggregate
+  without raw job rows or mutation controls.
 - [ ] The bounded, read-only global monitoring procedure has been rehearsed for
-  critical queues.
+  critical queues. This remains open for the current release.
+- [ ] Representative query-plan evidence for the bounded global queue
+  aggregates is available. This remains open for the current release.
 - [ ] No unexpected backlog exists, based on that approved monitoring source.
-- Current gate status is BLOCKED. P1-F must provide and verify the source and
-  procedure before production launch. `/dashboard/sales/ops` is Event-scoped
-  and is not a global backlog source.
+- Current gate status is BLOCKED until both query-plan evidence and the
+  runbook rehearsal are complete.
+  `/dashboard/sales/ops` is Event-scoped and is not a global backlog source.
 
 ## Paystack
 
@@ -170,3 +175,8 @@
 - [ ] Manual review coverage is active for launch window.
 - [ ] Incident response owner is active for launch window.
 - [ ] Launch owner signs go.
+
+P1F_QUERY_PLAN_EVIDENCE=OPEN
+P1F_RUNBOOK_REHEARSAL=OPEN
+P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=OPEN

@@ -21,6 +21,10 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.BrowserAuth
   end
 
+  pipeline :global_ops_auth do
+    plug FastCheckWeb.Plugs.GlobalOpsAuth
+  end
+
   pipeline :scanner_auth do
     plug FastCheckWeb.Plugs.ScannerAuth
   end
@@ -79,6 +83,12 @@ defmodule FastCheckWeb.Router do
     get "/export/attendees/:event_id", ExportController, :export_attendees
     get "/export/check-ins/:event_id", ExportController, :export_check_ins
     delete "/logout", SessionController, :delete
+  end
+
+  scope "/", FastCheckWeb do
+    pipe_through [:browser, :dashboard_auth, :global_ops_auth]
+
+    live "/dashboard/system/workers", Operations.WorkersDashboardLive, :index
   end
 
   scope "/", FastCheckWeb do
