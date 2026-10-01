@@ -6,7 +6,7 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
   alias FastCheck.Observability.Redactor
   alias FastCheck.Telemetry
 
-  @opaque "opaque-telemetry-test-segment"
+  @test_segment "opaque-telemetry-test-segment"
 
   setup do
     handler_id = {__MODULE__, :fastcheck_request, make_ref()}
@@ -27,7 +27,7 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
           [:phoenix, :endpoint, :stop],
           %{duration: duration_native},
           %{
-            request_path: "/t/#{@opaque}/pdf",
+            request_path: "/t/#{@test_segment}/pdf",
             method: "GET",
             status: 200
           },
@@ -35,8 +35,8 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
         )
       end)
 
-    refute log =~ @opaque
-    assert log =~ Redactor.redact_request_path("/t/#{@opaque}/pdf")
+    refute log =~ @test_segment
+    assert log =~ Redactor.redact_request_path("/t/#{@test_segment}/pdf")
   end
 
   test "emitted request event metadata never contains raw bearer token", %{handler_id: handler_id} do
@@ -58,7 +58,7 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
       [:phoenix, :endpoint, :stop],
       %{duration: duration_native},
       %{
-        request_path: "/t/#{@opaque}",
+        request_path: "/t/#{@test_segment}",
         method: "GET",
         status: 200
       },
@@ -66,8 +66,8 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
     )
 
     assert_receive {:telemetry_metadata, metadata}, 500
-    refute inspect(metadata) =~ @opaque
-    assert metadata.route == Redactor.redact_request_path("/t/#{@opaque}")
+    refute inspect(metadata) =~ @test_segment
+    assert metadata.route == Redactor.redact_request_path("/t/#{@test_segment}")
   end
 
   test "endpoint handler still emits telemetry when endpoint log policy would disable Phoenix logging" do
@@ -86,7 +86,7 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
         nil
       )
 
-    conn = Plug.Test.conn(:get, "/t/#{@opaque}")
+    conn = Plug.Test.conn(:get, "/t/#{@test_segment}")
 
     assert FastCheckWeb.Observability.EndpointRequestLogPolicy.log_level(conn) == false
 
@@ -125,7 +125,7 @@ defmodule FastCheck.TelemetrySecureTicketPathTest do
       %{duration: duration_native},
       %{
         route: "/t/:token",
-        request_path: "/t/#{@opaque}",
+        request_path: "/t/#{@test_segment}",
         method: "GET",
         status: 200
       },

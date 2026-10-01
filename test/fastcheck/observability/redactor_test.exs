@@ -142,14 +142,14 @@ defmodule FastCheck.Observability.RedactorTest do
   end
 
   describe "redact_request_path/1" do
-    @opaque "opaque-redactor-test-segment"
+    @test_segment "opaque-redactor-test-segment"
 
     test "redacts secure-ticket HTML path" do
-      assert Redactor.redact_request_path("/t/#{@opaque}") == "/t/" <> Redactor.filtered()
+      assert Redactor.redact_request_path("/t/#{@test_segment}") == "/t/" <> Redactor.filtered()
     end
 
     test "redacts secure-ticket PDF path" do
-      assert Redactor.redact_request_path("/t/#{@opaque}/pdf") ==
+      assert Redactor.redact_request_path("/t/#{@test_segment}/pdf") ==
                "/t/" <> Redactor.filtered() <> "/pdf"
     end
 

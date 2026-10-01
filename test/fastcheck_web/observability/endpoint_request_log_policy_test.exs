@@ -6,7 +6,7 @@ defmodule FastCheckWeb.Observability.EndpointRequestLogPolicyTest do
   alias FastCheckWeb.Endpoint
   alias FastCheckWeb.Observability.EndpointRequestLogPolicy
 
-  @opaque "opaque-test-segment-not-a-real-token"
+  @test_segment "opaque-test-segment-not-a-real-token"
 
   test "endpoint Plug.Telemetry log MFA references EndpointRequestLogPolicy.log_level/1" do
     assert Endpoint.endpoint_request_log_mfa() ==
@@ -14,12 +14,12 @@ defmodule FastCheckWeb.Observability.EndpointRequestLogPolicyTest do
   end
 
   test "secure-ticket HTML path disables endpoint request logging" do
-    conn = conn(:get, "/t/#{@opaque}")
+    conn = conn(:get, "/t/#{@test_segment}")
     assert EndpointRequestLogPolicy.log_level(conn) == false
   end
 
   test "secure-ticket PDF path disables endpoint request logging" do
-    conn = conn(:get, "/t/#{@opaque}/pdf")
+    conn = conn(:get, "/t/#{@test_segment}/pdf")
     assert EndpointRequestLogPolicy.log_level(conn) == false
   end
 
