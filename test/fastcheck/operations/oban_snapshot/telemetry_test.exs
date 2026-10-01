@@ -7,46 +7,58 @@ defmodule FastCheck.Operations.ObanSnapshot.TelemetryTest do
 
   test "metric definitions bind the full event names and emitted measurements" do
     expected = [
-      {[:fastcheck, :operations, :oban, :jobs], [:fastcheck, :operations, :oban, :jobs], :value},
+      {
+        [:fastcheck, :operations, :oban, :jobs],
+        [:fastcheck, :operations, :oban, :jobs],
+        :value,
+        [:queue, :state]
+      },
       {
         [:fastcheck, :operations, :oban, :oldest_age_seconds],
         [:fastcheck, :operations, :oban, :oldest_age_seconds],
-        :value
+        :value,
+        [:queue, :state]
       },
       {
         [:fastcheck, :operations, :oban, :next_scheduled_in_seconds],
         [:fastcheck, :operations, :oban, :next_scheduled_in_seconds],
-        :value
+        :value,
+        [:queue]
       },
       {
         [:fastcheck, :operations, :oban, :discarded_recent],
         [:fastcheck, :operations, :oban, :discarded_recent],
-        :value
+        :value,
+        [:queue]
       },
       {
         [:fastcheck, :operations, :oban, :snapshot_age_seconds],
         [:fastcheck, :operations, :oban, :snapshot_age_seconds],
-        :value
+        :value,
+        []
       },
       {
         [:fastcheck, :operations, :oban, :snapshot_freshness],
         [:fastcheck, :operations, :oban, :snapshot_freshness],
-        :value
+        :value,
+        []
       },
       {
         [:fastcheck, :operations, :oban, :collection_errors_total],
         [:fastcheck, :operations, :oban, :collection_errors_total],
-        :count
+        :count,
+        [:reason]
       }
     ]
 
     metrics = FastCheckWeb.Telemetry.metrics()
 
-    for {name, event_name, measurement} <- expected do
+    for {name, event_name, measurement, tags} <- expected do
       metric = Enum.find(metrics, &(&1.name == name))
       assert metric, "missing metric #{inspect(name)}"
       assert metric.event_name == event_name
       assert metric.measurement == measurement
+      assert metric.tags == tags
     end
   end
 

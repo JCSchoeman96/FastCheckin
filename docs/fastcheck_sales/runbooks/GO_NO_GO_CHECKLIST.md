@@ -56,8 +56,11 @@
   without raw job rows or mutation controls.
 - [ ] The bounded, read-only global monitoring procedure has been rehearsed for
   critical queues. This remains open for the current release.
+- [ ] Representative query-plan evidence for the bounded global queue
+  aggregates is available. This remains open for the current release.
 - [ ] No unexpected backlog exists, based on that approved monitoring source.
-- Current gate status is BLOCKED until the rehearsal is complete.
+- Current gate status is BLOCKED until both query-plan evidence and the
+  runbook rehearsal are complete.
   `/dashboard/sales/ops` is Event-scoped and is not a global backlog source.
 
 ## Paystack
@@ -173,6 +176,7 @@
 - [ ] Incident response owner is active for launch window.
 - [ ] Launch owner signs go.
 
+P1F_QUERY_PLAN_EVIDENCE=OPEN
 P1F_RUNBOOK_REHEARSAL=OPEN
 P1F_GLOBAL_OBAN_BLOCKER=OPEN
 P1E_INGRESS_BLOCKER=OPEN

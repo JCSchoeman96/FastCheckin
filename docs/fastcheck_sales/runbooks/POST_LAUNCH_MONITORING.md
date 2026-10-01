@@ -77,10 +77,12 @@ At least hourly during the first day:
 - Launch owner reviews successful transaction count.
 - Operator lead reviews manual review and delivery failure backlog.
 - Developer/admin reviews incidents and logs. Global worker monitoring remains
-  a launch blocker until the runbook rehearsal is complete.
+  a launch blocker until both representative query-plan evidence and the
+  runbook rehearsal are complete.
 - Refund/revocation operator reviews all destructive actions.
 - Decision is recorded: continue, continue with mitigations, or pause sales.
 
+P1F_QUERY_PLAN_EVIDENCE=OPEN
 P1F_RUNBOOK_REHEARSAL=OPEN
 P1F_GLOBAL_OBAN_BLOCKER=OPEN
 P1E_INGRESS_BLOCKER=OPEN

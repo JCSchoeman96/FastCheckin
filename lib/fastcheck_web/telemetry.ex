@@ -236,7 +236,7 @@ defmodule FastCheckWeb.Telemetry do
       ),
 
       # Global read-only Oban monitoring. Each node exports the accepted
-      # snapshot, so dashboards aggregate replicated gauges with max by instance.
+      # snapshot, so dashboards aggregate replicated gauges with max without(instance).
       last_value("fastcheck.operations.oban.jobs",
         event_name: [:fastcheck, :operations, :oban, :jobs],
         measurement: :value,
