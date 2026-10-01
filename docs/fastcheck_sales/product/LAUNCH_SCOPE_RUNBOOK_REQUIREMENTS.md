@@ -44,6 +44,16 @@ For internal pilot and admin-assisted sales:
   a separate BrowserAuth event-isolation requirement until that follow-up is
   implemented.
 
+## Ingress logging evidence (secure ticket launch gate)
+
+Before declaring production secure-ticket logging fully safe end-to-end,
+operators must confirm the host reverse proxy in front of FastCheck does **not**
+log raw `/t/:token` request URIs. The repository documents Compose/app binding
+but does not ship proxy configuration; capture attestation or configuration
+review evidence out of band. Until verified, treat
+`INGRESS_REQUEST_LOGGING_SAFE=UNVERIFIED` and keep the P1-E launch blocker open
+on ingress even when application request logging hardening is merged.
+
 ## Deferred Web Checkout Runbook
 
 Public web checkout runbooks are deferred with `web_checkout_sales`.

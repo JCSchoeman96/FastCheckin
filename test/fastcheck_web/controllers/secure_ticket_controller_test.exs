@@ -41,6 +41,18 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
   end
 
   describe "GET /t/:token" do
+    test "route metadata disables router dispatch logging" do
+      route =
+        Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
+          route.path == "/t/:token" and route.verb == :get
+        end)
+
+      assert %{
+               metadata: %{log: false},
+               plug: FastCheckWeb.SecureTicketController
+             } = route
+    end
+
     test "is public and does not redirect to login", %{conn: conn} do
       %{token: token, event: event} = issued_ticket_fixture()
 

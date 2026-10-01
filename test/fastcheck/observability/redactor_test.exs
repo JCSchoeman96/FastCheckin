@@ -141,6 +141,43 @@ defmodule FastCheck.Observability.RedactorTest do
     end
   end
 
+  describe "redact_request_path/1" do
+    @opaque "opaque-redactor-test-segment"
+
+    test "redacts secure-ticket HTML path" do
+      assert Redactor.redact_request_path("/t/#{@opaque}") == "/t/" <> Redactor.filtered()
+    end
+
+    test "redacts secure-ticket PDF path" do
+      assert Redactor.redact_request_path("/t/#{@opaque}/pdf") ==
+               "/t/" <> Redactor.filtered() <> "/pdf"
+    end
+
+    test "fail-closes malformed /t/ paths without exposing segments" do
+      assert Redactor.redact_request_path("/t/foo/bar") == "/t/" <> Redactor.filtered()
+      refute Redactor.redact_request_path("/t/foo/bar") =~ "foo"
+      refute Redactor.redact_request_path("/t/foo/bar") =~ "bar"
+    end
+
+    test "leaves ordinary paths unchanged" do
+      assert Redactor.redact_request_path("/dashboard") == "/dashboard"
+    end
+
+    test "returns unknown for nil and non-binary input" do
+      assert Redactor.redact_request_path(nil) == "unknown"
+      assert Redactor.redact_request_path(123) == "unknown"
+    end
+
+    test "treats percent-encoded bearer segments as opaque without decoding" do
+      encoded = "/t/%41%42%43%44"
+      result = Redactor.redact_request_path(encoded)
+
+      assert result == "/t/" <> Redactor.filtered()
+      refute result =~ "%41"
+      refute result =~ "ABCD"
+    end
+  end
+
   describe "redact_map/2 preserve_safe_ids" do
     test "preserves safe operational ids when requested" do
       input = %{order_id: "order-1", payment_attempt_id: "pay-1", delivery_token: "secret"}
