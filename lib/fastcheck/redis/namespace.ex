@@ -13,7 +13,6 @@ defmodule FastCheck.Redis.Namespace do
   @single_key_commands [
     "GET",
     "SET",
-    "SET",
     "SETEX",
     "SETNX",
     "GETSET",
