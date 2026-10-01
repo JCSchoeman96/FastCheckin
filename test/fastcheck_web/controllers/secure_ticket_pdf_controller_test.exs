@@ -49,6 +49,18 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   end
 
   describe "GET /t/:token/pdf" do
+    test "route metadata disables router dispatch logging" do
+      route =
+        Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
+          route.path == "/t/:token/pdf" and route.verb == :get
+        end)
+
+      assert %{
+               metadata: %{log: false},
+               plug: FastCheckWeb.SecureTicketPdfController
+             } = route
+    end
+
     test "downloads a current PDF without exposing secrets or mutating ticket state" do
       %{
         token: token,

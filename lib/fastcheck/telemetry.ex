@@ -14,6 +14,8 @@ defmodule FastCheck.Telemetry do
 
   require Logger
 
+  alias FastCheck.Observability.Redactor
+
   @doc """
   Attaches all telemetry handlers. Called from application.ex start/2 AFTER supervision tree starts.
   """
@@ -173,6 +175,7 @@ defmodule FastCheck.Telemetry do
   def handle_phoenix_endpoint(_event, measurements, metadata, _config) do
     # Convert duration to milliseconds
     duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    request_path = endpoint_request_path(metadata)
 
     # Emit aggregate metrics for monitoring
     :telemetry.execute(
@@ -182,9 +185,9 @@ defmodule FastCheck.Telemetry do
         count: 1
       },
       %{
-        status: metadata[:status] || 200,
-        method: metadata[:method] || "UNKNOWN",
-        route: metadata[:route] || metadata[:request_path] || "unknown"
+        status: endpoint_status(metadata),
+        method: endpoint_method(metadata),
+        route: sanitized_endpoint_route(metadata, request_path)
       }
     )
 
@@ -192,12 +195,41 @@ defmodule FastCheck.Telemetry do
     if duration_ms > 5_000 do
       Logger.warning("Slow HTTP request detected",
         duration_ms: duration_ms,
-        method: metadata[:method],
-        path: metadata[:request_path],
-        status: metadata[:status]
+        method: endpoint_method(metadata),
+        path: Redactor.redact_request_path(request_path),
+        status: endpoint_status(metadata)
       )
     end
   end
+
+  defp sanitized_endpoint_route(metadata, request_path) do
+    case metadata[:route] do
+      route when is_binary(route) and route != "" ->
+        route
+
+      _ ->
+        Redactor.redact_request_path(request_path)
+    end
+  end
+
+  defp endpoint_request_path(%{request_path: path}) when is_binary(path), do: path
+
+  defp endpoint_request_path(%{conn: %Plug.Conn{request_path: path}}) when is_binary(path),
+    do: path
+
+  defp endpoint_request_path(_), do: nil
+
+  defp endpoint_method(%{method: method}) when is_binary(method), do: method
+
+  defp endpoint_method(%{conn: %Plug.Conn{method: method}}) when is_binary(method), do: method
+
+  defp endpoint_method(_), do: "UNKNOWN"
+
+  defp endpoint_status(%{status: status}) when is_integer(status), do: status
+
+  defp endpoint_status(%{conn: %Plug.Conn{status: status}}) when is_integer(status), do: status
+
+  defp endpoint_status(_), do: 200
 
   @doc """
   Handles Phoenix router dispatch stop events for route-level metrics.

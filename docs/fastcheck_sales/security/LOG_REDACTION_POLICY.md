@@ -43,3 +43,8 @@
 - Token-bearing URLs are redacted as full values, not partially masked.
 - Raw provider payloads are never logged as structured metadata.
 - Provider client logs must avoid request headers and secrets.
+- Production reverse proxies and ingress layers (for example Nginx, Caddy, or
+  Traefik in front of the Phoenix app) must not record raw secure-ticket request
+  URIs such as `/t/:delivery_token` or `/t/:delivery_token/pdf` in access logs,
+  error logs, or debug captures. Application-level redaction does not replace
+  ingress log hygiene; operators must verify proxy configuration separately.

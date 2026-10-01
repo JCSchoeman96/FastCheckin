@@ -47,6 +47,19 @@ defmodule FastCheckWeb.SentryFilterTest do
              Redactor.filtered()
   end
 
+  test "filters secure-ticket HTML and PDF request URLs" do
+    opaque = "opaque-sentry-test-segment"
+
+    for url <- [
+          "https://tickets.example.test/t/#{opaque}",
+          "https://tickets.example.test/t/#{opaque}/pdf"
+        ] do
+      filtered = SentryFilter.filter_event(%{request: %{url: url, headers: %{}, query: %{}}})
+      refute filtered.request.url =~ opaque
+      assert filtered.request.url == Redactor.filtered()
+    end
+  end
+
   test "preserves safe ids in request and extra data" do
     event = %{
       request: %{

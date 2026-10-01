@@ -271,6 +271,19 @@ defmodule FastCheck.Observability.Redactor do
   @spec redact_token(String.t() | nil) :: String.t()
   def redact_token(_), do: @filtered
 
+  @spec redact_request_path(String.t() | nil) :: String.t()
+  def redact_request_path(nil), do: "unknown"
+
+  def redact_request_path(path) when is_binary(path) do
+    if String.starts_with?(path, "/t/") do
+      redact_secure_ticket_request_path(path)
+    else
+      path
+    end
+  end
+
+  def redact_request_path(_), do: "unknown"
+
   @spec redact_url(String.t() | nil) :: String.t()
   def redact_url(nil), do: @filtered
 
@@ -431,6 +444,17 @@ defmodule FastCheck.Observability.Redactor do
     "graph.facebook.com",
     "whatsapp.com"
   ]
+
+  defp redact_secure_ticket_request_path(path) do
+    rest = String.replace_prefix(path, "/t/", "")
+
+    case String.split(rest, "/", trim: true) do
+      [] -> "/t/" <> @filtered
+      [_bearer] -> "/t/" <> @filtered
+      [_bearer, "pdf"] -> "/t/" <> @filtered <> "/pdf"
+      _ -> "/t/" <> @filtered
+    end
+  end
 
   defp classify_and_redact_url(url) do
     uri = URI.parse(url)

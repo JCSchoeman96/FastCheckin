@@ -61,7 +61,13 @@ defmodule FastCheckWeb.Endpoint do
     cookie_key: "request_logger"
 
   plug Plug.RequestId
-  plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+
+  @endpoint_request_log_mfa {FastCheckWeb.Observability.EndpointRequestLogPolicy, :log_level, []}
+
+  plug Plug.Telemetry,
+    event_prefix: [:phoenix, :endpoint],
+    log: @endpoint_request_log_mfa
+
   plug FastCheckWeb.Plugs.SecurityHeaders
 
   plug Plug.Parsers,
@@ -88,6 +94,9 @@ defmodule FastCheckWeb.Endpoint do
   plug CORSPlug, origin: &__MODULE__.cors_origins/0
 
   plug FastCheckWeb.Router
+
+  @doc false
+  def endpoint_request_log_mfa, do: @endpoint_request_log_mfa
 
   @provider_webhook_paths MapSet.new([
                             "/api/sales/paystack/webhook",
