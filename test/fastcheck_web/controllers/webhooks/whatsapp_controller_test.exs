@@ -6,6 +6,7 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
 
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Workers.WhatsAppInboundWorker
 
@@ -576,7 +577,7 @@ defmodule FastCheckWeb.Webhooks.WhatsAppControllerTest do
   end
 
   defp dedupe_key(provider_message_id) do
-    "fastcheck:whatsapp:dedupe:message:#{provider_message_id}"
+    Namespace.key("fastcheck:whatsapp:dedupe:message:#{provider_message_id}")
   end
 
   defp insert_provider_accepted_attempt!(provider_message_id) do

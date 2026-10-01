@@ -3,6 +3,7 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
 
   import ExUnit.CaptureLog
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.Checkout
   alias FastCheck.Sales.Inventory.Reconciler
@@ -16,7 +17,11 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
   end
 
   test "dry-run reconcile reports missing inventory hash with planned rebuild", %{offer: offer} do
-    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{offer.id}:inventory"])
+    assert {:ok, _} =
+             Redix.command(
+               FastCheck.Redix,
+               ["DEL", Namespace.key("sales:offer:#{offer.id}:inventory")]
+             )
 
     assert {:ok, report} = Reconciler.reconcile_offer(offer.id, dry_run: true)
     assert report.dry_run?
@@ -41,7 +46,11 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
                effective_sales_channel: "whatsapp"
              )
 
-    assert {:ok, _} = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{offer.id}:inventory"])
+    assert {:ok, _} =
+             Redix.command(
+               FastCheck.Redix,
+               ["DEL", Namespace.key("sales:offer:#{offer.id}:inventory")]
+             )
 
     assert {:ok, report} =
              Reconciler.reconcile_offer(offer.id, dry_run: false, allow_repair: true)
@@ -87,7 +96,7 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
     assert {:ok, _} =
              Redix.command(FastCheck.Redix, [
                "HSET",
-               "sales:offer:#{offer.id}:inventory",
+               Namespace.key("sales:offer:#{offer.id}:inventory"),
                "available_quantity",
                "10"
              ])
@@ -120,7 +129,7 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
     assert {:ok, _} =
              Redix.command(FastCheck.Redix, [
                "HSET",
-               "sales:offer:#{offer.id}:inventory",
+               Namespace.key("sales:offer:#{offer.id}:inventory"),
                "available_quantity",
                "10"
              ])
@@ -149,7 +158,7 @@ defmodule FastCheck.Sales.Inventory.ReconcilerTest do
     assert {:ok, _} =
              Redix.command(FastCheck.Redix, [
                "HSET",
-               "sales:offer:#{offer.id}:inventory",
+               Namespace.key("sales:offer:#{offer.id}:inventory"),
                "available_quantity",
                "12"
              ])

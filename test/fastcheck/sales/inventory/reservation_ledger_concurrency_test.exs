@@ -1,13 +1,24 @@
 defmodule FastCheck.Sales.Inventory.ReservationLedgerConcurrencyTest do
   use FastCheck.DataCase, async: false
 
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Sales.Inventory.ReservationLedger
 
   @offer_id 44_002
 
   setup do
-    _ = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{@offer_id}:inventory"])
-    _ = Redix.command(FastCheck.Redix, ["DEL", "sales:offer:#{@offer_id}:holds"])
+    _ =
+      Redix.command(
+        FastCheck.Redix,
+        ["DEL", Namespace.key("sales:offer:#{@offer_id}:inventory")]
+      )
+
+    _ =
+      Redix.command(
+        FastCheck.Redix,
+        ["DEL", Namespace.key("sales:offer:#{@offer_id}:holds")]
+      )
+
     assert :ok = ReservationLedger.initialize_offer(@offer_id, 10)
     :ok
   end

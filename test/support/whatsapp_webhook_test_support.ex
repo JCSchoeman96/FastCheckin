@@ -1,6 +1,8 @@
 defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
   @moduledoc false
 
+  alias FastCheck.Redis.Namespace
+
   @config_keys [
     :whatsapp_enabled,
     :whatsapp_graph_api_base_url,
@@ -177,15 +179,20 @@ defmodule FastCheck.Messaging.WhatsApp.WebhookTestSupport do
 
   def flush_redis_keys! do
     for pattern <- [
-          "fastcheck:whatsapp:dedupe:message:*",
-          "fastcheck:whatsapp:dedupe:send_payment_link:*",
-          "fastcheck:whatsapp:dedupe:send_ticket_link:*",
-          "fastcheck:whatsapp:session:*"
+          Namespace.pattern("fastcheck:whatsapp:dedupe:message:*"),
+          Namespace.pattern("fastcheck:whatsapp:dedupe:send_payment_link:*"),
+          Namespace.pattern("fastcheck:whatsapp:dedupe:send_ticket_link:*"),
+          Namespace.pattern("fastcheck:whatsapp:session:*")
         ] do
       case Redix.command(FastCheck.Redix, ["KEYS", pattern]) do
-        {:ok, []} -> :ok
-        {:ok, keys} -> Redix.command(FastCheck.Redix, ["DEL" | keys])
-        {:error, _reason} -> :ok
+        {:ok, []} ->
+          :ok
+
+        {:ok, keys} ->
+          Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
+
+        {:error, _reason} ->
+          :ok
       end
     end
   end

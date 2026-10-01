@@ -1,3 +1,5 @@
+name: fastcheckin
+
 services:
   app-perf:
     profiles:
@@ -5,21 +7,22 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.perf
-    container_name: fastcheck-app-perf
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      perf-db-role:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-perf-small-secret-key-base-perf-small-secret-key-base-1234567890abcd}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-perf-small-encryption-key-perf-small-encryption-key-1234}
-      MOBILE_JWT_SECRET: ${MOBILE_JWT_SECRET:-perf-small-mobile-jwt-secret-perf-small-mobile-jwt-secret-1234}
-      DATABASE_URL: ecto://postgres:${DB_PASSWORD:-postgres}@pgbouncer:5432/fastcheck_prod
-      MIGRATION_DATABASE_URL: ecto://postgres:${DB_PASSWORD:-postgres}@postgres:5432/fastcheck_prod
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?Set SECRET_KEY_BASE}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY}
+      MOBILE_JWT_SECRET: ${MOBILE_JWT_SECRET:?Set MOBILE_JWT_SECRET}
+      DATABASE_URL: ecto://fastcheck_perf:${FASTCHECK_PERF_DB_PASSWORD:?Set FASTCHECK_PERF_DB_PASSWORD}@pgbouncer:5432/fastcheck_prod
+      MIGRATION_DATABASE_URL: ecto://postgres:${PERF_ADMIN_DB_PASSWORD:?Set PERF_ADMIN_DB_PASSWORD}@postgres:5432/fastcheck_prod
       DATABASE_POOLING_MODE: pgbouncer_transaction
       DB_PREPARE_MODE: unnamed
       OBAN_NOTIFIER: pg
@@ -31,6 +34,12 @@ services:
       RUN_MIGRATIONS: "true"
     networks:
       - fastcheck_network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:4000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     cpus: 2.0
     mem_limit: 2g
 
@@ -40,11 +49,10 @@ services:
     build:
       context: .
       dockerfile: docker/perf-proxy.Dockerfile
-    container_name: fastcheck-perf-proxy
     restart: unless-stopped
     depends_on:
       app-perf:
-        condition: service_started
+        condition: service_healthy
     environment:
       PERF_DEVICE_HEADER: x-perf-device-id
       PERF_DEVICE_IP_PREFIX: "10.250"
@@ -56,15 +64,18 @@ services:
       - fastcheck_network
 
   postgres:
+    profiles:
+      - perf-small
     image: postgres:18-alpine
-    container_name: fastcheck-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: fastcheck_prod
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${PERF_ADMIN_DB_PASSWORD:?Set PERF_ADMIN_DB_PASSWORD}
+    labels:
+      com.fastcheck.perf-pg18-data-migration-ack: "${FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK:?Set FASTCHECK_PERF_PG18_DATA_MIGRATION_ACK only after the existing PG18 data is backed up and deliberately migrated}"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     ports:
       - "5434:5432"
     healthcheck:
@@ -75,17 +86,77 @@ services:
     networks:
       - fastcheck_network
 
+  perf-db-role:
+    profiles:
+      - perf-small
+    image: postgres:18-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: ${PERF_ADMIN_DB_PASSWORD:?Set PERF_ADMIN_DB_PASSWORD}
+      FASTCHECK_PERF_DB_PASSWORD: ${FASTCHECK_PERF_DB_PASSWORD:?Set FASTCHECK_PERF_DB_PASSWORD}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until pg_isready -h "$$PGHOST" -p "$$PGPORT" -U "$$PGUSER" -d "$$PGDATABASE"; do
+          sleep 1
+        done
+
+        if psql -Atqc "SELECT 1 FROM pg_roles WHERE rolname = 'fastcheck_perf'" | grep -q '^1$'; then
+          psql -v ON_ERROR_STOP=1 -v perf_password="$$FASTCHECK_PERF_DB_PASSWORD" <<'SQL'
+        SELECT format(
+          'ALTER ROLE fastcheck_perf LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L',
+          :'perf_password'
+        )
+        \gexec
+        SQL
+        else
+          psql -v ON_ERROR_STOP=1 -v perf_password="$$FASTCHECK_PERF_DB_PASSWORD" <<'SQL'
+        SELECT format(
+          'CREATE ROLE fastcheck_perf LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L',
+          :'perf_password'
+        )
+        \gexec
+        SQL
+        fi
+
+        psql -v ON_ERROR_STOP=1 -d fastcheck_prod <<'SQL'
+        GRANT CONNECT ON DATABASE fastcheck_prod TO fastcheck_perf;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+          GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO fastcheck_perf;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+          GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO fastcheck_perf;
+        SQL
+
+        psql -v ON_ERROR_STOP=1 -d fastcheck_prod <<'SQL'
+        GRANT USAGE ON SCHEMA public TO fastcheck_perf;
+        GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER
+          ON ALL TABLES IN SCHEMA public TO fastcheck_perf;
+        GRANT USAGE, SELECT, UPDATE
+          ON ALL SEQUENCES IN SCHEMA public TO fastcheck_perf;
+        SQL
+    networks:
+      - fastcheck_network
+
   pgbouncer:
+    profiles:
+      - perf-small
     image: edoburu/pgbouncer:latest
-    container_name: fastcheck-pgbouncer
     restart: unless-stopped
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_USER: fastcheck_perf
+      DB_PASSWORD: ${FASTCHECK_PERF_DB_PASSWORD:?Set FASTCHECK_PERF_DB_PASSWORD}
       DB_NAME: fastcheck_prod
       AUTH_TYPE: scram-sha-256
+      ADMIN_USERS: fastcheck_perf
 
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 500
@@ -103,17 +174,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      perf-db-role:
+        condition: service_completed_successfully
     networks:
       - fastcheck_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U postgres -d fastcheck_prod"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U fastcheck_perf -d fastcheck_prod"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
+    profiles:
+      - perf-small
     image: redis:7-alpine
-    container_name: fastcheck-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     volumes:

@@ -7,6 +7,7 @@ defmodule FastCheck.CheckIns.DuplicateGuard do
 
   alias FastCheck.CheckIns.CheckInAttempt
   alias FastCheck.Redis
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
 
   @spec admitted?(integer(), String.t()) :: boolean()
@@ -47,5 +48,5 @@ defmodule FastCheck.CheckIns.DuplicateGuard do
   def mark_admitted(_event_id, _normalized_code), do: {:error, :invalid_ticket_code}
 
   @spec admitted_key(integer()) :: String.t()
-  def admitted_key(event_id), do: "admitted:#{event_id}"
+  def admitted_key(event_id), do: Namespace.key("admitted:#{event_id}")
 end

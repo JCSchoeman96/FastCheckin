@@ -3,6 +3,7 @@ defmodule FastCheck.Messaging.WhatsApp.DedupeTest do
 
   alias FastCheck.Messaging.WhatsApp.Dedupe
   alias FastCheck.Messaging.WhatsApp.WebhookTestSupport
+  alias FastCheck.Redis.Namespace
 
   setup do
     WebhookTestSupport.flush_redis_keys!()
@@ -19,7 +20,7 @@ defmodule FastCheck.Messaging.WhatsApp.DedupeTest do
     assert {:ok, ttl} =
              Redix.command(FastCheck.Redix, [
                "TTL",
-               "fastcheck:whatsapp:dedupe:message:#{message_id}"
+               Namespace.key("fastcheck:whatsapp:dedupe:message:#{message_id}")
              ])
 
     assert ttl > 0
@@ -45,15 +46,21 @@ defmodule FastCheck.Messaging.WhatsApp.DedupeTest do
     challenge_b = 30_002
 
     ordinary_key =
-      "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{ticket_issue_id}"
+      Namespace.key(
+        "fastcheck:whatsapp:dedupe:send_ticket_link:#{conversation_id}:#{ticket_issue_id}"
+      )
 
     key_a =
-      "fastcheck:whatsapp:dedupe:send_ticket_link:" <>
-        "#{conversation_id}:#{ticket_issue_id}:challenge:#{challenge_a}"
+      Namespace.key(
+        "fastcheck:whatsapp:dedupe:send_ticket_link:" <>
+          "#{conversation_id}:#{ticket_issue_id}:challenge:#{challenge_a}"
+      )
 
     key_b =
-      "fastcheck:whatsapp:dedupe:send_ticket_link:" <>
-        "#{conversation_id}:#{ticket_issue_id}:challenge:#{challenge_b}"
+      Namespace.key(
+        "fastcheck:whatsapp:dedupe:send_ticket_link:" <>
+          "#{conversation_id}:#{ticket_issue_id}:challenge:#{challenge_b}"
+      )
 
     assert {:ok, :new} =
              Dedupe.claim_send_ticket_link_for_challenge(

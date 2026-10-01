@@ -38,6 +38,7 @@ npm-debug.log
 # Environment files (contain secrets)
 .env
 .env.local
+.env.*.local
 
 # Code quality and security tools
 /.credo_cache/
