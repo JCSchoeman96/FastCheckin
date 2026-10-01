@@ -235,6 +235,35 @@ defmodule FastCheckWeb.Telemetry do
         description: "Sales admin action denials"
       ),
 
+      # Global read-only Oban monitoring. Each node exports the accepted
+      # snapshot, so dashboards aggregate replicated gauges with max by instance.
+      last_value("fastcheck.operations.oban.jobs",
+        tags: [:queue, :state],
+        description: "Accepted global Oban job counts by normalized queue and state"
+      ),
+      last_value("fastcheck.operations.oban.oldest_age_seconds",
+        tags: [:queue, :state],
+        description: "Accepted global Oban oldest available, executing, or retryable age"
+      ),
+      last_value("fastcheck.operations.oban.next_scheduled_in_seconds",
+        tags: [:queue],
+        description: "Accepted global Oban next scheduled delay"
+      ),
+      last_value("fastcheck.operations.oban.discarded_recent",
+        tags: [:queue],
+        description: "Accepted global Oban discarded jobs in the recent window"
+      ),
+      last_value("fastcheck.operations.oban.snapshot_age_seconds",
+        description: "Age of the accepted global Oban snapshot"
+      ),
+      last_value("fastcheck.operations.oban.snapshot_freshness",
+        description: "Freshness of the accepted global Oban snapshot"
+      ),
+      counter("fastcheck.operations.oban.collection_errors_total",
+        tags: [:reason],
+        description: "Bounded global Oban monitoring collection errors"
+      ),
+
       # VM Metrics
       last_value("vm.memory.total", unit: {:byte, :kilobyte}),
       last_value("vm.total_run_queue_lengths.total"),

@@ -27,6 +27,8 @@ defmodule FastCheck.Application do
         {Phoenix.PubSub, name: FastCheck.PubSub},
         FastCheck.Redis.Connection,
         {Oban, Application.fetch_env!(:fastcheck, Oban)},
+        FastCheck.Operations.ObanSnapshot.Store,
+        FastCheck.Operations.ObanSnapshot.Collector,
         FastCheckWeb.Endpoint,
         # Rate limiter storage (ETS table) - cleans up expired entries every 60 seconds
         {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000},

@@ -60,6 +60,43 @@ defmodule FastCheck.RuntimeConfiguration do
 
   def dashboard_event_ids(_raw_value), do: {:error, :invalid_dashboard_event_ids}
 
+  @spec operations_global_monitoring_usernames(term(), term()) ::
+          {:ok, [String.t()]}
+          | {:error, :invalid_operations_global_monitoring_usernames | :wildcard_not_allowed}
+  def operations_global_monitoring_usernames(raw_value, dashboard_username) do
+    bootstrap_username = trim_value(dashboard_username)
+
+    cond do
+      blank?(raw_value) ->
+        case bootstrap_username do
+          username when is_binary(username) and username != "" -> {:ok, [username]}
+          _ -> {:error, :invalid_operations_global_monitoring_usernames}
+        end
+
+      not is_binary(raw_value) ->
+        {:error, :invalid_operations_global_monitoring_usernames}
+
+      true ->
+        usernames =
+          raw_value
+          |> String.split(",", trim: false)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.uniq()
+
+        cond do
+          Enum.any?(usernames, &String.contains?(&1, "*")) ->
+            {:error, :wildcard_not_allowed}
+
+          usernames == [] ->
+            {:error, :invalid_operations_global_monitoring_usernames}
+
+          true ->
+            {:ok, usernames}
+        end
+    end
+  end
+
   @spec whatsapp_sandbox_mode(atom(), boolean(), term()) ::
           {:ok, boolean()} | {:error, :missing | :invalid}
   def whatsapp_sandbox_mode(environment, whatsapp_enabled, raw_value) do

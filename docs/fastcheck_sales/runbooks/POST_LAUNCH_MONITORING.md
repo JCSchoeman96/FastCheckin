@@ -2,17 +2,24 @@
 
 ## Pre-Launch Blocker
 
-The production source and procedure for global Oban backlog monitoring remain
-unresolved under P1-F. Production launch is NO-GO until an approved source
-exists and staff have rehearsed its procedure. `/dashboard/sales/ops` is
-Event-scoped and is not an approved substitute. Do not use ad-hoc SQL as a
-workaround.
+The read-only global worker source is `/dashboard/system/workers`. It is
+separate from the Event-scoped `/dashboard/sales/ops` page. P1-F launch
+rehearsal remains open, so this page does not clear the production launch gate.
+Do not use ad-hoc SQL as a workaround.
 
 ## First Hour
 
 Every 10 minutes for the first hour:
 
 - Open `/dashboard/sales/ops`.
+- Open `/dashboard/system/workers`.
+- Confirm monitoring status is `Current`, snapshot age is at most 30 seconds,
+  and distribution is healthy. Escalate if status is `Stale`, `Unavailable`, or
+  the page reports a degraded shared mirror.
+- Review all configured queues and the single `Unexpected queues` aggregate.
+  Age fields are meaningful only when their matching state count is non-zero.
+- Treat the Prometheus gauges as replicated global values. Query them with
+  `max without(instance)`. Never sum these gauges across instances.
 - Check orders by status for unexpected `manual_review`, `expired`, or stalled
   `awaiting_payment` growth.
 - Check payment failures and mismatches.
@@ -60,16 +67,20 @@ At least hourly during the first day:
 - Do not paste payment links, ticket links, tokens, access codes, phone numbers,
   or email addresses into public incident notes.
 - Use Audit Timeline for state history instead of raw DB dumps.
-- Use Ops Dashboard for Event-attributable Sales failure counts. It does not
-  report global worker queue pressure. P1-F must provide that monitoring before
-  production launch.
+- Use Ops Dashboard for Event-attributable Sales failure counts.
+- Use the worker page for global queue pressure. It has no retry, pause, delete,
+  or other mutation controls.
 - Pause new sales if incident thresholds are met.
 
 ## End-Of-Day Signoff
 
 - Launch owner reviews successful transaction count.
 - Operator lead reviews manual review and delivery failure backlog.
-- Developer/admin reviews incidents and logs. Global retry backlog monitoring
-  remains blocked by P1-F until an approved source and procedure exist.
+- Developer/admin reviews incidents and logs. Global worker monitoring remains
+  a launch blocker until the runbook rehearsal is complete.
 - Refund/revocation operator reviews all destructive actions.
 - Decision is recorded: continue, continue with mitigations, or pause sales.
+
+P1F_RUNBOOK_REHEARSAL=OPEN
+P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=OPEN
