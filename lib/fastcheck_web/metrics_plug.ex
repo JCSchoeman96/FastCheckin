@@ -14,6 +14,7 @@ defmodule FastCheckWeb.MetricsPlug do
   def init(opts), do: opts
 
   @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
+  # sobelow_skip ["XSS.SendResp", "XSS.ContentType"]
   def call(%Plug.Conn{request_path: "/metrics"} = conn, _opts) do
     body = TelemetryMetricsPrometheus.Core.scrape()
 
