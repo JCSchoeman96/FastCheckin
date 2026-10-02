@@ -1,6 +1,7 @@
 defmodule FastCheck.Operations.ObanSnapshot.QueryTest do
   use ExUnit.Case, async: false
 
+  alias FastCheck.Operations.ObanSnapshot
   alias FastCheck.Operations.ObanSnapshot.Query
 
   @base ~U[2026-10-01 10:00:00Z]
@@ -50,13 +51,51 @@ defmodule FastCheck.Operations.ObanSnapshot.QueryTest do
 
   test "active query normalizes arbitrary queues and bounds grouping" do
     assert {:ok, []} = Query.active_rows(__MODULE__.QueryTestRepo, @base)
-    assert_receive {:query, sql, _params}
+    assert_receive {:query, sql, params}
 
     assert sql =~ "CASE WHEN queue = ANY"
+    assert sql =~ "ELSE '__unexpected__'"
     assert sql =~ "GROUP BY normalized_queue, state"
     refute sql =~ "args"
     refute sql =~ "errors"
     refute sql =~ "meta"
+
+    assert params == [ObanSnapshot.configured_queues()]
+
+    assert sql =~ "WHERE state IN ("
+    refute sql =~ "state::text"
+
+    active_where =
+      sql
+      |> String.split("WHERE state IN (", parts: 2)
+      |> Enum.at(1, "")
+      |> String.split(")", parts: 2)
+      |> hd()
+
+    active_states_in_sql =
+      ~r/'([^']+)'/
+      |> Regex.scan(active_where)
+      |> Enum.map(fn [_, state] -> state end)
+
+    assert active_states_in_sql == Enum.map(ObanSnapshot.states(), &to_string/1)
+
+    discarded_sql = discarded_rows_sql_from_module()
+    assert discarded_sql =~ "state::text = 'discarded'"
+
+    refute sql =~ "$2"
+  end
+
+  defp discarded_rows_sql_from_module do
+    {:ok, _} = Query.discarded_rows(__MODULE__.DiscardedSqlRepo, @base)
+    assert_receive {:discarded_sql, sql}
+    sql
+  end
+
+  defmodule DiscardedSqlRepo do
+    def query(sql, _params) do
+      send(self(), {:discarded_sql, sql})
+      {:ok, %{rows: []}}
+    end
   end
 
   defmodule QueryTestRepo do

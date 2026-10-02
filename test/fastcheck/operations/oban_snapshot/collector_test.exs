@@ -16,6 +16,8 @@ defmodule FastCheck.Operations.ObanSnapshot.CollectorTest do
     refute lock_sql =~ "pg_advisory_lock"
     assert_receive {:query, active_sql}
     assert active_sql =~ "CASE WHEN queue = ANY"
+    assert active_sql =~ "WHERE state IN ("
+    refute active_sql =~ "ANY($2"
     assert_receive {:query, discarded_sql}
     assert discarded_sql =~ "CASE WHEN queue = ANY"
   end
@@ -30,9 +32,17 @@ defmodule FastCheck.Operations.ObanSnapshot.CollectorTest do
       send(Process.get(:collector_test_parent), {:query, sql})
 
       cond do
-        String.contains?(sql, "pg_try_advisory_xact_lock") -> {:ok, %{rows: [[true]]}}
-        String.contains?(sql, "ANY($2") -> {:ok, %{rows: []}}
-        String.contains?(sql, "discarded") -> {:ok, %{rows: []}}
+        String.contains?(sql, "pg_try_advisory_xact_lock") ->
+          {:ok, %{rows: [[true]]}}
+
+        String.contains?(sql, "state::text = 'discarded'") ->
+          {:ok, %{rows: []}}
+
+        String.contains?(sql, "WHERE state IN (") ->
+          {:ok, %{rows: []}}
+
+        true ->
+          raise "unexpected collector fake query: #{inspect(sql)}"
       end
     end
   end
