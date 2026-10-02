@@ -72,9 +72,12 @@ defmodule FastCheck.Operations.ObanSnapshot.QueryTest do
       |> String.split(")", parts: 2)
       |> hd()
 
-    for state <- ObanSnapshot.states() do
-      assert active_where =~ "'#{state}'"
-    end
+    active_states_in_sql =
+      ~r/'([^']+)'/
+      |> Regex.scan(active_where)
+      |> Enum.map(fn [_, state] -> state end)
+
+    assert active_states_in_sql == Enum.map(ObanSnapshot.states(), &to_string/1)
 
     discarded_sql = discarded_rows_sql_from_module()
     assert discarded_sql =~ "state::text = 'discarded'"
