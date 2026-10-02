@@ -799,6 +799,7 @@ defmodule P1F.ObanSnapshotFixture do
   defp load_fixture(scenario_key, scenario, fixture_time) do
     with :ok <- ensure_minimal_runtime(),
          {:ok, url} <- fixture_database_url(),
+         :ok <- ensure_database_runtime(),
          {:ok, repo_pid} <- Repo.start_link(url: url, pool_size: 1, log: false) do
       try do
         with :ok <- check_database!(scenario_key) do
@@ -811,17 +812,46 @@ defmodule P1F.ObanSnapshotFixture do
   end
 
   defp ensure_minimal_runtime do
-    fastcheck_started? =
-      Enum.any?(Application.started_applications(), fn {application, _description, _version} ->
-        application == :fastcheck
-      end)
-
-    if fastcheck_started? or not is_nil(Process.whereis(Repo)) do
+    if fastcheck_started?() or not is_nil(Process.whereis(Repo)) do
       {:error,
        "load mode requires mix run --no-start and a VM with FastCheck.Repo not already started"}
     else
       :ok
     end
+  end
+
+  defp ensure_database_runtime do
+    with :ok <- ensure_runtime_application(:ecto_sql),
+         :ok <- ensure_runtime_application(:postgrex),
+         :ok <- ensure_fastcheck_stopped() do
+      :ok
+    end
+  end
+
+  defp ensure_runtime_application(application) do
+    case Application.ensure_all_started(application) do
+      {:ok, _started} ->
+        :ok
+
+      {:error, {failed_application, reason}} ->
+        {:error,
+         "failed to start database runtime application #{application} (#{failed_application}): #{inspect(reason)}"}
+    end
+  end
+
+  defp ensure_fastcheck_stopped do
+    if fastcheck_started?() do
+      {:error,
+       "database dependency startup unexpectedly started :fastcheck; refusing to start FastCheck.Repo"}
+    else
+      :ok
+    end
+  end
+
+  defp fastcheck_started? do
+    Enum.any?(Application.started_applications(), fn {application, _description, _version} ->
+      application == :fastcheck
+    end)
   end
 
   defp fixture_database_url do
