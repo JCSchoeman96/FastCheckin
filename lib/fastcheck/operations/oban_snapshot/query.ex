@@ -8,7 +8,6 @@ defmodule FastCheck.Operations.ObanSnapshot.Query do
   alias FastCheck.Repo
 
   @discarded_recent_window_seconds 3_600
-  @active_states ObanSnapshot.states()
   @configured_queues ObanSnapshot.configured_queues()
 
   @spec active_rows(module(), DateTime.t()) :: {:ok, [map()]} | {:error, term()}
@@ -21,11 +20,16 @@ defmodule FastCheck.Operations.ObanSnapshot.Query do
       min(scheduled_at) AS min_scheduled_at,
       min(attempted_at) AS min_attempted_at
     FROM oban_jobs
-    WHERE state::text = ANY($2::text[])
+    WHERE state IN (
+      'available',
+      'executing',
+      'retryable',
+      'scheduled'
+    )
     GROUP BY normalized_queue, state
     """
 
-    case repo_query(repo, sql, [ObanSnapshot.configured_queues(), @active_states]) do
+    case repo_query(repo, sql, [ObanSnapshot.configured_queues()]) do
       {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, &active_row/1)}
       {:error, reason} -> {:error, reason}
     end
