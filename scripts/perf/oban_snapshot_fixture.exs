@@ -23,6 +23,15 @@ defmodule P1F.ObanSnapshotFixture do
   @fixture_ack "disposable-local-database"
   @runner "oban@fixture.invalid"
 
+  @persisted_timestamp_fields [
+    :inserted_at,
+    :scheduled_at,
+    :attempted_at,
+    :completed_at,
+    :cancelled_at,
+    :discarded_at
+  ]
+
   @states [
     :available,
     :executing,
@@ -345,7 +354,14 @@ defmodule P1F.ObanSnapshotFixture do
 
   defp parse_time(%{now: value}) do
     case DateTime.from_iso8601(value) do
-      {:ok, %DateTime{utc_offset: 0, std_offset: 0} = datetime, 0} -> {:ok, datetime}
+      {:ok,
+       %DateTime{
+         utc_offset: 0,
+         std_offset: 0,
+         microsecond: {value, _precision}
+       } = datetime, 0} ->
+        {:ok, %DateTime{datetime | microsecond: {value, 6}}}
+
       {:ok, _datetime, _offset} -> {:error, "--now must use UTC (Z or +00:00)"}
       {:error, _reason} -> {:error, "--now must be a valid UTC RFC3339 timestamp"}
     end
@@ -513,11 +529,17 @@ defmodule P1F.ObanSnapshotFixture do
         worker = row.worker
         state = row.state
         class = payload_class(global_index, scenario)
+        precision_valid? = valid_persisted_timestamp_precision?(job)
 
         cond do
           job.queue != raw_queue(worker) or job.worker != worker_name(worker) ->
             {:halt,
              {:error, "generated queue or worker differs from canonical fixture authority"}}
+
+          not precision_valid? ->
+            {:halt,
+             {:error,
+              "generated #{state} row timestamps must have microsecond precision 6 when present"}}
 
           not valid_job?(job, fixture_time, actual_max_attempts(worker)) ->
             {:halt,
@@ -560,6 +582,16 @@ defmodule P1F.ObanSnapshotFixture do
          :ok <- validate_generated_bucket_totals(scenario_key, totals.timestamp_buckets) do
       :ok
     end
+  end
+
+  defp valid_persisted_timestamp_precision?(job) do
+    Enum.all?(@persisted_timestamp_fields, fn field ->
+      case Map.fetch!(job, field) do
+        nil -> true
+        %DateTime{microsecond: {_value, 6}} -> true
+        _ -> false
+      end
+    end)
   end
 
   defp valid_state_offset?(%{state: :executing, state_ordinal: ordinal}, job, fixture_time) do
