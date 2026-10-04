@@ -294,14 +294,14 @@ retry jobs, pause queues, or delete jobs as a monitoring response.
   or an assumed platform dashboard.
 - Verification after recovery: Confirm the affected Event-owned order, payment,
   ticket, or delivery state, then verify the worker page reports current
-  monitoring. Launch clearance remains open pending query-plan evidence and the
-  runbook rehearsal.
+  monitoring. P1-F query-plan evidence and runbook rehearsal are complete. This
+  does not establish current queue health or make an active incident safe.
 - Escalation trigger: A worker-dependent Sales flow stalls or a global backlog
   cannot be assessed.
 
-P1F_QUERY_PLAN_EVIDENCE=OPEN
-P1F_RUNBOOK_REHEARSAL=OPEN
-P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1F_QUERY_PLAN_EVIDENCE=PASS
+P1F_RUNBOOK_REHEARSAL=PASS
+P1F_GLOBAL_OBAN_BLOCKER=CLEARED
 P1E_INGRESS_BLOCKER=OPEN
 
 ## Ops dashboard unavailable
