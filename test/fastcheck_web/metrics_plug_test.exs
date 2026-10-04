@@ -29,11 +29,23 @@ defmodule FastCheckWeb.MetricsPlugTest do
 
     assert conn.status == 200
 
-    [content_type | _] = get_resp_header(conn, "content-type")
-    assert content_type =~ "text/plain; version=0.0.4; charset=utf-8"
+    assert get_resp_header(conn, "content-type") == [
+             "text/plain; version=0.0.4; charset=utf-8"
+           ]
+
     assert conn.resp_body =~ "fastcheck_operations_oban_jobs"
     assert conn.resp_body =~ ~s(queue="payments")
     assert conn.resp_body =~ ~s(state="available")
+  end
+
+  test "POST /metrics does not return the scrape body" do
+    conn =
+      :post
+      |> conn("/metrics")
+      |> MetricsPlug.call([])
+
+    assert conn.status == 404
+    refute conn.resp_body =~ "fastcheck_operations_oban_jobs"
   end
 
   test "unknown paths return 404" do

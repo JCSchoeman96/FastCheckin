@@ -8,14 +8,14 @@ defmodule FastCheckWeb.MetricsPlug do
 
   import Plug.Conn
 
-  @prometheus_content_type "text/plain; version=0.0.4; charset=utf-8"
+  @prometheus_content_type "text/plain; version=0.0.4"
 
   @spec init(keyword()) :: keyword()
   def init(opts), do: opts
 
   @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   # sobelow_skip ["XSS.SendResp", "XSS.ContentType"]
-  def call(%Plug.Conn{request_path: "/metrics"} = conn, _opts) do
+  def call(%Plug.Conn{method: "GET", request_path: "/metrics"} = conn, _opts) do
     body = TelemetryMetricsPrometheus.Core.scrape()
 
     conn
