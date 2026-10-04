@@ -65,13 +65,24 @@ defmodule FastCheck.Application do
     if metrics_enabled?() do
       [
         {TelemetryMetricsPrometheus.Core,
-         metrics: FastCheckWeb.Telemetry.metrics(),
-         port: String.to_integer(System.get_env("METRICS_PORT", "9568")),
-         plug_cowboy_opts: [ip: {127, 0, 0, 1}]}
+         metrics: FastCheckWeb.Telemetry.metrics(), start_async: false},
+        metrics_listener_child()
       ]
     else
       []
     end
+  end
+
+  defp metrics_listener_child do
+    {Bandit,
+     plug: {FastCheckWeb.MetricsPlug, []},
+     port: metrics_port(),
+     ip: {127, 0, 0, 1},
+     startup_log: false}
+  end
+
+  defp metrics_port do
+    System.get_env("METRICS_PORT", "9568") |> String.to_integer()
   end
 
   defp metrics_enabled? do
