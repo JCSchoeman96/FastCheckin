@@ -3,21 +3,23 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | P1E-SECURE-TICKET-INGRESS-REMEDIATION |
-| **Plan version** | v1.2 |
+| **Plan version** | v1.3 |
 | **Status** | FROZEN — ready for implementation review (plan-only; no code in this artifact) |
-| **Scope** | Remediate P1-E ingress logging blocker by removing delivery bearer from HTTP request targets; introduce stateless ticket-scoped browser claims without new durable session stores |
+| **Scope** | Remediate P1-E ingress logging blocker by removing delivery bearer from HTTP request targets; browser ticket-session via one cookie + warm Redis HASH registry (not durable ticket authority) |
 | **Authority** | This file is the **active contract** for P1-E implementation. `docs/fastcheck_sales/product/LAUNCH_SCOPE_RUNBOOK_REQUIREMENTS.md` remains the launch gate source for `INGRESS_REQUEST_LOGGING_SAFE`. On conflict, this plan defines *how* P1-E is satisfied; the runbook defines *when* the gate may clear. |
 | **Accepted base** | `BASE_SHA=71462644f91d9c8132c0a5a4ac5df97e2c8acd81`, `BASE_TREE=56de18e69be5a5140b7bf9eb131ea4f49c9304ae` |
 | **Last updated** | 2026-10-04 |
-| **Change summary (v1.2)** | Multi-ticket path-scoped signed cookie claims; ticket-specific view/PDF routes; `GET /t` bootstrap-only; separated exchange vs session-read rate limits. |
-| **Change summary (v1.1)** | Two-stage production cutover when legacy links exist; `P1E_LEGACY_INVENTORY_GATE`; conditional P1E-F; frozen generation fingerprint v1; RawBodyReader boundary; corrected PR #494 commit distance (40). |
-| **Change summary (v1)** | Initial freeze: fragment URL contract, ticket-session domain, HTTP routes, legacy cutover, deployment provenance, tests, and production evidence requirements. |
+| **Change summary (v1.3)** | One `_fastcheck_ticket_session` cookie + Redis HASH registry (replaces per-ticket cookie fan-out); distributed Redis ZSET rate limits; trusted client-IP rules for new P1-E guards. |
+| **Change summary (v1.2)** | Multi-ticket path-scoped signed cookie claims; ticket-specific view/PDF routes; `GET /t` bootstrap-only; separated exchange vs session-read rate limits. *(Per-ticket cookie fan-out **superseded** by v1.3.)* |
+| **Change summary (v1.1)** | Two-stage production cutover; `P1E_LEGACY_INVENTORY_GATE`; conditional P1E-F; fingerprint v1; RawBodyReader; PR #494 distance (40). |
+| **Change summary (v1)** | Initial fragment ingress contract. |
 
 ### Revision log
 
 - `v1` — Initial security architecture contract after production ingress diagnostic (`RAILWAY_RAW_PATH_LOGGING=CONFIRMED`).
-- `v1.1` — Production cutover sequencing: compatibility release vs hard-cutover release; P1E-F gated on legacy cohort replacement; frozen `delivery_generation_fingerprint` algorithm; deployment provenance count correction.
-- `v1.2` — Reject global single-ticket Phoenix session; ticket-scoped `_fastcheck_ticket` cookies; `/t/view/:ticket_issue_id` routes; multi-ticket coexistence; rate-limit buckets split (exchange vs session-read).
+- `v1.1` — Production cutover sequencing; P1E-F gated on legacy cohort replacement; frozen generation fingerprint v1.
+- `v1.2` — Multi-ticket routes `/t/view/:id`; reject global Phoenix session; cross-ticket fail-closed semantics. *(Cookie-per-ticket storage rejected in v1.3.)*
+- `v1.3` — Replace per-ticket cookie fan-out with one browser ticket-session cookie + Redis HASH registry; freeze distributed Redis ZSET rate limiting and trusted client-IP rules.
 
 ---
 
@@ -38,110 +40,81 @@ INGRESS_REQUEST_LOGGING_SAFE=FAIL
 P1E_INGRESS_BLOCKER=OPEN
 ```
 
-A synthetic `GET /t/p1e-canary-...` was stored by Railway HTTP logs with the **complete raw path**. Cloudflare Logpush HTTP request datasets also capture client request URI/path fields. **Rewrites at the edge are not an acceptable primary fix**: they may protect Railway `@path` while Cloudflare still records the original client target.
+Today, WhatsApp generates path links `GET /t/<delivery-token>`. Bearer appears in HTTP request targets at Cloudflare/Railway before Phoenix. Application log hardening (PR #494) cannot clear P1-E while bearers remain in request targets for the new flow.
 
-Today, WhatsApp and the app generate links as `GET /t/<delivery-token>` (and PDF as `/t/<token>/pdf`). The bearer therefore appears in HTTP request targets observable by Cloudflare and Railway **before** Phoenix can reject or redact.
-
-Application-side log suppression (`FastCheckWeb.Observability.EndpointRequestLogPolicy`, PR #494) remains valuable defense-in-depth for **stray legacy path requests** but **cannot** clear P1-E while the bearer remains in the request target.
-
-There is **no** existing secure-ticket feature flag to switch fragment delivery independently of legacy route behavior. Production sequencing must account for that.
-
-### Multi-ticket domain fact (authoritative)
-
-FastCheck supports **multiple issued ticket units** per order.
+### Multi-ticket domain fact
 
 ```text
 initial_ticket_delivery = one TicketDeliveryIntent per TicketIssue
-one TicketDeliveryIntent per issued unit
-```
-
-Platform purchase ceiling:
-
-```text
 FastCheck.Sales.PurchaseLimits.max_tickets_per_order() = 50
 ```
 
-A browser/customer may legitimately hold **multiple concurrently valid** ticket links. The architecture **must not** assume one active `TicketIssue` per browser or one global ticket claim.
+A browser may hold **many concurrently valid** ticket links. Architecture must support **50 tickets** without cross-ticket artifact collision.
+
+### Cookie-scale fact (v1.3)
+
+RFC 6265 guarantees only a **minimum** cookie capacity per domain (~50 cookies); user agents may evict cookies. FastCheck already uses cookies (e.g. `_fastcheck_key`). v1.2’s **one cookie per accessed `TicketIssue`** can exceed standards-level minimums for a legitimate 50-ticket order.
+
+```text
+PER_TICKET_COOKIE_FANOUT=REJECTED (v1.2)
+```
+
+Stateless per-ticket cookies are **proven insufficient** at platform ceiling. v1.3 uses **one browser cookie** + **warm Redis HASH** (ephemeral bindings only; Postgres remains durable authority).
 
 ---
 
 ## Frozen security invariant
 
-The implementation **must** establish (steady state after hard cutover):
+(Steady state after hard cutover — unchanged intent from v1.1/v1.2.)
 
-```text
-A delivery bearer token MUST NOT occur in:
-- HTTP request path (except legacy compatibility window on /t/:token — not bearer in new flow)
-- HTTP query string
-- Referer generated by FastCheck
-- redirect Location header (no bearer; numeric ticket_issue_id in /t/view/:id is allowed)
-- application log output
-- Sentry event output
-- analytics/telemetry metadata
-- browser localStorage
-- browser sessionStorage
-- persisted database plaintext
-- ticket-session cookie value (cookie holds signed claim only)
-```
+Delivery bearer must not occur in HTTP path/query (new flow), Referer, redirects with bearer, logs, Sentry, telemetry, localStorage, sessionStorage, DB plaintext, or Redis keys/values.
 
-The delivery token may exist transiently only in:
-
-```text
-1. the customer-delivered URL fragment (#<token>);
-2. browser process memory while exchanging it;
-3. the single HTTPS POST /t/session request body (parameter name delivery_token);
-4. FastCheck process memory while validating that request.
-```
-
-Do **not** persist plaintext delivery tokens.
-
-**Core rule (steady state):**
+Transient bearer only in: URL fragment, browser memory during exchange, `POST /t/session` body (`delivery_token`), process memory during validation.
 
 ```text
 NO PLAINTEXT DELIVERY BEARER IN HTTP REQUEST TARGET.
 ```
 
-During a **compatibility release** (see legacy cutover), legacy path URLs may still be used by customers and will still hit ingress with bearer in the path. That window is **not** P1-E clearance; `INGRESS_REQUEST_LOGGING_SAFE` remains `FAIL`.
+Compatibility window: legacy `/t/:token` may still hit ingress with bearer; `INGRESS_REQUEST_LOGGING_SAFE=FAIL`.
 
 ---
 
-## Current architecture (repository baseline at accepted base)
+## Current architecture (repository baseline)
 
 | Layer | Behavior |
 |-------|----------|
-| **Link generation** | `SendWhatsAppTicketLinkWorker`: `FastCheckWeb.Endpoint.url() <> "/t/" <> token` |
-| **Routes** | `GET /t/:token`, `GET /t/:token/pdf` (`:browser` pipeline, CSRF on POST elsewhere) |
-| **HTML** | `SecureTicketController` → `TicketPage.resolve/1` → `ArtifactResolver.resolve_from_delivery_token/1` |
-| **PDF** | `SecureTicketPdfController` → same resolver + `PdfTicket.generate/1` |
-| **Authority** | `DeliveryToken`, `TicketIssue.delivery_token_hash`, expiry, revocation, `ArtifactResolver` eligibility |
-| **Rate limit** | `RateLimiter`: `secure_ticket_operation?` = `String.starts_with?(request_path, "/t/")`, default 5/min per IP |
-| **Observability** | Path redaction for `/t/...` in Logger/Telemetry/Sentry; endpoint request log level `false` for `/t/...` paths (main) |
-| **Raw body** | `FastCheckWeb.Plugs.RawBodyReader` retains `conn.private[:raw_body]` only for approved webhook paths (see Observability) |
+| **Link generation** | `... <> "/t/" <> token` |
+| **Routes** | `GET /t/:token`, `GET /t/:token/pdf` |
+| **Rate limit** | `secure_ticket_operation?` → `/t/` prefix; **local ETS** via PlugAttack; 5/min per IP |
+| **Mobile shared limits** | Redis backend for some mobile routes only |
+| **Client IP** | `get_peer_ip/1` uses first `X-Forwarded-For` value |
+
+Pinned `plug_attack 0.4.3` provides ETS storage; **do not** depend on non-existent `PlugAttack.Storage.Redis` for P1-E.
 
 ---
 
-## Target architecture
+## Target architecture (v1.3)
 
 ```text
-WhatsApp → https://scan.voelgoed.co.za/t#<delivery-token>
+WhatsApp → /t#<delivery-token>
 
 Browser:
-  GET /t                         (bootstrap only; no ticket cookie sent)
-  POST /t/session                (delivery_token body + CSRF)
-       → validate DeliveryToken / ArtifactResolver
-       → Set-Cookie: _fastcheck_ticket=<signed claim>
-          Path=/t/view/<ticket_issue_id>
-          HttpOnly; SameSite=Lax; Secure (production)
-       → redirect_to=/t/view/<ticket_issue_id>
-  location.replace(redirect_to)
+  Cookie: _fastcheck_ticket_session=<signed opaque browser_session_id>
+          Path=/t; HttpOnly; SameSite=Lax; Secure (prod); no Max-Age
 
-  GET /t/view/<id>               (cookie for this path only)
-  GET /t/view/<id>/pdf
+  GET /t                          bootstrap only
+  POST /t/session                 exchange → HSET ticket:<id> → fingerprint; refresh TTL
+  GET /t/view/:ticket_issue_id    HGET + Postgres revalidation
+  GET /t/view/:ticket_issue_id/pdf
+
+Redis HASH (warm, idle TTL 24h):
+  key: ticket-browser-session:<hash(session-id)>
+  fields: ticket:<ticket_issue_id> → delivery_generation_fingerprint (v1)
 ```
 
-**Rejected (v1.0–v1.1):** one global Phoenix session claim + generic `GET /t` ticket page + `GET /t/pdf` — causes cross-ticket collision when multiple tickets are open.
+**Preserved from v1.2:** routes, fragment URL, fingerprint v1 algorithm, multi-ticket isolation semantics, cross-ticket fail-closed, bootstrap-only `GET /t`.
 
-**WhatsApp** continues to treat the bearer as a **delivery-channel** secret; **HTTP ingress** must not see new delivery bearers in the request target after hard cutover and cohort replacement.
+**Rejected:** v1.0–v1.1 global `/t` + `/t/pdf`; v1.2 per-ticket `_fastcheck_ticket` cookie fan-out.
 
 ---
 
@@ -149,233 +122,186 @@ Browser:
 
 | Component | Role |
 |-----------|------|
-| `lib/fastcheck/tickets/ticket_session.ex` (**new**) | Sign/verify path-scoped claim; exchange; resolve claim → artifact; fingerprint binding; per-ticket cookie clear. **Not** DB/Redis. |
-| `FastCheck.Tickets.DeliveryToken` | Unchanged verification/generation authority |
-| `FastCheck.Tickets.ArtifactResolver` | `resolve_from_ticket_claim/1` (or equivalent) converging on **same** eligibility as `resolve_from_delivery_token/1` |
-| `FastCheck.Sales.TicketPage` | HTML resolve from validated claim + route id match |
-| `FastCheckWeb.SecureTicketController` | `GET /t` bootstrap **only**; `GET /t/view/:ticket_issue_id` ticket page |
-| **Exchange** | `POST /t/session` |
-| `SecureTicketPdfController` | `GET /t/view/:ticket_issue_id/pdf` |
-| `assets/js/secure_ticket_bootstrap.js` | Fragment read, strip, CSRF POST, `location.replace(server_safe_path)` |
-| `SendWhatsAppTicketLinkWorker` | `... <> "/t#" <> token` (from compatibility release onward) |
+| `lib/fastcheck/tickets/ticket_session.ex` (**new**) | Browser session id; Redis HASH registry; exchange; HGET/HSET/HDEL; resolve → `ArtifactResolver` |
+| `FastCheck.Tickets.DeliveryToken` | Unchanged |
+| `FastCheck.Tickets.ArtifactResolver` | Same eligibility path for exchange and session resolve |
+| `FastCheck.Sales.TicketPage` | HTML from validated registry entry + route id |
+| `SecureTicket*` controllers | Bootstrap, exchange, view, PDF |
+| `assets/js/secure_ticket_bootstrap.js` | Fragment → `POST /t/session` → `location.replace(/t/view/id)` |
+| `SendWhatsAppTicketLinkWorker` | `"/t#" <> token` |
+| **Redis** | WARM: ticket-browser-session HASH; WARM: secure-ticket rate-limit ZSETs |
+| **Postgres** | COLD: `TicketIssue` durable authority |
 
-**Explicit non-goals:** new DB table, migration, Redis session registry, global single-ticket browser claim, Cloudflare/Railway rewrite as primary control.
+**Non-goals:** new DB table, migration, durable ticket authority in Redis, `PlugAttack.Storage.Redis`, new dependencies for rate limiting.
 
 ---
 
-## Ticket-scoped session model (v1.2 — frozen)
+## Browser ticket-session model (v1.3 — frozen)
 
-### Rejected: global single claim
-
-Do **not** store one global ticket claim in the ordinary Phoenix session for all `/t` traffic. That model allows tab A to receive ticket B's PDF via generic `/t/pdf`.
-
-### Path-scoped signed cookie
-
-After successful exchange, issue **one** signed ticket-session cookie per `TicketIssue`, scoped by cookie `Path`:
+### One cookie
 
 ```text
-Cookie name:  _fastcheck_ticket
-Cookie Path:  /t/view/<ticket_issue_id>
+Name:   _fastcheck_ticket_session
+Path:   /t
 ```
 
-The same cookie **name** may coexist for different tickets because each instance has a different `Path`.
+Contains **only** a signed opaque `browser_session_id` (recommended: 32 random bytes, `Base.url_encode64(..., padding: false)`).
 
-**Production cookie properties (frozen):**
+Signing namespace:
 
 ```text
-HttpOnly=true
-SameSite=Lax
-Secure=true (production)
+ticket-browser-session:v1
 ```
 
-No explicit long-lived `Max-Age` — browser-session cookie. Durable authority remains `TicketIssue` (expiry, revocation, generation, eligibility).
+Preferred: `Phoenix.Token` with `max_age: :infinity` for the opaque id (browser-session cookie lifetime + Redis idle TTL + Postgres authority define validity — not a second ticket TTL).
 
-Ticket-scoped cookies are **not** sent to `GET /t` or `POST /t/session` (narrower path).
-
-### Signed claim payload
+Cookie **must not** contain: delivery token, `delivery_token_hash`, fingerprint, ticket list, artifact, PII.
 
 ```text
-version=1
-ticket_issue_id
-delivery_generation_fingerprint
+MAX_TICKET_SESSION_COOKIES_PER_BROWSER=1
 ```
 
-### Generation fingerprint v1 (unchanged from v1.1)
+(independent of ticket count, orders, tabs)
+
+### Redis HASH registry
+
+Use existing `FastCheck.Redix` / `FastCheck.Redis.Namespace`. No new Redis client.
+
+Redis key id (do not store raw session secret in key):
+
+```text
+session_id_hash = SHA-256("ticket-browser-session:v1:" <> browser_session_id)
+namespaced key: ticket-browser-session:<session_id_hash>
+```
+
+Fields:
+
+```text
+ticket:<ticket_issue_id> → delivery_generation_fingerprint
+```
+
+Never store in Redis: plaintext delivery token, raw `delivery_token_hash`, signed cookie value, customer PII.
+
+### Generation fingerprint v1 (unchanged)
 
 ```text
 digest = SHA-256("ticket-session:v1:" <> current_delivery_token_hash)
-
-delivery_generation_fingerprint =
-  Base.url_encode64(digest, padding: false)
+delivery_generation_fingerprint = Base.url_encode64(digest, padding: false)
 ```
 
-**Do not** put plaintext delivery token or raw `delivery_token_hash` in the cookie.
-
-### Claim signing (frozen)
-
-Application signing namespace:
+### Session registry TTL (frozen)
 
 ```text
-ticket-session:v1
+ticket_browser_session_idle_ttl_seconds = 86400
 ```
 
-Use an authenticated server-side signing primitive (preferred: **`Phoenix.Token`**).
+Refresh TTL only after: successful exchange; successful authorized HTML read; successful authorized PDF read.
 
-- Tamper-evident claim required.
-- Do **not** introduce Phoenix.Token default one-day auth TTL as a second ticket lifecycle.
-- Use supported non-expiring token age contract (`max_age: :infinity`); authority from:
-  - browser-session cookie lifetime
-  - `TicketIssue.delivery_token_expires_at`
-  - generation fingerprint
-  - revocation + artifact eligibility
+Do **not** refresh on: invalid cookie, invalid route id, expired/revoked ticket, malformed session, unauthorized enumeration.
 
-### Multi-ticket coexistence (frozen invariant)
+Idle expiry requires fresh fragment exchange; does **not** extend `DeliveryToken` validity.
+
+### Multi-ticket invariant (unchanged semantics)
 
 ```text
-ticket A claim MUST NOT overwrite ticket B claim
-ticket B claim MUST NOT invalidate ticket A claim
+one browser cookie
+one Redis session HASH
+many independent ticket fields
+
+exchange A → HSET ticket:A
+exchange B → HSET ticket:B
+GET /t/view/A → A only
+GET /t/view/B → B only
+rotation/revoke/expiry of A → HDEL/deny A only; B remains
 ```
 
-unless durable authority for that ticket changes.
+`ticket_issue_id` in URL is a **non-secret selector**. Authorization requires:
 
 ```text
-exchange A → cookie Path=/t/view/A
-exchange B → cookie Path=/t/view/B
-GET /t/view/A     → A
-GET /t/view/B     → B
-GET /t/view/A/pdf → A PDF
-GET /t/view/B/pdf → B PDF
+valid browser session cookie
+AND Redis field for that ticket
+AND fingerprint matches current DB generation
+AND expiry / revocation / ArtifactResolver
 ```
 
-**Same-ticket rotation:** new generation → same `ticket_issue_id` → same cookie `Path` → successful exchange **replaces** that ticket's cookie only. Rotation of A must not disturb B.
+Route id alone **never** grants access.
 
-**Route id vs claim:** `ticket_issue_id` in the URL is a **non-secret selector** only. Authorization requires signed cookie whose `claim.ticket_issue_id == route ticket_issue_id` plus all durable checks. Enumeration without correct cookie fails closed (generic customer-safe response; no artifact leak).
+### Same-ticket rotation
+
+Successful exchange for ticket A: `HSET ticket:A <new-fingerprint>` only.
+
+### Redis failure (fail closed)
+
+If Redis unavailable:
+
+```text
+POST /t/session → safe failure
+GET /t/view/:id → safe failure
+GET /t/view/:id/pdf → safe failure
+```
+
+No bearer in URL/query fallback; no authority from route id alone; generic customer-safe response; bounded ops telemetry (no secrets).
+
+Redis is **required** for v1.3 browser ticket sessions. Redis is **not** durable ticket authority.
 
 ---
 
-## Ticket-session lifecycle
+## Redis session lifecycle
 
-| State | Trigger | Guard | Side effect | Terminal for claim? |
-|-------|---------|-------|-------------|---------------------|
-| `absent` | `GET /t` | bootstrap | no ticket page | no |
-| `active` | `POST /t/session` success | valid bearer + eligible artifact | set path-scoped cookie for that issue | no |
-| `active` | `GET /t/view/:id` or `.../pdf` | cookie + id match + fingerprint + expiry/revoke/eligibility | render | no |
-| `rotated` | resolve | fingerprint mismatch | clear cookie at `Path=/t/view/:id` only; deny | yes |
-| `expired` | resolve | delivery expiry | clear that ticket's cookie; deny | yes |
-| `revoked` | resolve | revoked | clear that ticket's cookie; deny | yes |
-| `unavailable` | resolve | other artifact failure | clear that ticket's cookie; deny | yes |
-| `malformed` / route≠claim id | resolve | invalid | clear matching path cookie if present; deny | yes |
-| `absent` | browser session ends | — | cookies expire with browser session | — |
+| State | Trigger | Guard | Side effect | Terminal |
+|-------|---------|-------|-------------|----------|
+| `absent` | `GET /t` | no usable session | bootstrap | no |
+| `active` | `POST /t/session` | valid bearer | create/reuse HASH; HSET; refresh TTL | no |
+| `active` | view/PDF read | session + field + durable checks | render; refresh TTL | no |
+| `ticket_rotated` | read | fingerprint ≠ DB | HDEL ticket field; deny | for that ticket |
+| `ticket_expired` | read | delivery expiry | HDEL field; deny | for that ticket |
+| `ticket_revoked` | read | revoked | HDEL field; deny | for that ticket |
+| `ticket_unavailable` | read | artifact failure | HDEL field; deny | for that ticket |
+| `session_expired` | Redis key missing | — | re-exchange via fragment | yes |
+| `registry_unavailable` | Redis down | — | fail closed | temporary |
 
-Terminal cleanup **must** delete/clear using the **same** `Cookie Path` (`/t/view/<ticket_issue_id>`). Never clear unrelated ticket cookies.
-
-A new valid fragment link may establish a fresh `active` claim for that ticket after terminal state.
+Terminal for ticket A must not delete fields for B/C. Empty HASH may be deleted.
 
 ---
 
-## HTTP route contract (frozen)
-
-### Steady state (after hard cutover)
+## HTTP route contract (frozen — v1.2 preserved)
 
 ```text
-GET  /t                              bootstrap only (never "current ticket" page)
-POST /t/session                      exchange (body: delivery_token=...)
-
-GET  /t/view/:ticket_issue_id        HTML (ticket-scoped cookie required)
-GET  /t/view/:ticket_issue_id/pdf    PDF (same)
+GET  /t
+POST /t/session
+GET  /t/view/:ticket_issue_id
+GET  /t/view/:ticket_issue_id/pdf
 ```
 
-**Forbidden for bearer transport:** `/t/<token>`, `/t?token=...`, bearer in query or path for new flow.
-
-`POST /t/session` uses `:browser` pipeline (`protect_from_forgery`). **No CSRF exception.**
-
-Exchange response must not echo `delivery_token`, `delivery_token_hash`, fingerprint, or signed cookie value in HTML, logs, telemetry, or unsafe redirects. Return server-created safe path `/t/view/<ticket_issue_id>` for `location.replace`.
-
-**Legacy** (`GET /t/:token`, `GET /t/:token/pdf`) after **P1E-F**: safe generic rejection only.
-
-**Route ordering:** register `/t`, `/t/session`, `/t/view/:ticket_issue_id`, `/t/view/:ticket_issue_id/pdf` **before** legacy catch-all (compatibility or rejection).
-
-### Compatibility release (when `REQUIRES_CUTOVER`)
-
-Stage 1: legacy `/t/:token` routes **temporarily retain existing resolution**; new fragment flow uses `/t` → `/t/view/:id`. Static `/t/view/...` routes registered before legacy catch-all.
+No generic `/t/pdf`. `GET /t` bootstrap **only**. CSRF on exchange. Legacy cutover per v1.1 (compatibility then P1E-F).
 
 ---
 
-## Browser bootstrap contract
+## Browser bootstrap, artifact/PDF, WhatsApp
 
-Files:
+*(Same as v1.2 except authorization via Redis field + session cookie, not per-ticket cookie Path.)*
 
-```text
-assets/js/secure_ticket_bootstrap.js
-import from assets/js/app.js
-```
+PDF/HTML: `HGET` for `ticket:<route_id>`; never resolve another ticket’s field.
 
-Sequence:
-
-```text
-1. GET /t
-2. read window.location.hash
-3. token in local JS variable only
-4. history.replaceState (strip fragment)
-5. CSRF meta token
-6. POST /t/session (delivery_token)
-7. on success: location.replace(server_returned /t/view/<id>)
-8. on failure: generic ticket-link failure
-```
-
-`GET /t` **must not** render an existing ticket from another ticket's cookie (path-scoped cookies are not sent to `/t`).
-
-Never place plaintext token in DOM, storage, console, telemetry, or query params.
+WhatsApp: `FastCheckWeb.Endpoint.url() <> "/t#" <> token`.
 
 ---
 
-## Artifact / PDF authority
-
-- HTML: `GET /t/view/:ticket_issue_id` with matching path-scoped cookie.
-- PDF: `GET /t/view/:ticket_issue_id/pdf` only — **no** generic `/t/pdf`.
-- Ticket A HTML links only `/t/view/A/pdf`.
-- PDF controller: read cookie for path, verify signature, `claim.ticket_issue_id == route id`, fingerprint, expiry, revocation, `ArtifactResolver` — **never** fall back to another ticket's cookie.
-- Do not persist generated PDFs.
-
----
-
-## WhatsApp delivery contract
-
-**Frozen replacement (from compatibility release / P1E-E):**
+## Legacy-link cutover (v1.1 — unchanged)
 
 ```text
-FastCheckWeb.Endpoint.url() <> "/t#" <> token
+P1E_LEGACY_INVENTORY_GATE → NONE | REQUIRES_CUTOVER
+Stage 1: P1E-B–E compatibility (legacy /t/:token may still resolve)
+P1E-E2: cohort rotate/resend with fragment worker
+LEGACY_CURRENT_GENERATIONS_REPLACED=PASS
+Stage 2: P1E-F hard cutover (conditional)
 ```
-
-Preserve existing delivery semantics. **Ordering rule:** no cohort replacement resend until deployed worker emits fragments only.
-
----
-
-## Legacy-link cutover
-
-*(Unchanged from v1.1 — `P1E_LEGACY_INVENTORY_GATE`, NONE vs REQUIRES_CUTOVER, Stage 1 compatibility, P1E-E2 cohort rotation/resend, `LEGACY_CURRENT_GENERATIONS_REPLACED=PASS`, Stage 2 P1E-F hard cutover.)*
-
-Current gate state:
 
 ```text
-LEGACY_PRODUCTION_LINK_STATUS=UNVERIFIED
-P1E_LEGACY_INVENTORY_GATE=UNRESOLVED
-P1E_INGRESS_BLOCKER=OPEN
+Do NOT issue P1E-F until gate authorizes.
 ```
 
-Compatibility mode: legacy `/t/:token` may still resolve; new flow uses `/t#` → `/t/view/:id`.
-
-Rotation invalidates old path bearer and **that ticket's** path-scoped cookie claim.
-
-### Implementation-prompt rule (mandatory)
-
-```text
-Do NOT issue a P1E-F implementation prompt until the legacy inventory/cutover
-state authorizes it (P1E_LEGACY_INVENTORY_GATE=NONE, or
-LEGACY_CURRENT_GENERATIONS_REPLACED=PASS for REQUIRES_CUTOVER).
-```
-
-P1E-B through P1E-E may ship as compatibility release before P1E-F.
+Rotation invalidates old path bearer and **that ticket’s** Redis registry field.
 
 ---
 
@@ -383,112 +309,94 @@ P1E-B through P1E-E may ship as compatibility release before P1E-F.
 
 | Field | Value |
 |-------|-------|
-| `ACTIVE_RAILWAY_DEPLOYMENT_ID` | `0f1b57de-4283-4a58-b408-c3281acd85fb` |
 | `ACTIVE_RAILWAY_GIT_SHA` | `a8a3d830629f8e2fa915fed85cbcf94268cebc60` |
-| PR #494 merge | `368b6d73f56dc2bae88aad5b634b36b2688a6c5c` |
-| Commit distance | **40 commits** (`a8a3d830` .. `368b6d7`) |
+| PR #494 | `368b6d73f56dc2bae88aad5b634b36b2688a6c5c` |
+| Distance | **40 commits** |
 
-`PR494_LOG_HARDENING_PRESENT_IN_DEPLOYMENT=NO`
-`APP_LOG_REGRESSION_CLASSIFICATION=STALE_DEPLOYMENT`
+`PR494_LOG_HARDENING_PRESENT_IN_DEPLOYMENT=NO` — `STALE_DEPLOYMENT`
 
 ---
 
 ## Observability / redaction
 
-- Preserve v1.1 `/t/...` path redaction; `delivery_token` body redaction on `POST /t/session`.
-- `ticket_issue_id` may appear in logs as a safe numeric identifier where policy permits.
-- **Never log:** signed ticket cookie value, delivery generation fingerprint, delivery token, raw `delivery_token_hash`.
-- **Set-Cookie** values must not be captured in Sentry/telemetry.
-- Tests: plaintext absent from Logger, rate-limit logs, Sentry, telemetry, redirects, HTML, headers.
-
-### Raw body exchange boundary (frozen)
-
-`FastCheckWeb.Plugs.RawBodyReader` stores raw bodies **only** for:
-
-```text
-/api/sales/paystack/webhook
-/api/v1/webhooks/whatsapp
-```
-
-`POST /t/session` **must not** populate `conn.private[:raw_body]`.
+- v1.1 `/t/...` path redaction; `delivery_token` on exchange body.
+- Safe: numeric `ticket_issue_id` where policy allows.
+- **Never log:** cookie value, browser session id, Redis session secrets, fingerprint, delivery token, raw hash, rate-limit credential fingerprint, Set-Cookie values in Sentry.
+- `POST /t/session` must not set `conn.private[:raw_body]` (webhook-only `RawBodyReader`).
 
 ---
 
-## Rate limiting (v1.2 — frozen)
+## Rate limiting (v1.3 — frozen)
 
-v1.1's single **5/min** bucket for all secure-ticket routes is **invalid** for multi-ticket flows (two tickets alone can require ≥6 requests if exchange and reads share one bucket). **Do not** solve by blindly raising the legacy 5/min bucket for all routes.
+### Reject node-local security counters for new limits
 
-### Credential-validation (exchange) bucket
+v1.2’s **PlugAttack/Ets-only** model for new secure-ticket limits is **rejected**: effective ceiling multiplies by replica count (`N × limit`). Legacy `/t/:token` policy during compatibility remains **unchanged** (existing local/legacy behavior — do not route legacy through new fragment limits unless P1E-F explicitly changes).
 
-Surfaces:
+New P1-E limits use **shared Redis ZSET** sliding windows via existing `Redix` + `FastCheck.Redis.Namespace`. **Do not** use `PlugAttack.Storage.Redis` (not in plug_attack 0.4.3). **Do not** add a new dependency. Implement a small FastCheck-owned atomic boundary (Lua/EVAL or equivalent): trim window → count → conditional insert → bounded key TTL → allow/deny.
+
+Do not fix unrelated mobile rate-limit backend debt in P1E unless separately authorized.
+
+### Namespace (conceptual)
 
 ```text
-POST /t/session
+rate-limit:secure-ticket:exchange-token:<credential-fingerprint>
+rate-limit:secure-ticket:exchange-ip:<client-identity>
+rate-limit:secure-ticket:session:<browser-session-hash>
+rate-limit:secure-ticket:read-ip:<client-identity>
 ```
 
-During compatibility, legacy credential surfaces remain:
+Exchange credential fingerprint (rate limit only, in-memory):
 
 ```text
-GET /t/:token
-GET /t/:token/pdf
+SHA-256("secure-ticket-rate-limit:v1:" <> delivery_token)
 ```
 
-(keep **existing** bounded policy for legacy bearer paths — do not raise legacy limits merely because new flow exists)
+(encoded deterministically; never logged; not ticket authority)
 
-**Frozen v1.2 exchange limit:**
+### Layers (frozen)
+
+Exchange:
 
 ```text
-secure_ticket_exchange_limit = 60 requests/minute/IP
+A. per-credential: secure_ticket_exchange_token_limit = 5/min
+B. per-client-IP:   secure_ticket_exchange_ip_limit   = 600/min
 ```
 
-Rationale: up to `max_tickets_per_order()` (50) exchanges per order with headroom; DoS boundary, not entropy boundary.
-
-### Session-read bucket
-
-Authenticated HTML/PDF reads:
+Session reads (`/t/view/...`):
 
 ```text
-GET /t/view/:ticket_issue_id
-GET /t/view/:ticket_issue_id/pdf
+A. per-browser-session: secure_ticket_session_read_limit    = 120/min
+B. per-client-IP:       secure_ticket_session_read_ip_limit = 1200/min
 ```
 
-**Frozen v1.2 session-read limit:**
+Rationale: 50 tickets/order; ~10 max-size customers behind one NAT on exchange IP; session bucket avoids cross-ticket collision; broad IP guards are defense-in-depth.
+
+`GET /t` bootstrap: no ticket lookup; not charged to exchange bucket.
+
+### Trusted client IP (new P1-E broad guards)
 
 ```text
-secure_ticket_session_read_limit = 120 requests/minute/IP
+TRUST_FIRST_X_FORWARDED_FOR=NO
 ```
 
-Rationale: up to 50 HTML + 50 PDF reads with headroom.
+For broad IP keys on canonical production host behind Cloudflare: prefer **`CF-Connecting-IP`** when valid; otherwise trusted peer/direct per environment. Do not use arbitrary first `X-Forwarded-For` as sole security identity. Document direct-origin bypass as ingress-hardening consideration.
 
-### Bootstrap
+Per-credential and per-session Redis limits remain effective if IP attribution degrades.
 
-```text
-GET /t
-```
+### Rate-limit failure
 
-No ticket lookup; **must not** consume the exchange bucket. Ordinary edge/application protection only.
+Never silently disable. Redis rate-limit failure → same safe fail-closed posture as registry unavailability for protected routes. Log/metric without secrets.
 
-### Configuration
+### Capacity test (P1E-G)
 
-May add under existing `FastCheck.RateLimiter` / `Application` config:
+Before P1E-G passes:
 
 ```text
-secure_ticket_exchange_limit
-secure_ticket_session_read_limit
-```
-
-No new storage technology; continue existing PlugAttack/Ets architecture.
-
-### Rate-limit tests (required)
-
-```text
-two different ticket exchanges within one minute succeed
-multiple ticket page reads do not consume exchange bucket
-PDF reads do not consume exchange bucket
-exchange still bounded
-session reads still bounded
-legacy path throttling remains intact
-documented thresholds cover max_tickets_per_order() arithmetic
+10 concurrent customers, same apparent client IP, 50 exchanges each → must not trip broad exchange ceiling
+per-token >5/min blocks
+per-session >120/min blocks
+broad IP overflow blocks
+limits do not multiply across simulated nodes/backends
 ```
 
 ---
@@ -497,17 +405,36 @@ documented thresholds cover max_tickets_per_order() arithmetic
 
 | Item | Value |
 |------|-------|
-| SESSION_AUTHORITY | stateless path-scoped signed cookies (`_fastcheck_ticket`) |
-| REDIS_SESSION_REGISTRY | NO |
+| HOT | one opaque browser cookie (`_fastcheck_ticket_session`) |
+| WARM | Redis HASH browser ticket-session; idle TTL 86400s |
+| WARM | Redis ZSET rate limits; 60s windows; bounded TTL |
+| COLD | Postgres `TicketIssue` + `ArtifactResolver` |
 | NEW_DB_TABLE | NO |
-| NEW_DB_WRITES | 0 |
-| MULTI_TICKET_COOKIE_COUNT | at most one active browser-session cookie per accessed `TicketIssue` |
-| COOKIE_SCOPE | ticket-specific `Path`; unrelated ticket cookies not sent on each view request |
-| WARM_REDIS | not required |
-| COLD_POSTGRES | `TicketIssue` + artifact reads (existing) |
+| MIGRATION | NO |
+| NEW_DB_WRITES_PER_VIEW | 0 |
+| REDIS_HASH_WRITES | exchange, HDEL on terminal, TTL refresh |
+| REDIS_HASH_READS | HGET per view/PDF (single-field; no full HASH load for one ticket) |
+| PUBSUB | none required |
 | OBAN | unchanged |
+| MULTI_TICKET_50_COUNT_SAFE | YES (one cookie + up to 50 HASH fields) |
 
-Avoid one giant cookie holding many fingerprints; avoid Redis/session tables.
+**Session registry:**
+
+```text
+DATA_LAYER=WARM_REDIS
+STRUCTURE=HASH
+TTL=86400s idle
+INVALIDATION=generation mismatch, expiry, revocation, artifact unavailable, idle expiry
+```
+
+**Rate limiting:**
+
+```text
+DATA_LAYER=WARM_REDIS
+STRUCTURE=ZSET
+WINDOW=60s
+ATOMICITY=Redis-side
+```
 
 **Review status:** PASS
 
@@ -517,22 +444,16 @@ Avoid one giant cookie holding many fingerprints; avoid Redis/session tables.
 
 | Topic | Mitigation |
 |-------|------------|
-| Multi-ticket collision | Path-scoped cookies + route id match; no generic `/t/pdf` |
-| Fragment not sent to server | HTTP semantics on `GET /t` |
-| HttpOnly ticket cookie | JS cannot read claim |
-| Secure (production) | TLS-only cookie |
-| SameSite=Lax | CSRF posture with standard POST boundary |
-| ticket-specific Cookie Path | Isolation; not sent to `/t` or `/t/session` |
-| No token in cookie | Signed claim with fingerprint only |
-| Cookie value not logged | Observability/Sentry rules |
-| Set-Cookie not in Sentry | Filter/capture policy |
-| Selector enumeration | Fail closed without valid cookie for path |
+| 50-ticket cookie eviction | One cookie + Redis HASH |
+| Multi-ticket collision | Per-field registry + route id |
+| Redis not durable authority | Always revalidate Postgres |
+| Plaintext not in Redis | Fingerprints only |
+| HttpOnly / Secure / SameSite / Path=/t | Cookie hardening |
 | CSRF on exchange | `protect_from_forgery` |
-| Rotation / expiry / revoke | Per-ticket cookie clear + durable checks |
-| Legacy cutover | v1.1 two-stage model preserved |
-| Rate limits | Separate exchange vs read buckets |
-| Cloudflare / Railway | Safe targets steady state (no bearer in new paths) |
-| Raw body | `POST /t/session` excluded from retention |
+| Distributed rate limits | Redis ZSET, not per-node ETS |
+| IP spoofing | CF-Connecting-IP preferred |
+| Legacy cutover | v1.1 two-stage preserved |
+| Ingress / fragment | v1.1/v1.2 preserved |
 
 **Review status:** PASS
 
@@ -543,102 +464,80 @@ Avoid one giant cookie holding many fingerprints; avoid Redis/session tables.
 | Phase | Deliverable |
 |-------|-------------|
 | **P1E-A** | Provenance + plan + legacy inventory gate |
-| **P1E-B** | Ticket-scoped claim signing, fingerprint v1, resolve domain |
-| **P1E-C** | `GET /t` bootstrap; `POST /t/session`; path-scoped cookie; safe redirect |
-| **P1E-D** | `GET /t/view/:id`, `GET /t/view/:id/pdf`; multi-ticket isolation |
-| **P1E-E** | WhatsApp `/t#` — compatibility release boundary when `REQUIRES_CUTOVER` |
-| **P1E-E2** | Legacy cohort rotation/resend (operational) |
-| **P1E-F** | Legacy rejection + observability/rate-limit alignment — **conditional** |
-| **P1E-G** | Regression tests incl. multi-ticket / cross-tab-equivalent cases |
-| **P1E-H** | Production ingress canary (post hard cutover) |
-| **P1E-I** | Gate documentation closure |
-
-Do **not** issue implementation prompts until plan merge is authorized.
+| **P1E-B** | Browser session id + Redis HASH registry; fingerprint domain |
+| **P1E-C** | Bootstrap/exchange; single cookie; HSET |
+| **P1E-D** | View/PDF; HGET + Postgres; multi-ticket isolation |
+| **P1E-E** | WhatsApp `/t#` |
+| **P1E-E2** | Legacy cohort (operational) |
+| **P1E-F** | Legacy rejection — **conditional** |
+| **P1E-G** | 50-ticket cookie test; Redis lifecycle; distributed rate-limit tests |
+| **P1E-H** | Production ingress canary |
+| **P1E-I** | Gate closure |
 
 ---
 
 ## Test / evidence strategy
 
-**v1.1 tests retained**, plus **mandatory v1.2**:
+Retain v1.1/v1.2 tests (routes, fragment, legacy stages, redaction, raw body).
+
+**Mandatory v1.3:**
 
 ```text
-exchange A + exchange B coexist
-A HTML after B exchange → A; B → B
-A PDF after B exchange → A PDF; B → B PDF
-/t/view/A with B cookie → fail closed
-/t/view/B with A cookie → fail closed
-rotation A invalidates A only; B remains
-revocation A invalidates A only; B remains
-terminal A cleanup does not delete B cookie
-GET /t never renders existing ticket claim
-GET /t bootstrap: no ticket-scoped cookie by Path semantics (browser-level where practical)
-cookie: no delivery token or raw hash
-cookie: HttpOnly, Secure, SameSite, path-scoped
-POST /t/session: no conn.private[:raw_body]
-rate-limit: exchange vs read separation (see Rate limiting)
-two-stage legacy semantics (compatibility vs P1E-F)
+1 ticket → 1 browser session cookie
+50 tickets → still 1 browser session cookie
+Redis HASH fields A/B independent
+A terminal HDEL → A only; B remains
+Redis session expiry → require fragment re-exchange
+Redis unavailable → no artifact
+cookie: no token/hash/fingerprint list
+Redis key: no raw browser_session_id
+rate-limit keys: no raw delivery token
+shared Redis limits: no per-node multiplication
+spoofed X-Forwarded-For not sole P1-E identity
 ```
 
-**External (P1E-H)** — synthetic token, post hard cutover:
+Plus v1.2 cross-ticket HTML/PDF isolation cases (via registry fields).
 
-```text
-GET  /t
-POST /t/session
-GET  /t/view/<synthetic_ticket_issue_id>
-GET  /t/view/<synthetic_ticket_issue_id>/pdf   (optional)
-```
-
-No synthetic bearer in Railway/Cloudflare path fields. No token in app logs/Sentry.
+**P1E-H** paths unchanged (`/t`, `/t/session`, `/t/view/<id>`, optional pdf).
 
 ---
 
-## Production cutover
+## Production cutover / rollback / STOP conditions
 
-*(Conditional sequencing unchanged from v1.1 — NONE single release vs REQUIRES_CUTOVER two-stage; never resend from path-link generator; P1E-H after hard cutover.)*
+Production sequencing and rollback: **v1.1 unchanged** (compatibility → E2 → F; no path-token generation rollback).
 
----
+**Additional STOP conditions:**
 
-## Rollback
-
-*(v1.1 rollback model preserved; hard-cutover rollback must not restore path-token **generation** for new deliveries.)*
-
----
-
-## STOP conditions (implementation)
-
-1–15 from v1.1, plus:
-
-16. **Global single-ticket Phoenix session claim remains authority model.**
-17. **Generic `/t/pdf` resolves "most recent" exchange.**
-18. **Opening ticket B causes ticket A route/tab to return B's artifact.**
-19. **All secure-ticket routes share one 5/min bucket without v1.2 split.**
-20. **Plaintext delivery token or raw hash stored in cookie.**
-21. **Route `ticket_issue_id` alone grants authority without path-scoped cookie.**
+- Per-ticket cookie fan-out remains required for 50-ticket flow.
+- Redis becomes durable ticket authority or bypasses Postgres checks.
+- Plaintext bearer in Redis.
+- Node-local ETS as production authority for **new** P1-E limits.
+- Dependence on `PlugAttack.Storage.Redis`.
+- Non-atomic Redis rate-limit updates.
+- First `X-Forwarded-For` alone as trusted P1-E identity.
+- Weakened legacy cutover.
 
 ---
 
-## Confirmed P1-E defect (do not reopen)
+## Confirmed P1-E defect
 
 ```text
 RAILWAY_RAW_PATH_LOGGING=CONFIRMED
-INGRESS_REQUEST_LOGGING_SAFE=FAIL (until post-cutover P1E-H)
+INGRESS_REQUEST_LOGGING_SAFE=FAIL until P1E-H after hard cutover
 ```
-
-Remediation: fragment delivery + `POST /t/session` + path-scoped ticket reads; two-stage legacy cutover when required.
 
 ---
 
-## Success criteria (architecture)
+## Success criteria
 
 ```text
-delivery token in HTTP request target = NEVER (steady state new flow)
-Redis session registry = NO
-new DB table = NO
-migration = NO
-multi-ticket support = YES
+delivery bearer not in HTTP request target (steady state new flow)
+MAX_TICKET_SESSION_COOKIES=1
+multi-ticket support = YES (50/order)
 multi-tab collision = NO
-rotation isolation = per ticket
-PDF authority = explicit ticket_issue_id route + matching cookie
+WARM Redis session registry = YES (ephemeral bindings only)
+NEW_DB_TABLE = NO
+distributed rate limits = YES
 legacy two-stage cutover = preserved
 P1-E gate = PASS only after P1E-H
 ```
