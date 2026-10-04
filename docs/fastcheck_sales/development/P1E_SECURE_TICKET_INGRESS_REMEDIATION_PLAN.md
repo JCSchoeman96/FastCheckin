@@ -3,17 +3,19 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | P1E-SECURE-TICKET-INGRESS-REMEDIATION |
-| **Plan version** | v1 |
+| **Plan version** | v1.1 |
 | **Status** | FROZEN — ready for implementation review (plan-only; no code in this artifact) |
 | **Scope** | Remediate P1-E ingress logging blocker by removing delivery bearer from HTTP request targets; introduce browser ticket-session binding without new durable session stores |
 | **Authority** | This file is the **active contract** for P1-E implementation. `docs/fastcheck_sales/product/LAUNCH_SCOPE_RUNBOOK_REQUIREMENTS.md` remains the launch gate source for `INGRESS_REQUEST_LOGGING_SAFE`. On conflict, this plan defines *how* P1-E is satisfied; the runbook defines *when* the gate may clear. |
 | **Accepted base** | `BASE_SHA=71462644f91d9c8132c0a5a4ac5df97e2c8acd81`, `BASE_TREE=56de18e69be5a5140b7bf9eb131ea4f49c9304ae` |
 | **Last updated** | 2026-10-04 |
+| **Change summary (v1.1)** | Two-stage production cutover when legacy links exist; `P1E_LEGACY_INVENTORY_GATE`; conditional P1E-F; frozen generation fingerprint v1; RawBodyReader boundary; corrected PR #494 commit distance (40). |
 | **Change summary (v1)** | Initial freeze: fragment URL contract, ticket-session domain, HTTP routes, legacy cutover, deployment provenance, tests, and production evidence requirements. |
 
 ### Revision log
 
 - `v1` — Initial security architecture contract after production ingress diagnostic (`RAILWAY_RAW_PATH_LOGGING=CONFIRMED`).
+- `v1.1` — Production cutover sequencing: compatibility release vs hard-cutover release; P1E-F gated on legacy cohort replacement; frozen `delivery_generation_fingerprint` algorithm; deployment provenance count correction.
 
 ---
 
@@ -40,11 +42,13 @@ Today, WhatsApp and the app generate links as `GET /t/<delivery-token>` (and PDF
 
 Application-side log suppression (`FastCheckWeb.Observability.EndpointRequestLogPolicy`, PR #494) remains valuable defense-in-depth for **stray legacy path requests** but **cannot** clear P1-E while the bearer remains in the request target.
 
+There is **no** existing secure-ticket feature flag to switch fragment delivery independently of legacy route behavior. Production sequencing must account for that.
+
 ---
 
 ## Frozen security invariant
 
-The implementation **must** establish:
+The implementation **must** establish (steady state after hard cutover):
 
 ```text
 A delivery bearer token MUST NOT occur in:
@@ -71,11 +75,13 @@ The delivery token may exist transiently only in:
 
 Do **not** persist plaintext delivery tokens.
 
-**Core rule:**
+**Core rule (steady state):**
 
 ```text
 NO PLAINTEXT DELIVERY BEARER IN HTTP REQUEST TARGET.
 ```
+
+During a **compatibility release** (see legacy cutover), legacy path URLs may still be used by customers and will still hit ingress with bearer in the path. That window is **not** P1-E clearance; `INGRESS_REQUEST_LOGGING_SAFE` remains `FAIL`.
 
 ---
 
@@ -90,6 +96,7 @@ NO PLAINTEXT DELIVERY BEARER IN HTTP REQUEST TARGET.
 | **Authority** | `DeliveryToken`, `TicketIssue.delivery_token_hash`, expiry, revocation, `ArtifactResolver` eligibility |
 | **Rate limit** | `RateLimiter`: `secure_ticket_operation?` = `String.starts_with?(request_path, "/t/")`, default 5/min per IP |
 | **Observability** | Path redaction for `/t/...` in Logger/Telemetry/Sentry; endpoint request log level `false` for `/t/...` paths (main) |
+| **Raw body** | `FastCheckWeb.Plugs.RawBodyReader` retains `conn.private[:raw_body]` only for approved webhook paths (see Observability) |
 
 ---
 
@@ -121,7 +128,7 @@ GET /t  → resolve_from_ticket_session → same downstream eligibility as today
 GET /t/pdf → same session claim, no token in URL
 ```
 
-**WhatsApp** continues to treat the bearer as a **delivery-channel** secret; **HTTP ingress** never sees it in the request target after cutover.
+**WhatsApp** continues to treat the bearer as a **delivery-channel** secret; **HTTP ingress** must not see new delivery bearers in the request target after hard cutover and cohort replacement.
 
 ---
 
@@ -137,7 +144,7 @@ GET /t/pdf → same session claim, no token in URL
 | **New** exchange action | `POST /t/session` (controller or dedicated module under `SecureTicket*`) |
 | `SecureTicketPdfController` | `GET /t/pdf` session-only |
 | `assets/js/secure_ticket_bootstrap.js` | Fragment read, strip, CSRF POST, `location.replace("/t")` |
-| `SendWhatsAppTicketLinkWorker` | `... <> "/t#" <> token` |
+| `SendWhatsAppTicketLinkWorker` | `... <> "/t#" <> token` (from compatibility release onward) |
 
 **Explicit non-goals:** new DB table, migration, Redis session registry, second long-lived auth TTL policy, Cloudflare/Railway rewrite as primary control.
 
@@ -145,22 +152,53 @@ GET /t/pdf → same session claim, no token in URL
 
 ## Ticket-session lifecycle
 
-Session claim (recommended shape):
+Session claim (frozen shape):
 
 ```text
-version
+version                          (claim schema version; v1 for this plan)
 ticket_issue_id
 delivery_generation_fingerprint
 ```
 
-`delivery_generation_fingerprint` = deterministic one-way derivation from the **current** stored `delivery_token_hash` on `TicketIssue`. Purpose: detect resend/rotation without storing hash or plaintext in the browser session.
+### Generation fingerprint v1 (frozen)
+
+The fingerprint is a **deterministic digest** of the **current** stored `delivery_token_hash` on `TicketIssue` (the hash already persisted for delivery authority — not plaintext).
+
+**Semantic definition:**
+
+```text
+SHA-256("ticket-session:v1:" <> current_delivery_token_hash)
+```
+
+**Encoding for session storage:**
+
+```text
+Base.url_encode64(digest, padding: false)
+```
+
+(i.e. URL-safe Base64 without padding)
+
+**Properties:**
+
+```text
+- is NOT a bearer credential
+- does NOT replace DeliveryToken verification on exchange
+- is stored only inside the signed Phoenix session claim
+- exists solely to detect delivery-token generation rotation
+```
+
+**Do not store** in the browser session: plaintext delivery token, raw `delivery_token_hash`.
+
+On session resolution, compare fingerprints with **exact / constant-time** equality where practical.
+
+Changing the algorithm requires a future **claim `version` bump** (not silent drift).
 
 | State | Trigger | Guard | Side effect | Terminal for claim? |
 |-------|---------|-------|-------------|---------------------|
 | `absent` | initial `GET /t` | no valid claim | render bootstrap shell | no |
 | `active` | `POST /t/session` success | valid current bearer + artifact eligible | set claim | no |
 | `active` | `GET /t` / `GET /t/pdf` | claim + issue exists + fingerprint matches + not expired/revoked + eligibility | render artifact/PDF | no |
-| `rotated` | session resolve | fingerprint ≠ current hash generation | clear claim; deny | yes |
+| `rotated` | session resolve | fingerprint ≠ current generation | clear claim; deny | yes |
 | `expired` | session resolve | `delivery_token_expires_at` elapsed | clear claim; deny | yes |
 | `revoked` | session resolve | ticket revoked | clear claim; deny | yes |
 | `unavailable` | session resolve | other `ArtifactResolver` failure | clear claim; deny | yes |
@@ -176,6 +214,8 @@ A **new** valid fragment link may establish a fresh `active` claim after any ter
 
 ## HTTP route contract (frozen)
 
+### Steady state (after hard cutover)
+
 Safe request targets only:
 
 ```text
@@ -188,9 +228,13 @@ GET  /t/pdf          PDF via session claim
 
 `POST /t/session` uses the normal `:browser` pipeline (`protect_from_forgery`). **No CSRF exception.**
 
-**Legacy routes** (`GET /t/:token`, `GET /t/:token/pdf`): **must not** resolve tickets after cutover. Respond with **safe generic rejection** (no artifact leak). Keep path redaction/logging policies for stray requests.
+**Legacy routes** (`GET /t/:token`, `GET /t/:token/pdf`) after **hard cutover (P1E-F)**: **safe generic rejection** only; **no** ticket resolution. Retain path redaction/logging for stray requests.
 
-**Route ordering:** register static `/t`, `/t/pdf`, `POST /t/session` **before** any legacy catch-all if retained for rejection telemetry.
+**Route ordering:** register static `/t`, `/t/pdf`, `POST /t/session` **before** any legacy catch-all retained for compatibility or rejection.
+
+### Compatibility release (when `REQUIRES_CUTOVER`)
+
+During Stage 1 only, legacy routes **temporarily retain existing resolution behavior** so customers with already-delivered `/t/<token>` links are not broken before cohort replacement. New generation must use fragment URLs only.
 
 ---
 
@@ -224,8 +268,8 @@ Bootstrap page must not embed token in server-rendered HTML.
 
 ## Artifact / PDF authority
 
-- HTML and PDF both require valid **ticket session** after exchange.
-- PDF: `GET /t/pdf` only; **no** `/t/:token/pdf`.
+- HTML and PDF both require valid **ticket session** after exchange (steady state).
+- PDF: `GET /t/pdf` only; **no** `/t/:token/pdf` for customers after hard cutover.
 - Each access runs full current-generation, expiry, revocation, and `ArtifactResolver` eligibility checks (same as today’s resolver outcomes).
 - Do not persist generated PDFs.
 - FastCheck-generated links to PDF must use `/t/pdf` only (no bearer in `href`).
@@ -236,7 +280,7 @@ Bootstrap page must not embed token in server-rendered HTML.
 
 Central constructor today: `ticket_url/1` in `lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex`.
 
-**Frozen replacement:**
+**Frozen replacement (from compatibility release / P1E-E deploy):**
 
 ```text
 FastCheckWeb.Endpoint.url() <> "/t#" <> token
@@ -252,42 +296,176 @@ https://scan.voelgoed.co.za/t#<delivery-token>
 
 Minimal raw fragment `#<token>` (existing charset is fragment-safe). **No query string.**
 
+**Ordering rule:** Do not run cohort **replacement resends** until deployed code generates fragment URLs. A replacement resend must never be emitted by code that still produces `/t/<token>`.
+
 ---
 
 ## Legacy-link cutover
 
-### Application behavior
+### Pre-implementation decision gate: `P1E_LEGACY_INVENTORY_GATE`
 
-- Stop generating path-based links at cutover (phase P1E-E).
-- Legacy `GET /t/:token` and `/t/:token/pdf`: generic rejection only; **no** ticket resolution.
-
-### Why rejection is insufficient for P1-E clearance
-
-Edge providers may have **already logged** historical `GET /t/<real-token>` requests. FastCheck rejection does not erase provider logs.
-
-### Pre-cutover inventory (launch-critical)
-
-Before `P1E_INGRESS_BLOCKER=CLEARED`, operators must establish **one** of:
+Current documented state:
 
 ```text
-LEGACY_PRODUCTION_LINKS=NONE
+LEGACY_PRODUCTION_LINK_STATUS=UNVERIFIED
+P1E_LEGACY_INVENTORY_GATE=UNRESOLVED
+P1E_INGRESS_BLOCKER=OPEN
+```
+
+Before destructive legacy-route cutover (P1E-F), operators must resolve the gate to:
+
+```text
+NONE
 ```
 
 or:
 
 ```text
-LEGACY_PRODUCTION_LINKS=INVALIDATED_AND_REPLACED
+REQUIRES_CUTOVER
 ```
 
-**Status at plan freeze:** `LEGACY_PRODUCTION_LINK_STATUS=UNVERIFIED` — production has shipped path-based WhatsApp links; assume `REQUIRES_CUTOVER` until inventory proves otherwise.
+Implementation must **not** assume a single deploy can simultaneously:
 
-**Procedure (out of band, not blind mass mutation in code):**
+```text
+enable fragment links
+AND
+reject legacy path links
+```
 
-1. Confirm whether any production/customer path links were delivered (delivery intents, support records).
-2. If yes: use existing **rotate/resend** authority (`DeliveryToken` / ticket delivery intents) to invalidate old generations and deliver fragment links.
-3. Document evidence in runbook gate folder before P1E-H.
+when the gate is `UNRESOLVED` or `REQUIRES_CUTOVER`.
 
-Do **not** claim legacy exposure is healed by app routes alone.
+---
+
+### NONE path
+
+If production evidence **conclusively** establishes:
+
+```text
+LEGACY_PRODUCTION_LINKS=NONE
+```
+
+then a **single** implementation release may:
+
+```text
+- enable fragment links (P1E-E)
+- enable session-backed ticket access (P1E-B–D)
+- switch PDF to session authority
+- stop generating path links
+- reject legacy token-bearing routes (P1E-F)
+```
+
+followed by P1E-H.
+
+Do **not** classify `NONE` merely because plaintext historical tokens are not stored in the database. Evidence must prove no valid production/customer link was **delivered** in the old `/t/<token>` format.
+
+---
+
+### REQUIRES_CUTOVER path
+
+If legacy links exist **or** cannot safely be proven absent:
+
+```text
+LEGACY_PRODUCTION_LINKS=REQUIRES_CUTOVER
+```
+
+Freeze a **two-stage** production migration.
+
+#### Stage 1 — compatibility release
+
+Deploy (code phases P1E-B through P1E-E):
+
+```text
+P1E-B  TicketSession domain
+P1E-C  fragment bootstrap + POST /t/session
+P1E-D  session-backed GET /t and GET /t/pdf
+P1E-E  WhatsApp fragment-link generation
+```
+
+Requirements:
+
+```text
+- New and resend deliveries MUST produce /t#<delivery-token>
+- Legacy GET /t/:token and GET /t/:token/pdf TEMPORARILY retain existing resolution behavior
+- Application log/path redaction remains mandatory for all /t/... traffic
+```
+
+P1-E during compatibility window:
+
+```text
+INGRESS_REQUEST_LOGGING_SAFE=FAIL
+P1E_INGRESS_BLOCKER=OPEN
+```
+
+Do **not** treat compatibility mode as secure ingress completion.
+
+#### P1E-E2 — legacy cohort rotation/resend (operational)
+
+After Stage 1 is deployed:
+
+Identify all currently valid production delivery-token generations that may have been delivered using the pre-fragment URL format.
+
+If exact linkage between a generation and delivery format cannot be proven safely, use the conservative cohort:
+
+```text
+all still-valid production ticket delivery generations that could predate the fragment cutover
+```
+
+Use **existing** ticket rotation/resend authority. **No** blind database token mutation.
+
+For each affected customer/ticket:
+
+```text
+rotate old generation
+deliver replacement via Stage-1 fragment-capable worker
+replacement URL MUST be /t#<new-token>
+```
+
+Rotation must invalidate:
+
+```text
+old path bearer
+old browser ticket-session claim, if any
+```
+
+Record durable operational evidence that the replacement cohort completed.
+
+#### Cutover completion gate
+
+Before legacy routes may stop resolving:
+
+```text
+LEGACY_CURRENT_GENERATIONS_REPLACED=PASS
+```
+
+Meaning: no known still-current production delivery generation depends on the old path URL format.
+
+If this cannot be established: **STOP** — do not deploy P1E-F legacy rejection.
+
+#### Stage 2 — hard-cutover release
+
+Only after `LEGACY_CURRENT_GENERATIONS_REPLACED=PASS`, implement and deploy **P1E-F**:
+
+```text
+GET /t/:token
+GET /t/:token/pdf
+```
+
+→ safe generic rejection; **never** resolve ticket authority.
+
+Retain path redaction, endpoint log suppression, and rate limiting for stray legacy requests.
+
+After Stage 2:
+
+```text
+NEW_PATH_LINK_GENERATION=NONE
+LEGACY_PATH_RESOLUTION=DISABLED
+```
+
+Then proceed to P1E-H production ingress evidence.
+
+### Why rejection alone does not clear P1-E
+
+Edge providers may have **already logged** historical `GET /t/<real-token>` requests. FastCheck rejection does not erase provider logs. Hard cutover stops **new** path exposure from supported routes; cohort replacement addresses **current** customer bearers still in circulation.
 
 ---
 
@@ -305,9 +483,11 @@ Read-only Railway production deployment (plan freeze):
 |-------|-------|
 | `ACTIVE_RAILWAY_DEPLOYMENT_ID` | `0f1b57de-4283-4a58-b408-c3281acd85fb` |
 | `ACTIVE_RAILWAY_GIT_SHA` | `a8a3d830629f8e2fa915fed85cbcf94268cebc60` |
-| PR #494 merge on main | `368b6d7` (EndpointRequestLogPolicy) |
+| PR #494 merge on main | `368b6d73f56dc2bae88aad5b634b36b2688a6c5c` (EndpointRequestLogPolicy) |
 
-**Conclusion at freeze:** `PR494_LOG_HARDENING_PRESENT_IN_DEPLOYMENT=NO` (deploy SHA predates PR #494 by 65 commits on main).
+**Commit distance** (`a8a3d830` .. `368b6d7` on main): **40 commits**.
+
+**Conclusion at freeze:** `PR494_LOG_HARDENING_PRESENT_IN_DEPLOYMENT=NO`.
 
 **Classification:** `APP_LOG_REGRESSION_CLASSIFICATION=STALE_DEPLOYMENT` — do **not** mix unproven logging fixes into ingress redesign.
 
@@ -326,6 +506,19 @@ Read-only Railway production deployment (plan freeze):
 - Tests must prove plaintext absent from: Logger captures, rate-limit logging, Sentry filtered request data, telemetry metadata, redirects, rendered HTML, response headers.
 - Do not weaken path redaction for legacy stray `/t/...` requests.
 
+### Raw body exchange boundary (frozen)
+
+`FastCheckWeb.Plugs.RawBodyReader` stores raw request bodies **only** for:
+
+```text
+/api/sales/paystack/webhook
+/api/v1/webhooks/whatsapp
+```
+
+Therefore `POST /t/session` **must not** populate `conn.private[:raw_body]`.
+
+Implementation and tests must confirm the exchange route does not retain plaintext in raw body storage.
+
 ---
 
 ## Rate limiting
@@ -341,11 +534,13 @@ Document mapping:
 | `GET /t` (bootstrap + page) | secure-ticket bucket |
 | `POST /t/session` | secure-ticket bucket (**must not** be exempt) |
 | `GET /t/pdf` | secure-ticket bucket |
-| Legacy `/t/:token` | secure-ticket bucket (rejection path) |
+| Legacy `/t/:token` | secure-ticket bucket (compatibility or rejection path) |
 
 Default limit remains **5/min per IP** unless measurement shows the normal post-cutover sequence (`GET /t` → `POST /t/session` → `GET /t` [→ `GET /t/pdf`]) cannot succeed.
 
 **STOP:** if 5/min cannot support the normal sequence, **quantify** in implementation PR before raising limits.
+
+P1E-F rate-limit alignment ships with hard cutover (or documents compatibility-era mapping if paths differ).
 
 ---
 
@@ -378,17 +573,18 @@ Each page/PDF view: existing narrow authority reads only; no global token/sessio
 | CSRF | Standard `protect_from_forgery` on `POST /t/session` |
 | XSS | No token in DOM; bootstrap uses minimal JS surface |
 | Session fixation | Exchange establishes claim after verified bearer; no pre-auth privileged state |
-| Signed-but-readable session | Claim holds ids + fingerprint only, not bearer |
+| Signed-but-readable session | Claim holds ids + fingerprint only, not bearer or raw hash |
 | Session theft | Same as today’s session cookie threat model; rotation invalidates claim |
 | Token rotation / expiry / revocation | Revalidated every request via fingerprint + `ArtifactResolver` |
-| Legacy links | Generic reject; cutover + invalidation for provider log exposure |
+| Legacy links | Two-stage cutover; generic reject only after cohort gate |
 | Rate limiting | All secure-ticket routes throttled |
 | Sentry / Logger | `delivery_token` redaction + no bearer in targets |
-| Cloudflare / Railway logs | Bearer absent from request targets post-cutover |
-| WhatsApp | Fragment URL only after P1E-E |
-| PDF | Session-only `GET /t/pdf` |
+| Cloudflare / Railway logs | Bearer absent from request targets after hard cutover + cohort |
+| WhatsApp | Fragment URL from compatibility release |
+| PDF | Session-only `GET /t/pdf` (steady state) |
+| Raw body retention | `POST /t/session` excluded from `RawBodyReader` storage |
 
-**Review status:** PASS (contingent on legacy cutover evidence and post-deploy ingress canary)
+**Review status:** PASS (contingent on legacy gate resolution, two-stage cutover, and post-deploy ingress canary)
 
 ---
 
@@ -396,15 +592,28 @@ Each page/PDF view: existing narrow authority reads only; no global token/sessio
 
 | Phase | Deliverable |
 |-------|-------------|
-| **P1E-A** | Deployment provenance + this plan authority (this document) |
-| **P1E-B** | `TicketSession` domain: claim shape, fingerprint, exchange + resolve |
+| **P1E-A** | Deployment provenance + this plan authority + **legacy inventory gate** resolution |
+| **P1E-B** | `TicketSession` domain: claim shape, fingerprint v1, exchange + resolve |
 | **P1E-C** | Bootstrap JS + `POST /t/session` + `GET /t` bootstrap/page split |
 | **P1E-D** | Session-authorized HTML/PDF (`GET /t/pdf`) |
-| **P1E-E** | WhatsApp `"/t#" <> token` cutover |
-| **P1E-F** | Legacy route safe rejection + rate limit + observability alignment |
-| **P1E-G** | Focused + full regression tests (see below) |
-| **P1E-H** | Deployed production synthetic ingress canary (fragment flow) |
+| **P1E-E** | WhatsApp `"/t#" <> token` — **compatibility release boundary** when `REQUIRES_CUTOVER` |
+| **P1E-E2** | Legacy cohort rotation/resend (operational); evidence for `LEGACY_CURRENT_GENERATIONS_REPLACED=PASS`; **no blind DB mutation** |
+| **P1E-F** | Legacy route **rejection** + final observability/rate-limit alignment — **hard-cutover release**; **conditional** on cutover gate |
+| **P1E-G** | Focused + full regression tests (final gate before/after F per path) |
+| **P1E-H** | Deployed production synthetic ingress canary (fragment flow, post hard cutover) |
 | **P1E-I** | P1-E gate documentation: `INGRESS_REQUEST_LOGGING_SAFE=PASS`, blocker cleared |
+
+### Implementation-prompt rule (mandatory)
+
+```text
+Do NOT issue a P1E-F implementation prompt until the legacy inventory/cutover
+state authorizes it (P1E_LEGACY_INVENTORY_GATE=NONE, or
+LEGACY_CURRENT_GENERATIONS_REPLACED=PASS for REQUIRES_CUTOVER).
+```
+
+P1E-B through P1E-E may be implemented and deployed as the **compatibility release** before final legacy-route rejection.
+
+No coding agent may deploy P1E-F while `P1E_LEGACY_INVENTORY_GATE=UNRESOLVED` or while cohort replacement is incomplete.
 
 ---
 
@@ -416,19 +625,32 @@ Each page/PDF view: existing narrow authority reads only; no global token/sessio
 - new WhatsApp URL shape (/t#token)
 - fragment bootstrap: no token server-side on GET /t
 - POST /t/session: valid, invalid, expired, revoked exchanges
+- POST /t/session does not retain plaintext in conn.private[:raw_body]
 - GET /t and GET /t/pdf via valid session
 - rotation invalidates session
 - expiry invalidates session
 - revocation invalidates session
 - malformed session claim fails closed
-- legacy GET /t/:token does not resolve ticket
 - raw token absent from Logger, Sentry fixtures, HTML, redirects, headers
 - rate limiting still applies to /t, /t/session, /t/pdf
 ```
 
+**Two-stage migration semantics (where applicable):**
+
+```text
+Compatibility release (intentional flag or compile-time/config contract in tests):
+  - new generated links are fragments
+  - legacy path links still resolve while compatibility mode is active
+
+Hard cutover (P1E-F):
+  - legacy path links no longer resolve tickets
+```
+
 Preserve all existing `DeliveryToken`, `ArtifactResolver`, and secure-ticket regression tests; update route shapes where intentional.
 
-**External acceptance (P1E-H)** — synthetic token only, production:
+Do **not** require production provider log tests in ordinary unit CI.
+
+**External acceptance (P1E-H)** — synthetic token only, production, **after hard cutover**:
 
 Expected Railway HTTP log paths (no fragment token possible):
 
@@ -449,26 +671,74 @@ Only then: `INGRESS_REQUEST_LOGGING_SAFE=PASS`, `P1E_INGRESS_BLOCKER=CLEARED`.
 
 ## Production cutover
 
-1. Merge implementation through P1E-G to main.
-2. Complete legacy inventory / invalidation (if required).
-3. Deploy production (includes PR #494+ for app-log track).
-4. Enable fragment URLs in WhatsApp worker (P1E-E) — coordinate so new messages never use path links.
-5. Run P1E-H canary and archive evidence outside repo per runbook.
-6. P1E-I: update launch gate docs with topology + evidence references.
+Conditional sequencing — **do not** use “merge P1E-G → invalidate → deploy → enable fragments” as a single ordered list when legacy links may exist.
 
-**Order constraint:** do not mark P1-E cleared before P1E-H on **deployed** production.
+### If `P1E_LEGACY_INVENTORY_GATE=NONE`
+
+```text
+implement P1E-B through P1E-F (and G tests)
+test
+deploy single release
+P1E-H
+P1E-I
+```
+
+### If `P1E_LEGACY_INVENTORY_GATE=REQUIRES_CUTOVER`
+
+```text
+implement P1E-B through P1E-E (+ G tests for compatibility semantics)
+test
+deploy compatibility release (legacy paths still resolve)
+
+all new/resend delivery uses fragments only (deployed worker)
+
+P1E-E2: rotate/resend legacy cohort using fragment-capable worker
+prove LEGACY_CURRENT_GENERATIONS_REPLACED=PASS
+
+implement P1E-F legacy rejection
+run final regression gate (P1E-G)
+
+deploy hard-cutover release
+P1E-H
+P1E-I
+```
+
+Deploy production builds that include PR #494+ for the app-log track as part of normal release cadence.
+
+**Order constraints:**
+
+- Never emit replacement resends from code that still generates `/t/<token>`.
+- Do not mark P1-E cleared before P1E-H on **deployed** production **after hard cutover**.
+- Do not deploy P1E-F before cohort gate passes when `REQUIRES_CUTOVER`.
 
 ---
 
 ## Rollback
 
+### Compatibility release rollback
+
+```text
+- May revert fragment/session functionality if required
+- P1-E remains OPEN
+- Legacy path resolution behavior still exists on prior deploy
+- Do not re-enable path-link generation for new deliveries without accepting P1-E FAIL
+```
+
+### Hard-cutover rollback
+
+```text
+- Must NOT silently restore path-token delivery generation in WhatsApp worker
+- If legacy route compatibility must temporarily be restored to recover customers,
+  record INGRESS_REQUEST_LOGGING_SAFE=FAIL and P1E_INGRESS_BLOCKER=OPEN
+  until remediation is restored and re-evidenced
+```
+
 | Scenario | Action |
 |----------|--------|
-| Fragment exchange broken | Revert deploy; **do not** re-enable path links in WhatsApp without accepting P1-E FAIL |
+| Fragment exchange broken (Stage 1) | Revert to pre-compatibility deploy; legacy links continue to work |
 | Session claim bug | Revert ticket-session + controllers; keep fragment URLs off until fixed |
-| Rate limit too tight | Adjust only with measured justification (not in initial cutover) |
-
-Rollback of WhatsApp URL format alone does **not** restore ingress safety.
+| Rate limit too tight | Adjust only with measured justification |
+| Hard cutover causes customer impact | Emergency restore of legacy **resolution** only with explicit P1-E FAIL attestation; plan re-cutover |
 
 ---
 
@@ -482,11 +752,15 @@ Stop and escalate if:
 4. Plaintext delivery token would be persisted (DB, Redis, session, localStorage).
 5. Redis registry or new DB table proposed without proof stateless binding is insufficient.
 6. Token rotation would not invalidate existing session claims.
-7. PDF still requires token in URL for customers.
+7. PDF still requires token in URL for customers (steady state).
 8. CSRF disabled for `/t/session`.
 9. Legacy links declared safe because FastCheck rejects them (without cutover evidence).
-10. P1-E marked cleared before P1E-H production evidence.
+10. P1-E marked cleared before P1E-H production evidence (post hard cutover).
 11. Rate limit raised without quantified conflict.
+12. **P1E-F deployed while legacy current generations still depend on path URLs.**
+13. **Replacement resend generated before fragment-capable code is deployed.**
+14. **P1E-F implementation started while `P1E_LEGACY_INVENTORY_GATE=UNRESOLVED`.**
+15. **Rollback re-enables `/t/<token>` generation for new deliveries.**
 
 ---
 
@@ -498,20 +772,20 @@ RAILWAY_RAW_PATH_LOGGING=CONFIRMED
 INGRESS_REQUEST_LOGGING_SAFE=FAIL (until post-cutover P1E-H)
 ```
 
-Primary remediation: **remove bearer from HTTP request target** via fragment delivery + one-time `POST /t/session` exchange + session-bound reads.
+Primary remediation: **remove bearer from HTTP request target** via fragment delivery + one-time `POST /t/session` exchange + session-bound reads, with **two-stage cutover** when legacy path links exist.
 
 ---
 
 ## Success criteria (architecture)
 
 ```text
-WhatsApp: bearer in delivery channel only (fragment URL)
+WhatsApp: bearer in delivery channel only (fragment URL after compatibility release)
 Browser: fragment transient; exchange once
-Cloudflare request target: SAFE (/t, /t/session, /t/pdf only)
-Railway request target: SAFE
-FastCheck request target: SAFE
+Cloudflare request target: SAFE (steady state)
+Railway request target: SAFE (steady state)
+FastCheck request target: SAFE (steady state)
 Durable authority: TicketIssue + DeliveryToken + ArtifactResolver
 rotation / expiry / revoke → session claim dies
-Legacy path links: not generated; invalidated or proven none; stray paths rejected
-P1-E gate: PASS only after deployed ingress canary
+Legacy path links: not generated after cutover; cohort replaced or proven none; stray paths rejected after F
+P1-E gate: PASS only after deployed ingress canary (P1E-H)
 ```
