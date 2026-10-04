@@ -23,7 +23,21 @@ defmodule FastCheck.Tickets.TicketSession do
   local encoded = ARGV[4]
   local ttl = tonumber(ARGV[5])
 
-  if not incoming_gen or incoming_gen < 0 or incoming_fp == '' or encoded == '' or not ttl then
+  local function valid_fingerprint(fingerprint)
+    if type(fingerprint) ~= "string" or string.len(fingerprint) ~= 43 then
+      return false
+    end
+
+    return string.match(fingerprint, "^[A-Za-z0-9_-]+$") == fingerprint
+  end
+
+  if not incoming_gen or incoming_gen < 0 or not valid_fingerprint(incoming_fp) or encoded == '' or not ttl then
+    return {"INVALID"}
+  end
+
+  local expected_encoded = "v1:" .. tostring(incoming_gen) .. ":" .. incoming_fp
+
+  if encoded ~= expected_encoded then
     return {"INVALID"}
   end
 
@@ -40,7 +54,7 @@ defmodule FastCheck.Tickets.TicketSession do
 
     local generation = tonumber(gen_str)
 
-    if not generation or generation < 0 then
+    if not generation or generation < 0 or not valid_fingerprint(fingerprint) then
       return nil
     end
 

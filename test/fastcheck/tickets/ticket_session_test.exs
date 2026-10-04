@@ -229,6 +229,45 @@ defmodule FastCheck.Tickets.TicketSessionTest do
              )
   end
 
+  test "bind rejects malformed current short fingerprint without mutation or TTL refresh", %{
+    browser_session_id: session
+  } do
+    key = TicketSession.registry_key(session)
+    field = "ticket:#{@ticket_issue_id}"
+    valid_fp = TicketSession.generation_fingerprint(@delivery_hash_b)
+
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["HSET", key, field, "v1:2:short"])
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXPIRE", key, 15])
+    short_ttl = redis_ttl!(session)
+
+    assert {:error, :invalid_binding} =
+             TicketSession.bind(session, @ticket_issue_id, 3, valid_fp, 86_400)
+
+    assert redis_hget!(session, @ticket_issue_id) == "v1:2:short"
+    assert redis_ttl!(session) == short_ttl
+  end
+
+  test "bind rejects malformed current fingerprint charset without overwrite", %{
+    browser_session_id: session
+  } do
+    key = TicketSession.registry_key(session)
+    field = "ticket:#{@ticket_issue_id}"
+    valid_fp = TicketSession.generation_fingerprint(@delivery_hash_b)
+    malformed_fp = String.duplicate("a", 42) <> "!"
+
+    assert {:ok, 1} =
+             Redix.command(FastCheck.Redix, ["HSET", key, field, "v1:2:#{malformed_fp}"])
+
+    assert {:ok, 1} = Redix.command(FastCheck.Redix, ["EXPIRE", key, 18])
+    short_ttl = redis_ttl!(session)
+
+    assert {:error, :invalid_binding} =
+             TicketSession.bind(session, @ticket_issue_id, 5, valid_fp, 86_400)
+
+    assert redis_hget!(session, @ticket_issue_id) == "v1:2:#{malformed_fp}"
+    assert redis_ttl!(session) == short_ttl
+  end
+
   test "fetch_binding rejects malformed stored values", %{browser_session_id: session} do
     key = TicketSession.registry_key(session)
     field = "ticket:#{@ticket_issue_id}"
