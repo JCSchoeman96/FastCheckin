@@ -71,3 +71,6 @@ config :fastcheck, FastCheckWeb.Endpoint,
   secret_key_base: System.get_env("SECRET_KEY_BASE")
 
 config :fastcheck, :enable_metrics, true
+
+# PERF inherits the Local mailer adapter, so it does not need an API client.
+config :swoosh, :api_client, false
