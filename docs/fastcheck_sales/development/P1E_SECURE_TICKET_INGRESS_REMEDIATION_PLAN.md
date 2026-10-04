@@ -3,12 +3,13 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | P1E-SECURE-TICKET-INGRESS-REMEDIATION |
-| **Plan version** | v1.3 |
+| **Plan version** | v1.4 |
 | **Status** | FROZEN — ready for implementation review (plan-only; no code in this artifact) |
 | **Scope** | Remediate P1-E ingress logging blocker by removing delivery bearer from HTTP request targets; browser ticket-session via one cookie + warm Redis HASH registry (not durable ticket authority) |
 | **Authority** | This file is the **active contract** for P1-E implementation. `docs/fastcheck_sales/product/LAUNCH_SCOPE_RUNBOOK_REQUIREMENTS.md` remains the launch gate source for `INGRESS_REQUEST_LOGGING_SAFE`. On conflict, this plan defines *how* P1-E is satisfied; the runbook defines *when* the gate may clear. |
 | **Accepted base** | `BASE_SHA=71462644f91d9c8132c0a5a4ac5df97e2c8acd81`, `BASE_TREE=56de18e69be5a5140b7bf9eb131ea4f49c9304ae` |
 | **Last updated** | 2026-10-04 |
+| **Change summary (v1.4)** | Atomic Redis session bind (HSET+EXPIRE) and compare-and-delete invalidation; Redis TIME + unique ZSET members for rate limits; trusted Cloudflare CIDR + `CF-Connecting-IP` rule. |
 | **Change summary (v1.3)** | One `_fastcheck_ticket_session` cookie + Redis HASH registry (replaces per-ticket cookie fan-out); distributed Redis ZSET rate limits; trusted client-IP rules for new P1-E guards. |
 | **Change summary (v1.2)** | Multi-ticket path-scoped signed cookie claims; ticket-specific view/PDF routes; `GET /t` bootstrap-only; separated exchange vs session-read rate limits. *(Per-ticket cookie fan-out **superseded** by v1.3.)* |
 | **Change summary (v1.1)** | Two-stage production cutover; `P1E_LEGACY_INVENTORY_GATE`; conditional P1E-F; fingerprint v1; RawBodyReader; PR #494 distance (40). |
@@ -20,6 +21,7 @@
 - `v1.1` — Production cutover sequencing; P1E-F gated on legacy cohort replacement; frozen generation fingerprint v1.
 - `v1.2` — Multi-ticket routes `/t/view/:id`; reject global Phoenix session; cross-ticket fail-closed semantics. *(Cookie-per-ticket storage rejected in v1.3.)*
 - `v1.3` — Replace per-ticket cookie fan-out with one browser ticket-session cookie + Redis HASH registry; freeze distributed Redis ZSET rate limiting and trusted client-IP rules.
+- `v1.4` — Atomic Redis session binding/invalidation; distributed rate-limit clock/member semantics; trusted Cloudflare client-IP validation (CIDR-gated `CF-Connecting-IP`).
 
 ---
 
@@ -122,7 +124,7 @@ Redis HASH (warm, idle TTL 24h):
 
 | Component | Role |
 |-----------|------|
-| `lib/fastcheck/tickets/ticket_session.ex` (**new**) | Browser session id; Redis HASH registry; exchange; HGET/HSET/HDEL; resolve → `ArtifactResolver` |
+| `lib/fastcheck/tickets/ticket_session.ex` (**new**) | Browser session id; Redis HASH registry; atomic bind/TTL; compare-and-delete; resolve → `ArtifactResolver` |
 | `FastCheck.Tickets.DeliveryToken` | Unchanged |
 | `FastCheck.Tickets.ArtifactResolver` | Same eligibility path for exchange and session resolve |
 | `FastCheck.Sales.TicketPage` | HTML from validated registry entry + route id |
@@ -212,7 +214,7 @@ exchange A → HSET ticket:A
 exchange B → HSET ticket:B
 GET /t/view/A → A only
 GET /t/view/B → B only
-rotation/revoke/expiry of A → HDEL/deny A only; B remains
+rotation/revoke/expiry of A → compare-and-delete field A only; B remains
 ```
 
 `ticket_issue_id` in URL is a **non-secret selector**. Authorization requires:
@@ -228,7 +230,82 @@ Route id alone **never** grants access.
 
 ### Same-ticket rotation
 
-Successful exchange for ticket A: `HSET ticket:A <new-fingerprint>` only.
+Successful exchange for ticket A: atomic bind replaces field `ticket:A` only (see atomicity below).
+
+### Redis session atomicity (v1.4 — frozen)
+
+#### Atomic session bind (exchange)
+
+A successful exchange must atomically (one Redis-side Lua/EVAL or equivalent transaction):
+
+```text
+HSET ticket:<ticket_issue_id> <fingerprint>
+EXPIRE session-key 86400
+```
+
+Required invariant:
+
+```text
+SESSION_BINDING_WITHOUT_TTL=IMPOSSIBLE
+```
+
+Do **not** use unprotected client-side `HSET` then `EXPIRE` as the security contract.
+
+The operation may replace the field for the same ticket; it must not modify other ticket fields.
+
+#### Exchange ordering
+
+For a new or continuing browser session:
+
+```text
+1. obtain/create opaque browser_session_id (in memory until Redis succeeds)
+2. validate delivery bearer and durable TicketIssue authority
+3. atomic Redis bind + TTL
+4. only after Redis success: Set-Cookie _fastcheck_ticket_session
+5. return safe redirect target /t/view/:ticket_issue_id
+```
+
+If Redis bind fails: no successful exchange; no usable ticket authorization; safe customer failure. Do not set the session cookie before registry bind succeeds.
+
+#### Conditional terminal invalidation (compare-and-delete)
+
+Never unconditionally `HDEL` based on an earlier `HGET` observation.
+
+Freeze atomic `conditional_remove_ticket(session_key, ticket_field, expected_fingerprint)`:
+
+```text
+current = HGET ticket_field
+if current == expected_fingerprint:
+    HDEL ticket_field
+    return REMOVED
+else:
+    leave field unchanged
+    return NOT_REMOVED
+```
+
+Must execute Redis-side atomically.
+
+Required race behavior:
+
+```text
+stale request observes F1 in Redis
+fresh exchange writes F2
+stale request sees DB generation mismatch vs F1
+conditional_remove(expected=F1)
+→ F2 remains; stale request denied
+```
+
+A stale request **must not** delete a newer successful exchange (`F2`).
+
+#### Empty HASH behavior
+
+Do **not** implement unsafe client-side `HLEN` then `DEL` cleanup races. If removing the final field deletes the empty key, rely on normal Redis behavior. No full-key deletion from stale emptiness observations.
+
+#### Successful read TTL refresh
+
+After successful: Redis membership + fingerprint match + Postgres generation/expiry/revocation + `ArtifactResolver` authorization — refresh session key TTL to `86400`.
+
+If the key disappeared concurrently, TTL refresh **must not** recreate the HASH or fields. Complete the current request only per frozen resolution semantics; subsequent requests require re-exchange when registry is absent. Do not silently rebuild missing session authority.
 
 ### Redis failure (fail closed)
 
@@ -251,16 +328,16 @@ Redis is **required** for v1.3 browser ticket sessions. Redis is **not** durable
 | State | Trigger | Guard | Side effect | Terminal |
 |-------|---------|-------|-------------|----------|
 | `absent` | `GET /t` | no usable session | bootstrap | no |
-| `active` | `POST /t/session` | valid bearer | create/reuse HASH; HSET; refresh TTL | no |
-| `active` | view/PDF read | session + field + durable checks | render; refresh TTL | no |
-| `ticket_rotated` | read | fingerprint ≠ DB | HDEL ticket field; deny | for that ticket |
-| `ticket_expired` | read | delivery expiry | HDEL field; deny | for that ticket |
-| `ticket_revoked` | read | revoked | HDEL field; deny | for that ticket |
-| `ticket_unavailable` | read | artifact failure | HDEL field; deny | for that ticket |
+| `active` | `POST /t/session` | valid bearer | atomic HSET+EXPIRE for field; then cookie | no |
+| `active` | view/PDF read | session + field + durable checks | render; TTL refresh if key exists | no |
+| `ticket_rotated` | read | fingerprint ≠ DB | compare-and-delete if `expected==observed`; deny | for that ticket |
+| `ticket_expired` | read | delivery expiry | compare-and-delete if match; deny | for that ticket |
+| `ticket_revoked` | read | revoked | compare-and-delete if match; deny | for that ticket |
+| `ticket_unavailable` | read | artifact failure | compare-and-delete if match; deny | for that ticket |
 | `session_expired` | Redis key missing | — | re-exchange via fragment | yes |
 | `registry_unavailable` | Redis down | — | fail closed | temporary |
 
-Terminal for ticket A must not delete fields for B/C. Empty HASH may be deleted.
+Terminal invalidation for ticket A must not remove fields for B/C.
 
 ---
 
@@ -332,7 +409,37 @@ Rotation invalidates old path bearer and **that ticket’s** Redis registry fiel
 
 v1.2’s **PlugAttack/Ets-only** model for new secure-ticket limits is **rejected**: effective ceiling multiplies by replica count (`N × limit`). Legacy `/t/:token` policy during compatibility remains **unchanged** (existing local/legacy behavior — do not route legacy through new fragment limits unless P1E-F explicitly changes).
 
-New P1-E limits use **shared Redis ZSET** sliding windows via existing `Redix` + `FastCheck.Redis.Namespace`. **Do not** use `PlugAttack.Storage.Redis` (not in plug_attack 0.4.3). **Do not** add a new dependency. Implement a small FastCheck-owned atomic boundary (Lua/EVAL or equivalent): trim window → count → conditional insert → bounded key TTL → allow/deny.
+New P1-E limits use **shared Redis ZSET** sliding windows via existing `Redix` + `FastCheck.Redis.Namespace`. **Do not** use `PlugAttack.Storage.Redis` (not in plug_attack 0.4.3). **Do not** add a new dependency. Implement a small FastCheck-owned **atomic** boundary (Lua/EVAL).
+
+**Frozen clock (v1.4):**
+
+```text
+CLOCK_SOURCE=Redis TIME
+```
+
+Sliding-window timestamps must come from Redis, not independent app-node clocks.
+
+**Frozen ZSET member (v1.4):**
+
+```text
+member = <redis-time-microseconds>:<cryptographically-random-nonce>
+score  = Redis-derived timestamp
+```
+
+ZSET members are unique; **timestamp-only members are forbidden** (concurrent requests would undercount).
+
+**Atomic algorithm (one Redis-side operation):**
+
+```text
+1. Redis TIME
+2. prune scores older than window
+3. ZCARD
+4. if below limit: ZADD unique member
+5. set/refresh bounded key expiry
+6. return allow/block + reset/retry metadata
+```
+
+No read-decide-write split across client commands.
 
 Do not fix unrelated mobile rate-limit backend debt in P1E unless separately authorized.
 
@@ -373,15 +480,43 @@ Rationale: 50 tickets/order; ~10 max-size customers behind one NAT on exchange I
 
 `GET /t` bootstrap: no ticket lookup; not charged to exchange bucket.
 
-### Trusted client IP (new P1-E broad guards)
+### Trusted client IP (v1.4 — frozen)
 
 ```text
-TRUST_FIRST_X_FORWARDED_FOR=NO
+TRUST_ARBITRARY_X_FORWARDED_FOR=NO
 ```
 
-For broad IP keys on canonical production host behind Cloudflare: prefer **`CF-Connecting-IP`** when valid; otherwise trusted peer/direct per environment. Do not use arbitrary first `X-Forwarded-For` as sole security identity. Document direct-origin bypass as ingress-hardening consideration.
+For broad IP guards, derive identity deterministically:
 
-Per-credential and per-session Redis limits remain effective if IP attribution degrades.
+```text
+outer_peer = Railway-provided X-Real-IP (remote IP presented to Railway edge)
+```
+
+Trust **`CF-Connecting-IP`** as visitor IP **only when**:
+
+```text
+outer_peer parses as a valid IP
+AND outer_peer belongs to configured trusted Cloudflare proxy CIDRs (IPv4 + IPv6)
+AND CF-Connecting-IP parses as a valid IPv4 or IPv6 address
+```
+
+Then:
+
+```text
+client_ip = CF-Connecting-IP
+```
+
+Otherwise (including direct Railway public origin without Cloudflare hop):
+
+```text
+client_ip = outer_peer (X-Real-IP) when valid
+```
+
+Never use arbitrary first `X-Forwarded-For` as P1-E security identity.
+
+**Trusted Cloudflare CIDR configuration:** explicit deploy-time CIDR authority; IPv4+IPv6; documented maintenance; invalid CIDRs fail closed or reject config; **no** dynamic web lookup on request path. Direct-origin traffic must not spoof broad-IP identity by supplying `CF-Connecting-IP` without a trusted Cloudflare outer peer.
+
+**Identity degradation:** per-credential and per-browser-session Redis limits remain primary. If trustworthy client IP cannot be derived, do not fall back to attacker-controlled `X-Forwarded-For`; use safely available outer-peer identity or a conservative documented fallback. Do not silently disable broad guards.
 
 ### Rate-limit failure
 
@@ -412,7 +547,7 @@ limits do not multiply across simulated nodes/backends
 | NEW_DB_TABLE | NO |
 | MIGRATION | NO |
 | NEW_DB_WRITES_PER_VIEW | 0 |
-| REDIS_HASH_WRITES | exchange, HDEL on terminal, TTL refresh |
+| REDIS_HASH_WRITES | atomic bind, compare-and-delete on terminal, conditional TTL refresh |
 | REDIS_HASH_READS | HGET per view/PDF (single-field; no full HASH load for one ticket) |
 | PUBSUB | none required |
 | OBAN | unchanged |
@@ -424,7 +559,9 @@ limits do not multiply across simulated nodes/backends
 DATA_LAYER=WARM_REDIS
 STRUCTURE=HASH
 TTL=86400s idle
-INVALIDATION=generation mismatch, expiry, revocation, artifact unavailable, idle expiry
+ATOMIC_BIND=YES
+ATOMIC_COMPARE_DELETE=YES
+INVALIDATION=compare-and-delete on generation mismatch, expiry, revocation, artifact unavailable; idle expiry
 ```
 
 **Rate limiting:**
@@ -433,6 +570,8 @@ INVALIDATION=generation mismatch, expiry, revocation, artifact unavailable, idle
 DATA_LAYER=WARM_REDIS
 STRUCTURE=ZSET
 WINDOW=60s
+CLOCK=Redis TIME
+MEMBER=unique per request (<redis-time>:<nonce>)
 ATOMICITY=Redis-side
 ```
 
@@ -451,7 +590,9 @@ ATOMICITY=Redis-side
 | HttpOnly / Secure / SameSite / Path=/t | Cookie hardening |
 | CSRF on exchange | `protect_from_forgery` |
 | Distributed rate limits | Redis ZSET, not per-node ETS |
-| IP spoofing | CF-Connecting-IP preferred |
+| IP spoofing | CIDR-gated CF-Connecting-IP; never trust X-Forwarded-For |
+| Stale invalidation race | Compare-and-delete; F1 cannot remove F2 |
+| Session bind without TTL | Atomic HSET+EXPIRE |
 | Legacy cutover | v1.1 two-stage preserved |
 | Ingress / fragment | v1.1/v1.2 preserved |
 
@@ -464,13 +605,13 @@ ATOMICITY=Redis-side
 | Phase | Deliverable |
 |-------|-------------|
 | **P1E-A** | Provenance + plan + legacy inventory gate |
-| **P1E-B** | Browser session id + Redis HASH registry; fingerprint domain |
-| **P1E-C** | Bootstrap/exchange; single cookie; HSET |
+| **P1E-B** | Browser session id + Redis HASH; atomic bind/compare-delete; fingerprint domain |
+| **P1E-C** | Bootstrap/exchange; Redis-before-cookie; single cookie |
 | **P1E-D** | View/PDF; HGET + Postgres; multi-ticket isolation |
 | **P1E-E** | WhatsApp `/t#` |
 | **P1E-E2** | Legacy cohort (operational) |
 | **P1E-F** | Legacy rejection — **conditional** |
-| **P1E-G** | 50-ticket cookie test; Redis lifecycle; distributed rate-limit tests |
+| **P1E-G** | 50-ticket cookie test; Redis concurrency; rate-limit clock/member tests; client-IP tests |
 | **P1E-H** | Production ingress canary |
 | **P1E-I** | Gate closure |
 
@@ -480,20 +621,35 @@ ATOMICITY=Redis-side
 
 Retain v1.1/v1.2 tests (routes, fragment, legacy stages, redaction, raw body).
 
-**Mandatory v1.3:**
+**Mandatory v1.3** (retained):
 
 ```text
 1 ticket → 1 browser session cookie
 50 tickets → still 1 browser session cookie
 Redis HASH fields A/B independent
-A terminal HDEL → A only; B remains
 Redis session expiry → require fragment re-exchange
 Redis unavailable → no artifact
 cookie: no token/hash/fingerprint list
 Redis key: no raw browser_session_id
 rate-limit keys: no raw delivery token
 shared Redis limits: no per-node multiplication
-spoofed X-Forwarded-For not sole P1-E identity
+```
+
+**Mandatory v1.4 (concurrency + IP):**
+
+```text
+stale F1 invalidation racing fresh F2 exchange preserves F2
+atomic bind never creates session HASH without TTL
+terminal invalidation removes exactly the observed generation (compare-and-delete)
+terminal invalidation of A never removes B
+concurrent same-ticket exchanges cannot leave older fingerprint as final authority after newer DB generation known
+rate limiter counts concurrent same-microsecond requests independently (unique ZSET members)
+rate limiter uses one Redis clock across simulated app nodes
+
+trusted Cloudflare outer IP + valid CF-Connecting-IP → use CF visitor IP
+untrusted outer IP + spoofed CF-Connecting-IP → ignore CF header
+arbitrary X-Forwarded-For → not trusted
+IPv4 and IPv6 trusted proxy CIDRs supported
 ```
 
 Plus v1.2 cross-ticket HTML/PDF isolation cases (via registry fields).
@@ -514,7 +670,13 @@ Production sequencing and rollback: **v1.1 unchanged** (compatibility → E2 →
 - Node-local ETS as production authority for **new** P1-E limits.
 - Dependence on `PlugAttack.Storage.Redis`.
 - Non-atomic Redis rate-limit updates.
-- First `X-Forwarded-For` alone as trusted P1-E identity.
+- Application-node clocks define distributed sliding windows.
+- ZSET timestamp-only members (collision under concurrency).
+- Redis session binding without TTL (`SESSION_BINDING_WITHOUT_TTL` possible).
+- Terminal invalidation uses unconditional HDEL after prior HGET.
+- Stale F1 can delete concurrently written F2.
+- `CF-Connecting-IP` trusted without trusted Cloudflare outer peer (CIDR).
+- Arbitrary `X-Forwarded-For` as authoritative P1-E identity.
 - Weakened legacy cutover.
 
 ---
