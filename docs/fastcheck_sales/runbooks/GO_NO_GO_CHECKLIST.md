@@ -54,14 +54,16 @@
 - [ ] `/dashboard/system/workers` is reachable for an allowlisted global admin.
 - [ ] The page shows all configured queues and the `Unexpected queues` aggregate
   without raw job rows or mutation controls.
-- [ ] The bounded, read-only global monitoring procedure has been rehearsed for
-  critical queues. This remains open for the current release.
-- [ ] Representative query-plan evidence for the bounded global queue
-  aggregates is available. This remains open for the current release.
+- [x] The bounded, read-only global monitoring procedure has been rehearsed for
+  critical queues.
+- [x] Representative query-plan evidence for the bounded global queue
+  aggregates is available.
 - [ ] No unexpected backlog exists, based on that approved monitoring source.
-- Current gate status is BLOCKED until both query-plan evidence and the
-  runbook rehearsal are complete.
+- The P1-F global Oban monitoring blocker is cleared: representative query-plan
+  evidence and the bounded runbook rehearsal are complete. Runtime launch checks
+  above must still be performed for the actual launch environment.
   `/dashboard/sales/ops` is Event-scoped and is not a global backlog source.
+- Durable evidence: [P1-F global Oban monitoring evidence](P1F_GLOBAL_OBAN_MONITORING_EVIDENCE.md).
 
 ## Paystack
 
@@ -176,7 +178,7 @@
 - [ ] Incident response owner is active for launch window.
 - [ ] Launch owner signs go.
 
-P1F_QUERY_PLAN_EVIDENCE=OPEN
-P1F_RUNBOOK_REHEARSAL=OPEN
-P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1F_QUERY_PLAN_EVIDENCE=PASS
+P1F_RUNBOOK_REHEARSAL=PASS
+P1F_GLOBAL_OBAN_BLOCKER=CLEARED
 P1E_INGRESS_BLOCKER=OPEN

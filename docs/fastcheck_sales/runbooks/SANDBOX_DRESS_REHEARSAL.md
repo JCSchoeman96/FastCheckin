@@ -182,13 +182,16 @@ source for the order of operations.
 
 ### 20. Global worker monitoring gate
 
-- Action: Confirm that an approved production global Oban monitoring source
-  exists and that its bounded procedure has been rehearsed.
-- Expected result: This gate is currently blocked by P1-F because no approved
-  source or procedure exists.
-- Where to verify: No production source is currently approved.
-- Failure response: Production GO remains blocked until P1-F is complete. Do not
-  use Event-scoped Sales Ops as a substitute.
+- Action: Confirm `/dashboard/system/workers` is reachable, reports `Current`,
+  and is usable by an allowlisted global admin in this rehearsal environment.
+  Follow the rehearsed bounded, read-only procedure.
+- Expected result: The approved global source is usable, and the P1-F procedure
+  and representative query-plan evidence are accepted.
+- Where to verify: [P1-F global Oban monitoring evidence](P1F_GLOBAL_OBAN_MONITORING_EVIDENCE.md)
+  and [the go/no-go checklist](GO_NO_GO_CHECKLIST.md).
+- Failure response: If approved global monitoring is unavailable or current
+  health cannot be assessed, production GO remains blocked. Do not use
+  Event-scoped Sales Ops as a substitute.
 
 ### 21. Audit timeline verification
 

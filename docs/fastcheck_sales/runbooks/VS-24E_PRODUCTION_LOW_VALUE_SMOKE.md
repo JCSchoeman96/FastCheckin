@@ -21,9 +21,11 @@ traffic.
 - [ ] Hidden/internal event and low-value offer are confirmed.
 - [ ] Evidence template is ready and contains no protected values.
 
-Global worker monitoring is currently blocked by P1-F. Do not begin this
-production smoke or declare launch GO until an approved source and procedure
-exist. Event-scoped Sales Ops is not a substitute.
+The P1-F global monitoring implementation/evidence gate is cleared. Before this
+production smoke begins, verify that the approved `/dashboard/system/workers`
+source is reachable, `Current`, and usable by the allowlisted operator. Keep the
+prerequisite unchecked until it is verified for this run. Event-scoped Sales Ops
+is not a substitute.
 
 ## Production Constraints
 

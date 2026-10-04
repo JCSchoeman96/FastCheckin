@@ -1,11 +1,17 @@
 # Post-Launch Monitoring
 
-## Pre-Launch Blocker
+## Approved global worker monitoring
 
-The read-only global worker source is `/dashboard/system/workers`. It is
-separate from the Event-scoped `/dashboard/sales/ops` page. P1-F launch
-rehearsal remains open, so this page does not clear the production launch gate.
-Do not use ad-hoc SQL as a workaround.
+Use `/dashboard/system/workers` as the approved, read-only global queue source.
+Access uses the server-owned global monitoring username allowlist. The page is
+not Event-scoped; `/dashboard/sales/ops` remains limited to Event-attributable
+Sales metrics.
+
+P1-F query-plan evidence and runbook rehearsal are complete, and the P1-F
+implementation/evidence blocker is cleared. P1-E remains independent and open.
+These results do not clear every production launch gate. Verify live monitoring
+and all other launch checks for the actual environment. Do not use ad-hoc SQL as
+a workaround.
 
 ## First Hour
 
@@ -76,13 +82,13 @@ At least hourly during the first day:
 
 - Launch owner reviews successful transaction count.
 - Operator lead reviews manual review and delivery failure backlog.
-- Developer/admin reviews incidents and logs. Global worker monitoring remains
-  a launch blocker until both representative query-plan evidence and the
-  runbook rehearsal are complete.
+- Developer/admin reviews incidents and logs. Operators use
+  `/dashboard/system/workers` for global worker status according to the
+  rehearsed procedure, and verify current health for the active environment.
 - Refund/revocation operator reviews all destructive actions.
 - Decision is recorded: continue, continue with mitigations, or pause sales.
 
-P1F_QUERY_PLAN_EVIDENCE=OPEN
-P1F_RUNBOOK_REHEARSAL=OPEN
-P1F_GLOBAL_OBAN_BLOCKER=OPEN
+P1F_QUERY_PLAN_EVIDENCE=PASS
+P1F_RUNBOOK_REHEARSAL=PASS
+P1F_GLOBAL_OBAN_BLOCKER=CLEARED
 P1E_INGRESS_BLOCKER=OPEN
