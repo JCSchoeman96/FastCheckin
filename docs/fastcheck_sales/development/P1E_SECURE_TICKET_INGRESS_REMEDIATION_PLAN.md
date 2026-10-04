@@ -3,12 +3,13 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | P1E-SECURE-TICKET-INGRESS-REMEDIATION |
-| **Plan version** | v1.4 |
+| **Plan version** | v1.5 |
 | **Status** | FROZEN — ready for implementation review (plan-only; no code in this artifact) |
 | **Scope** | Remediate P1-E ingress logging blocker by removing delivery bearer from HTTP request targets; browser ticket-session via one cookie + warm Redis HASH registry (not durable ticket authority) |
 | **Authority** | This file is the **active contract** for P1-E implementation. `docs/fastcheck_sales/product/LAUNCH_SCOPE_RUNBOOK_REQUIREMENTS.md` remains the launch gate source for `INGRESS_REQUEST_LOGGING_SAFE`. On conflict, this plan defines *how* P1-E is satisfied; the runbook defines *when* the gate may clear. |
 | **Accepted base** | `BASE_SHA=71462644f91d9c8132c0a5a4ac5df97e2c8acd81`, `BASE_TREE=56de18e69be5a5140b7bf9eb131ea4f49c9304ae` |
 | **Last updated** | 2026-10-04 |
+| **Change summary (v1.5)** | Monotonic `delivery_token_generation` on `TicketIssue` (migration); generation-aware Redis bind; stale exchange cannot overwrite newer generation. |
 | **Change summary (v1.4)** | Atomic Redis session bind (HSET+EXPIRE) and compare-and-delete invalidation; Redis TIME + unique ZSET members for rate limits; trusted Cloudflare CIDR + `CF-Connecting-IP` rule. |
 | **Change summary (v1.3)** | One `_fastcheck_ticket_session` cookie + Redis HASH registry (replaces per-ticket cookie fan-out); distributed Redis ZSET rate limits; trusted client-IP rules for new P1-E guards. |
 | **Change summary (v1.2)** | Multi-ticket path-scoped signed cookie claims; ticket-specific view/PDF routes; `GET /t` bootstrap-only; separated exchange vs session-read rate limits. *(Per-ticket cookie fan-out **superseded** by v1.3.)* |
@@ -22,6 +23,7 @@
 - `v1.2` — Multi-ticket routes `/t/view/:id`; reject global Phoenix session; cross-ticket fail-closed semantics. *(Cookie-per-ticket storage rejected in v1.3.)*
 - `v1.3` — Replace per-ticket cookie fan-out with one browser ticket-session cookie + Redis HASH registry; freeze distributed Redis ZSET rate limiting and trusted client-IP rules.
 - `v1.4` — Atomic Redis session binding/invalidation; distributed rate-limit clock/member semantics; trusted Cloudflare client-IP validation (CIDR-gated `CF-Connecting-IP`).
+- `v1.5` — Freeze monotonic `delivery_token_generation` as durable token-generation ordering authority; generation-aware Redis bind prevents stale exchange overwrite.
 
 ---
 
@@ -105,13 +107,13 @@ Browser:
           Path=/t; HttpOnly; SameSite=Lax; Secure (prod); no Max-Age
 
   GET /t                          bootstrap only
-  POST /t/session                 exchange → HSET ticket:<id> → fingerprint; refresh TTL
+  POST /t/session                 exchange → atomic HSET+EXPIRE ticket:<id> → fingerprint
   GET /t/view/:ticket_issue_id    HGET + Postgres revalidation
   GET /t/view/:ticket_issue_id/pdf
 
 Redis HASH (warm, idle TTL 24h):
   key: ticket-browser-session:<hash(session-id)>
-  fields: ticket:<ticket_issue_id> → delivery_generation_fingerprint (v1)
+  fields: ticket:<ticket_issue_id> → v1:<generation>:<delivery_generation_fingerprint>
 ```
 
 **Preserved from v1.2:** routes, fragment URL, fingerprint v1 algorithm, multi-ticket isolation semantics, cross-ticket fail-closed, bootstrap-only `GET /t`.
@@ -132,9 +134,56 @@ Redis HASH (warm, idle TTL 24h):
 | `assets/js/secure_ticket_bootstrap.js` | Fragment → `POST /t/session` → `location.replace(/t/view/id)` |
 | `SendWhatsAppTicketLinkWorker` | `"/t#" <> token` |
 | **Redis** | WARM: ticket-browser-session HASH; WARM: secure-ticket rate-limit ZSETs |
-| **Postgres** | COLD: `TicketIssue` durable authority |
+| **Postgres** | COLD: `TicketIssue` + `delivery_token_generation`; `ArtifactResolver` |
+| **Migration** | Add `TicketIssue.delivery_token_generation` (v1.5); no new table/index |
 
-**Non-goals:** new DB table, migration, durable ticket authority in Redis, `PlugAttack.Storage.Redis`, new dependencies for rate limiting.
+**Non-goals:** new DB table, durable ticket authority in Redis, `PlugAttack.Storage.Redis`, new dependencies for rate limiting.
+
+---
+
+## Durable delivery token generation (v1.5 — frozen)
+
+Fingerprint v1 alone does not provide monotonic ordering under concurrent exchange. Add explicit lifecycle counter on `TicketIssue`:
+
+```text
+delivery_token_generation :integer
+NOT NULL
+default 0
+minimum 0
+```
+
+Semantics:
+
+```text
+- identifies the currently authoritative delivery-token generation for one TicketIssue
+- NOT a bearer, timestamp, ticket version, scanner version, or browser-session version
+```
+
+**Migration:** existing rows → `delivery_token_generation = 0` (valid for current hash). Next rotation → `1`, then `2`, … No historical reconstruction.
+
+**Initial issuance:** first token may remain at generation `0`; do not increment merely because the first token exists. Counter advances on **rotation** away from initial generation.
+
+**Rotation (`rotate_delivery_token_for_delivery` or equivalent)** must persist **one** atomic durable transition:
+
+```text
+delivery_token_hash       → new hash
+delivery_token_expires_at → new expiry
+delivery_token_generation → previous + 1
+```
+
+Forbidden:
+
+```text
+using delivery_token_expires_at, updated_at, or inserted_at as generation ordering
+unprotected read-modify-write of generation in application code without DB atomicity
+committing hash/expiry/generation independently
+```
+
+Require Ash/Postgres concurrency-safe increment (optimistic lock or equivalent). Concurrent rotations must not both persist the same resulting generation (`G0→G1` and `G0→G2`, not two `G1`).
+
+If the chosen Ash action cannot prove this: **STOP** implementation; do not approximate with timestamps.
+
+**Registry invalidation on rotation:** Postgres rotation is durable authority; Redis stale bindings are rejected/removed lazily on read; fresh exchange with `G+1` forward-only overwrites per bind rules. No PubSub; no distributed Redis↔Postgres transaction.
 
 ---
 
@@ -176,13 +225,19 @@ session_id_hash = SHA-256("ticket-browser-session:v1:" <> browser_session_id)
 namespaced key: ticket-browser-session:<session_id_hash>
 ```
 
-Fields:
+Fields (generation binding):
 
 ```text
-ticket:<ticket_issue_id> → delivery_generation_fingerprint
+ticket:<ticket_issue_id> → v1:<generation>:<delivery_generation_fingerprint>
 ```
 
-Never store in Redis: plaintext delivery token, raw `delivery_token_hash`, signed cookie value, customer PII.
+Compact deterministic encoding; semantic fields are generation + fingerprint v1. Never store in Redis: plaintext delivery token, raw `delivery_token_hash`, signed cookie value, customer PII.
+
+```text
+REDIS_GENERATION_CAN_ONLY_MOVE_FORWARD=YES
+```
+
+(per browser session + `ticket_issue_id`; stale generation cannot overwrite newer binding)
 
 ### Generation fingerprint v1 (unchanged)
 
@@ -222,7 +277,8 @@ rotation/revoke/expiry of A → compare-and-delete field A only; B remains
 ```text
 valid browser session cookie
 AND Redis field for that ticket
-AND fingerprint matches current DB generation
+AND Redis generation == TicketIssue.delivery_token_generation
+AND Redis fingerprint == fingerprint(current delivery_token_hash)
 AND expiry / revocation / ArtifactResolver
 ```
 
@@ -234,68 +290,69 @@ Successful exchange for ticket A: atomic bind replaces field `ticket:A` only (se
 
 ### Redis session atomicity (v1.4 — frozen)
 
-#### Atomic session bind (exchange)
+#### Generation-aware atomic session bind (exchange)
 
-A successful exchange must atomically (one Redis-side Lua/EVAL or equivalent transaction):
+Inputs: `incoming_generation`, `incoming_fingerprint`, encoded value `v1:<G>:<F>`.
 
-```text
-HSET ticket:<ticket_issue_id> <fingerprint>
-EXPIRE session-key 86400
-```
-
-Required invariant:
+One Redis-side Lua/EVAL (or equivalent) must atomically bind **and**:
 
 ```text
-SESSION_BINDING_WITHOUT_TTL=IMPOSSIBLE
+EXPIRE session-key 86400   (only on successful bind outcomes below)
 ```
 
-Do **not** use unprotected client-side `HSET` then `EXPIRE` as the security contract.
+`SESSION_BINDING_WITHOUT_TTL=IMPOSSIBLE` — no unprotected client `HSET` then `EXPIRE`.
 
-The operation may replace the field for the same ticket; it must not modify other ticket fields.
+Outcomes (inspect current field atomically):
 
-#### Exchange ordering
+| Case | Action | Result |
+|------|--------|--------|
+| No current field | SET incoming | `BOUND` |
+| Current `G1`, incoming `G2` where `G2 > G1` | replace; refresh TTL | `BOUND` |
+| Current `G2/F2`, incoming `G2/F2` | idempotent; refresh TTL | `BOUND` |
+| Current `G2`, incoming `G1` (`G1 < G2`) | **no mutation**; no TTL refresh | `STALE_GENERATION` |
+| Current `G2/Fa`, incoming `G2/Fb`, `Fa != Fb` | **no mutation**; fail closed | `GENERATION_CONFLICT` |
 
-For a new or continuing browser session:
+**Lower generation bind rejected:** older exchange must never overwrite newer binding (`G2` outranks `G1`).
+
+#### Exchange flow (frozen)
 
 ```text
-1. obtain/create opaque browser_session_id (in memory until Redis succeeds)
-2. validate delivery bearer and durable TicketIssue authority
-3. atomic Redis bind + TTL
-4. only after Redis success: Set-Cookie _fastcheck_ticket_session
-5. return safe redirect target /t/view/:ticket_issue_id
+1. hash/verify plaintext delivery token (DeliveryToken)
+2. load TicketIssue: id, delivery_token_hash, delivery_token_expires_at, delivery_token_generation
+3. derive fingerprint v1 from current hash
+4. obtain/create browser_session_id (memory until success)
+5. generation-aware atomic Redis bind + TTL
+6. if BOUND: re-read TicketIssue generation + hash; require generation and fingerprint still match bound values and token still valid
+7. only then Set-Cookie and return /t/view/:ticket_issue_id
+8. else: generation-aware compare-and-delete stale binding where safe; fail exchange
 ```
 
-If Redis bind fails: no successful exchange; no usable ticket authorization; safe customer failure. Do not set the session cookie before registry bind succeeds.
+Post-bind Postgres revalidation closes validation→bind races. Do not issue cookie after observing DB advanced past bound generation.
+
+**Post-bind rotation semantics:** absolute lock with future rotation is impossible; freeze:
+
+```text
+NO STALE GENERATION CAN AUTHORIZE AN ARTIFACT
+```
+
+Stale Redis/browser state after rotation may require customer re-exchange via current fragment; reads always revalidate Postgres.
+
+#### Exchange ordering (cookie)
+
+Cookie only after successful registry bind **and** post-bind durable check. Redis bind failure → safe customer failure, no cookie.
 
 #### Conditional terminal invalidation (compare-and-delete)
 
-Never unconditionally `HDEL` based on an earlier `HGET` observation.
+Never unconditional `HDEL` after prior observation.
 
-Freeze atomic `conditional_remove_ticket(session_key, ticket_field, expected_fingerprint)`:
-
-```text
-current = HGET ticket_field
-if current == expected_fingerprint:
-    HDEL ticket_field
-    return REMOVED
-else:
-    leave field unchanged
-    return NOT_REMOVED
-```
-
-Must execute Redis-side atomically.
-
-Required race behavior:
+Atomic `conditional_remove_ticket(session_key, ticket_field, expected_encoded_value)` where `expected_encoded_value` is full `v1:<G>:<F>` observed:
 
 ```text
-stale request observes F1 in Redis
-fresh exchange writes F2
-stale request sees DB generation mismatch vs F1
-conditional_remove(expected=F1)
-→ F2 remains; stale request denied
+if HGET == expected_encoded_value: HDEL; REMOVED
+else: NOT_REMOVED (leave field, including newer G2)
 ```
 
-A stale request **must not** delete a newer successful exchange (`F2`).
+Stale `G1/F1` invalidation must not remove concurrent `G2/F2`.
 
 #### Empty HASH behavior
 
@@ -303,7 +360,7 @@ Do **not** implement unsafe client-side `HLEN` then `DEL` cleanup races. If remo
 
 #### Successful read TTL refresh
 
-After successful: Redis membership + fingerprint match + Postgres generation/expiry/revocation + `ArtifactResolver` authorization — refresh session key TTL to `86400`.
+After successful: Redis binding matches `delivery_token_generation` + fingerprint + expiry/revocation + `ArtifactResolver` — refresh TTL to `86400`.
 
 If the key disappeared concurrently, TTL refresh **must not** recreate the HASH or fields. Complete the current request only per frozen resolution semantics; subsequent requests require re-exchange when registry is absent. Do not silently rebuild missing session authority.
 
@@ -330,7 +387,7 @@ Redis is **required** for v1.3 browser ticket sessions. Redis is **not** durable
 | `absent` | `GET /t` | no usable session | bootstrap | no |
 | `active` | `POST /t/session` | valid bearer | atomic HSET+EXPIRE for field; then cookie | no |
 | `active` | view/PDF read | session + field + durable checks | render; TTL refresh if key exists | no |
-| `ticket_rotated` | read | fingerprint ≠ DB | compare-and-delete if `expected==observed`; deny | for that ticket |
+| `ticket_rotated` | read | generation/fingerprint ≠ DB | compare-and-delete exact observed binding; deny | for that ticket |
 | `ticket_expired` | read | delivery expiry | compare-and-delete if match; deny | for that ticket |
 | `ticket_revoked` | read | revoked | compare-and-delete if match; deny | for that ticket |
 | `ticket_unavailable` | read | artifact failure | compare-and-delete if match; deny | for that ticket |
@@ -545,8 +602,10 @@ limits do not multiply across simulated nodes/backends
 | WARM | Redis ZSET rate limits; 60s windows; bounded TTL |
 | COLD | Postgres `TicketIssue` + `ArtifactResolver` |
 | NEW_DB_TABLE | NO |
-| MIGRATION | NO |
+| MIGRATION_REQUIRED | YES (`delivery_token_generation` column) |
+| NEW_INDEX_REQUIRED | NO |
 | NEW_DB_WRITES_PER_VIEW | 0 |
+| ROTATION_DB_WRITE | +1 integer increment (atomic with hash/expiry) |
 | REDIS_HASH_WRITES | atomic bind, compare-and-delete on terminal, conditional TTL refresh |
 | REDIS_HASH_READS | HGET per view/PDF (single-field; no full HASH load for one ticket) |
 | PUBSUB | none required |
@@ -591,8 +650,9 @@ ATOMICITY=Redis-side
 | CSRF on exchange | `protect_from_forgery` |
 | Distributed rate limits | Redis ZSET, not per-node ETS |
 | IP spoofing | CIDR-gated CF-Connecting-IP; never trust X-Forwarded-For |
-| Stale invalidation race | Compare-and-delete; F1 cannot remove F2 |
-| Session bind without TTL | Atomic HSET+EXPIRE |
+| Stale invalidation race | Compare-and-delete; G1 cannot remove G2 |
+| Stale exchange overwrite | Generation-aware bind; G1 cannot replace G2 |
+| Session bind without TTL | Atomic bind+EXPIRE |
 | Legacy cutover | v1.1 two-stage preserved |
 | Ingress / fragment | v1.1/v1.2 preserved |
 
@@ -605,9 +665,9 @@ ATOMICITY=Redis-side
 | Phase | Deliverable |
 |-------|-------------|
 | **P1E-A** | Provenance + plan + legacy inventory gate |
-| **P1E-B** | Browser session id + Redis HASH; atomic bind/compare-delete; fingerprint domain |
-| **P1E-C** | Bootstrap/exchange; Redis-before-cookie; single cookie |
-| **P1E-D** | View/PDF; HGET + Postgres; multi-ticket isolation |
+| **P1E-B** | `delivery_token_generation` migration + atomic rotation; browser session; generation-aware Redis bind/compare-delete; fingerprint |
+| **P1E-C** | Exchange; generation-aware bind; post-bind Postgres revalidation; cookie |
+| **P1E-D** | View/PDF; generation + fingerprint + durable checks; multi-ticket isolation |
 | **P1E-E** | WhatsApp `/t#` |
 | **P1E-E2** | Legacy cohort (operational) |
 | **P1E-F** | Legacy rejection — **conditional** |
@@ -642,7 +702,6 @@ stale F1 invalidation racing fresh F2 exchange preserves F2
 atomic bind never creates session HASH without TTL
 terminal invalidation removes exactly the observed generation (compare-and-delete)
 terminal invalidation of A never removes B
-concurrent same-ticket exchanges cannot leave older fingerprint as final authority after newer DB generation known
 rate limiter counts concurrent same-microsecond requests independently (unique ZSET members)
 rate limiter uses one Redis clock across simulated app nodes
 
@@ -652,9 +711,26 @@ arbitrary X-Forwarded-For → not trusted
 IPv4 and IPv6 trusted proxy CIDRs supported
 ```
 
+**Mandatory v1.5 (generation ordering):**
+
+```text
+DB: migrated rows default generation 0; initial token G0; rotation G0→G1→G2; concurrent rotations no duplicate G
+DB: hash + expiry + generation one atomic transition
+
+Redis bind: empty+G1→G1; G1+incoming G2→G2; G2+incoming G1→stays G2 (STALE_GENERATION)
+G2/F2 + G2/F2 idempotent; G2/Fa + G2/Fb → GENERATION_CONFLICT
+stale G1 exchange racing fresh G2 → final registry G2 (both orderings)
+bind + TTL atomic
+
+Auth: Redis G1 while DB G2 → no HTML/PDF; mismatch cleanup cannot remove G2
+fresh G2 authorizes after stale G1 activity
+```
+
 Plus v1.2 cross-ticket HTML/PDF isolation cases (via registry fields).
 
 **P1E-H** paths unchanged (`/t`, `/t/session`, `/t/view/<id>`, optional pdf).
+
+**Migration safety:** bounded column add; existing rows `generation=0`; reversible per repo conventions; no destructive token rotation in migration.
 
 ---
 
@@ -678,6 +754,14 @@ Production sequencing and rollback: **v1.1 unchanged** (compatibility → E2 →
 - `CF-Connecting-IP` trusted without trusted Cloudflare outer peer (CIDR).
 - Arbitrary `X-Forwarded-For` as authoritative P1-E identity.
 - Weakened legacy cutover.
+- Timestamps used as generation ordering.
+- Concurrent rotations persist same generation.
+- Lower Redis generation overwrites higher generation.
+- Same generation + different fingerprint silently accepted.
+- Stale Redis binding authorizes artifact after DB generation advances.
+- Rotation requires synchronous Redis mutation in DB transaction.
+- Unnecessary index on `delivery_token_generation`.
+- Claim `MIGRATION_REQUIRED=NO` for P1-E session ordering.
 
 ---
 
@@ -699,6 +783,10 @@ multi-ticket support = YES (50/order)
 multi-tab collision = NO
 WARM Redis session registry = YES (ephemeral bindings only)
 NEW_DB_TABLE = NO
+MIGRATION_REQUIRED = YES (delivery_token_generation)
+NEW_INDEX_REQUIRED = NO
+REDIS_GENERATION_FORWARD_ONLY = YES
+NO STALE GENERATION ARTIFACT AUTHORIZATION = YES
 distributed rate limits = YES
 legacy two-stage cutover = preserved
 P1-E gate = PASS only after P1E-H
