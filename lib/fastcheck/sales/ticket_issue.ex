@@ -189,6 +189,8 @@ defmodule FastCheck.Sales.TicketIssue do
           )
         end
       end)
+
+      change(optimistic_lock(:delivery_token_generation))
     end
   end
 
@@ -242,6 +244,12 @@ defmodule FastCheck.Sales.TicketIssue do
     attribute(:qr_token_hash, :string, sensitive?: true)
     attribute(:delivery_token_hash, :string, sensitive?: true)
     attribute(:delivery_token_expires_at, :utc_datetime)
+
+    attribute :delivery_token_generation, :integer do
+      allow_nil?(false)
+      default(0)
+      constraints(min: 0)
+    end
 
     attribute :status, :string do
       allow_nil?(false)

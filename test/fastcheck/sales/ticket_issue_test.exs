@@ -50,6 +50,205 @@ defmodule FastCheck.Sales.TicketIssueTest do
     refute Map.has_key?(transition.metadata, "raw_payload")
   end
 
+  test "create_issued_link defaults delivery_token_generation to zero" do
+    {order_id, order_line_id} = insert_order_with_line!()
+
+    assert {:ok, ticket_issue} =
+             TicketIssue
+             |> Changeset.for_create(
+               :create_issued_link,
+               issued_link_attrs(order_id, order_line_id, 42_010),
+               actor: system_actor()
+             )
+             |> Ash.create(authorize?: false)
+
+    assert ticket_issue.delivery_token_generation == 0
+  end
+
+  test "rotate_delivery_token_for_delivery advances generation and token fields" do
+    {order_id, order_line_id} = insert_order_with_line!()
+
+    assert {:ok, ticket_issue} =
+             TicketIssue
+             |> Changeset.for_create(
+               :create_issued_link,
+               issued_link_attrs(order_id, order_line_id, 42_011),
+               actor: system_actor()
+             )
+             |> Ash.create(authorize?: false)
+
+    expires_at = DateTime.utc_now() |> DateTime.add(7200, :second) |> DateTime.truncate(:second)
+
+    assert {:ok, rotated_once} =
+             ticket_issue
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-rotated-hash-1",
+                 delivery_token_expires_at: expires_at
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    assert rotated_once.delivery_token_hash == "delivery-rotated-hash-1"
+    assert rotated_once.delivery_token_expires_at == expires_at
+    assert rotated_once.delivery_token_generation == 1
+
+    later_expires =
+      DateTime.utc_now() |> DateTime.add(10_800, :second) |> DateTime.truncate(:second)
+
+    assert {:ok, rotated_twice} =
+             rotated_once
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-rotated-hash-2",
+                 delivery_token_expires_at: later_expires
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    assert rotated_twice.delivery_token_generation == 2
+    assert rotated_twice.delivery_token_hash == "delivery-rotated-hash-2"
+  end
+
+  test "stale rotate_delivery_token_for_delivery cannot duplicate generation" do
+    {order_id, order_line_id} = insert_order_with_line!()
+
+    assert {:ok, ticket_issue} =
+             TicketIssue
+             |> Changeset.for_create(
+               :create_issued_link,
+               issued_link_attrs(order_id, order_line_id, 42_012),
+               actor: system_actor()
+             )
+             |> Ash.create(authorize?: false)
+
+    stale_copy = Ash.get!(TicketIssue, ticket_issue.id, authorize?: false)
+    assert stale_copy.delivery_token_generation == 0
+
+    expires_a = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.truncate(:second)
+
+    assert {:ok, winner} =
+             stale_copy
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-winner-hash",
+                 delivery_token_expires_at: expires_a
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    assert winner.delivery_token_generation == 1
+
+    expires_b = DateTime.utc_now() |> DateTime.add(5400, :second) |> DateTime.truncate(:second)
+
+    assert {:error, %Ash.Error.Invalid{errors: [%Ash.Error.Changes.StaleRecord{}]}} =
+             stale_copy
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-stale-hash",
+                 delivery_token_expires_at: expires_b
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    persisted = Ash.get!(TicketIssue, ticket_issue.id, authorize?: false)
+    assert persisted.delivery_token_generation == 1
+    assert persisted.delivery_token_hash == "delivery-winner-hash"
+
+    retry_copy = Ash.get!(TicketIssue, ticket_issue.id, authorize?: false)
+
+    assert {:ok, rotated_again} =
+             retry_copy
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-retry-hash",
+                 delivery_token_expires_at: expires_b
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    assert rotated_again.delivery_token_generation == 2
+  end
+
+  test "rotate_delivery_token_for_delivery retains issued and revocation guards" do
+    {order_id, order_line_id} = insert_order_with_line!()
+
+    assert {:ok, ticket_issue} =
+             TicketIssue
+             |> Changeset.for_create(
+               :create_issued_link,
+               issued_link_attrs(order_id, order_line_id, 42_013),
+               actor: system_actor()
+             )
+             |> Ash.create(authorize?: false)
+
+    assert {:ok, revoked} =
+             ticket_issue
+             |> Changeset.for_update(
+               :mark_revoked,
+               %{revocation_reason: "sales_refund"},
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    expires_at = DateTime.utc_now() |> DateTime.add(3600, :second)
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             revoked
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-should-not-rotate",
+                 delivery_token_expires_at: expires_at
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+  end
+
+  test "rotate_delivery_token_for_delivery audit transition omits token secrets" do
+    {order_id, order_line_id} = insert_order_with_line!()
+
+    assert {:ok, ticket_issue} =
+             TicketIssue
+             |> Changeset.for_create(
+               :create_issued_link,
+               issued_link_attrs(order_id, order_line_id, 42_014),
+               actor: system_actor()
+             )
+             |> Ash.create(authorize?: false)
+
+    expires_at = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.truncate(:second)
+
+    assert {:ok, _rotated} =
+             ticket_issue
+             |> Changeset.for_update(
+               :rotate_delivery_token_for_delivery,
+               %{
+                 delivery_token_hash: "delivery-audit-hash",
+                 delivery_token_expires_at: expires_at
+               },
+               actor: system_actor()
+             )
+             |> Ash.update(authorize?: false)
+
+    transition = ticket_issue_rotation_transition!(ticket_issue.id)
+    assert transition.source == "ticket_issue.rotate_delivery_token_for_delivery"
+    refute Map.has_key?(transition.metadata, "delivery_token_hash")
+    refute Map.has_key?(transition.metadata, "delivery_token")
+    refute Map.has_key?(transition.metadata, "ticket_code")
+  end
+
   test "mark_revoked writes safe TicketIssue state transition metadata" do
     {order_id, order_line_id} = insert_order_with_line!()
 
@@ -180,6 +379,33 @@ defmodule FastCheck.Sales.TicketIssueTest do
         select: %{
           from_state: st.from_state,
           to_state: st.to_state,
+          source: st.source,
+          metadata: st.metadata
+        }
+    )
+  end
+
+  defp issued_link_attrs(order_id, order_line_id, attendee_id) do
+    %{
+      sales_order_id: order_id,
+      sales_order_line_id: order_line_id,
+      line_item_sequence: 1,
+      attendee_id: attendee_id,
+      ticket_code: "FC-#{attendee_id}",
+      qr_token_hash: "qr-#{attendee_id}",
+      delivery_token_hash: "delivery-#{attendee_id}",
+      delivery_token_expires_at: DateTime.utc_now() |> DateTime.add(3600, :second)
+    }
+  end
+
+  defp ticket_issue_rotation_transition!(ticket_issue_id) do
+    Repo.one!(
+      from st in "sales_state_transitions",
+        where:
+          st.entity_type == "TicketIssue" and
+            st.entity_id == ^Integer.to_string(ticket_issue_id) and
+            st.source == "ticket_issue.rotate_delivery_token_for_delivery",
+        select: %{
           source: st.source,
           metadata: st.metadata
         }

@@ -166,6 +166,7 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
       :qr_token_hash,
       :delivery_token_hash,
       :delivery_token_expires_at,
+      :delivery_token_generation,
       :status,
       :scanner_status,
       :last_scanner_sync_version,
@@ -178,6 +179,9 @@ defmodule FastCheck.Sales.TicketAndDeliveryResourceSkeletonsTest do
 
     assert_attribute_type(resource, :line_item_sequence, :integer)
     assert_attribute_type(resource, :last_scanner_sync_version, :integer)
+    assert_attribute_type(resource, :delivery_token_generation, :integer)
+
+    refute ResourceInfo.attribute(resource, :delivery_token_generation).sensitive?
     assert_relationship(resource, :order, :belongs_to, FastCheck.Sales.Order)
     assert_relationship(resource, :order_line, :belongs_to, FastCheck.Sales.OrderLine)
 
