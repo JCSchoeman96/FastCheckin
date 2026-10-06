@@ -33,6 +33,39 @@ defmodule FastCheck.Tickets.ArtifactResolver do
   """
   @spec resolve_from_delivery_token(term()) :: result()
   def resolve_from_delivery_token(raw_token) when is_binary(raw_token) do
+    case resolve_delivery_eligibility(raw_token) do
+      {:ok, %{ticket_issue: ticket_issue, attendee: attendee, event: event}} ->
+        {:ok, artifact(ticket_issue, attendee, event)}
+
+      {:error, state} ->
+        {:error, error(state)}
+
+      :error ->
+        {:error, error(:not_found)}
+    end
+  end
+
+  def resolve_from_delivery_token(_raw_token), do: {:error, error(:not_found)}
+
+  @doc """
+  Shared delivery-token eligibility path for P1E-C exchange orchestration.
+
+  Returns the validated `TicketIssue` without building a customer artifact.
+  """
+  @spec resolve_eligible_ticket_issue_from_delivery_token(String.t()) ::
+          {:ok, TicketIssue.t()} | {:error, ArtifactError.t()}
+  def resolve_eligible_ticket_issue_from_delivery_token(raw_token) when is_binary(raw_token) do
+    case resolve_delivery_eligibility(raw_token) do
+      {:ok, %{ticket_issue: ticket_issue}} -> {:ok, ticket_issue}
+      {:error, state} -> {:error, error(state)}
+      :error -> {:error, error(:not_found)}
+    end
+  end
+
+  def resolve_eligible_ticket_issue_from_delivery_token(_raw_token),
+    do: {:error, error(:not_found)}
+
+  defp resolve_delivery_eligibility(raw_token) when is_binary(raw_token) do
     token = String.trim(raw_token)
 
     with :ok <- validate_token_format(token),
@@ -44,14 +77,12 @@ defmodule FastCheck.Tickets.ArtifactResolver do
          {:ok, event} <- load_event(ticket_issue),
          :ok <- ensure_event_available(event),
          :ok <- ensure_scannable(attendee) do
-      {:ok, artifact(ticket_issue, attendee, event)}
+      {:ok, %{token: token, ticket_issue: ticket_issue, attendee: attendee, event: event}}
     else
-      {:error, state} -> {:error, error(state)}
-      :error -> {:error, error(:not_found)}
+      {:error, state} -> {:error, state}
+      :error -> :error
     end
   end
-
-  def resolve_from_delivery_token(_raw_token), do: {:error, error(:not_found)}
 
   @doc """
   Resolves a ticket issue id into a backend/admin ticket artifact.
