@@ -40,7 +40,8 @@ defmodule FastCheck.Tickets.TicketExchange do
          {:ok, ticket_issue} <-
            ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(raw_token),
          snapshot <- snapshot_from_issue(ticket_issue),
-         {:ok, encoded} <- TicketSession.encode_binding(snapshot.generation, snapshot.fingerprint),
+         {:ok, encoded} <-
+           TicketSession.encode_binding(snapshot.generation, snapshot.fingerprint),
          {:ok, :bound} <-
            TicketSession.bind(
              browser_session_id,
