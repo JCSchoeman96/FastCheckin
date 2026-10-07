@@ -77,6 +77,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
 
     for _i <- 1..5 do
       conn = get(conn, "/t/not-a-real-token")
+      assert conn.status == 404
       refute conn.status == 429
     end
 
@@ -89,6 +90,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
 
     for _i <- 1..5 do
       conn = get(conn, "/t/not-a-real-token/pdf")
+      assert conn.status == 404
       refute conn.status == 429
     end
 

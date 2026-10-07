@@ -1,9 +1,9 @@
 defmodule FastCheckWeb.SecureTicketController do
   @moduledoc """
-  Public customer secure ticket page for Sales-issued tickets (VS-11).
+  Public customer secure ticket surfaces for Sales-issued tickets (VS-11).
 
-  Access is possession-based via delivery bearer tokens. No dashboard or scanner
-  session is required.
+  Fragment bootstrap and session-backed views are the active P1E paths. Legacy
+  bearer-path HTML requests are hard-rejected without resolution (P1E-F).
   """
 
   use FastCheckWeb, :controller
@@ -17,22 +17,11 @@ defmodule FastCheckWeb.SecureTicketController do
     |> render(:bootstrap)
   end
 
-  def show(conn, %{"token" => token}) do
-    result = TicketPage.resolve(token)
-
-    conn
-    |> put_private_ticket_headers()
-    |> put_status(http_status(result.state))
-    |> render(:show, result: result, download_path: legacy_download_path(result, token))
-  end
-
-  def show(conn, _params) do
-    result = TicketPage.resolve("")
-
+  def reject_legacy(conn, _params) do
     conn
     |> put_private_ticket_headers()
     |> put_status(:not_found)
-    |> render(:show, result: result, download_path: nil)
+    |> render(:show, result: TicketPage.from_session_error(:not_found), download_path: nil)
   end
 
   def view(conn, %{"ticket_issue_id" => ticket_issue_id}) do
@@ -79,9 +68,6 @@ defmodule FastCheckWeb.SecureTicketController do
     |> put_resp_header("x-robots-tag", "noindex, nofollow")
     |> put_resp_header("referrer-policy", "no-referrer")
   end
-
-  defp legacy_download_path(%{state: :valid}, token), do: "/t/#{token}/pdf"
-  defp legacy_download_path(_result, _token), do: nil
 
   defp session_download_path(ticket_issue_id, %{state: :valid}),
     do: "/t/view/#{ticket_issue_id}/pdf"

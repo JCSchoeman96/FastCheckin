@@ -110,7 +110,12 @@ defmodule FastCheck.Sales.E2E.CheckoutToScannerTest do
           ]
         )
 
-        html = conn |> get(~p"/t/#{token}") |> html_response(200)
+        html =
+          conn
+          |> E2E.exchange_secure_ticket_session!(token)
+          |> E2E.get_secure_ticket_view(issue.id)
+          |> html_response(200)
+
         assert html =~ issue.ticket_code
         refute html =~ hashed
 

@@ -1,11 +1,8 @@
 defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   use FastCheckWeb.ConnCase, async: false
 
-  import Ecto.Query
-
   alias Ash.Changeset
   alias FastCheck.Attendees.Attendee
-  alias FastCheck.Events.Event
   alias FastCheck.Fixtures
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketIssue
@@ -13,12 +10,6 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   alias FastCheckWeb.SecureTicketSessionCookie
 
   @failure "Ticket PDF is not available for download."
-  @sensitive_values [
-    "https://checkout.paystack.test/pay/order-show-secret",
-    "provider_payload_secret",
-    "buyer@example.test",
-    "+27821234567"
-  ]
 
   setup do
     previous_limit =
@@ -49,8 +40,8 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
     :ok
   end
 
-  describe "GET /t/:token/pdf" do
-    test "route metadata disables router dispatch logging" do
+  describe "GET /t/:token/pdf legacy bearer rejection (P1E-F)" do
+    test "route metadata disables router dispatch logging and targets reject_legacy" do
       route =
         Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
           route.path == "/t/:token/pdf" and route.verb == :get
@@ -58,125 +49,47 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
 
       assert %{
                metadata: %{log: false},
-               plug: FastCheckWeb.SecureTicketPdfController
+               plug: FastCheckWeb.SecureTicketPdfController,
+               plug_opts: :reject_legacy
              } = route
     end
 
-    test "downloads a current PDF without exposing secrets or mutating ticket state" do
-      %{
-        token: token,
-        delivery_hash: delivery_hash,
-        qr_hash: qr_hash,
-        ticket_code: ticket_code,
-        ticket_issue_id: ticket_issue_id,
-        attendee: attendee,
-        order_id: order_id
-      } = issued_ticket_fixture()
-
-      snapshot_before = data_snapshot(ticket_issue_id, attendee.id, order_id)
-      conn = get_pdf(token)
-
-      assert conn.status == 200
-      assert [content_type] = get_resp_header(conn, "content-type")
-      assert content_type =~ "application/pdf"
-
-      assert get_resp_header(conn, "content-disposition") == [
-               "attachment; filename=\"fastcheck-ticket.pdf\""
-             ]
-
-      assert get_resp_header(conn, "cache-control") == ["no-store, private"]
-      assert get_resp_header(conn, "pragma") == ["no-cache"]
-      assert get_resp_header(conn, "x-robots-tag") == ["noindex, nofollow"]
-      assert get_resp_header(conn, "referrer-policy") == ["no-referrer"]
-      assert String.starts_with?(conn.resp_body, "%PDF-")
-      assert conn.resp_body =~ "% FastCheck QR matrix modules="
-      assert conn.resp_body =~ "Ticket code: #{ticket_code}"
-
-      response_text = response_text(conn)
-
-      for value <- [token, delivery_hash, qr_hash | @sensitive_values] do
-        refute response_text =~ value
-      end
-
-      assert data_snapshot(ticket_issue_id, attendee.id, order_id) == snapshot_before
-    end
-
-    test "malformed and unknown tokens return generic non-PDF failures" do
+    test "random bearer returns constant 404 without PDF body" do
       unknown_token = DeliveryToken.generate().token
-
-      assert_denied("bad token", 404, ["bad token"])
-      assert_denied(unknown_token, 404, [unknown_token])
+      assert_legacy_pdf_rejected(unknown_token)
     end
 
-    test "expired delivery token returns a generic non-PDF failure" do
+    test "valid bearer returns same 404 without PDF body" do
+      %{token: token, delivery_hash: delivery_hash, qr_hash: qr_hash, ticket_code: ticket_code} =
+        issued_ticket_fixture()
+
+      assert_legacy_pdf_rejected(token, sensitive: [token, delivery_hash, qr_hash, ticket_code])
+    end
+
+    test "expired bearer returns same 404 as valid bearer" do
       %{token: token, delivery_hash: delivery_hash} =
         issued_ticket_fixture(expires_at: DateTime.add(DateTime.utc_now(), -3600, :second))
 
-      assert_denied(token, 410, [token, delivery_hash | @sensitive_values])
+      assert_legacy_pdf_rejected(token, sensitive: [token, delivery_hash])
     end
 
-    test "revoked ticket returns a generic non-PDF failure" do
-      %{token: token, delivery_hash: delivery_hash, qr_hash: qr_hash, ticket_code: ticket_code} =
-        issued_ticket_fixture(status: "revoked", revoked_at: DateTime.utc_now())
+    test "valid legacy bearer performs zero Repo queries during request" do
+      %{token: token} = issued_ticket_fixture()
 
-      assert_denied(token, 410, [token, delivery_hash, qr_hash, ticket_code | @sensitive_values])
+      {_conn, query_count} =
+        capture_repo_queries(fn ->
+          get_pdf(token)
+        end)
+
+      assert query_count == 0
     end
 
-    test "archived event returns a generic non-PDF failure" do
-      %{token: token, event: event} = issued_ticket_fixture()
+    test "pre-limit rejection is 404 regardless of token validity" do
+      valid = issued_ticket_fixture().token
+      random = DeliveryToken.generate().token
 
-      event
-      |> Event.changeset(%{status: "archived"})
-      |> Repo.update!()
-
-      assert_denied(token, 409, [token | @sensitive_values])
-    end
-
-    test "not-scannable attendee returns a generic non-PDF failure" do
-      %{token: token, attendee: attendee} = issued_ticket_fixture()
-
-      attendee
-      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
-      |> Repo.update!()
-
-      assert_denied(token, 409, [token | @sensitive_values])
-    end
-
-    test "ticket that is not ready returns a generic non-PDF failure" do
-      %{token: token} = issued_ticket_fixture(status: "pending")
-
-      assert_denied(token, 409, [token | @sensitive_values])
-    end
-
-    test "renderer failure returns a generic non-PDF failure" do
-      %{token: token, ticket_issue_id: ticket_issue_id, ticket_code: ticket_code} =
-        issued_ticket_fixture()
-
-      Repo.query!("UPDATE sales_ticket_issues SET ticket_code = $1 WHERE id = $2", [
-        ticket_code <> "\nBAD",
-        ticket_issue_id
-      ])
-
-      assert_denied(token, 500, [token, ticket_code | @sensitive_values])
-    end
-
-    test "a ticket revoked after page load cannot download a PDF" do
-      %{token: token, ticket_issue_id: ticket_issue_id} = issued_ticket_fixture()
-
-      page = get(build_conn(), "/t/#{token}")
-
-      assert page.status == 200
-      assert page.resp_body =~ "Download PDF"
-      assert page.resp_body =~ ~s(href="/t/#{token}/pdf")
-
-      Repo.query!(
-        "UPDATE sales_ticket_issues SET status = 'revoked', revoked_at = now() WHERE id = $1",
-        [
-          ticket_issue_id
-        ]
-      )
-
-      assert_denied(token, 410, [token])
+      assert get_pdf(valid).status == 404
+      assert get_pdf(random).status == 404
     end
   end
 
@@ -241,20 +154,59 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
     end
   end
 
-  defp assert_denied(token, status, sensitive_values) do
+  defp assert_legacy_pdf_rejected(token, opts \\ []) do
+    sensitive = Keyword.get(opts, :sensitive, [token])
     conn = get_pdf(token)
 
-    assert conn.status == status
+    assert conn.status == 404
+    assert get_resp_header(conn, "location") == []
     assert [content_type] = get_resp_header(conn, "content-type")
     assert content_type =~ "text/plain"
     assert conn.resp_body == @failure
     refute String.starts_with?(conn.resp_body, "%PDF-")
 
+    assert {"cache-control", "no-store, private"} in conn.resp_headers
+    assert {"pragma", "no-cache"} in conn.resp_headers
+    assert {"x-robots-tag", "noindex, nofollow"} in conn.resp_headers
+    assert {"referrer-policy", "no-referrer"} in conn.resp_headers
+
     response_text = response_text(conn)
 
-    Enum.each(sensitive_values, fn value ->
+    Enum.each(sensitive, fn value ->
       refute response_text =~ value
     end)
+  end
+
+  defp capture_repo_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "secure-ticket-legacy-pdf-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, _metadata, _config ->
+        send(parent, {:repo_query, ref})
+      end,
+      nil
+    )
+
+    try do
+      result = fun.()
+      query_count = drain_repo_query_messages(ref, 0)
+      {result, query_count}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp drain_repo_query_messages(ref, count) do
+    receive do
+      {:repo_query, ^ref} -> drain_repo_query_messages(ref, count + 1)
+    after
+      0 -> count
+    end
   end
 
   defp get_pdf(token), do: get(build_conn(), "/t/#{token}/pdf")
@@ -262,49 +214,6 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   defp response_text(conn) do
     headers = Enum.map_join(conn.resp_headers, "\n", fn {name, value} -> "#{name}: #{value}" end)
     "#{conn.resp_body}\n#{headers}"
-  end
-
-  defp data_snapshot(ticket_issue_id, attendee_id, order_id) do
-    %{
-      ticket_issue:
-        Repo.one!(
-          from t in "sales_ticket_issues",
-            where: t.id == ^ticket_issue_id,
-            select: %{
-              status: t.status,
-              scanner_status: t.scanner_status,
-              revoked_at: t.revoked_at,
-              delivery_token_hash: t.delivery_token_hash,
-              delivery_token_expires_at: t.delivery_token_expires_at,
-              attendee_id: t.attendee_id,
-              sales_order_id: t.sales_order_id
-            }
-        ),
-      attendee:
-        Repo.one!(
-          from a in "attendees",
-            where: a.id == ^attendee_id,
-            select: %{
-              scan_eligibility: a.scan_eligibility,
-              payment_status: a.payment_status,
-              sales_ticket_issue_id: a.sales_ticket_issue_id,
-              checked_in_at: a.checked_in_at,
-              checked_out_at: a.checked_out_at,
-              last_checked_in_at: a.last_checked_in_at,
-              is_currently_inside: a.is_currently_inside
-            }
-        ),
-      order:
-        Repo.one!(
-          from o in "sales_orders",
-            where: o.id == ^order_id,
-            select: %{status: o.status, event_id: o.event_id, updated_at: o.updated_at}
-        ),
-      payment_attempts:
-        Repo.query!("SELECT to_jsonb(p) FROM sales_payment_attempts AS p ORDER BY p.id").rows,
-      delivery_attempts:
-        Repo.query!("SELECT to_jsonb(d) FROM sales_delivery_attempts AS d ORDER BY d.id").rows
-    }
   end
 
   defp issued_ticket_fixture(opts \\ []) do
