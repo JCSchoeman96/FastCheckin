@@ -330,6 +330,7 @@ defmodule FastCheck.SalesE2EFixtures do
     conn
     |> recycle()
     |> Plug.Test.put_req_cookie(cookie_name, cookie_value)
+    |> delete_req_header("accept")
   end
 
   @doc false

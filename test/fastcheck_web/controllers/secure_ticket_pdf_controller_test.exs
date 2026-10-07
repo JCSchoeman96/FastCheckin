@@ -5,7 +5,6 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
 
   alias Ash.Changeset
   alias FastCheck.Attendees.Attendee
-  alias FastCheck.Events.Event
   alias FastCheck.Fixtures
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketIssue
@@ -13,12 +12,6 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   alias FastCheckWeb.SecureTicketSessionCookie
 
   @failure "Ticket PDF is not available for download."
-  @sensitive_values [
-    "https://checkout.paystack.test/pay/order-show-secret",
-    "provider_payload_secret",
-    "buyer@example.test",
-    "+27821234567"
-  ]
 
   setup do
     previous_limit =
@@ -59,7 +52,7 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
       assert %{
                metadata: %{log: false},
                plug: FastCheckWeb.SecureTicketPdfController,
-               plug_opts: %{action: :reject_legacy}
+               plug_opts: :reject_legacy
              } = route
     end
 
@@ -223,49 +216,6 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   defp response_text(conn) do
     headers = Enum.map_join(conn.resp_headers, "\n", fn {name, value} -> "#{name}: #{value}" end)
     "#{conn.resp_body}\n#{headers}"
-  end
-
-  defp data_snapshot(ticket_issue_id, attendee_id, order_id) do
-    %{
-      ticket_issue:
-        Repo.one!(
-          from t in "sales_ticket_issues",
-            where: t.id == ^ticket_issue_id,
-            select: %{
-              status: t.status,
-              scanner_status: t.scanner_status,
-              revoked_at: t.revoked_at,
-              delivery_token_hash: t.delivery_token_hash,
-              delivery_token_expires_at: t.delivery_token_expires_at,
-              attendee_id: t.attendee_id,
-              sales_order_id: t.sales_order_id
-            }
-        ),
-      attendee:
-        Repo.one!(
-          from a in "attendees",
-            where: a.id == ^attendee_id,
-            select: %{
-              scan_eligibility: a.scan_eligibility,
-              payment_status: a.payment_status,
-              sales_ticket_issue_id: a.sales_ticket_issue_id,
-              checked_in_at: a.checked_in_at,
-              checked_out_at: a.checked_out_at,
-              last_checked_in_at: a.last_checked_in_at,
-              is_currently_inside: a.is_currently_inside
-            }
-        ),
-      order:
-        Repo.one!(
-          from o in "sales_orders",
-            where: o.id == ^order_id,
-            select: %{status: o.status, event_id: o.event_id, updated_at: o.updated_at}
-        ),
-      payment_attempts:
-        Repo.query!("SELECT to_jsonb(p) FROM sales_payment_attempts AS p ORDER BY p.id").rows,
-      delivery_attempts:
-        Repo.query!("SELECT to_jsonb(d) FROM sales_delivery_attempts AS d ORDER BY d.id").rows
-    }
   end
 
   defp issued_ticket_fixture(opts \\ []) do

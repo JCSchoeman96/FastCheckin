@@ -72,7 +72,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert %{
                metadata: %{log: false},
                plug: FastCheckWeb.SecureTicketController,
-               plug_opts: %{action: :reject_legacy}
+               plug_opts: :reject_legacy
              } = route
     end
 
@@ -150,8 +150,8 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       token = DeliveryToken.generate().token
 
       final_conn =
-        Enum.reduce(1..6, build_conn(), fn _n, acc ->
-          acc
+        Enum.reduce(1..6, nil, fn _n, _acc ->
+          build_conn()
           |> non_local_conn()
           |> get(~p"/t/#{token}")
         end)
