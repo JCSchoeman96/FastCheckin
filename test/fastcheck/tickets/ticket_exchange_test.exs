@@ -81,6 +81,34 @@ defmodule FastCheck.Tickets.TicketExchangeTest do
       refute redis_key_exists?(session)
     end
 
+    test "not-ready ticket is denied before Redis bind" do
+      %{token: token, ticket_issue_id: ticket_issue_id} = issued_ticket_fixture(status: "pending")
+      session = TicketSession.new_browser_session_id()
+
+      assert {:error, :not_ready} =
+               TicketExchange.exchange(token, browser_session_id: session)
+
+      refute redis_key_exists?(session)
+      assert {:error, :not_found} = TicketSession.fetch_binding(session, ticket_issue_id)
+    end
+
+    test "not-scannable attendee is denied before Redis bind" do
+      %{token: token, ticket_issue_id: ticket_issue_id, attendee: attendee} =
+        issued_ticket_fixture()
+
+      attendee
+      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
+      |> Repo.update!()
+
+      session = TicketSession.new_browser_session_id()
+
+      assert {:error, :not_scannable} =
+               TicketExchange.exchange(token, browser_session_id: session)
+
+      refute redis_key_exists?(session)
+      assert {:error, :not_found} = TicketSession.fetch_binding(session, ticket_issue_id)
+    end
+
     test "redis unavailable fails closed without fallback" do
       %{token: token} = issued_ticket_fixture()
       session = TicketSession.new_browser_session_id()

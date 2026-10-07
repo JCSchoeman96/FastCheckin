@@ -32,7 +32,7 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
   end
 
   describe "resolve_eligible_ticket_issue_from_delivery_token/1" do
-    test "shares delivery eligibility with artifact resolver" do
+    test "valid issued scannable ticket returns TicketIssue after full artifact eligibility" do
       %{token: token, ticket_issue_id: ticket_issue_id, delivery_hash: delivery_hash} =
         issued_ticket_fixture()
 
@@ -44,6 +44,35 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
 
       assert {:error, %ArtifactError{state: :not_found}} =
                ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token("!!!")
+    end
+
+    test "pending ticket issue returns ticket_not_ready" do
+      %{token: token} = issued_ticket_fixture(status: "pending")
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
+    end
+
+    test "not-scannable attendee returns ticket_not_scannable" do
+      %{token: token, attendee: attendee} = issued_ticket_fixture()
+
+      attendee
+      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
+      |> Repo.update!()
+
+      assert {:error, %ArtifactError{state: :ticket_not_scannable}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
+    end
+
+    test "archived event returns ticket_not_ready" do
+      %{token: token, event: event} = issued_ticket_fixture()
+
+      event
+      |> Event.changeset(%{status: "archived"})
+      |> Repo.update!()
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
     end
   end
 
@@ -229,6 +258,80 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
       assert {:ok, %Artifact{}} = ArtifactResolver.resolve_from_delivery_token(token)
 
       assert row_counts(ticket_issue_id, attendee.id, order_id) == counts_before
+    end
+  end
+
+  describe "resolve_from_ticket_issue/1" do
+    test "matches delivery-token artifact eligibility for valid issued ticket" do
+      %{
+        token: token,
+        ticket_issue_id: ticket_issue_id,
+        event: event,
+        attendee: attendee
+      } = issued_ticket_fixture()
+
+      issue = Ash.get!(TicketIssue, ticket_issue_id, authorize?: false)
+
+      assert {:ok, bearer_artifact} = ArtifactResolver.resolve_from_delivery_token(token)
+      assert {:ok, issue_artifact} = ArtifactResolver.resolve_from_ticket_issue(issue)
+
+      assert issue_artifact.state == bearer_artifact.state
+      assert issue_artifact.event_name == bearer_artifact.event_name
+      assert issue_artifact.attendee_name == bearer_artifact.attendee_name
+      assert issue_artifact.scanner_payload == bearer_artifact.scanner_payload
+      assert issue_artifact.event_name == event.name
+      assert issue_artifact.attendee_name == "#{attendee.first_name} #{attendee.last_name}"
+    end
+
+    test "not ready, not scannable, archived event, and missing attendee match bearer semantics" do
+      %{ticket_issue_id: pending_id} = issued_ticket_fixture(status: "pending")
+      pending = Ash.get!(TicketIssue, pending_id, authorize?: false)
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_from_ticket_issue(pending)
+
+      %{ticket_issue_id: scannable_id, attendee: attendee} = issued_ticket_fixture()
+
+      attendee
+      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
+      |> Repo.update!()
+
+      scannable = Ash.get!(TicketIssue, scannable_id, authorize?: false)
+
+      assert {:error, %ArtifactError{state: :ticket_not_scannable}} =
+               ArtifactResolver.resolve_from_ticket_issue(scannable)
+
+      %{ticket_issue_id: archived_id, event: event} = issued_ticket_fixture()
+
+      event
+      |> Event.changeset(%{status: "archived"})
+      |> Repo.update!()
+
+      archived = Ash.get!(TicketIssue, archived_id, authorize?: false)
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_from_ticket_issue(archived)
+
+      %{ticket_issue_id: missing_attendee_id} = issued_ticket_fixture()
+
+      Repo.query!("UPDATE sales_ticket_issues SET attendee_id = $1 WHERE id = $2", [
+        999_999_999,
+        missing_attendee_id
+      ])
+
+      missing_attendee = Ash.get!(TicketIssue, missing_attendee_id, authorize?: false)
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_from_ticket_issue(missing_attendee)
+    end
+
+    test "resolve_from_delivery_token/1 has not regressed after shared eligibility refactor" do
+      %{token: token} = issued_ticket_fixture()
+
+      assert {:ok, %Artifact{state: :valid}} = ArtifactResolver.resolve_from_delivery_token(token)
+
+      assert {:error, %ArtifactError{state: :not_found}} =
+               ArtifactResolver.resolve_from_delivery_token("not-a-valid-token-at-all")
     end
   end
 
