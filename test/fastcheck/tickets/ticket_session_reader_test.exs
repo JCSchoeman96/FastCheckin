@@ -354,6 +354,41 @@ defmodule FastCheck.Tickets.TicketSessionReaderTest do
       assert {:error, :not_found} = TicketSession.fetch_binding(session, ticket_issue_id)
     end
 
+    test "final artifact failure after race hook removes binding without TTL refresh" do
+      %{ticket_issue_id: ticket_issue_id, delivery_hash: delivery_hash, attendee: attendee} =
+        issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      fp = TicketSession.generation_fingerprint(delivery_hash)
+
+      assert {:ok, :bound} =
+               TicketSession.bind(
+                 session,
+                 ticket_issue_id,
+                 0,
+                 fp,
+                 TicketSession.session_idle_ttl_seconds()
+               )
+
+      Redix.command!(FastCheck.Redix, [
+        "EXPIRE",
+        TicketSession.registry_key(session),
+        45
+      ])
+
+      assert {:error, :ticket_not_scannable} =
+               TicketSessionReader.resolve(session, ticket_issue_id,
+                 after_artifact: fn ->
+                   attendee
+                   |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
+                   |> Repo.update!()
+                 end
+               )
+
+      assert {:error, :not_found} = TicketSession.fetch_binding(session, ticket_issue_id)
+      refute redis_ttl!(session) in 86_300..86_400
+    end
+
     test "registry disappears before TTL refresh still returns artifact for current request" do
       %{ticket_issue_id: ticket_issue_id, delivery_hash: delivery_hash} = issued_ticket_fixture()
       session = TicketSession.new_browser_session_id()

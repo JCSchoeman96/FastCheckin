@@ -77,9 +77,9 @@ defmodule FastCheck.Tickets.TicketSessionReader do
          :ok <- invoke_after_artifact(after_artifact),
          {:ok, fresh} <- load_ticket_issue(ticket_issue_id),
          :ok <- final_durable_authority_ok?(binding, fresh),
+         {:ok, artifact} <- ArtifactResolver.resolve_from_ticket_issue(fresh),
          :ok <- refresh_session_ttl(browser_session_id, redix_opts) do
-      ArtifactResolver.resolve_from_ticket_issue(fresh)
-      |> map_artifact_result()
+      {:ok, artifact}
     else
       {:error, :expired_link} = error ->
         invalidate_binding(browser_session_id, ticket_issue_id, encoded, redix_opts)

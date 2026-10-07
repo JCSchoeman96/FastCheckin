@@ -56,9 +56,17 @@ defmodule FastCheck.Tickets.ArtifactResolver do
           {:ok, TicketIssue.t()} | {:error, ArtifactError.t()}
   def resolve_eligible_ticket_issue_from_delivery_token(raw_token) when is_binary(raw_token) do
     case resolve_delivery_eligibility(raw_token) do
-      {:ok, %{ticket_issue: ticket_issue}} -> {:ok, ticket_issue}
-      {:error, state} -> {:error, error(state)}
-      :error -> {:error, error(:not_found)}
+      {:ok, %{ticket_issue: ticket_issue}} ->
+        case resolve_from_ticket_issue(ticket_issue) do
+          {:ok, _artifact} -> {:ok, ticket_issue}
+          {:error, %ArtifactError{} = artifact_error} -> {:error, artifact_error}
+        end
+
+      {:error, state} ->
+        {:error, error(state)}
+
+      :error ->
+        {:error, error(:not_found)}
     end
   end
 

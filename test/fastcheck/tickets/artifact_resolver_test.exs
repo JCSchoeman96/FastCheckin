@@ -32,7 +32,7 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
   end
 
   describe "resolve_eligible_ticket_issue_from_delivery_token/1" do
-    test "shares delivery eligibility with artifact resolver" do
+    test "valid issued scannable ticket returns TicketIssue after full artifact eligibility" do
       %{token: token, ticket_issue_id: ticket_issue_id, delivery_hash: delivery_hash} =
         issued_ticket_fixture()
 
@@ -44,6 +44,35 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
 
       assert {:error, %ArtifactError{state: :not_found}} =
                ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token("!!!")
+    end
+
+    test "pending ticket issue returns ticket_not_ready" do
+      %{token: token} = issued_ticket_fixture(status: "pending")
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
+    end
+
+    test "not-scannable attendee returns ticket_not_scannable" do
+      %{token: token, attendee: attendee} = issued_ticket_fixture()
+
+      attendee
+      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
+      |> Repo.update!()
+
+      assert {:error, %ArtifactError{state: :ticket_not_scannable}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
+    end
+
+    test "archived event returns ticket_not_ready" do
+      %{token: token, event: event} = issued_ticket_fixture()
+
+      event
+      |> Event.changeset(%{status: "archived"})
+      |> Repo.update!()
+
+      assert {:error, %ArtifactError{state: :ticket_not_ready}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
     end
   end
 
