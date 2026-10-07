@@ -1,7 +1,9 @@
 defmodule FastCheckWeb.ClientIpTest do
   use ExUnit.Case, async: false
 
+  alias FastCheck.Tickets.TicketRateLimiter
   alias FastCheckWeb.ClientIp
+  alias Plug.Conn
 
   setup do
     previous = Application.get_env(:fastcheck, ClientIp, [])
@@ -19,7 +21,7 @@ defmodule FastCheckWeb.ClientIpTest do
       |> Map.put(:remote_ip, peer)
 
     Enum.reduce(headers, conn, fn {k, v}, c ->
-      Plug.Conn.put_req_header(c, k, v)
+      Conn.put_req_header(c, k, v)
     end)
   end
 
@@ -27,7 +29,7 @@ defmodule FastCheckWeb.ClientIpTest do
     conn = Plug.Test.conn(:get, "/t/session") |> Map.put(:remote_ip, peer)
 
     Enum.reduce(values, conn, fn value, c ->
-      Plug.Conn.put_req_header(c, header, value)
+      Conn.put_req_header(c, header, value)
     end)
   end
 
@@ -148,7 +150,7 @@ defmodule FastCheckWeb.ClientIpTest do
     conn =
       conn_with_duplicate_header("x-real-ip", ["173.245.48.10", "203.0.113.9"])
       |> then(fn c ->
-        Plug.Conn.put_req_header(c, "cf-connecting-ip", "198.51.100.1")
+        Conn.put_req_header(c, "cf-connecting-ip", "198.51.100.1")
       end)
 
     assert ClientIp.from_conn(conn) == "127.0.0.1"
@@ -159,7 +161,7 @@ defmodule FastCheckWeb.ClientIpTest do
 
     conn =
       conn_with_duplicate_header("cf-connecting-ip", ["203.0.113.1", "203.0.113.2"])
-      |> Plug.Conn.put_req_header("x-real-ip", "173.245.48.10")
+      |> Conn.put_req_header("x-real-ip", "173.245.48.10")
 
     assert ClientIp.from_conn(conn) == "173.245.48.10"
   end
