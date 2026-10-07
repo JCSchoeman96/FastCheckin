@@ -191,7 +191,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
     conn =
       conn
-      |> enable_csrf_protection()
+      |> Plug.Test.init_test_session(%{})
       |> then(fn c ->
         if req_cookie do
           put_req_cookie(c, SecureTicketSessionCookie.cookie_name(), req_cookie)
@@ -205,7 +205,6 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
     conn
     |> recycle()
-    |> enable_csrf_protection()
     |> then(fn recycled ->
       if req_cookie do
         put_req_cookie(recycled, SecureTicketSessionCookie.cookie_name(), req_cookie)
