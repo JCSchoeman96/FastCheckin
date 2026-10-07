@@ -1,6 +1,6 @@
 defmodule FastCheck.Tickets.TicketRateLimiter do
   @moduledoc """
-  Distributed Redis sliding-window limits for P1-E `POST /t/session` exchange.
+  Distributed Redis sliding-window limits for P1-E secure-ticket exchange and session reads.
 
   Uses Redis `TIME` and atomic Lua per ZSET bucket. Fails closed when Redis is
   unavailable (no ETS fallback).
@@ -8,9 +8,13 @@ defmodule FastCheck.Tickets.TicketRateLimiter do
 
   alias FastCheck.Redis.Namespace
 
+  alias FastCheck.Tickets.TicketSession
+
   @window_seconds 60
   @exchange_token_limit 5
   @exchange_ip_limit 600
+  @session_read_limit 120
+  @session_read_ip_limit 1200
   @credential_prefix "secure-ticket-rate-limit:v1:"
   @key_ttl_seconds @window_seconds * 2
 
@@ -74,6 +78,31 @@ defmodule FastCheck.Tickets.TicketRateLimiter do
     end
   end
 
+  @doc """
+  Applies session-read and trusted-IP buckets for one browser session ticket view.
+
+  Never logs or stores the raw browser session id.
+  """
+  @spec check_session_read(String.t(), String.t(), keyword()) :: check_result()
+  def check_session_read(browser_session_id, client_ip, opts \\ [])
+      when is_binary(browser_session_id) and is_binary(client_ip) do
+    redix_name = Keyword.get(opts, :redix_name, FastCheck.Redix)
+    session_limit = Keyword.get(opts, :session_read_limit, @session_read_limit)
+    ip_limit = Keyword.get(opts, :session_read_ip_limit, @session_read_ip_limit)
+
+    case check_bucket(
+           session_read_key(browser_session_id),
+           session_limit,
+           redix_name
+         ) do
+      :allowed ->
+        check_bucket(read_ip_key(client_ip), ip_limit, redix_name)
+
+      other ->
+        other
+    end
+  end
+
   @doc false
   @spec window_seconds() :: pos_integer()
   def window_seconds, do: @window_seconds
@@ -85,6 +114,14 @@ defmodule FastCheck.Tickets.TicketRateLimiter do
   @doc false
   @spec exchange_ip_limit() :: pos_integer()
   def exchange_ip_limit, do: @exchange_ip_limit
+
+  @doc false
+  @spec session_read_limit() :: pos_integer()
+  def session_read_limit, do: @session_read_limit
+
+  @doc false
+  @spec session_read_ip_limit() :: pos_integer()
+  def session_read_ip_limit, do: @session_read_ip_limit
 
   @doc false
   @spec credential_fingerprint(String.t()) :: String.t()
@@ -107,8 +144,24 @@ defmodule FastCheck.Tickets.TicketRateLimiter do
     Namespace.key("rate-limit:secure-ticket:exchange-ip:#{client_ip}")
   end
 
+  @doc false
+  @spec session_read_redis_key(String.t()) :: String.t()
+  def session_read_redis_key(browser_session_id) when is_binary(browser_session_id) do
+    hash = TicketSession.browser_session_redis_hash(browser_session_id)
+
+    Namespace.key("rate-limit:secure-ticket:session:#{hash}")
+  end
+
+  @doc false
+  @spec read_ip_redis_key(String.t()) :: String.t()
+  def read_ip_redis_key(client_ip) do
+    Namespace.key("rate-limit:secure-ticket:read-ip:#{client_ip}")
+  end
+
   defp token_key(delivery_token), do: token_redis_key(delivery_token)
   defp ip_key(client_ip), do: ip_redis_key(client_ip)
+  defp session_read_key(browser_session_id), do: session_read_redis_key(browser_session_id)
+  defp read_ip_key(client_ip), do: read_ip_redis_key(client_ip)
 
   defp check_bucket(redis_key, limit, redix_name) do
     nonce = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)

@@ -150,13 +150,20 @@ defmodule FastCheck.Tickets.TicketSession do
   end
 
   @doc """
+  Deterministic Redis-safe hash for a browser session id (never store the raw id in Redis keys).
+  """
+  @spec browser_session_redis_hash(String.t()) :: String.t()
+  def browser_session_redis_hash(browser_session_id) when is_binary(browser_session_id) do
+    digest = :crypto.hash(:sha256, @session_key_prefix <> browser_session_id)
+    Base.url_encode64(digest, padding: false)
+  end
+
+  @doc """
   Returns the namespaced Redis key for a browser session registry HASH.
   """
   @spec registry_key(String.t()) :: String.t()
   def registry_key(browser_session_id) when is_binary(browser_session_id) do
-    digest = :crypto.hash(:sha256, @session_key_prefix <> browser_session_id)
-    session_id_hash = Base.url_encode64(digest, padding: false)
-    Namespace.key("ticket-browser-session:" <> session_id_hash)
+    Namespace.key("ticket-browser-session:" <> browser_session_redis_hash(browser_session_id))
   end
 
   @doc """
