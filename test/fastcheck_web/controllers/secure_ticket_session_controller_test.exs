@@ -23,7 +23,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
   describe "POST /t/session" do
     test "requires CSRF protection", %{conn: _conn} do
-      conn =
+      assert_raise Plug.CSRFProtection.InvalidCSRFTokenError, fn ->
         build_conn()
         |> enable_csrf_protection()
         |> Plug.Test.init_test_session(%{})
@@ -34,8 +34,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
           "_csrf_token" => "invalid",
           "delivery_token" => "bearer"
         })
-
-      assert conn.status == 403
+      end
     end
 
     test "valid delivery_token in body exchanges and sets session cookie", %{conn: conn} do
