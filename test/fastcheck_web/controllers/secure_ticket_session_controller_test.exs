@@ -13,6 +13,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
   alias FastCheck.Tickets.TicketSession
   alias FastCheck.Tickets.TokenHash
   alias FastCheckWeb.SecureTicketSessionCookie
+  alias Plug.CSRFProtection
 
   setup do
     cleanup_exchange_rate_keys()
@@ -49,7 +50,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       conn =
         conn
         |> bootstrap_session()
-        |> put_req_header("x-csrf-token", Plug.CSRFProtection.get_csrf_token())
+        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
         |> post("/t/session?delivery_token=#{URI.encode_www_form(token)}", %{
           "delivery_token" => token
         })
@@ -65,7 +66,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       conn =
         conn
         |> bootstrap_session()
-        |> put_req_header("x-csrf-token", Plug.CSRFProtection.get_csrf_token())
+        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
         |> post("/t/session?delivery_token=#{URI.encode_www_form(token)}", %{})
 
       assert conn.status == 422
@@ -89,7 +90,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
           SecureTicketSessionCookie.cookie_name(),
           SecureTicketSessionCookie.sign(existing)
         )
-        |> put_req_header("x-csrf-token", Plug.CSRFProtection.get_csrf_token())
+        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
         |> post("/t/session", %{"delivery_token" => token})
 
       assert conn.status == 200
@@ -105,7 +106,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
         conn
         |> bootstrap_session()
         |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), "tampered-value")
-        |> put_req_header("x-csrf-token", Plug.CSRFProtection.get_csrf_token())
+        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
         |> post("/t/session", %{"delivery_token" => token})
 
       assert conn.status == 200
@@ -129,7 +130,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
         |> recycle()
         |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), cookie_a)
         |> bootstrap_session()
-        |> put_req_header("x-csrf-token", Plug.CSRFProtection.get_csrf_token())
+        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
         |> post("/t/session", %{"delivery_token" => token_b})
 
       assert conn_b.status == 200
@@ -178,7 +179,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
   defp post_session(conn, params) do
     conn
     |> bootstrap_session()
-    |> put_req_header("x-csrf-token", Plug.CSRFProtection.get_csrf_token())
+    |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
     |> put_req_header("accept", "application/json")
     |> post("/t/session", params)
   end

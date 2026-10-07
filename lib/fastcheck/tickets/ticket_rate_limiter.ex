@@ -65,9 +65,12 @@ defmodule FastCheck.Tickets.TicketRateLimiter do
       when is_binary(delivery_token) and is_binary(client_ip) do
     redix_name = Keyword.get(opts, :redix_name, FastCheck.Redix)
 
-    with :allowed <- check_bucket(token_key(delivery_token), @exchange_token_limit, redix_name),
-         :allowed <- check_bucket(ip_key(client_ip), @exchange_ip_limit, redix_name) do
-      :allowed
+    case check_bucket(token_key(delivery_token), @exchange_token_limit, redix_name) do
+      :allowed ->
+        check_bucket(ip_key(client_ip), @exchange_ip_limit, redix_name)
+
+      other ->
+        other
     end
   end
 

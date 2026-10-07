@@ -126,9 +126,7 @@ defmodule FastCheckWeb.ClientIp do
   end
 
   defp ipv6_to_bitstring(bytes) do
-    bytes
-    |> Enum.map(&(Integer.to_string(&1, 2) |> String.pad_leading(8, "0")))
-    |> Enum.join()
+    Enum.map_join(bytes, "", &(Integer.to_string(&1, 2) |> String.pad_leading(8, "0")))
   end
 
   defp take_prefix(bitstring, prefix) do

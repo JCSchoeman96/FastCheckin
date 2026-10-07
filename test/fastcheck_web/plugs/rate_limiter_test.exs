@@ -5,6 +5,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
   alias FastCheck.Events.Event
   alias FastCheck.Mobile.Token
   alias FastCheck.Repo
+  alias Plug.CSRFProtection
 
   setup do
     # Clear rate limiter storage before tests
@@ -18,7 +19,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
       |> Plug.Test.init_test_session(%{})
       |> get("/t")
 
-    csrf = Plug.CSRFProtection.get_csrf_token()
+    csrf = CSRFProtection.get_csrf_token()
 
     for _i <- 1..8 do
       conn =
