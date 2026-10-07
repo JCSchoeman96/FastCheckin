@@ -31,6 +31,22 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
     :ok
   end
 
+  describe "resolve_eligible_ticket_issue_from_delivery_token/1" do
+    test "shares delivery eligibility with artifact resolver" do
+      %{token: token, ticket_issue_id: ticket_issue_id, delivery_hash: delivery_hash} =
+        issued_ticket_fixture()
+
+      assert {:ok, %TicketIssue{id: id, delivery_token_hash: hash}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token(token)
+
+      assert id == ticket_issue_id
+      assert hash == delivery_hash
+
+      assert {:error, %ArtifactError{state: :not_found}} =
+               ArtifactResolver.resolve_eligible_ticket_issue_from_delivery_token("!!!")
+    end
+  end
+
   describe "resolve_from_delivery_token/1" do
     test "valid token returns a safe artifact with scanner payload available as data" do
       %{
