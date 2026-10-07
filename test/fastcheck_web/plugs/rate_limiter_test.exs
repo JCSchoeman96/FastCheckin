@@ -13,17 +13,18 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
     :ok
   end
 
-  test "POST /t/session bypasses legacy secure_ticket PlugAttack throttle", %{conn: conn} do
-    conn =
-      conn
-      |> Plug.Test.init_test_session(%{})
-      |> get("/t")
-
-    csrf = CSRFProtection.get_csrf_token()
-
+  test "POST /t/session bypasses legacy secure_ticket PlugAttack throttle", %{conn: _conn} do
     for _i <- 1..8 do
       conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> get("/t")
+
+      csrf = CSRFProtection.get_csrf_token()
+
+      conn =
         conn
+        |> recycle()
         |> put_req_header("x-forwarded-for", "203.0.113.201")
         |> put_req_header("x-csrf-token", csrf)
         |> post("/t/session", %{"delivery_token" => "not-a-valid-bearer"})

@@ -50,12 +50,11 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       %{token: token} = issued_ticket_fixture()
 
       conn =
-        conn
-        |> bootstrap_session()
-        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
-        |> post("/t/session?delivery_token=#{URI.encode_www_form(token)}", %{
-          "delivery_token" => token
-        })
+        post_session_with_path(
+          conn,
+          "/t/session?delivery_token=#{URI.encode_www_form(token)}",
+          %{"delivery_token" => token}
+        )
 
       assert conn.status == 422
       assert json_response(conn, 422) == %{"error" => "ticket_unavailable"}
@@ -66,10 +65,11 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       %{token: token} = issued_ticket_fixture()
 
       conn =
-        conn
-        |> bootstrap_session()
-        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
-        |> post("/t/session?delivery_token=#{URI.encode_www_form(token)}", %{})
+        post_session_with_path(
+          conn,
+          "/t/session?delivery_token=#{URI.encode_www_form(token)}",
+          %{}
+        )
 
       assert conn.status == 422
       refute session_cookie(conn)
@@ -86,14 +86,9 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       existing = TicketSession.new_browser_session_id()
 
       conn =
-        conn
-        |> bootstrap_session()
-        |> put_req_cookie(
-          SecureTicketSessionCookie.cookie_name(),
-          SecureTicketSessionCookie.sign(existing)
+        post_session(conn, %{"delivery_token" => token},
+          req_cookie: SecureTicketSessionCookie.sign(existing)
         )
-        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
-        |> post("/t/session", %{"delivery_token" => token})
 
       assert conn.status == 200
       cookie = session_cookie(conn)
@@ -105,11 +100,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       %{token: token} = issued_ticket_fixture()
 
       conn =
-        conn
-        |> bootstrap_session()
-        |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), "tampered-value")
-        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
-        |> post("/t/session", %{"delivery_token" => token})
+        post_session(conn, %{"delivery_token" => token}, req_cookie: "tampered-value")
 
       assert conn.status == 200
       cookie = session_cookie(conn)
@@ -128,12 +119,8 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       {:ok, session_a} = SecureTicketSessionCookie.verify(cookie_a)
 
       conn_b =
-        conn_a
-        |> recycle()
-        |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), cookie_a)
-        |> bootstrap_session()
-        |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
-        |> post("/t/session", %{"delivery_token" => token_b})
+        build_conn()
+        |> post_session(%{"delivery_token" => token_b}, req_cookie: cookie_a)
 
       assert conn_b.status == 200
       cookie_b = session_cookie(conn_b)
@@ -178,16 +165,35 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
     end
   end
 
-  defp post_session(conn, params) do
-    conn
-    |> bootstrap_session()
-    |> put_req_header("x-csrf-token", CSRFProtection.get_csrf_token())
-    |> put_req_header("accept", "application/json")
-    |> post("/t/session", params)
+  defp post_session(conn, params, opts \\ []) do
+    post_session_with_path(conn, "/t/session", params, opts)
   end
 
-  defp bootstrap_session(conn) do
-    get(conn, "/t")
+  defp post_session_with_path(conn, path, params, opts \\ []) do
+    req_cookie = Keyword.get(opts, :req_cookie)
+
+    conn =
+      if req_cookie do
+        put_req_cookie(conn, SecureTicketSessionCookie.cookie_name(), req_cookie)
+      else
+        conn
+      end
+
+    _conn = get(conn, "/t")
+    csrf = CSRFProtection.get_csrf_token()
+
+    conn
+    |> recycle()
+    |> then(fn recycled ->
+      if req_cookie do
+        put_req_cookie(recycled, SecureTicketSessionCookie.cookie_name(), req_cookie)
+      else
+        recycled
+      end
+    end)
+    |> put_req_header("x-csrf-token", csrf)
+    |> put_req_header("accept", "application/json")
+    |> post(path, params)
   end
 
   defp session_cookie(conn) do

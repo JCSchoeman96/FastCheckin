@@ -55,8 +55,13 @@ defmodule FastCheckWeb.ClientIp do
   end
 
   defp plug_peer_ip(conn) do
-    %{address: address} = Plug.Conn.get_peer_data(conn)
-    address |> :inet.ntoa() |> to_string()
+    case Plug.Conn.get_peer_data(conn) do
+      %{address: address} ->
+        address |> :inet.ntoa() |> to_string()
+
+      _ ->
+        conn.remote_ip |> :inet.ntoa() |> to_string()
+    end
   end
 
   defp single_valid_ip_header(conn, header) do
