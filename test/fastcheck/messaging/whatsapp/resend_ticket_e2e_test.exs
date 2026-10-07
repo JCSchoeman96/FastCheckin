@@ -118,8 +118,8 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
     refute Map.has_key?(request.options.json, "filename")
 
     body = request.options.json["text"]["body"]
-    assert body =~ "/t/"
     token = extract_ticket_link_token!(body)
+    assert_fragment_ticket_url!(body, token)
     assert %{state: :valid} = TicketPage.resolve(token)
     assert_safe_worker_log!(worker_log, candidate, challenge.public_id, otp, token)
 
@@ -224,7 +224,9 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
              })
 
     assert_received {:whatsapp_request, request}
-    assert request.options.json["text"]["body"] =~ "/t/"
+    resend_body = request.options.json["text"]["body"]
+    resend_token = extract_ticket_link_token!(resend_body)
+    assert_fragment_ticket_url!(resend_body, resend_token)
 
     assert %{status: "consumed", consumed_at: consumed_at} =
              resend_challenge_snapshot(challenge_id)
@@ -318,10 +320,33 @@ defmodule FastCheck.Messaging.WhatsApp.ResendTicketE2ETest do
   end
 
   defp extract_ticket_link_token!(body) when is_binary(body) do
-    case Regex.run(~r{/t/([^[:space:]]+)}, body) do
-      [_, token] -> token
-      _ -> flunk("expected WhatsApp body to contain a /t/<delivery-token> ticket link")
+    uri = URI.parse(extract_ticket_link_url!(body))
+
+    case uri.fragment do
+      fragment when is_binary(fragment) and fragment != "" -> fragment
+      _ -> flunk("expected WhatsApp body to contain a /t#<delivery-token> ticket link")
     end
+  end
+
+  defp extract_ticket_link_url!(body) when is_binary(body) do
+    case Regex.run(~r{https?://[^\s]+/t#[^\s]+}, body) do
+      [url] -> url
+      _ -> flunk("expected WhatsApp body to contain a secure ticket URL")
+    end
+  end
+
+  defp assert_fragment_ticket_url!(body, token) when is_binary(body) and is_binary(token) do
+    uri = URI.parse(extract_ticket_link_url!(body))
+    endpoint = URI.parse(FastCheckWeb.Endpoint.url())
+
+    assert uri.scheme == endpoint.scheme
+    assert uri.host == endpoint.host
+    assert uri.path == "/t"
+    assert uri.query == nil
+    assert uri.fragment == token
+    refute String.contains?(body, "/t/#{token}")
+    refute String.contains?(body, "?token=")
+    refute String.contains?(body, "?delivery_token=")
   end
 
   defp resend_challenge_snapshot(challenge_id) do
