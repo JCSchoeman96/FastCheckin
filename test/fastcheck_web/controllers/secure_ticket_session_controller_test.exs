@@ -187,11 +187,15 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
     req_cookie = Keyword.get(opts, :req_cookie)
 
     conn =
-      if req_cookie do
-        put_req_cookie(conn, SecureTicketSessionCookie.cookie_name(), req_cookie)
-      else
-        conn
-      end
+      conn
+      |> enable_csrf_protection()
+      |> then(fn c ->
+        if req_cookie do
+          put_req_cookie(c, SecureTicketSessionCookie.cookie_name(), req_cookie)
+        else
+          c
+        end
+      end)
 
     _conn = get(conn, "/t")
     csrf = CSRFProtection.get_csrf_token()
