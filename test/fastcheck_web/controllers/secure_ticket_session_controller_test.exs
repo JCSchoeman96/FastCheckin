@@ -178,7 +178,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
   defp enable_csrf_protection(conn) do
     conn
-    |> update_in(conn.private, &Map.delete(&1, :plug_skip_csrf_protection))
+    |> Map.update!(:private, &Map.delete(&1, :plug_skip_csrf_protection))
     |> Plug.Conn.put_private(:phoenix_recycled, true)
   end
 
