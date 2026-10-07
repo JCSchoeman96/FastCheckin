@@ -29,6 +29,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
         |> Plug.Test.init_test_session(%{})
         |> get("/t")
         |> recycle()
+        |> enable_csrf_protection()
         |> post("/t/session", %{
           "_csrf_token" => "invalid",
           "delivery_token" => "bearer"
@@ -176,7 +177,9 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
   end
 
   defp enable_csrf_protection(conn) do
-    update_in(conn.private, &Map.delete(&1, :plug_skip_csrf_protection))
+    conn
+    |> update_in(conn.private, &Map.delete(&1, :plug_skip_csrf_protection))
+    |> Plug.Conn.put_private(:phoenix_recycled, true)
   end
 
   defp post_session(conn, params, opts \\ []) do
@@ -202,6 +205,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
     conn
     |> recycle()
+    |> enable_csrf_protection()
     |> then(fn recycled ->
       if req_cookie do
         put_req_cookie(recycled, SecureTicketSessionCookie.cookie_name(), req_cookie)
