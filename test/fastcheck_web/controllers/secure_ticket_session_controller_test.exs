@@ -22,9 +22,10 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
   end
 
   describe "POST /t/session" do
-    test "requires CSRF protection", %{conn: conn} do
+    test "requires CSRF protection", %{conn: _conn} do
       conn =
-        conn
+        build_conn()
+        |> enable_csrf_protection()
         |> Plug.Test.init_test_session(%{})
         |> get("/t")
         |> recycle()
@@ -172,6 +173,10 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       assert set_cookie =~ "SameSite=Lax"
       refute set_cookie =~ "Max-Age"
     end
+  end
+
+  defp enable_csrf_protection(conn) do
+    update_in(conn.private, &Map.delete(&1, :plug_skip_csrf_protection))
   end
 
   defp post_session(conn, params, opts \\ []) do
