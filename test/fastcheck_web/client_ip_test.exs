@@ -26,11 +26,11 @@ defmodule FastCheckWeb.ClientIpTest do
   end
 
   defp conn_with_duplicate_header(header, values, peer \\ {127, 0, 0, 1}) do
-    conn = Plug.Test.conn(:get, "/t/session") |> Map.put(:remote_ip, peer)
+    headers = Enum.map(values, &{header, &1})
 
-    Enum.reduce(values, conn, fn value, c ->
-      Conn.put_req_header(c, header, value)
-    end)
+    Plug.Test.conn(:get, "/t/session")
+    |> Map.put(:remote_ip, peer)
+    |> Map.put(:req_headers, headers)
   end
 
   defp put_trusted_cidrs(cidrs) do
@@ -167,8 +167,6 @@ defmodule FastCheckWeb.ClientIpTest do
   end
 
   test "equivalent IPv6 textual forms yield one canonical identity" do
-    alias FastCheck.Tickets.TicketRateLimiter
-
     conn_long =
       conn_with([{"x-real-ip", "2001:0db8:0000:0000:0000:0000:0000:0001"}])
 
