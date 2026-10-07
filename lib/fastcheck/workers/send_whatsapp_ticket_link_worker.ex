@@ -805,7 +805,7 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorker do
     end
   end
 
-  defp ticket_url(token), do: FastCheckWeb.Endpoint.url() <> "/t/" <> token
+  defp ticket_url(token), do: FastCheckWeb.Endpoint.url() <> "/t#" <> token
 
   defp ticket_link_template_components(url) do
     [

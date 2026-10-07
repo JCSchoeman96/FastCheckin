@@ -35,13 +35,13 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
   test "does not treat QR inside the opaque delivery token as direct ticket payload leakage" do
     body =
       "Jou kaartjie is gereed. Maak jou veilige kaartjieskakel hier oop: " <>
-        "http://localhost:4002/t/abcQRdef123"
+        "http://localhost:4002/t#abcQRdef123"
 
     token = extract_ticket_link_token!(body)
     redacted_body = redact_delivery_token!(body, token)
 
     assert token == "abcQRdef123"
-    assert redacted_body =~ "/t/[redacted]"
+    assert redacted_body =~ "/t#[redacted]"
     assert_no_direct_ticket_payload!(redacted_body)
   end
 
@@ -231,9 +231,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
     assert_received {:whatsapp_request, request}
     assert request.options.json["type"] == "text"
     body = request.options.json["text"]["body"]
-    assert body =~ "/t/"
 
     token = extract_ticket_link_token!(body)
+    assert_fragment_ticket_url_invariant!(body, token)
     redacted_body = redact_delivery_token!(body, token)
 
     assert_no_direct_ticket_payload!(redacted_body)
@@ -397,7 +397,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
       |> hd()
 
     assert body_param["type"] == "text"
-    assert body_param["text"] =~ "/t/"
+    template_url = body_param["text"]
+    token = extract_ticket_link_token!(template_url)
+    assert_fragment_ticket_url_invariant!(template_url, token)
 
     assert [
              %{
@@ -496,7 +498,9 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
              })
 
     assert_received {:whatsapp_request, request}
-    assert request.options.json["text"]["body"] =~ "/t/"
+    resend_body = request.options.json["text"]["body"]
+    resend_token = extract_ticket_link_token!(resend_body)
+    assert_fragment_ticket_url_invariant!(resend_body, resend_token)
 
     assert %{status: "consumed", consumed_at: consumed_at} =
              resend_challenge_snapshot(challenge.id)
@@ -2208,10 +2212,43 @@ defmodule FastCheck.Workers.SendWhatsAppTicketLinkWorkerTest do
   end
 
   defp extract_ticket_link_token!(body) when is_binary(body) do
-    case Regex.run(~r{/t/([^[:space:]]+)}, body) do
-      [_, token] -> token
-      _ -> flunk("expected WhatsApp body to contain a /t/<delivery-token> ticket link")
+    case extract_ticket_link_url!(body) do
+      url ->
+        uri = URI.parse(url)
+        fragment = uri.fragment
+
+        if is_binary(fragment) and fragment != "" do
+          fragment
+        else
+          flunk("expected WhatsApp body to contain a /t#<delivery-token> ticket link")
+        end
     end
+  end
+
+  defp extract_ticket_link_url!(body) when is_binary(body) do
+    case Regex.run(~r{https?://[^\s]+/t#[^\s]+}, body) do
+      [url] -> url
+      _ -> flunk("expected WhatsApp body to contain a secure ticket URL")
+    end
+  end
+
+  defp assert_fragment_ticket_url_invariant!(body, token)
+       when is_binary(body) and is_binary(token) do
+    url = extract_ticket_link_url!(body)
+    uri = URI.parse(url)
+    endpoint = URI.parse(FastCheckWeb.Endpoint.url())
+
+    assert uri.scheme == endpoint.scheme
+    assert uri.host == endpoint.host
+    assert uri.path == "/t"
+    assert uri.query == nil
+    assert uri.fragment == token
+
+    refute String.contains?(body, "/t/#{token}")
+    refute String.contains?(body, "?token=")
+    refute String.contains?(body, "?delivery_token=")
+
+    :ok
   end
 
   defp redact_delivery_token!(body, token) when is_binary(body) and is_binary(token) do

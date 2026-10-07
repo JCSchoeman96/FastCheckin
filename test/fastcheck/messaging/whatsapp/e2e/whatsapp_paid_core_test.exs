@@ -183,8 +183,8 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
             assert_received {:whatsapp_request, ticket_request}
             assert ticket_request.options.json["type"] == "text"
             body = ticket_request.options.json["text"]["body"]
-            assert body =~ "/t/"
             token = extract_ticket_link_token!(body)
+            assert_fragment_ticket_url!(body, token)
 
             current_issues = Enum.map(issues, &E2E.reload_ticket_issue!(&1.id))
 
@@ -393,10 +393,34 @@ defmodule FastCheck.Messaging.WhatsApp.E2E.WhatsAppPaidCoreTest do
   end
 
   defp extract_ticket_link_token!(body) do
-    case Regex.run(~r{/t/([^[:space:]]+)}, body) do
-      [_, token] -> token
+    url = extract_ticket_link_url!(body)
+    uri = URI.parse(url)
+
+    case uri.fragment do
+      fragment when is_binary(fragment) and fragment != "" -> fragment
+      _ -> flunk("expected a /t#<delivery-token> secure ticket link in the WhatsApp response")
+    end
+  end
+
+  defp extract_ticket_link_url!(body) do
+    case Regex.run(~r{https?://[^\s]+/t#[^\s]+}, body) do
+      [url] -> url
       _ -> flunk("expected a secure ticket link in the WhatsApp response")
     end
+  end
+
+  defp assert_fragment_ticket_url!(body, token) do
+    uri = URI.parse(extract_ticket_link_url!(body))
+    endpoint = URI.parse(FastCheckWeb.Endpoint.url())
+
+    assert uri.scheme == endpoint.scheme
+    assert uri.host == endpoint.host
+    assert uri.path == "/t"
+    assert uri.query == nil
+    assert uri.fragment == token
+    refute String.contains?(body, "/t/#{token}")
+    refute String.contains?(body, "?token=")
+    refute String.contains?(body, "?delivery_token=")
   end
 
   defp whatsapp_step!(%{conversation: %Conversation{} = conversation}, text, provider_message_id),
