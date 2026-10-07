@@ -194,7 +194,13 @@ defmodule FastCheck.Tickets.TicketSessionReaderTest do
       encoded = "v1:0:#{fp}"
 
       assert {:ok, :bound} =
-               TicketSession.bind(session, ticket_issue_id, 0, fp, TicketSession.session_idle_ttl_seconds())
+               TicketSession.bind(
+                 session,
+                 ticket_issue_id,
+                 0,
+                 fp,
+                 TicketSession.session_idle_ttl_seconds()
+               )
 
       assert {:error, :expired_link} = TicketSessionReader.resolve(session, ticket_issue_id)
       refute redis_hget(session, ticket_issue_id) == encoded
@@ -208,7 +214,13 @@ defmodule FastCheck.Tickets.TicketSessionReaderTest do
       fp = TicketSession.generation_fingerprint(delivery_hash)
 
       assert {:ok, :bound} =
-               TicketSession.bind(session, ticket_issue_id, 0, fp, TicketSession.session_idle_ttl_seconds())
+               TicketSession.bind(
+                 session,
+                 ticket_issue_id,
+                 0,
+                 fp,
+                 TicketSession.session_idle_ttl_seconds()
+               )
 
       assert {:error, :ticket_revoked} = TicketSessionReader.resolve(session, ticket_issue_id)
       assert {:error, :not_found} = TicketSession.fetch_binding(session, ticket_issue_id)
@@ -226,7 +238,13 @@ defmodule FastCheck.Tickets.TicketSessionReaderTest do
       fp = TicketSession.generation_fingerprint(delivery_hash)
 
       assert {:ok, :bound} =
-               TicketSession.bind(session, ticket_issue_id, 0, fp, TicketSession.session_idle_ttl_seconds())
+               TicketSession.bind(
+                 session,
+                 ticket_issue_id,
+                 0,
+                 fp,
+                 TicketSession.session_idle_ttl_seconds()
+               )
 
       Redix.command!(FastCheck.Redix, [
         "EXPIRE",
@@ -249,7 +267,13 @@ defmodule FastCheck.Tickets.TicketSessionReaderTest do
       fp = TicketSession.generation_fingerprint(delivery_hash)
 
       assert {:ok, :bound} =
-               TicketSession.bind(session, ticket_issue_id, 0, fp, TicketSession.session_idle_ttl_seconds())
+               TicketSession.bind(
+                 session,
+                 ticket_issue_id,
+                 0,
+                 fp,
+                 TicketSession.session_idle_ttl_seconds()
+               )
 
       assert {:error, :ticket_not_ready} = TicketSessionReader.resolve(session, ticket_issue_id)
       assert {:error, :not_found} = TicketSession.fetch_binding(session, ticket_issue_id)

@@ -300,6 +300,7 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
       %{token: token} = issued_ticket_fixture()
 
       assert {:ok, %Artifact{state: :valid}} = ArtifactResolver.resolve_from_delivery_token(token)
+
       assert {:error, %ArtifactError{state: :not_found}} =
                ArtifactResolver.resolve_from_delivery_token("not-a-valid-token-at-all")
     end
