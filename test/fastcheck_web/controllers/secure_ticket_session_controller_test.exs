@@ -146,7 +146,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       refute session_cookie(conn)
     end
 
-    test "rate limit exceeded returns 429 without cookie", %{conn: conn} do
+    test "rate limit exceeded returns 429 without cookie", %{conn: _conn} do
       %{token: token} = issued_ticket_fixture()
 
       for _ <- 1..5 do
