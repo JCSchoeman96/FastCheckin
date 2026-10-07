@@ -1,8 +1,11 @@
 defmodule FastCheck.SalesE2EFixtures do
   @moduledoc false
 
+  @endpoint FastCheckWeb.Endpoint
+
   import Ecto.Query
-  import Plug.Conn, only: [put_req_header: 3]
+  import Plug.Conn
+  import Phoenix.ConnTest
 
   require Ash.Query
 
@@ -27,6 +30,7 @@ defmodule FastCheck.SalesE2EFixtures do
   alias FastCheck.SalesCheckoutFixtures
   alias FastCheck.TestSupport.Scans.InMemoryStore
   alias FastCheckWeb.SalesWebFixtures
+  alias FastCheckWeb.SecureTicketSessionCookie
 
   def setup_sales_event_offer!(opts \\ []) do
     channel = Keyword.get(opts, :sales_channel, "whatsapp")
@@ -301,27 +305,35 @@ defmodule FastCheck.SalesE2EFixtures do
   end
 
   @doc false
-  def get_secure_ticket_view(conn, delivery_token, ticket_issue_id) do
-    alias Plug.CSRFProtection
-    alias FastCheckWeb.SecureTicketSessionCookie
+  def exchange_secure_ticket_session!(conn, delivery_token) when is_binary(delivery_token) do
+    conn =
+      conn
+      |> init_test_session(%{})
+      |> get("/t")
 
-    conn = Plug.Test.init_test_session(conn, %{})
-    conn = Plug.Test.get(conn, "/t")
-    csrf = CSRFProtection.get_csrf_token()
+    csrf = Plug.CSRFProtection.get_csrf_token()
 
     conn =
       conn
-      |> Plug.Conn.recycle()
+      |> recycle()
       |> put_req_header("x-csrf-token", csrf)
       |> put_req_header("accept", "application/json")
-      |> Plug.Test.post("/t/session", %{"delivery_token" => delivery_token})
+      |> post("/t/session", %{"delivery_token" => delivery_token})
+
+    if conn.status != 200 do
+      raise "secure ticket session exchange failed with status #{conn.status}"
+    end
 
     cookie_name = SecureTicketSessionCookie.cookie_name()
     cookie_value = conn.resp_cookies[cookie_name].value
 
     conn
-    |> Plug.Conn.recycle()
+    |> recycle()
     |> Plug.Test.put_req_cookie(cookie_name, cookie_value)
-    |> Plug.Test.get("/t/view/#{ticket_issue_id}")
+  end
+
+  @doc false
+  def get_secure_ticket_view(conn, ticket_issue_id) do
+    get(conn, "/t/view/#{ticket_issue_id}")
   end
 end

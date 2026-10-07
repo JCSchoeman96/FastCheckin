@@ -210,12 +210,13 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       nil
     )
 
-    result = fun.()
-    query_count = drain_repo_query_messages(ref, 0)
-
-    :telemetry.detach(handler_id)
-
-    {result, query_count}
+    try do
+      result = fun.()
+      query_count = drain_repo_query_messages(ref, 0)
+      {result, query_count}
+    after
+      :telemetry.detach(handler_id)
+    end
   end
 
   defp drain_repo_query_messages(ref, count) do
