@@ -23,7 +23,11 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
   describe "POST /t/session" do
     test "requires CSRF protection", %{conn: conn} do
-      conn = post(conn, "/t/session", %{"delivery_token" => "bearer"})
+      conn =
+        conn
+        |> Plug.Test.init_test_session(%{})
+        |> post("/t/session", %{"delivery_token" => "bearer"})
+
       assert conn.status == 403
     end
 

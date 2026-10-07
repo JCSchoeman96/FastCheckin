@@ -106,7 +106,7 @@ defmodule FastCheckWeb.ClientIp do
 
   defp ip_in_cidr_ipv4(ip, network, prefix) when prefix >= 0 and prefix <= 32 do
     ip_int = ipv4_to_int(ip)
-    net_int = ipv4_to_int(Tuple.to_list(network))
+    net_int = ipv4_to_int(network)
 
     mask =
       if prefix == 0,
@@ -120,7 +120,7 @@ defmodule FastCheckWeb.ClientIp do
 
   defp ip_in_cidr_ipv6(ip, network, prefix) when prefix >= 0 and prefix <= 128 do
     ip_bits = ipv6_to_bitstring(ip)
-    net_bits = ipv6_to_bitstring(Tuple.to_list(network))
+    net_bits = ipv6_to_bitstring(network)
     take_prefix(ip_bits, prefix) == take_prefix(net_bits, prefix)
   end
 
