@@ -2,7 +2,7 @@ defmodule FastCheck.SalesE2EFixtures do
   @moduledoc false
 
   import Ecto.Query
-  import Plug.Conn, only: [put_req_cookie: 2, put_req_header: 3]
+  import Plug.Conn, only: [put_req_header: 3]
 
   require Ash.Query
 
@@ -321,7 +321,7 @@ defmodule FastCheck.SalesE2EFixtures do
 
     conn
     |> Plug.Conn.recycle()
-    |> put_req_cookie(cookie_name, cookie_value)
+    |> Plug.Test.put_req_cookie(cookie_name, cookie_value)
     |> Plug.Test.get("/t/view/#{ticket_issue_id}")
   end
 end
