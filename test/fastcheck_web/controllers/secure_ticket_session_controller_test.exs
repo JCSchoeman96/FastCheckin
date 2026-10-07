@@ -33,7 +33,9 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       conn = post_session(conn, %{"delivery_token" => token})
 
       assert conn.status == 200
-      assert %{"redirect_to" => "/t/view/#{ticket_issue_id}"} = json_response(conn, 200)
+
+      assert %{"redirect_to" => redirect} = json_response(conn, 200)
+      assert redirect == "/t/view/#{ticket_issue_id}"
 
       cookie = session_cookie(conn)
       assert cookie != nil
