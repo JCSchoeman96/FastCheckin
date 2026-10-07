@@ -1,5 +1,5 @@
 defmodule FastCheckWeb.ClientIpTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias FastCheckWeb.ClientIp
 
@@ -41,7 +41,7 @@ defmodule FastCheckWeb.ClientIpTest do
 
   test "trusted CF IPv6 outer and valid CF-Connecting-IP yields visitor IP" do
     put_trusted_cidrs([
-      {:inet6, {2_603, 47_00, 0x50B0, 0, 0, 0, 0, 0}, 32}
+      {:inet6, {0x2603, 0x4700, 0x50B0, 0, 0, 0, 0, 0}, 48}
     ])
 
     conn =

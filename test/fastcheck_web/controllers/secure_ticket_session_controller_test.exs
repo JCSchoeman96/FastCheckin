@@ -28,7 +28,10 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
         |> Plug.Test.init_test_session(%{})
         |> get("/t")
         |> recycle()
-        |> post("/t/session", %{"delivery_token" => "bearer"})
+        |> post("/t/session", %{
+          "_csrf_token" => "invalid",
+          "delivery_token" => "bearer"
+        })
 
       assert conn.status == 403
     end
