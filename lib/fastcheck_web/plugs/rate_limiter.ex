@@ -80,10 +80,10 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Storage backend configured in application.ex
   # {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000}
 
-  # P1E-C2: POST /t/session uses distributed Redis exchange limits in the controller.
+  # P1E-C2/D2: dedicated Redis-owned secure-ticket routes bypass legacy ETS PlugAttack.
   rule "allow_secure_ticket_session_exchange", conn do
-    if conn.method == "POST" and conn.request_path == "/t/session" do
-      {:allow, :p1e_secure_ticket_exchange}
+    if p1e_redis_owned_secure_ticket_route?(conn) do
+      {:allow, :p1e_secure_ticket_redis_owned}
     else
       nil
     end
@@ -350,7 +350,38 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   end
 
   defp secure_ticket_operation?(conn) do
-    String.starts_with?(conn.request_path, "/t/")
+    String.starts_with?(conn.request_path, "/t/") and
+      not p1e_redis_owned_secure_ticket_route?(conn)
+  end
+
+  defp p1e_redis_owned_secure_ticket_route?(conn) do
+    (conn.method == "POST" and conn.request_path == "/t/session") or
+      secure_ticket_session_view_route?(conn)
+  end
+
+  defp secure_ticket_session_view_route?(conn) do
+    conn.method == "GET" and secure_ticket_view_path?(conn.request_path)
+  end
+
+  defp secure_ticket_view_path?(path) when is_binary(path) do
+    case path do
+      "/t/view/" <> rest ->
+        case String.split(rest, "/", parts: 2) do
+          [ticket_issue_id, "pdf"] -> positive_ticket_issue_path_id?(ticket_issue_id)
+          [ticket_issue_id] -> positive_ticket_issue_path_id?(ticket_issue_id)
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp positive_ticket_issue_path_id?(segment) when is_binary(segment) do
+    case Integer.parse(segment) do
+      {ticket_issue_id, ""} when ticket_issue_id > 0 -> true
+      _ -> false
+    end
   end
 
   defp whatsapp_webhook_operation?(conn) do
