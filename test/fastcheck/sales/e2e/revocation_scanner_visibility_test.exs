@@ -89,7 +89,8 @@ defmodule FastCheck.Sales.E2E.RevocationScannerVisibilityTest do
       ]
     )
 
-    assert conn |> get(~p"/t/#{token}") |> html_response(200) =~ issue.ticket_code
+    assert conn |> E2E.get_secure_ticket_view(token, issue.id) |> html_response(200) =~
+             issue.ticket_code
 
     assert {:ok, %{status: :revoked}} =
              AdminRevocations.revoke_ticket_issue(
@@ -111,7 +112,10 @@ defmodule FastCheck.Sales.E2E.RevocationScannerVisibilityTest do
              :count
            ) == 1
 
-    refute conn |> recycle() |> get(~p"/t/#{token}") |> html_response(200) =~ issue.ticket_code
+    assert conn |> recycle() |> get(~p"/t/#{token}") |> html_response(404)
+
+    refute conn |> recycle() |> E2E.get_secure_ticket_view(token, issue.id) |> html_response(404) =~
+             issue.ticket_code
 
     mobile_token = E2E.mobile_token!(event.id)
 

@@ -62,8 +62,8 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
     end
   end
 
-  describe "GET /t/:token" do
-    test "route metadata disables router dispatch logging" do
+  describe "GET /t/:token legacy bearer rejection (P1E-F)" do
+    test "route metadata disables router dispatch logging and targets reject_legacy" do
       route =
         Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
           route.path == "/t/:token" and route.verb == :get
@@ -71,102 +71,87 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
 
       assert %{
                metadata: %{log: false},
-               plug: FastCheckWeb.SecureTicketController
+               plug: FastCheckWeb.SecureTicketController,
+               plug_opts: %{action: :reject_legacy}
              } = route
     end
 
-    test "is public and does not redirect to login", %{conn: conn} do
-      %{token: token, event: event} = issued_ticket_fixture()
+    test "random bearer returns constant 404 without redirect" do
+      unknown = DeliveryToken.generate().token
 
-      conn = get(conn, ~p"/t/#{token}")
+      conn = get(build_conn(), ~p"/t/#{unknown}")
 
-      assert conn.status == 200
+      assert conn.status == 404
       assert get_resp_header(conn, "location") == []
-      assert html_response(conn, 200) =~ event.name
+      html = html_response(conn, 404)
+      refute html =~ unknown
+      refute html =~ "Download PDF"
     end
 
-    test "valid response shows safe ticket fields and ticket code", %{conn: conn} do
+    test "previously valid bearer returns same 404 without ticket fields" do
       %{token: token, ticket_code: ticket_code, event: event, attendee: attendee} =
         issued_ticket_fixture()
 
-      html = conn |> get(~p"/t/#{token}") |> html_response(200)
+      conn = get(build_conn(), ~p"/t/#{token}")
 
-      assert html =~ event.name
-      assert html =~ attendee.first_name
-      assert html =~ ticket_code
-      assert html =~ "Download PDF"
-      assert html =~ ~s(href="/t/#{token}/pdf")
-    end
-
-    test "invalid token omits ticket code from HTML", %{conn: conn} do
-      %{ticket_code: ticket_code} = issued_ticket_fixture()
-      unknown = DeliveryToken.generate().token
-
-      html = conn |> get(~p"/t/#{unknown}") |> html_response(404)
-
+      assert conn.status == 404
+      html = html_response(conn, 404)
+      refute html =~ token
       refute html =~ ticket_code
+      refute html =~ event.name
+      refute html =~ attendee.first_name
       refute html =~ "Download PDF"
     end
 
-    test "expired token omits ticket code from HTML", %{conn: conn} do
+    test "expired bearer returns same 404 as valid bearer" do
       %{token: token, ticket_code: ticket_code} =
         issued_ticket_fixture(expires_at: DateTime.add(DateTime.utc_now(), -3600, :second))
 
-      html = conn |> get(~p"/t/#{token}") |> html_response(410)
+      conn = get(build_conn(), ~p"/t/#{token}")
 
+      assert conn.status == 404
+      html = html_response(conn, 404)
+      refute html =~ token
       refute html =~ ticket_code
-      refute html =~ "Download PDF"
     end
 
-    test "revoked ticket omits ticket code from HTML", %{conn: conn} do
-      %{token: token, ticket_code: ticket_code} =
-        issued_ticket_fixture(status: "revoked", revoked_at: DateTime.utc_now())
-
-      html = conn |> get(~p"/t/#{token}") |> html_response(200)
-
-      refute html =~ ticket_code
-      refute html =~ "Download PDF"
-    end
-
-    test "not-ready ticket omits ticket code from HTML", %{conn: conn} do
-      %{token: token, ticket_code: ticket_code} = issued_ticket_fixture(status: "pending")
-
-      html = conn |> get(~p"/t/#{token}") |> html_response(200)
-
-      refute html =~ ticket_code
-      refute html =~ "Download PDF"
-    end
-
-    test "not_scannable attendee omits ticket code from HTML", %{conn: conn} do
-      %{token: token, ticket_code: ticket_code, attendee: attendee} = issued_ticket_fixture()
-
-      attendee
-      |> Attendee.changeset(%{scan_eligibility: "not_scannable"})
-      |> Repo.update!()
-
-      html = conn |> get(~p"/t/#{token}") |> html_response(200)
-
-      refute html =~ ticket_code
-      refute html =~ "Download PDF"
-    end
-
-    test "sets no-store private and noindex headers", %{conn: conn} do
+    test "valid legacy bearer performs zero Repo queries during request" do
       %{token: token} = issued_ticket_fixture()
 
-      conn = get(conn, ~p"/t/#{token}")
+      {_conn, query_count} =
+        capture_repo_queries(fn ->
+          get(build_conn(), ~p"/t/#{token}")
+        end)
 
+      assert query_count == 0
+    end
+
+    test "sets no-store private and noindex headers" do
+      %{token: token} = issued_ticket_fixture()
+
+      conn = get(build_conn(), ~p"/t/#{token}")
+
+      assert conn.status == 404
       assert {"cache-control", "no-store, private"} in conn.resp_headers
       assert {"pragma", "no-cache"} in conn.resp_headers
       assert {"x-robots-tag", "noindex, nofollow"} in conn.resp_headers
       assert {"referrer-policy", "no-referrer"} in conn.resp_headers
     end
 
-    test "burst invalid-token requests from same IP eventually return 429", %{conn: conn} do
+    test "pre-limit rejection is 404 regardless of token validity" do
+      valid = issued_ticket_fixture().token
+      random = DeliveryToken.generate().token
+
+      assert get(build_conn(), ~p"/t/#{valid}").status == 404
+      assert get(build_conn(), ~p"/t/#{random}").status == 404
+    end
+
+    test "burst legacy bearer requests from same IP eventually return 429" do
       token = DeliveryToken.generate().token
 
       final_conn =
-        Enum.reduce(1..6, conn, fn _n, _acc ->
-          conn
+        Enum.reduce(1..6, build_conn(), fn _n, acc ->
+          acc
           |> non_local_conn()
           |> get(~p"/t/#{token}")
         end)
@@ -174,20 +159,20 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert final_conn.status == 429
     end
 
-    test "captured logs do not include raw route token", %{conn: conn} do
+    test "captured logs do not include raw route token" do
       %{token: token} = issued_ticket_fixture()
 
       log =
         capture_log(fn ->
-          get(conn, ~p"/t/#{token}")
+          get(build_conn(), ~p"/t/#{token}")
         end)
 
       refute log =~ token
     end
 
-    test "rate-limit blocked log does not include raw /t/token path", %{conn: conn} do
+    test "rate-limit blocked log does not include raw /t/token path" do
       token = DeliveryToken.generate().token
-      conn = non_local_conn(conn)
+      conn = non_local_conn(build_conn())
 
       log =
         capture_log([level: :warning], fn ->
@@ -198,15 +183,46 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert log =~ "/t/[FILTERED]"
     end
 
-    test "does not mutate ticket, attendee, order, payment, or delivery rows", %{conn: conn} do
+    test "does not mutate ticket, attendee, order, payment, or delivery rows" do
       %{token: token, ticket_issue_id: ticket_issue_id, attendee: attendee, order_id: order_id} =
         issued_ticket_fixture()
 
       counts_before = row_counts(ticket_issue_id, attendee.id, order_id)
 
-      get(conn, ~p"/t/#{token}")
+      get(build_conn(), ~p"/t/#{token}")
 
       assert row_counts(ticket_issue_id, attendee.id, order_id) == counts_before
+    end
+  end
+
+  defp capture_repo_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "secure-ticket-legacy-html-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, _metadata, _config ->
+        send(parent, {:repo_query, ref})
+      end,
+      nil
+    )
+
+    result = fun.()
+    query_count = drain_repo_query_messages(ref, 0)
+
+    :telemetry.detach(handler_id)
+
+    {result, query_count}
+  end
+
+  defp drain_repo_query_messages(ref, count) do
+    receive do
+      {:repo_query, ^ref} -> drain_repo_query_messages(ref, count + 1)
+    after
+      0 -> count
     end
   end
 

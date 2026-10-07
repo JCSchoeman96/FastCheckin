@@ -2,6 +2,7 @@ defmodule FastCheck.SalesE2EFixtures do
   @moduledoc false
 
   import Ecto.Query
+  import Plug.Conn, only: [put_req_cookie: 2, put_req_header: 3]
 
   require Ash.Query
 
@@ -297,5 +298,30 @@ defmodule FastCheck.SalesE2EFixtures do
     |> rem(1_000_000)
     |> Integer.to_string()
     |> String.pad_leading(6, "0")
+  end
+
+  @doc false
+  def get_secure_ticket_view(conn, delivery_token, ticket_issue_id) do
+    alias Plug.CSRFProtection
+    alias FastCheckWeb.SecureTicketSessionCookie
+
+    conn = Plug.Test.init_test_session(conn, %{})
+    conn = Plug.Test.get(conn, "/t")
+    csrf = CSRFProtection.get_csrf_token()
+
+    conn =
+      conn
+      |> Plug.Conn.recycle()
+      |> put_req_header("x-csrf-token", csrf)
+      |> put_req_header("accept", "application/json")
+      |> Plug.Test.post("/t/session", %{"delivery_token" => delivery_token})
+
+    cookie_name = SecureTicketSessionCookie.cookie_name()
+    cookie_value = conn.resp_cookies[cookie_name].value
+
+    conn
+    |> Plug.Conn.recycle()
+    |> put_req_cookie(cookie_name, cookie_value)
+    |> Plug.Test.get("/t/view/#{ticket_issue_id}")
   end
 end

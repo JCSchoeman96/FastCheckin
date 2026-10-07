@@ -1,15 +1,12 @@
 defmodule FastCheckWeb.SecureTicketPdfController do
   @moduledoc """
-  Customer PDF download for a currently valid secure ticket.
+  Customer PDF download for session-authorized secure ticket views.
 
-  Each request resolves the delivery token and current ticket eligibility before
-  the renderer creates a transient PDF document.
+  Legacy bearer-path PDF downloads are rejected without resolution (P1E-F).
   """
 
   use FastCheckWeb, :controller
 
-  alias FastCheck.Tickets.ArtifactError
-  alias FastCheck.Tickets.ArtifactResolver
   alias FastCheck.Tickets.PdfTicket
   alias FastCheck.Tickets.PdfTicket.Document
   alias FastCheck.Tickets.PdfTicket.Error, as: PdfError
@@ -41,18 +38,7 @@ defmodule FastCheckWeb.SecureTicketPdfController do
     end
   end
 
-  def show(conn, %{"token" => token}) do
-    with {:ok, artifact} <- ArtifactResolver.resolve_from_delivery_token(token),
-         {:ok, %Document{} = document} <- PdfTicket.generate(artifact) do
-      send_pdf(conn, document)
-    else
-      {:error, %ArtifactError{} = error} -> send_failure(conn, artifact_error_status(error))
-      {:error, %PdfError{}} -> send_failure(conn, 500)
-      {:error, :invalid_artifact} -> send_failure(conn, 500)
-    end
-  end
-
-  def show(conn, _params), do: send_failure(conn, 404)
+  def reject_legacy(conn, _params), do: send_failure(conn, 404)
 
   # sobelow_skip ["XSS.SendResp", "XSS.ContentType"]
   # This response is a generated application/pdf attachment after current bearer-token validation.
@@ -86,11 +72,4 @@ defmodule FastCheckWeb.SecureTicketPdfController do
   defp session_error_status(:ticket_not_scannable), do: 409
   defp session_error_status(:session_unavailable), do: 503
   defp session_error_status(_other), do: 404
-
-  defp artifact_error_status(%ArtifactError{state: :not_found}), do: 404
-  defp artifact_error_status(%ArtifactError{state: :expired_link}), do: 410
-  defp artifact_error_status(%ArtifactError{state: :ticket_revoked}), do: 410
-  defp artifact_error_status(%ArtifactError{state: :ticket_not_ready}), do: 409
-  defp artifact_error_status(%ArtifactError{state: :ticket_not_scannable}), do: 409
-  defp artifact_error_status(%ArtifactError{}), do: 404
 end
