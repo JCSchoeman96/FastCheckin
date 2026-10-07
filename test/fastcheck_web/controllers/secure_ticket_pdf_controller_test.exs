@@ -1,8 +1,6 @@
 defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   use FastCheckWeb.ConnCase, async: false
 
-  import Ecto.Query
-
   alias Ash.Changeset
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Fixtures
