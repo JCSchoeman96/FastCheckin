@@ -108,6 +108,8 @@ defmodule FastCheckWeb.Router do
 
     get "/t", SecureTicketController, :bootstrap, log: false
     post "/t/session", SecureTicketSessionController, :create, log: false
+    get "/t/view/:ticket_issue_id", SecureTicketController, :view, log: false
+    get "/t/view/:ticket_issue_id/pdf", SecureTicketPdfController, :view, log: false
   end
 
   scope "/", FastCheckWeb do

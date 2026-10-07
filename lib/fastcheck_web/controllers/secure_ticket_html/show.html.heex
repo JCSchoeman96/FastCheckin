@@ -42,9 +42,9 @@
             <p class="text-xs text-fc-text-muted">{@result.support_message}</p>
           </div>
 
-          <div class="pt-2 text-center">
+          <div :if={@download_path} class="pt-2 text-center">
             <.link
-              href={~p"/t/#{@download_token}/pdf"}
+              href={@download_path}
               class="inline-flex min-h-11 items-center justify-center rounded-lg border border-fc-border px-5 py-3 text-sm font-semibold text-fc-accent hover:bg-fc-surface-raised"
             >
               Download PDF

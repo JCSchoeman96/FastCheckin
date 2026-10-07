@@ -34,6 +34,44 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
     end
   end
 
+  test "GET /t/view/:ticket_issue_id bypasses legacy secure_ticket PlugAttack throttle", %{
+    conn: conn
+  } do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.204")
+
+    for _i <- 1..6 do
+      conn = get(conn, "/t/view/123")
+      refute conn.status == 429
+      assert conn.status in [404, 503]
+    end
+  end
+
+  test "GET /t/view/:ticket_issue_id/pdf bypasses legacy secure_ticket PlugAttack throttle", %{
+    conn: conn
+  } do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.205")
+
+    for _i <- 1..6 do
+      conn = get(conn, "/t/view/123/pdf")
+      refute conn.status == 429
+      assert conn.status in [404, 503]
+    end
+  end
+
+  test "invalid GET /t/view/... shapes still use legacy secure_ticket PlugAttack throttle", %{
+    conn: conn
+  } do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.206")
+
+    for _i <- 1..5 do
+      conn = get(conn, "/t/view/not-an-id")
+      refute conn.status == 429
+    end
+
+    conn = get(conn, "/t/view/not-an-id")
+    assert conn.status == 429
+  end
+
   test "legacy GET /t/:token still uses secure_ticket PlugAttack throttle", %{conn: conn} do
     conn = put_req_header(conn, "x-forwarded-for", "203.0.113.202")
 

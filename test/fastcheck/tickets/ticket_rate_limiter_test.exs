@@ -3,6 +3,7 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
 
   alias FastCheck.Redis.Namespace
   alias FastCheck.Tickets.TicketRateLimiter
+  alias FastCheck.Tickets.TicketSession
 
   @client_ip "203.0.113.77"
 
@@ -105,6 +106,96 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
                  "rate-limit:secure-ticket:exchange-token:#{TicketRateLimiter.credential_fingerprint(token)}"
                )
     end
+  end
+
+  describe "check_session_read/3" do
+    test "same browser session: 120 reads allowed, 121st blocked" do
+      session = TicketSession.new_browser_session_id()
+
+      for _ <- 1..120 do
+        assert :allowed =
+                 TicketRateLimiter.check_session_read(session, @client_ip,
+                   session_read_limit: 120
+                 )
+      end
+
+      assert {:rate_limited, retry_after} =
+               TicketRateLimiter.check_session_read(session, @client_ip, session_read_limit: 120)
+
+      assert retry_after >= 1
+    end
+
+    test "same client IP: 1200 session reads allowed, 1201st blocked" do
+      key = TicketRateLimiter.read_ip_redis_key(@client_ip)
+      now_usec = redis_now_usec()
+
+      for i <- 1..1200 do
+        member = "#{now_usec + i}:ip-#{i}"
+        Redix.command!(FastCheck.Redix, ["ZADD", key, Integer.to_string(now_usec + i), member])
+      end
+
+      Redix.command!(FastCheck.Redix, ["EXPIRE", key, 120])
+
+      overflow_session = TicketSession.new_browser_session_id()
+
+      assert {:rate_limited, _} =
+               TicketRateLimiter.check_session_read(overflow_session, @client_ip,
+                 session_read_limit: 120,
+                 session_read_ip_limit: 1200
+               )
+    end
+
+    test "session bucket is shared across different ticket issue ids" do
+      session = TicketSession.new_browser_session_id()
+
+      for _ <- 1..119 do
+        assert :allowed =
+                 TicketRateLimiter.check_session_read(session, @client_ip,
+                   session_read_limit: 120
+                 )
+      end
+
+      assert :allowed =
+               TicketRateLimiter.check_session_read(session, "203.0.113.88",
+                 session_read_limit: 120
+               )
+
+      assert {:rate_limited, _} =
+               TicketRateLimiter.check_session_read(session, "203.0.113.89",
+                 session_read_limit: 120
+               )
+    end
+
+    test "raw browser session id does not appear in redis keys" do
+      session = "raw-session-secret-#{System.unique_integer([:positive])}"
+      assert :allowed = TicketRateLimiter.check_session_read(session, @client_ip)
+
+      pattern = Namespace.pattern("rate-limit:secure-ticket:*")
+      {:ok, keys} = Redix.command(FastCheck.Redix, ["KEYS", pattern])
+
+      for key <- keys do
+        refute key =~ session
+      end
+
+      assert TicketRateLimiter.session_read_redis_key(session) ==
+               Namespace.key(
+                 "rate-limit:secure-ticket:session:#{TicketSession.browser_session_redis_hash(session)}"
+               )
+    end
+
+    test "redis unavailable fails closed" do
+      session = TicketSession.new_browser_session_id()
+
+      assert :unavailable =
+               TicketRateLimiter.check_session_read(session, @client_ip,
+                 redix_name: :missing_redix_p1e
+               )
+    end
+  end
+
+  defp redis_now_usec do
+    {:ok, [sec, usec]} = Redix.command(FastCheck.Redix, ["TIME"])
+    String.to_integer(sec) * 1_000_000 + String.to_integer(usec)
   end
 
   defp cleanup_rate_keys do

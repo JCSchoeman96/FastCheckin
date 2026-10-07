@@ -9,7 +9,8 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
   alias FastCheck.Fixtures
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketIssue
-  alias FastCheck.Tickets.{DeliveryToken, TokenHash}
+  alias FastCheck.Tickets.{DeliveryToken, TicketSession, TokenHash}
+  alias FastCheckWeb.SecureTicketSessionCookie
 
   @failure "Ticket PDF is not available for download."
   @sensitive_values [
@@ -179,6 +180,67 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
     end
   end
 
+  describe "GET /t/view/:ticket_issue_id/pdf" do
+    test "downloads PDF for bound browser session without delivery bearer" do
+      %{
+        token: token,
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      conn =
+        build_conn()
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}/pdf")
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-type") |> hd() =~ "application/pdf"
+      refute conn.resp_body =~ token
+    end
+
+    test "missing cookie returns 404 without PDF body" do
+      %{ticket_issue_id: ticket_issue_id, token: token} = issued_ticket_fixture()
+
+      conn = get(build_conn(), ~p"/t/view/#{ticket_issue_id}/pdf")
+
+      assert conn.status == 404
+      assert response(conn, 404) == @failure
+      refute conn.resp_body =~ token
+    end
+
+    test "redis unavailable returns 503" do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      assert :ok = Supervisor.terminate_child(FastCheck.Redis.Connection, FastCheck.Redix)
+
+      on_exit(fn ->
+        {:ok, _} = Supervisor.restart_child(FastCheck.Redis.Connection, FastCheck.Redix)
+      end)
+
+      conn =
+        build_conn()
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}/pdf")
+
+      assert conn.status == 503
+    end
+  end
+
   defp assert_denied(token, status, sensitive_values) do
     conn = get_pdf(token)
 
@@ -303,6 +365,19 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
       event: event,
       attendee: attendee
     }
+  end
+
+  defp bind_session!(session, ticket_issue_id, delivery_hash, generation \\ 0) do
+    fp = TicketSession.generation_fingerprint(delivery_hash)
+
+    assert {:ok, :bound} =
+             TicketSession.bind(
+               session,
+               ticket_issue_id,
+               generation,
+               fp,
+               TicketSession.session_idle_ttl_seconds()
+             )
   end
 
   defp insert_order_with_line!(event_id) do

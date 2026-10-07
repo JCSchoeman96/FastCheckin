@@ -7,9 +7,11 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
   alias Ash.Changeset
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Fixtures
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketIssue
-  alias FastCheck.Tickets.{DeliveryToken, TokenHash}
+  alias FastCheck.Tickets.{DeliveryToken, TicketRateLimiter, TicketSession, TokenHash}
+  alias FastCheckWeb.SecureTicketSessionCookie
 
   setup do
     previous_limit =
@@ -270,6 +272,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       token: token,
       ticket_code: ticket_code,
       ticket_issue_id: ticket_issue.id,
+      delivery_hash: delivery_hash,
       order_id: order_id,
       event: event,
       attendee: attendee
@@ -335,5 +338,382 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
 
   defp non_local_conn(conn) do
     Plug.Conn.put_req_header(conn, "x-forwarded-for", "10.0.0.55")
+  end
+
+  describe "GET /t/view/:ticket_issue_id" do
+    setup do
+      cleanup_session_read_rate_keys()
+      on_exit(fn -> cleanup_session_read_rate_keys() end)
+      :ok
+    end
+
+    test "route metadata disables router dispatch logging" do
+      html_route =
+        Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
+          route.path == "/t/view/:ticket_issue_id" and route.verb == :get
+        end)
+
+      assert %{
+               metadata: %{log: false},
+               plug: FastCheckWeb.SecureTicketController,
+               plug_opts: :view
+             } = html_route
+
+      pdf_route =
+        Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
+          route.path == "/t/view/:ticket_issue_id/pdf" and route.verb == :get
+        end)
+
+      assert %{
+               metadata: %{log: false},
+               plug: FastCheckWeb.SecureTicketPdfController,
+               plug_opts: :view
+             } = pdf_route
+    end
+
+    test "GET /t/pdf is not a generic ticket route", %{conn: conn} do
+      conn = get(conn, "/t/pdf")
+      assert conn.status in [404, 302]
+      refute conn.status == 200
+    end
+
+    test "valid session shows ticket fields and safe PDF link without delivery bearer", %{
+      conn: conn
+    } do
+      %{
+        token: token,
+        ticket_issue_id: ticket_issue_id,
+        ticket_code: ticket_code,
+        event: event,
+        attendee: attendee,
+        delivery_hash: delivery_hash
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      html = html_response(conn, 200)
+
+      assert html =~ event.name
+      assert html =~ attendee.first_name
+      assert html =~ ticket_code
+      assert html =~ "Download PDF"
+      assert html =~ ~s(href="/t/view/#{ticket_issue_id}/pdf")
+      refute html =~ token
+      refute response_includes_delivery_bearer(conn, token)
+    end
+
+    test "missing cookie fails closed without ticket data or session side effects", %{conn: conn} do
+      %{ticket_issue_id: ticket_issue_id, ticket_code: ticket_code, token: token} =
+        issued_ticket_fixture()
+
+      conn = get(conn, ~p"/t/view/#{ticket_issue_id}")
+      html = html_response(conn, 404)
+
+      refute html =~ ticket_code
+      refute html =~ "Download PDF"
+      refute session_cookie(conn)
+      refute redis_registry_exists?(TicketSession.new_browser_session_id())
+      refute response_includes_delivery_bearer(conn, token)
+    end
+
+    test "invalid cookie fails closed without TTL refresh", %{conn: conn} do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        ticket_code: ticket_code,
+        delivery_hash: delivery_hash
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      Redix.command!(FastCheck.Redix, [
+        "EXPIRE",
+        TicketSession.registry_key(session),
+        45
+      ])
+
+      conn =
+        conn
+        |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), "not-a-valid-cookie")
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      html = html_response(conn, 404)
+      assert html =~ "not available"
+      refute html =~ ticket_code
+
+      ttl = redis_ttl!(session)
+      assert ttl in 40..50
+    end
+
+    test "route id alone does not authorize another ticket", %{conn: conn} do
+      fixture_a = issued_ticket_fixture()
+      fixture_b = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, fixture_a.ticket_issue_id, fixture_a.delivery_hash)
+
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{fixture_b.ticket_issue_id}")
+
+      html = html_response(conn, 404)
+      refute html =~ fixture_b.ticket_code
+      refute html =~ fixture_b.event.name
+    end
+
+    test "multi-ticket isolation within one browser session", %{conn: conn} do
+      fixture_a = issued_ticket_fixture()
+      fixture_b = issued_ticket_fixture()
+      session = TicketSession.new_browser_session_id()
+
+      bind_session!(session, fixture_a.ticket_issue_id, fixture_a.delivery_hash)
+      bind_session!(session, fixture_b.ticket_issue_id, fixture_b.delivery_hash)
+
+      cookie = SecureTicketSessionCookie.sign(session)
+
+      html_a =
+        conn
+        |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), cookie)
+        |> get(~p"/t/view/#{fixture_a.ticket_issue_id}")
+        |> html_response(200)
+
+      assert html_a =~ fixture_a.ticket_code
+      refute html_a =~ fixture_b.ticket_code
+
+      html_b =
+        conn
+        |> put_req_cookie(SecureTicketSessionCookie.cookie_name(), cookie)
+        |> get(~p"/t/view/#{fixture_b.ticket_issue_id}")
+        |> html_response(200)
+
+      assert html_b =~ fixture_b.ticket_code
+      refute html_b =~ fixture_a.ticket_code
+    end
+
+    test "stale generation after rotation does not return artifact", %{conn: conn} do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash,
+        ticket_code: ticket_code
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash, 0)
+
+      rotate_delivery_token!(ticket_issue_id)
+
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      html = html_response(conn, 404)
+      refute html =~ ticket_code
+      assert redis_hget(session, ticket_issue_id) == nil
+    end
+
+    test "expired delivery token omits ticket fields", %{conn: conn} do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash,
+        ticket_code: ticket_code
+      } =
+        issued_ticket_fixture(expires_at: DateTime.add(DateTime.utc_now(), -3600, :second))
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      assert conn.status == 410
+      refute html_response(conn, 410) =~ ticket_code
+    end
+
+    test "redis unavailable returns 503 without ticket data", %{conn: conn} do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      assert :ok = Supervisor.terminate_child(FastCheck.Redis.Connection, FastCheck.Redix)
+
+      on_exit(fn ->
+        {:ok, _} = Supervisor.restart_child(FastCheck.Redis.Connection, FastCheck.Redix)
+      end)
+
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      assert conn.status == 503
+      refute conn.resp_body =~ "ticket code"
+    end
+
+    test "session read rate limit returns 429 with Retry-After", %{conn: conn} do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      key = TicketRateLimiter.session_read_redis_key(session)
+      now_usec = redis_now_usec()
+
+      for i <- 1..120 do
+        member = "#{now_usec + i}:#{i}"
+        Redix.command!(FastCheck.Redix, ["ZADD", key, Integer.to_string(now_usec + i), member])
+      end
+
+      Redix.command!(FastCheck.Redix, ["EXPIRE", key, 120])
+
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      assert conn.status == 429
+      assert get_resp_header(conn, "retry-after") != []
+    end
+
+    test "does not mutate ticket, attendee, order, payment, or delivery rows", %{conn: conn} do
+      %{
+        ticket_issue_id: ticket_issue_id,
+        delivery_hash: delivery_hash,
+        attendee: attendee,
+        order_id: order_id
+      } = issued_ticket_fixture()
+
+      session = TicketSession.new_browser_session_id()
+      bind_session!(session, ticket_issue_id, delivery_hash)
+
+      counts_before = row_counts(ticket_issue_id, attendee.id, order_id)
+
+      conn
+      |> put_req_cookie(
+        SecureTicketSessionCookie.cookie_name(),
+        SecureTicketSessionCookie.sign(session)
+      )
+      |> get(~p"/t/view/#{ticket_issue_id}")
+
+      assert row_counts(ticket_issue_id, attendee.id, order_id) == counts_before
+    end
+  end
+
+  defp bind_session!(session, ticket_issue_id, delivery_hash, generation \\ 0) do
+    fp = TicketSession.generation_fingerprint(delivery_hash)
+
+    assert {:ok, :bound} =
+             TicketSession.bind(
+               session,
+               ticket_issue_id,
+               generation,
+               fp,
+               TicketSession.session_idle_ttl_seconds()
+             )
+  end
+
+  defp rotate_delivery_token!(ticket_issue_id) do
+    %{hash: hash, expires_at: expires_at} = DeliveryToken.generate()
+
+    Repo.query!(
+      """
+      UPDATE sales_ticket_issues
+      SET delivery_token_hash = $1,
+          delivery_token_expires_at = $2,
+          delivery_token_generation = delivery_token_generation + 1
+      WHERE id = $3
+      """,
+      [hash, expires_at, ticket_issue_id]
+    )
+  end
+
+  defp redis_hget(session, ticket_issue_id) do
+    Redix.command!(FastCheck.Redix, [
+      "HGET",
+      TicketSession.registry_key(session),
+      "ticket:#{ticket_issue_id}"
+    ])
+  end
+
+  defp redis_ttl!(session) do
+    {:ok, ttl} =
+      Redix.command(FastCheck.Redix, ["TTL", TicketSession.registry_key(session)])
+
+    ttl
+  end
+
+  defp redis_registry_exists?(session) do
+    case Redix.command(FastCheck.Redix, ["EXISTS", TicketSession.registry_key(session)]) do
+      {:ok, 1} -> true
+      _ -> false
+    end
+  end
+
+  defp redis_now_usec do
+    {:ok, [sec, usec]} = Redix.command(FastCheck.Redix, ["TIME"])
+    String.to_integer(sec) * 1_000_000 + String.to_integer(usec)
+  end
+
+  defp session_cookie(conn) do
+    conn.resp_cookies
+    |> Map.get(SecureTicketSessionCookie.cookie_name())
+    |> case do
+      %{value: value} -> value
+      _ -> nil
+    end
+  end
+
+  defp response_includes_delivery_bearer(conn, token) do
+    body = conn.resp_body || ""
+    headers = Enum.map_join(conn.resp_headers, " ", fn {_, v} -> v end)
+
+    body =~ token or headers =~ token or
+      Enum.any?(get_resp_header(conn, "location"), &String.contains?(&1, token))
+  end
+
+  defp cleanup_session_read_rate_keys do
+    pattern = Namespace.pattern("rate-limit:secure-ticket:*")
+
+    case Redix.command(FastCheck.Redix, ["KEYS", pattern]) do
+      {:ok, keys} when keys != [] ->
+        _ = Redix.command(FastCheck.Redix, ["DEL" | Namespace.ensure_scoped_keys!(keys)])
+
+      _ ->
+        :ok
+    end
   end
 end
