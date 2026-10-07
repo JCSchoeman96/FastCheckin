@@ -130,8 +130,10 @@ defmodule FastCheckWeb.ClientIp do
     Bitwise.bsl(a, 24) + Bitwise.bsl(b, 16) + Bitwise.bsl(c, 8) + d
   end
 
-  defp ipv6_to_bitstring(bytes) do
-    Enum.map_join(bytes, "", &(Integer.to_string(&1, 2) |> String.pad_leading(8, "0")))
+  defp ipv6_to_bitstring(segments) do
+    Enum.map_join(segments, "", fn segment ->
+      Integer.to_string(segment, 2) |> String.pad_leading(16, "0")
+    end)
   end
 
   defp take_prefix(bitstring, prefix) do

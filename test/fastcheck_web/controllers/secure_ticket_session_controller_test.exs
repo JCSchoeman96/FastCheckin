@@ -26,6 +26,8 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       conn =
         conn
         |> Plug.Test.init_test_session(%{})
+        |> get("/t")
+        |> recycle()
         |> post("/t/session", %{"delivery_token" => "bearer"})
 
       assert conn.status == 403
@@ -162,7 +164,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
       [set_cookie] = get_resp_header(conn, "set-cookie")
       assert set_cookie =~ "_fastcheck_ticket_session="
-      assert set_cookie =~ "Path=/t"
+      assert String.downcase(set_cookie) =~ "path=/t"
       assert set_cookie =~ "HttpOnly"
       assert set_cookie =~ "SameSite=Lax"
       refute set_cookie =~ "Max-Age"

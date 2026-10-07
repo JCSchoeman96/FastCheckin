@@ -14,7 +14,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
   end
 
   test "POST /t/session bypasses legacy secure_ticket PlugAttack throttle", %{conn: _conn} do
-    for _i <- 1..8 do
+    for i <- 1..8 do
       conn =
         build_conn()
         |> Plug.Test.init_test_session(%{})
@@ -27,7 +27,7 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
         |> recycle()
         |> put_req_header("x-forwarded-for", "203.0.113.201")
         |> put_req_header("x-csrf-token", csrf)
-        |> post("/t/session", %{"delivery_token" => "not-a-valid-bearer"})
+        |> post("/t/session", %{"delivery_token" => "not-a-valid-bearer-#{i}"})
 
       refute conn.status == 429
       assert conn.status in [403, 422, 503]
