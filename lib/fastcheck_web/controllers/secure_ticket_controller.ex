@@ -10,6 +10,12 @@ defmodule FastCheckWeb.SecureTicketController do
 
   alias FastCheck.Sales.TicketPage
 
+  def bootstrap(conn, _params) do
+    conn
+    |> put_private_ticket_headers()
+    |> render(:bootstrap)
+  end
+
   def show(conn, %{"token" => token}) do
     result = TicketPage.resolve(token)
 

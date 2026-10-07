@@ -99,6 +99,9 @@ defmodule FastCheckWeb.Router do
     get "/login", SessionController, :new
     post "/login", SessionController, :create
 
+    get "/t", SecureTicketController, :bootstrap, log: false
+    post "/t/session", SecureTicketSessionController, :create, log: false
+
     get "/t/:token", SecureTicketController, :show, log: false
     get "/t/:token/pdf", SecureTicketPdfController, :show, log: false
 

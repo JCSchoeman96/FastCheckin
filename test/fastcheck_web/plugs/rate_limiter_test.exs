@@ -12,6 +12,50 @@ defmodule FastCheckWeb.Plugs.RateLimiterTest do
     :ok
   end
 
+  test "POST /t/session bypasses legacy secure_ticket PlugAttack throttle", %{conn: conn} do
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{})
+      |> get("/t")
+
+    csrf = Plug.CSRFProtection.get_csrf_token()
+
+    for _i <- 1..8 do
+      conn =
+        conn
+        |> put_req_header("x-forwarded-for", "203.0.113.201")
+        |> put_req_header("x-csrf-token", csrf)
+        |> post("/t/session", %{"delivery_token" => "not-a-valid-bearer"})
+
+      refute conn.status == 429
+      assert conn.status in [403, 422, 503]
+    end
+  end
+
+  test "legacy GET /t/:token still uses secure_ticket PlugAttack throttle", %{conn: conn} do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.202")
+
+    for _i <- 1..5 do
+      conn = get(conn, "/t/not-a-real-token")
+      refute conn.status == 429
+    end
+
+    conn = get(conn, "/t/not-a-real-token")
+    assert conn.status == 429
+  end
+
+  test "legacy GET /t/:token/pdf still uses secure_ticket PlugAttack throttle", %{conn: conn} do
+    conn = put_req_header(conn, "x-forwarded-for", "203.0.113.203")
+
+    for _i <- 1..5 do
+      conn = get(conn, "/t/not-a-real-token/pdf")
+      refute conn.status == 429
+    end
+
+    conn = get(conn, "/t/not-a-real-token/pdf")
+    assert conn.status == 429
+  end
+
   test "login endpoint is strictly rate limited to 5 attempts", %{conn: conn} do
     conn = put_req_header(conn, "x-forwarded-for", "203.0.113.9")
 

@@ -80,6 +80,15 @@ defmodule FastCheckWeb.Plugs.RateLimiter do
   # Storage backend configured in application.ex
   # {PlugAttack.Storage.Ets, name: FastCheck.RateLimiter, clean_period: 60_000}
 
+  # P1E-C2: POST /t/session uses distributed Redis exchange limits in the controller.
+  rule "allow_secure_ticket_session_exchange", conn do
+    if conn.method == "POST" and conn.request_path == "/t/session" do
+      {:allow, :p1e_secure_ticket_exchange}
+    else
+      nil
+    end
+  end
+
   # Don't rate limit localhost (development) - supports IPv4 and IPv6
   rule "allow_local", conn do
     case get_peer_ip(conn) do
