@@ -59,16 +59,20 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
       assert allowed == limit
     end
 
-    test "rate-limit key TTL is positive and window entries expire" do
+    test "rate-limit key TTL is positive and stale ZSET members are pruned on check" do
       token = "ttl-token-#{System.unique_integer([:positive])}"
+      key = TicketRateLimiter.token_redis_key(token)
+
+      assert {:ok, 1} = Redix.command(FastCheck.Redix, ["ZADD", key, "1", "stale:member"])
       assert :allowed = TicketRateLimiter.check_exchange(token, @client_ip)
 
-      key = TicketRateLimiter.token_redis_key(token)
       {:ok, ttl} = Redix.command(FastCheck.Redix, ["TTL", key])
       assert ttl > 0
 
       {:ok, members} = Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1])
       assert members != []
+      refute Enum.member?(members, "stale:member")
+      assert length(members) == 1
     end
 
     test "redis unavailable fails closed without ETS fallback" do

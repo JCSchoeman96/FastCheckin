@@ -60,8 +60,14 @@ defmodule FastCheckWeb.SecureTicketSessionController do
 
   defp body_delivery_token(conn) do
     case conn.body_params do
-      %{"delivery_token" => token} when is_binary(token) and token != "" ->
-        {:ok, token}
+      %{"delivery_token" => token} when is_binary(token) ->
+        canonical = String.trim(token)
+
+        if canonical == "" do
+          :missing_body_token
+        else
+          {:ok, canonical}
+        end
 
       _ ->
         :missing_body_token

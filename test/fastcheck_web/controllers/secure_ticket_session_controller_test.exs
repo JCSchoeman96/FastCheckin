@@ -1,8 +1,6 @@
 defmodule FastCheckWeb.SecureTicketSessionControllerTest do
   use FastCheckWeb.ConnCase, async: false
 
-  import Ecto.Query
-
   alias Ash.Changeset
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Fixtures
@@ -172,6 +170,44 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       assert set_cookie =~ "HttpOnly"
       assert set_cookie =~ "SameSite=Lax"
       refute set_cookie =~ "Max-Age"
+    end
+
+    test "accepts trimmed whitespace around a valid delivery_token", %{conn: conn} do
+      %{token: token, ticket_issue_id: ticket_issue_id} = issued_ticket_fixture()
+
+      conn = post_session(conn, %{"delivery_token" => "  #{token}  "})
+      assert conn.status == 200
+
+      assert %{"redirect_to" => redirect} = json_response(conn, 200)
+      assert redirect == "/t/view/#{ticket_issue_id}"
+    end
+
+    test "rejects whitespace-only delivery_token", %{conn: conn} do
+      conn = post_session(conn, %{"delivery_token" => "    "})
+      assert conn.status == 422
+      assert json_response(conn, 422) == %{"error" => "ticket_unavailable"}
+      refute session_cookie(conn)
+    end
+
+    test "rate limit treats whitespace-padded forms as one credential bucket", %{conn: _conn} do
+      %{token: token} = issued_ticket_fixture()
+
+      padded_forms = [
+        token,
+        " #{token}",
+        "#{token} ",
+        "  #{token}",
+        "#{token}  "
+      ]
+
+      for form <- padded_forms do
+        conn = post_session(build_conn(), %{"delivery_token" => form})
+        assert conn.status == 200
+      end
+
+      conn = post_session(build_conn(), %{"delivery_token" => "\t#{token}\t"})
+      assert conn.status == 429
+      refute session_cookie(conn)
     end
   end
 

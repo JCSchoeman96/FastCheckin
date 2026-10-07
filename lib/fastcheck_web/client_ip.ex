@@ -66,12 +66,12 @@ defmodule FastCheckWeb.ClientIp do
 
   defp single_valid_ip_header(conn, header) do
     case Plug.Conn.get_req_header(conn, header) do
-      [value | _] ->
+      [value] ->
         trimmed = String.trim(value)
 
         if trimmed != "" and not String.contains?(trimmed, ",") do
           case parse_ip(trimmed) do
-            {:ok, _tuple} -> {:ok, trimmed}
+            {:ok, tuple} -> {:ok, format_ip(tuple)}
             :error -> :error
           end
         else
@@ -81,6 +81,10 @@ defmodule FastCheckWeb.ClientIp do
       _ ->
         :error
     end
+  end
+
+  defp format_ip(tuple) do
+    tuple |> :inet.ntoa() |> to_string()
   end
 
   defp outer_trusted_cloudflare?(outer_ip) do

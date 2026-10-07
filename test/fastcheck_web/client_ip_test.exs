@@ -23,6 +23,14 @@ defmodule FastCheckWeb.ClientIpTest do
     end)
   end
 
+  defp conn_with_duplicate_header(header, values, peer \\ {127, 0, 0, 1}) do
+    conn = Plug.Test.conn(:get, "/t/session") |> Map.put(:remote_ip, peer)
+
+    Enum.reduce(values, conn, fn value, c ->
+      Plug.Conn.put_req_header(c, header, value)
+    end)
+  end
+
   defp put_trusted_cidrs(cidrs) do
     Application.put_env(:fastcheck, ClientIp, trusted_cloudflare_proxy_cidrs: cidrs)
   end
@@ -132,5 +140,44 @@ defmodule FastCheckWeb.ClientIpTest do
     assert_raise ArgumentError, fn ->
       ClientIp.parse_trusted_cloudflare_proxy_cidrs!("not-a-cidr")
     end
+  end
+
+  test "duplicate X-Real-IP does not trust the first value" do
+    put_trusted_cidrs([{:inet, {173, 245, 48, 0}, 20}])
+
+    conn =
+      conn_with_duplicate_header("x-real-ip", ["173.245.48.10", "203.0.113.9"])
+      |> then(fn c ->
+        Plug.Conn.put_req_header(c, "cf-connecting-ip", "198.51.100.1")
+      end)
+
+    assert ClientIp.from_conn(conn) == "127.0.0.1"
+  end
+
+  test "duplicate CF-Connecting-IP falls back to trusted outer peer" do
+    put_trusted_cidrs([{:inet, {173, 245, 48, 0}, 20}])
+
+    conn =
+      conn_with_duplicate_header("cf-connecting-ip", ["203.0.113.1", "203.0.113.2"])
+      |> Plug.Conn.put_req_header("x-real-ip", "173.245.48.10")
+
+    assert ClientIp.from_conn(conn) == "173.245.48.10"
+  end
+
+  test "equivalent IPv6 textual forms yield one canonical identity" do
+    alias FastCheck.Tickets.TicketRateLimiter
+
+    conn_long =
+      conn_with([{"x-real-ip", "2001:0db8:0000:0000:0000:0000:0000:0001"}])
+
+    conn_short = conn_with([{"x-real-ip", "2001:db8::1"}])
+
+    identity_long = ClientIp.from_conn(conn_long)
+    identity_short = ClientIp.from_conn(conn_short)
+
+    assert identity_long == identity_short
+
+    assert TicketRateLimiter.ip_redis_key(identity_long) ==
+             TicketRateLimiter.ip_redis_key(identity_short)
   end
 end
