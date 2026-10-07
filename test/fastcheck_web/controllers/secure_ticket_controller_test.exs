@@ -356,7 +356,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert %{
                metadata: %{log: false},
                plug: FastCheckWeb.SecureTicketController,
-               action: :view
+               plug_opts: :view
              } = html_route
 
       pdf_route =
@@ -367,7 +367,7 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       assert %{
                metadata: %{log: false},
                plug: FastCheckWeb.SecureTicketPdfController,
-               action: :view
+               plug_opts: :view
              } = pdf_route
     end
 
@@ -560,23 +560,22 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
       session = TicketSession.new_browser_session_id()
       bind_session!(session, ticket_issue_id, delivery_hash)
 
-      redix = Process.whereis(FastCheck.Redix)
-      :erlang.suspend_process(redix)
+      assert :ok = Supervisor.terminate_child(FastCheck.Redis.Connection, FastCheck.Redix)
 
-      try do
-        conn =
-          conn
-          |> put_req_cookie(
-            SecureTicketSessionCookie.cookie_name(),
-            SecureTicketSessionCookie.sign(session)
-          )
-          |> get(~p"/t/view/#{ticket_issue_id}")
+      on_exit(fn ->
+        {:ok, _} = Supervisor.restart_child(FastCheck.Redis.Connection, FastCheck.Redix)
+      end)
 
-        assert conn.status == 503
-        refute conn.resp_body =~ "ticket code"
-      after
-        :erlang.resume_process(redix)
-      end
+      conn =
+        conn
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}")
+
+      assert conn.status == 503
+      refute conn.resp_body =~ "ticket code"
     end
 
     test "session read rate limit returns 429 with Retry-After", %{conn: conn} do

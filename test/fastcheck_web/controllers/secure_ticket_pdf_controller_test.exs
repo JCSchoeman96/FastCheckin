@@ -223,22 +223,21 @@ defmodule FastCheckWeb.SecureTicketPdfControllerTest do
       session = TicketSession.new_browser_session_id()
       bind_session!(session, ticket_issue_id, delivery_hash)
 
-      redix = Process.whereis(FastCheck.Redix)
-      :erlang.suspend_process(redix)
+      assert :ok = Supervisor.terminate_child(FastCheck.Redis.Connection, FastCheck.Redix)
 
-      try do
-        conn =
-          build_conn()
-          |> put_req_cookie(
-            SecureTicketSessionCookie.cookie_name(),
-            SecureTicketSessionCookie.sign(session)
-          )
-          |> get(~p"/t/view/#{ticket_issue_id}/pdf")
+      on_exit(fn ->
+        {:ok, _} = Supervisor.restart_child(FastCheck.Redis.Connection, FastCheck.Redix)
+      end)
 
-        assert conn.status == 503
-      after
-        :erlang.resume_process(redix)
-      end
+      conn =
+        build_conn()
+        |> put_req_cookie(
+          SecureTicketSessionCookie.cookie_name(),
+          SecureTicketSessionCookie.sign(session)
+        )
+        |> get(~p"/t/view/#{ticket_issue_id}/pdf")
+
+      assert conn.status == 503
     end
   end
 
