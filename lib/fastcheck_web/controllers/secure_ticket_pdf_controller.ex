@@ -11,20 +11,24 @@ defmodule FastCheckWeb.SecureTicketPdfController do
   alias FastCheck.Tickets.ArtifactError
   alias FastCheck.Tickets.ArtifactResolver
   alias FastCheck.Tickets.PdfTicket
-  alias FastCheckWeb.SecureTicketSessionAccess
   alias FastCheck.Tickets.PdfTicket.Document
   alias FastCheck.Tickets.PdfTicket.Error, as: PdfError
+  alias FastCheckWeb.SecureTicketSessionAccess
 
   @failure "Ticket PDF is not available for download."
 
   def view(conn, %{"ticket_issue_id" => ticket_issue_id}) do
     case SecureTicketSessionAccess.resolve(conn, ticket_issue_id) do
       {:ok, artifact} ->
-        with {:ok, %Document{} = document} <- PdfTicket.generate(artifact) do
-          send_pdf(conn, document)
-        else
-          {:error, %PdfError{}} -> send_failure(conn, 500)
-          {:error, :invalid_artifact} -> send_failure(conn, 500)
+        case PdfTicket.generate(artifact) do
+          {:ok, %Document{} = document} ->
+            send_pdf(conn, document)
+
+          {:error, %PdfError{}} ->
+            send_failure(conn, 500)
+
+          {:error, :invalid_artifact} ->
+            send_failure(conn, 500)
         end
 
       {:rate_limited, retry_after} ->

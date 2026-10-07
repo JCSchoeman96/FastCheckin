@@ -7,9 +7,9 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
   alias Ash.Changeset
   alias FastCheck.Attendees.Attendee
   alias FastCheck.Fixtures
+  alias FastCheck.Redis.Namespace
   alias FastCheck.Repo
   alias FastCheck.Sales.TicketIssue
-  alias FastCheck.Redis.Namespace
   alias FastCheck.Tickets.{DeliveryToken, TicketRateLimiter, TicketSession, TokenHash}
   alias FastCheckWeb.SecureTicketSessionCookie
 
