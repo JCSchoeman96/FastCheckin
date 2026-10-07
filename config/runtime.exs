@@ -844,6 +844,14 @@ mobile_rate_limit_storage =
       end
   end
 
+trusted_cloudflare_proxy_cidrs =
+  FastCheckWeb.ClientIp.parse_trusted_cloudflare_proxy_cidrs!(
+    System.get_env("TRUSTED_CLOUDFLARE_PROXY_CIDRS")
+  )
+
+config :fastcheck, FastCheckWeb.ClientIp,
+  trusted_cloudflare_proxy_cidrs: trusted_cloudflare_proxy_cidrs
+
 config :fastcheck, FastCheck.RateLimiter,
   storage: default_rate_limit_storage,
   mobile_storage: mobile_rate_limit_storage,

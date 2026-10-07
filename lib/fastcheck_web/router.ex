@@ -17,6 +17,18 @@ defmodule FastCheckWeb.Router do
     plug FastCheckWeb.Plugs.RateLimiter
   end
 
+  # P1E-C2 bootstrap + JSON session exchange (CSRF-protected fetch from /t).
+  pipeline :secure_ticket_browser do
+    plug :accepts, ["html", "json"]
+    plug :fetch_session
+    plug :fetch_live_flash
+    plug :put_root_layout, html: {FastCheckWeb.Layouts, :root}
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers, @browser_secure_headers
+    plug FastCheckWeb.Plugs.LoggerMetadata
+    plug FastCheckWeb.Plugs.RateLimiter
+  end
+
   pipeline :dashboard_auth do
     plug FastCheckWeb.Plugs.BrowserAuth
   end
@@ -89,6 +101,13 @@ defmodule FastCheckWeb.Router do
     pipe_through [:browser, :dashboard_auth, :global_ops_auth]
 
     live "/dashboard/system/workers", Operations.WorkersDashboardLive, :index
+  end
+
+  scope "/", FastCheckWeb do
+    pipe_through :secure_ticket_browser
+
+    get "/t", SecureTicketController, :bootstrap, log: false
+    post "/t/session", SecureTicketSessionController, :create, log: false
   end
 
   scope "/", FastCheckWeb do

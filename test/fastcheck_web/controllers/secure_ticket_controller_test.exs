@@ -40,6 +40,26 @@ defmodule FastCheckWeb.SecureTicketControllerTest do
     :ok
   end
 
+  describe "GET /t bootstrap" do
+    test "returns bootstrap page without embedding a bearer", %{conn: conn} do
+      conn = get(conn, "/t")
+      html = html_response(conn, 200)
+
+      assert html =~ "Opening your ticket"
+      refute html =~ "delivery_token"
+      assert get_resp_header(conn, "cache-control") == ["no-store, private"]
+    end
+
+    test "route metadata disables router dispatch logging for bootstrap" do
+      route =
+        Enum.find(FastCheckWeb.Router.__routes__(), fn route ->
+          route.path == "/t" and route.verb == :get
+        end)
+
+      assert %{metadata: %{log: false}, plug: FastCheckWeb.SecureTicketController} = route
+    end
+  end
+
   describe "GET /t/:token" do
     test "route metadata disables router dispatch logging" do
       route =

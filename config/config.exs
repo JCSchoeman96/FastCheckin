@@ -260,6 +260,9 @@ config :fastcheck, FastCheck.Cache.CacheManager,
 # Rate limiting configuration
 config :fastcheck, FastCheck.RateLimiter, storage: {PlugAttack.Storage.Ets, FastCheck.RateLimiter}
 
+# P1E-C2: trusted Cloudflare proxy CIDRs for secure-ticket client IP (runtime overrides).
+config :fastcheck, FastCheckWeb.ClientIp, trusted_cloudflare_proxy_cidrs: []
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
