@@ -34,8 +34,8 @@ defmodule FastCheck.Tickets.ArtifactResolver do
   @spec resolve_from_delivery_token(term()) :: result()
   def resolve_from_delivery_token(raw_token) when is_binary(raw_token) do
     case resolve_delivery_eligibility(raw_token) do
-      {:ok, %{ticket_issue: ticket_issue, attendee: attendee, event: event}} ->
-        {:ok, artifact(ticket_issue, attendee, event)}
+      {:ok, %{ticket_issue: ticket_issue}} ->
+        resolve_from_ticket_issue(ticket_issue)
 
       {:error, state} ->
         {:error, error(state)}
@@ -65,22 +65,41 @@ defmodule FastCheck.Tickets.ArtifactResolver do
   def resolve_eligible_ticket_issue_from_delivery_token(_raw_token),
     do: {:error, error(:not_found)}
 
+  @doc """
+  Resolves artifact eligibility for an already-loaded ticket issue.
+
+  Does not establish browser-session authority and does not verify delivery bearer
+  tokens or delivery-token expiry; callers must enforce session or bearer context.
+  """
+  @spec resolve_from_ticket_issue(TicketIssue.t()) :: result()
+  def resolve_from_ticket_issue(%TicketIssue{} = ticket_issue) do
+    case build_artifact_for_ticket_issue(ticket_issue) do
+      {:ok, artifact} -> {:ok, artifact}
+      {:error, state} -> {:error, error(state)}
+    end
+  end
+
   defp resolve_delivery_eligibility(raw_token) when is_binary(raw_token) do
     token = String.trim(raw_token)
 
     with :ok <- validate_token_format(token),
          hash <- TokenHash.hash(token, :delivery),
          {:ok, ticket_issue} <- fetch_ticket_issue(hash),
-         :ok <- verify_delivery_context(token, ticket_issue),
-         :ok <- ensure_issued_status(ticket_issue),
+         :ok <- verify_delivery_context(token, ticket_issue) do
+      {:ok, %{token: token, ticket_issue: ticket_issue}}
+    else
+      {:error, state} -> {:error, state}
+      :error -> :error
+    end
+  end
+
+  defp build_artifact_for_ticket_issue(%TicketIssue{} = ticket_issue) do
+    with :ok <- ensure_issued_status(ticket_issue),
          {:ok, attendee} <- load_attendee(ticket_issue),
          {:ok, event} <- load_event(ticket_issue),
          :ok <- ensure_event_available(event),
          :ok <- ensure_scannable(attendee) do
-      {:ok, %{token: token, ticket_issue: ticket_issue, attendee: attendee, event: event}}
-    else
-      {:error, state} -> {:error, state}
-      :error -> :error
+      {:ok, artifact(ticket_issue, attendee, event)}
     end
   end
 
