@@ -143,11 +143,11 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
       secondary = :p1e_g_secondary_redix
       redis_url = Application.fetch_env!(:fastcheck, :redis_url)
 
-      {:ok, _pid} = Redix.start_link(redis_url, name: secondary)
+      {:ok, pid} = Redix.start_link(redis_url, name: secondary)
 
       on_exit(fn ->
-        if pid = Process.whereis(secondary) do
-          Redix.stop(pid)
+        if Process.alive?(pid) do
+          _ = GenServer.stop(pid, :normal, 5_000)
         end
       end)
 
