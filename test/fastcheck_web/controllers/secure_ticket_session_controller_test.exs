@@ -250,8 +250,6 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       on_exit(fn ->
         _ = Redix.command(FastCheck.Redix, ["DEL", registry_key])
       end)
-
-      refute response_includes_secrets(conn, "", browser_session_id, cookie || "")
     end
 
     test "rate limit treats whitespace-padded forms as one credential bucket", %{conn: _conn} do

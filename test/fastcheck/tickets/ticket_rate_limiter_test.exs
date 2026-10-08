@@ -58,15 +58,20 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
       assert allowed == limit
 
       key = TicketRateLimiter.token_redis_key(token)
-      {:ok, members} = Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1])
+
+      {:ok, zrange_with_scores} =
+        Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1, "WITHSCORES"])
+
+      member_score_pairs = Enum.chunk_every(zrange_with_scores, 2)
+      members = Enum.map(member_score_pairs, fn [member, _score] -> member end)
 
       assert length(members) == limit
       assert MapSet.new(members) |> MapSet.size() == limit
 
-      for member <- members do
-        [timestamp_str, nonce] = String.split(member, ":", parts: 2)
-        timestamp = String.to_integer(timestamp_str)
-        assert timestamp > 0
+      for [member, score_str] <- member_score_pairs do
+        [_timestamp_part, nonce] = String.split(member, ":", parts: 2)
+        score = score_str |> String.to_float() |> trunc()
+        assert score > 0
         assert Regex.match?(~r/^[A-Za-z0-9_-]+$/, nonce)
         assert byte_size(Base.url_decode64!(nonce, padding: false)) == 16
       end
@@ -99,7 +104,8 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
 
       for task <- tasks, do: send(task.pid, {parent, :go})
 
-      assert :ok = Task.await_many(tasks, 120_000)
+      results = Task.await_many(tasks, 120_000)
+      assert Enum.all?(results, &(&1 == :ok))
 
       ip_key = TicketRateLimiter.ip_redis_key(shared_ip)
       {:ok, count} = Redix.command(FastCheck.Redix, ["ZCARD", ip_key])
@@ -121,10 +127,10 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
       assert :allowed = TicketRateLimiter.check_exchange(token, @client_ip)
       redis_after = redis_now_usec()
 
-      {:ok, [[_member, score_str]]} =
+      {:ok, [_member, score_str]} =
         Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1, "WITHSCORES"])
 
-      score = String.to_integer(score_str)
+      score = score_str |> String.to_float() |> trunc()
       assert score >= redis_before
       assert score <= redis_after
     end
