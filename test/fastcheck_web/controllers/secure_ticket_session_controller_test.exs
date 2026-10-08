@@ -221,12 +221,13 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
           assert returned_cookie != nil
           assert Map.has_key?(current_conn.resp_cookies, cookie_name)
 
-          ticket_session_cookie_names =
-            current_conn.resp_cookies
-            |> Map.keys()
-            |> Enum.filter(&String.starts_with?(&1, "_fastcheck_ticket_session"))
+          cookie_names = Map.keys(current_conn.resp_cookies)
 
-          assert ticket_session_cookie_names == [cookie_name]
+          assert cookie_name in cookie_names
+
+          refute Enum.any?(cookie_names, fn name ->
+                   name != cookie_name and String.starts_with?(name, "_fastcheck_ticket")
+                 end)
 
           assert {:ok, decoded_session} = SecureTicketSessionCookie.verify(returned_cookie)
 
