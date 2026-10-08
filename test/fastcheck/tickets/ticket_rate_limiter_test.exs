@@ -74,7 +74,8 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
         timestamp = parse_redis_time_member_usec(timestamp_part)
         assert score > 0
         assert timestamp > 0
-        assert timestamp == score
+        # Member prefix uses Lua tostring(now_usec); large values may lose sub-micro precision.
+        assert abs(timestamp - score) <= 1_000
         assert Regex.match?(~r/^[A-Za-z0-9_-]+$/, nonce)
         assert byte_size(Base.url_decode64!(nonce, padding: false)) == 16
       end
