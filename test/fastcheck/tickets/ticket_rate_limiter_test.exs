@@ -69,9 +69,12 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
       assert MapSet.new(members) |> MapSet.size() == limit
 
       for [member, score_str] <- member_score_pairs do
-        [_timestamp_part, nonce] = String.split(member, ":", parts: 2)
-        score = score_str |> String.to_float() |> trunc()
+        [timestamp_part, nonce] = String.split(member, ":", parts: 2)
+        score = parse_redis_zset_score_usec(score_str)
+        timestamp = parse_redis_time_member_usec(timestamp_part)
         assert score > 0
+        assert timestamp > 0
+        assert timestamp == score
         assert Regex.match?(~r/^[A-Za-z0-9_-]+$/, nonce)
         assert byte_size(Base.url_decode64!(nonce, padding: false)) == 16
       end
@@ -130,7 +133,7 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
       {:ok, [_member, score_str]} =
         Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1, "WITHSCORES"])
 
-      score = score_str |> String.to_float() |> trunc()
+      score = parse_redis_zset_score_usec(score_str)
       assert score >= redis_before
       assert score <= redis_after
     end
@@ -303,6 +306,24 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
   defp redis_now_usec do
     {:ok, [sec, usec]} = Redix.command(FastCheck.Redix, ["TIME"])
     String.to_integer(sec) * 1_000_000 + String.to_integer(usec)
+  end
+
+  defp parse_redis_zset_score_usec(score_str) when is_binary(score_str) do
+    case Integer.parse(score_str) do
+      {int, ""} -> int
+      _ -> score_str |> String.to_float() |> trunc()
+    end
+  end
+
+  defp parse_redis_time_member_usec(timestamp_part) when is_binary(timestamp_part) do
+    case Integer.parse(timestamp_part) do
+      {int, ""} ->
+        int
+
+      _ ->
+        {float, _} = Float.parse(timestamp_part)
+        trunc(float)
+    end
   end
 
   defp cleanup_rate_keys do

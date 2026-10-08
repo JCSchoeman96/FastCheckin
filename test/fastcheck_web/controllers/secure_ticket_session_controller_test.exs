@@ -198,7 +198,7 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
 
       cookie_name = SecureTicketSessionCookie.cookie_name()
 
-      {conn, cookie, browser_session_id} =
+      {_conn, _cookie, browser_session_id} =
         Enum.reduce(tickets, {conn, nil, nil}, fn %{
                                                     token: token,
                                                     ticket_issue_id: ticket_issue_id
