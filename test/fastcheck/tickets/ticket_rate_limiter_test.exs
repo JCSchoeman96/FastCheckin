@@ -40,16 +40,14 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
 
     test "concurrent requests admit exactly the allowed count without member collapse" do
       token = "concurrent-#{System.unique_integer([:positive])}"
+      client_ip = "203.0.113.44"
       limit = TicketRateLimiter.exchange_token_limit()
 
       results =
         1..(limit + 3)
         |> Task.async_stream(
           fn _ ->
-            TicketRateLimiter.check_exchange(
-              token,
-              "203.0.113.#{rem(System.unique_integer([]), 200)}"
-            )
+            TicketRateLimiter.check_exchange(token, client_ip)
           end,
           max_concurrency: limit + 3,
           timeout: 30_000
@@ -58,6 +56,109 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
 
       allowed = Enum.count(results, &(&1 == :allowed))
       assert allowed == limit
+
+      key = TicketRateLimiter.token_redis_key(token)
+      {:ok, members} = Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1])
+
+      assert length(members) == limit
+      assert MapSet.new(members) |> MapSet.size() == limit
+
+      for member <- members do
+        [timestamp_str, nonce] = String.split(member, ":", parts: 2)
+        timestamp = String.to_integer(timestamp_str)
+        assert timestamp > 0
+        assert Regex.match?(~r/^[A-Za-z0-9_-]+$/, nonce)
+        assert byte_size(Base.url_decode64!(nonce, padding: false)) == 16
+      end
+    end
+
+    test "ten concurrent customers each perform fifty unique exchanges behind one client IP" do
+      shared_ip = "203.0.113.250"
+      parent = self()
+
+      tasks =
+        for customer <- 1..10 do
+          Task.async(fn ->
+            send(parent, :ready)
+
+            receive do
+              {^parent, :go} -> :ok
+            end
+
+            for index <- 1..50 do
+              token = "p1e-g-c#{customer}-i#{index}-#{System.unique_integer([:positive])}"
+
+              assert :allowed = TicketRateLimiter.check_exchange(token, shared_ip)
+            end
+
+            :ok
+          end)
+        end
+
+      for _ <- 1..10, do: assert_receive(:ready, 5_000)
+
+      for task <- tasks, do: send(task.pid, {parent, :go})
+
+      assert :ok = Task.await_many(tasks, 120_000)
+
+      ip_key = TicketRateLimiter.ip_redis_key(shared_ip)
+      {:ok, count} = Redix.command(FastCheck.Redix, ["ZCARD", ip_key])
+      assert count == 500
+    end
+
+    test "rate limiter sliding window remains Redis TIME authoritative" do
+      source = File.read!("lib/fastcheck/tickets/ticket_rate_limiter.ex")
+
+      assert source =~ "redis.call('TIME')"
+      refute source =~ "System.system_time"
+      refute source =~ "System.os_time"
+      refute source =~ "DateTime.utc_now"
+
+      token = "redis-time-#{System.unique_integer([:positive])}"
+      key = TicketRateLimiter.token_redis_key(token)
+
+      redis_before = redis_now_usec()
+      assert :allowed = TicketRateLimiter.check_exchange(token, @client_ip)
+      redis_after = redis_now_usec()
+
+      {:ok, [[_member, score_str]]} =
+        Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1, "WITHSCORES"])
+
+      score = String.to_integer(score_str)
+      assert score >= redis_before
+      assert score <= redis_after
+    end
+
+    test "independent Redix clients share one exchange token bucket" do
+      secondary = :p1e_g_secondary_redix
+      redis_url = Application.fetch_env!(:fastcheck, :redis_url)
+
+      {:ok, _pid} = Redix.start_link(redis_url, name: secondary)
+
+      on_exit(fn ->
+        if pid = Process.whereis(secondary) do
+          Redix.stop(pid)
+        end
+      end)
+
+      token = "shared-redix-#{System.unique_integer([:positive])}"
+      client_ip = "203.0.113.251"
+
+      assert :allowed =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: FastCheck.Redix)
+
+      assert :allowed = TicketRateLimiter.check_exchange(token, client_ip, redix_name: secondary)
+
+      assert :allowed =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: FastCheck.Redix)
+
+      assert :allowed = TicketRateLimiter.check_exchange(token, client_ip, redix_name: secondary)
+
+      assert :allowed =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: FastCheck.Redix)
+
+      assert {:rate_limited, _} =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: secondary)
     end
 
     test "rate-limit key TTL is positive and stale ZSET members are pruned on check" do
