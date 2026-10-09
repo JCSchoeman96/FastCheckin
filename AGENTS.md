@@ -55,7 +55,7 @@ scripts/with-test-db-env.sh mix test test/fastcheck/events/sync_run_r0_expand_te
 scripts/with-test-db-env.sh mix precommit
 ```
 
-The helper reads `FASTCHECK_TEST_DB_PASSWORD` from `~/.config/dev-core/project-db.env` when it is not already set, then passes it to the child command. Set `DEVCORE_PROJECT_DB_ENV_FILE` to use a different credential-file path. The helper does not print credentials or create, modify, or start database and Redis services. Use TEST credentials only.
+The helper reads `FASTCHECK_TEST_DB_PASSWORD` from `~/.config/dev-core/project-db.env` when it is not already set, then passes it to the child command. It evaluates the credential file in an isolated shell and extracts only the resulting `FASTCHECK_TEST_DB_PASSWORD` value. The helper adds/exports only `FASTCHECK_TEST_DB_PASSWORD` from the Dev-Core credential authority; unrelated variables defined or exported by that credential file are not propagated into the child command. Set `DEVCORE_PROJECT_DB_ENV_FILE` to use a different credential-file path. The helper does not print credentials or create, modify, or start database and Redis services. Use TEST credentials only.
 
 Android (`android/scanner-app`), from that directory:
 
