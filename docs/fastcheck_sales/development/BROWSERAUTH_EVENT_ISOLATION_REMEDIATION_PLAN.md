@@ -3,17 +3,19 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | BROWSERAUTH-EVENT-ISOLATION-REMEDIATION |
-| **Plan version** | 1.0 |
-| **Status** | FROZEN_CANDIDATE |
+| **Plan version** | 1.1 |
+| **Status** | FROZEN |
 | **Scope** | Close the remaining P0 gap: general BrowserAuth surfaces that operate on Events must enforce server-owned per-Event authority (P1-D grant semantics) before reads, mutations, exports, scanner actions, occupancy, and secret reveal |
 | **Authority** | This file is the **active contract** for BrowserAuth Event-isolation implementation (B0–B5). P1-D (`FastCheck.Sales.DashboardAccess` + Sales routes) is **accepted and frozen**; do not reopen P1-D behavior in this workstream. Launch/runbook policy docs are **out of scope** until implementation evidence exists. |
 | **Accepted base** | `BASE_SHA=a56d2cc0e119ae84d1509e508486d19ee5e12663`, `BASE_TREE=2018bda825474a7cf04f67724c74028e10a036d9` |
 | **Tracking** | `FastCheckin-v6u9` (Beads / `bd`; verified locally 2026-10-09) |
 | **Last updated** | 2026-10-09 |
+| **Change summary (1.1)** | Master-review corrections: preserve empty Event-grant semantics; freeze `DASHBOARD_EVENT_CREATION_ENABLED` parsing; require grant-scoped Event and attendee aggregate queries (no global `events:all` filter) |
 | **Change summary (1.0)** | Initial authority freeze: existing-Event grants via `DASHBOARD_ALLOWED_EVENT_IDS`; creation via `DASHBOARD_EVENT_CREATION_ENABLED`; query-scoped dashboard list; decoupled create/sync; implementation slices B0–B5 |
 
 ### Revision log
 
+- `1.1` — Master-review corrections: preserve empty Event-grant semantics, freeze creation-flag parsing, and require grant-scoped Event plus attendee aggregate queries without filtering the global Event cache.
 - `1.0` — Authority freeze (documentation only). No production code.
 
 ---
@@ -69,6 +71,22 @@ browser/session-derived grants
 per-row permission query as authority source
 ```
 
+**`DASHBOARD_ALLOWED_EVENT_IDS` configuration contract** (unchanged P1-D / runtime semantics; do not tighten):
+
+| Input | Result |
+|-------|--------|
+| missing / blank (`nil`, `""` after trim) | valid configuration → **empty** Event grant set → fail closed for Event-owned access |
+| nonblank | comma-separated positive integer Event IDs → deduplicate + sort (`FastCheck.RuntimeConfiguration.dashboard_event_ids/1`) |
+| malformed nonblank | configuration error → application fails at boot |
+
+```text
+DASHBOARD_ALLOWED_EVENT_IDS_REQUIRED_IN_PROD=NO
+EMPTY_GRANT_SET_ALLOWED=YES
+EMPTY_GRANT_SET_ACCESS=NONE
+```
+
+This variable is **not** a new production-required env var. Missing/blank grants zero Events; operators may still set explicit IDs when needed.
+
 ### 2. P1-D preservation
 
 ```text
@@ -93,14 +111,24 @@ Creation has no pre-existing Event ID; it requires a **separate global** server-
 EVENT_CREATION_AUTHORITY=DASHBOARD_EVENT_CREATION_ENABLED
 ```
 
-**Semantics (fail-closed):**
+**Parsing contract (frozen; B0 must not choose different semantics):**
 
-| Config value | Creation allowed |
-|--------------|------------------|
+Input preprocessing: trim whitespace, then lowercase (same vocabulary as `FastCheck.RuntimeConfiguration` `@strict_true` / `@strict_false`).
+
+| Input | Creation allowed |
+|-------|------------------|
 | missing / blank | `false` |
-| explicit `true` (canonical truthy parsing TBD in B0 to match existing runtime config patterns) | `true` |
-| explicit `false` | `false` |
-| invalid nonblank | configuration error / application fail closed at boot (same class as malformed `DASHBOARD_ALLOWED_EVENT_IDS`) |
+| `1`, `true`, `yes`, `on` | `true` |
+| `0`, `false`, `no`, `off` | `false` |
+| any other nonblank value | configuration error → application fails closed at boot |
+
+```text
+EVENT_CREATION_TRUE_VALUES=1,true,yes,on
+EVENT_CREATION_FALSE_VALUES=0,false,no,off
+EVENT_CREATION_MISSING=false
+EVENT_CREATION_BLANK=false
+EVENT_CREATION_INVALID_NONBLANK=BOOT_ERROR
+```
 
 **Must not infer creation permission from:** role, query params, LiveView assigns, existing Event grants, or “has any allowed Event”.
 
@@ -153,26 +181,82 @@ Denial **before** DB mutation, Oban enqueue, `Task` start, external sync, decryp
 
 ### 6. Root dashboard reads (query boundary)
 
-**Do not** load all Events and filter in LiveView memory.
+**Do not** load all Events and filter in LiveView memory or in Elixir after a global fetch.
 
-Implement a set-based query primitive (name illustrative):
+**Baseline trap (accepted SHA):** `FastCheck.Events.Cache.list_events/0` uses global cache key `events:all`. Its cold path (`fetch_events_from_db/0`) performs (1) an attendee rollup across **all** attendee `event_id` values, then (2) `Repo.all` on **all** Events—before any dashboard grant is applied.
+
+Implement a grant-scoped query primitive (name illustrative):
 
 ```text
 Events.list_events_by_ids(granted_event_ids)
 ```
 
-Requirements:
+**Explicit prohibitions for B0/B1:**
 
 ```text
-empty grants     → zero Event rows loaded for dashboard list
-A-only grants    → only Event A (single WHERE id IN (...))
-A+B grants       → A and B only
-no per-Event authorization loop (no N+1 grant lookups)
+MUST NOT call Cache.list_events/0 and then filter by granted IDs.
+MUST NOT read events:all as the source of an authorization-scoped list.
+MUST NOT execute an attendee rollup across ungranted Events.
 ```
 
-Aggregates on the root dashboard must derive **only** from granted Events.
+Forbidden pattern (presentation filtering over unauthorized data):
+
+```elixir
+Cache.list_events()
+|> Enum.filter(&(&1.id in granted_ids))
+```
+
+#### Empty grant set
+
+```text
+list_events_by_ids([])
+→ []
+
+DB_CALLS=0
+EVENTS_ALL_CACHE_READ=NO
+ATTENDEE_ROLLUP_QUERY=NO
+```
+
+No database or global Event-list cache access when authority grants no Events.
+
+#### Non-empty grant set
+
+Scope **every** Event-owned query to the grant set. Two bounded set-based DB queries are acceptable (do not force a single artificial join).
+
+```text
+ATTENDEE_ROLLUP_QUERY:
+  WHERE attendee.event_id IN ^granted_event_ids
+  GROUP BY attendee.event_id
+
+EVENT_QUERY:
+  WHERE event.id IN ^granted_event_ids
+  (preserve current dashboard ordering, e.g. desc inserted_at)
+```
+
+Preserve current dashboard list fields for **granted** Events only: Event ordering, `attendee_count`, `checked_in_count`. No ungranted Event row or aggregate may be loaded as part of the dashboard list operation.
+
+```text
+BOUNDED_SET_BASED_QUERIES=YES
+ALL_EVENT_SCAN=NO
+ALL_ATTENDEE_ROLLUP=NO
+N_PLUS_ONE=NO
+PER_EVENT_AUTHORITY_QUERY=NO
+SCOPED_LIST_USES_GLOBAL_EVENTS_CACHE=NO
+EVENT_QUERY_SCOPED_BY_GRANTS=YES
+ATTENDEE_ROLLUP_SCOPED_BY_GRANTS=YES
+```
 
 `Event.id` is primary-key indexed; **no new index expected**.
+
+#### Cache decision (B0)
+
+```text
+NEW_SCOPED_LIST_CACHE=NO
+REDIS_REQUIRED=NO
+CACHEX_REQUIRED=NO
+```
+
+Do not introduce per-grant-set cache keys. Do not reuse `events:all` for the secured dashboard list. Bounded scoped DB reads are preferable to caching unauthorized rows into the authorization path. Existing global caches used by other already-authorized paths are not removed in B0.
 
 ### 7. Authority sequence (controllers and LiveViews)
 
@@ -352,12 +436,14 @@ AUTHENTICATED
 
 ## Event creation policy (configuration contract)
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `DASHBOARD_ALLOWED_EVENT_IDS` | Existing-Event read/mutate/export/scanner/occupancy/reveal | required in prod (existing); comma-separated positive integers |
-| `DASHBOARD_EVENT_CREATION_ENABLED` | Allow `Events.create_event/1` from dashboard only | **false** if missing/blank |
+| Variable | Purpose | Default / semantics |
+|----------|---------|---------------------|
+| `DASHBOARD_ALLOWED_EVENT_IDS` | Existing-Event read/mutate/export/scanner/occupancy/reveal | missing/blank → valid, **empty grant set**, fail closed; nonblank → comma-separated positive integers (dedupe + sort); malformed nonblank → boot error |
+| `DASHBOARD_EVENT_CREATION_ENABLED` | Allow `Events.create_event/1` from dashboard only | missing/blank → **false**; see frozen parser in §3 (`1`/`true`/`yes`/`on` vs `0`/`false`/`no`/`off`; other nonblank → boot error) |
 
-Parsing for creation flag must align with existing strict config style in `FastCheck.RuntimeConfiguration` (B0 defines exact accepted truthy strings).
+```text
+DASHBOARD_ALLOWED_EVENT_IDS_REQUIRED_IN_PROD=NO
+```
 
 ---
 
@@ -424,7 +510,7 @@ NEW_DB_PERMISSION_QUERY_PER_REQUEST=NO
 NEW_INDEX_EXPECTED=NO
 ```
 
-Root list: **one** `WHERE id IN (...)` (or equivalent) per dashboard load/refresh—not N grant queries, not load-all-then-filter.
+Root list: **bounded set-based queries** scoped to `granted_event_ids` (Event rows + attendee rollups)—not `ALL_EVENT_SCAN`, not `ALL_ATTENDEE_ROLLUP`, not N+1 per-Event authority queries, not load-all-then-filter, not `events:all` cache as source.
 
 ---
 
@@ -484,7 +570,7 @@ Each slice must preserve fail-closed behavior **before** later slices land. Docu
 
 | Slice | Contents | Depends on |
 |-------|----------|------------|
-| **B0** | `DASHBOARD_EVENT_CREATION_ENABLED` parsing; shared grant helper(s) if needed; `Events.list_events_by_ids/1`; unit tests for config + query | — |
+| **B0** | `DASHBOARD_EVENT_CREATION_ENABLED` parsing (frozen strict boolean vocabulary); shared grant helper(s) if needed; `Events.list_events_by_ids/1` with grant-scoped Event + attendee rollup queries (empty grants → `[]`, zero DB/cache); unit tests for config + query | — |
 | **B1** | `DashboardLive` query-scoped mount/refresh; grant on all Event `handle_event`; creation policy; **remove create→sync coupling** | B0 |
 | **B2** | `ExportController` grant enforcement + tests | B0 |
 | **B3** | `ScannerLive` grant enforcement + tests | B0 |
@@ -505,6 +591,8 @@ a slice requires a second Event allowlist or DB permissions
 a slice weakens P1-D Sales tests
 grant checks would occur only in templates (:if) without handle_event guards
 dashboard list reverts to list_events() + filter
+list_events_by_ids uses Cache.list_events/0 or events:all then filters
+attendee rollup runs across ungranted Events for dashboard list
 creation auto-starts sync or mutates allowlist
 ```
 
@@ -532,7 +620,8 @@ Pointers for implementers rebasing to `a56d2cc0e119ae84d1509e508486d19ee5e12663`
 - `ExportController` — `fetch_event/1` only
 - `ScannerLive.mount/3` — `fetch_event/1`, stats, PubSub not grant-gated
 - `OccupancyLive.mount/3` — stats + PubSub not grant-gated
-- `config/runtime.exs` — `DASHBOARD_ALLOWED_EVENT_IDS` → `:dashboard_auth.allowed_event_ids`
+- `config/runtime.exs` — `DASHBOARD_ALLOWED_EVENT_IDS` → `:dashboard_auth.allowed_event_ids` (`nil`/blank → `[]`)
+- `lib/fastcheck/events/cache.ex` — `events:all`, global attendee rollup + all Events on cold path
 - P1-D module — `lib/fastcheck/sales/dashboard_access.ex`
 
 ---
@@ -553,4 +642,4 @@ NO Redis / permission DB / new index for grants
 
 ## Plan-only PR gate
 
-This document version `1.0` / `FROZEN_CANDIDATE` awaits human review. **No B0 implementation** until the authority contract is accepted and merged (or explicitly approved without merge per team process).
+This document version `1.1` / `FROZEN` is the repository authority contract once merged to `main`. **No B0 implementation** until human merge gate on PR #512 completes.
