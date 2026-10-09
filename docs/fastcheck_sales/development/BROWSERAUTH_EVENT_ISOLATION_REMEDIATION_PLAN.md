@@ -3,19 +3,21 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | BROWSERAUTH-EVENT-ISOLATION-REMEDIATION |
-| **Plan version** | 1.2 |
+| **Plan version** | 1.3 |
 | **Status** | FROZEN |
-| **Scope** | Close the remaining P0 gap: general BrowserAuth surfaces that operate on Events must enforce server-owned per-Event authority (P1-D grant semantics) before reads, mutations, exports, scanner actions, occupancy, and secret reveal |
-| **Authority** | This file is the **active contract** for BrowserAuth Event-isolation implementation (B0–B5). P1-D (`FastCheck.Sales.DashboardAccess` + Sales routes) is **accepted and frozen**; do not reopen P1-D behavior in this workstream. Launch/runbook policy docs are **out of scope** until implementation evidence exists. |
-| **Accepted base** | `BASE_SHA=a56d2cc0e119ae84d1509e508486d19ee5e12663`, `BASE_TREE=2018bda825474a7cf04f67724c74028e10a036d9` |
+| **Scope** | Preserve BrowserAuth Event isolation and freeze durable Postgres SyncRun ownership after the revoked-sync terminal-safety regression showed that Event-ID-only cleanup is unsafe. |
+| **Authority** | This file is the active contract for B0–B5 and the separate SyncRun ownership workstream R0–R6. P1-D and all v1.2 creation-authority semantics remain frozen. PR #514 stays blocked until the SyncRun ownership implementation is reviewed, merged, and verified. |
+| **Accepted base** | `BASE_SHA=db8e5eb2a51bdbcc45fde2818c49b572e2c7ec53`, `BASE_TREE=3dc265243580bf52fd72fc6c734caf535723e52f` |
 | **Tracking** | `FastCheckin-v6u9` (Beads / `bd`; verified locally 2026-10-09) |
 | **Last updated** | 2026-10-09 |
+| **Change summary (1.3)** | Freeze durable SyncRun ownership in sync_logs, owner fencing, one active run per Event, database-clock leases, per-request authorization, and bounded crash recovery; keep SyncRun implementation separate from PR #514. |
 | **Change summary (1.2)** | Clarify creation authority: revalidate the current trusted dashboard identity and creation flag before bounded pre-insert Tickera credential/metadata resolution; forbid post-insert Event-owned operational work; require stale-identity and revoked-sync terminal-safety tests |
 | **Change summary (1.1)** | Master-review corrections: preserve empty Event-grant semantics; freeze `DASHBOARD_EVENT_CREATION_ENABLED` parsing; require grant-scoped Event and attendee aggregate queries (no global `events:all` filter) |
 | **Change summary (1.0)** | Initial authority freeze: existing-Event grants via `DASHBOARD_ALLOWED_EVENT_IDS`; creation via `DASHBOARD_EVENT_CREATION_ENABLED`; query-scoped dashboard list; decoupled create/sync; implementation slices B0–B5 |
 
 ### Revision log
 
+- `1.3` — Freeze durable Postgres SyncRun ownership after the B1 revoked-sync terminal-safety regression showed Event-ID-only cleanup is unsafe. Define owner-fenced active-run semantics, atomic Event/run transitions, leases, request-boundary authority checks, bounded crash recovery, and stale-worker fencing. Preserve v1.2 creation authority.
 - `1.2` — Clarify creation-input authority: the current trusted dashboard identity plus creation capability is required before any external validation; bounded pre-insert Tickera credential and Event-essentials discovery is permitted, while post-insert Event-owned operational work remains grant-gated. Add stale-identity and revoked-sync terminal-safety regression requirements.
 - `1.1` — Master-review corrections: preserve empty Event-grant semantics, freeze creation-flag parsing, and require grant-scoped Event plus attendee aggregate queries without filtering the global Event cache.
 - `1.0` — Authority freeze (documentation only). No production code.
@@ -623,7 +625,7 @@ Root list: **bounded set-based queries** scoped to `granted_event_ids` (Event ro
 - granted sync starts and reaches running state
 - grant is removed, then the worker fails, throws, or times out
 - no retry or new external request starts
-- durable Event and SyncState reach a non-stuck terminal state
+- durable Event leaves `syncing`, the SyncRun row is terminal, and matching hot SyncState is cleared
 - if this test fails, stop and report the cleanup semantics needed; this requirement does not authorize a production-code change by itself
 
 **Mutations (each class):** A granted → baseline behavior; B ungranted → denied; DB/Oban/Task unchanged; secret not decrypted.
@@ -689,9 +691,9 @@ GitHub/Linear/Plane were not required for this identifier; Beads is the reposito
 
 ---
 
-## Current baseline evidence (accepted SHA)
+## Historical baseline evidence (v1.0 accepted SHA)
 
-Pointers for implementers rebasing to `a56d2cc0e119ae84d1509e508486d19ee5e12663`:
+This snapshot records the v1.0 baseline at `a56d2cc0e119ae84d1509e508486d19ee5e12663`; it is historical, not the current accepted base:
 
 - `DashboardLive.mount/3` — `Events.list_events()` then `DashboardAccess.actor_for_identity/1`
 - `DashboardLive` `"create_event"` — `Events.create_event/1` then `start_sync_task/2`
@@ -720,4 +722,465 @@ NO Redis / permission DB / new index for grants
 
 ## Plan-only PR gate
 
-This document version `1.2` / `FROZEN` is the repository authority contract once merged to `main`. **No B0 implementation** until human merge gate on PR #512 completes.
+This document version `1.3` / `FROZEN` is the repository authority contract once merged to `main`. P1-D and v1.2 creation authority remain frozen. The separate SyncRun ownership implementation must merge and pass post-merge CI before PR #514 resumes. Do not implement SyncRun ownership in this authority change.
+
+## v1.3 durable SyncRun ownership authority
+
+This section is normative for the future sync lifecycle workstream. It supplements the BrowserAuth and creation rules above. It does not authorize production implementation in this documentation change. The future SyncRun implementation is a separate prerequisite to resuming PR #514.
+
+```text
+SYNC_RUN_DURABLE_AUTHORITY=Postgres
+SYNC_RUN_STORAGE=existing sync_logs table
+SYNC_RUN_HOT_MIRROR=FastCheck.Events.SyncState
+SYNC_RUN_EXTERNAL_LOCK=NONE
+REDIS_REQUIRED=NO
+LONG_DB_LOCK_DURING_TICKERA_CALL=NO
+AT_MOST_ONE_DURABLE_ACTIVE_RUN_PER_EVENT=YES
+```
+
+The v1.2 revoked-sync test remains required. Its failure exposed that an Event-ID-only reset cannot safely clean up a run after authority revocation. v1.3 replaces the v1.2 stop-only disposition for that lifecycle finding with the dedicated R0–R6 design below. It does not change v1.2 creation authority, P1-D, exports, scanner, occupancy, or the B2–B4 boundaries.
+
+### Durable resource model
+
+Postgres is the durable authority for sync-run ownership. Reuse the existing `sync_logs` table as both the operational SyncRun ledger and the audit record. Do not add a second operational run table. `FastCheck.Events.SyncLog` remains the schema and history representation. A future `FastCheck.Events.SyncRun` service may own claims, leases, fencing, control transitions, terminalization, and recovery.
+
+Every new active SyncRun must persist:
+
+```text
+sync_run_id       UUID
+owner_token       UUID
+lease_expires_at  timestamptz
+heartbeat_at      timestamptz
+```
+
+Historical terminal rows may leave ownership fields null. Every new active row must have `sync_run_id`, `owner_token`, `lease_expires_at`, and `heartbeat_at`.
+
+The canonical `sync_run_id` is generated once at atomic claim for every full and incremental SyncRun. Generate it before the active `sync_logs` row is inserted and before the first Tickera request. The current late-generated full-sync reconciliation UUID is the same identity semantic; its generation moves to claim time. Persist the claimed UUID on `sync_logs` and pass it through the worker, `SyncState`, request lifecycle, progress/control/terminalization, and full-sync reconciliation or invalidation when applicable. Incremental runs receive the same durable identity even though they do not perform full-sync absence reconciliation. Full-sync reconciliation consumes the claimed UUID and must not generate a second one.
+
+For a full-sync authoritative snapshot, use this identity flow:
+
+```text
+atomic claim: claimed_sync_run_id
+→ worker
+→ fetched authoritative snapshot
+→ Attendees.create_bulk / reconciliation path
+→ Reconciliation.apply_after_authoritative_snapshot(
+    event_id,
+    imported_ticket_codes,
+    claimed_sync_run_id
+  )
+```
+
+The reconciliation source identity equals the claimed SyncRun UUID. Incremental sync keeps its claimed SyncRun UUID for ownership and lifecycle but does not create a second reconciliation ID.
+
+```text
+SYNC_RUN_ID_TYPE=UUID
+SYNC_RUN_ID_GENERATION=AT_ATOMIC_CLAIM
+SYNC_RUN_ID_GENERATED_ONCE_PER_RUN=YES
+SYNC_RUN_ID_GENERATED_BEFORE_FIRST_TICKERA_REQUEST=YES
+FULL_SYNC_HAS_DURABLE_SYNC_RUN_ID=YES
+INCREMENTAL_SYNC_HAS_DURABLE_SYNC_RUN_ID=YES
+SYNC_RUN_ID_REQUIRED_FOR_FULL_SYNC=YES
+SYNC_RUN_ID_REQUIRED_FOR_INCREMENTAL_SYNC=YES
+SYNC_RUN_ID_PERSISTED_BEFORE_FIRST_TICKERA_REQUEST=YES
+RECONCILIATION_USES_CLAIMED_SYNC_RUN_ID=YES
+RECONCILIATION_GENERATES_SECOND_SYNC_RUN_ID=NO
+RETRY_CREATES_NEW_SYNC_RUN_ID=NO
+RETRY_CREATES_NEW_SYNC_LOG_ROW=NO
+RETRY_REUSES_SYNC_RUN_ID=YES
+RETRY_REUSES_OWNER_TOKEN=YES
+TAKEOVER_REUSES_SYNC_RUN_ID=NO
+TAKEOVER_REUSES_OWNER_TOKEN=NO
+TAKEOVER_NEW_SYNC_RUN_ID=YES
+TAKEOVER_NEW_OWNER_TOKEN=YES
+TAKEOVER_NEW_SYNC_LOG_ROW=YES
+```
+
+Keep these identifiers distinct: `sync_logs.id` is the database row primary key; `sync_logs.sync_run_id` is the logical run UUID generated at claim; `sync_logs.owner_token` is the separate immutable ownership/fencing UUID.
+
+The `SyncState` Agent is a hot mirror only. It does not prove ownership and it may be rebuilt or discarded. Each entry identifies `event_id`, `sync_run_id`, `owner_token`, status, current page, total pages, and attendees processed. Postgres wins if the mirror disagrees.
+
+`DashboardLive` is a UI/controller. It may start or control a run only after checking the current trusted dashboard identity and Event grant. The LiveView process and its socket do not own the run. A sync worker owns one run by the pair `sync_run_id + owner_token`. A bounded system recovery worker may terminalize an expired run but may not start or retry Tickera work.
+
+### Statuses and Event mapping
+
+Preserve the existing `sync_logs.status` vocabulary. Active and terminal statuses are:
+
+```text
+ACTIVE_SYNC_RUN_STATUSES=in_progress,paused
+TERMINAL_SYNC_RUN_STATUSES=completed,failed,cancelled
+```
+
+Do not persist a `claiming` status. Claiming exists only within a short Postgres transaction. A paused run remains active for uniqueness and lease purposes.
+
+```text
+in_progress -> Event.status=syncing
+paused      -> Event.status=syncing
+completed   -> terminal
+failed      -> terminal
+cancelled   -> terminal
+```
+
+Terminalization may change `Event.status` from `syncing` to `active` only if the Event still has status `syncing`. It must never change `archived` or any other non-syncing lifecycle state to `active`. A terminal run never becomes active again. Resuming work after lease expiry requires a new run row and a new owner token.
+
+### Database invariants and migration safety
+
+Postgres must enforce:
+
+```text
+AT_MOST_ONE_ACTIVE_SYNC_RUN_PER_EVENT
+```
+
+Use a partial unique index equivalent to:
+
+```sql
+CREATE UNIQUE INDEX sync_logs_one_active_run_per_event_index
+ON sync_logs (event_id)
+WHERE status IN ('in_progress', 'paused');
+```
+
+Use stable, explicit names for these indexes. Logical run UUIDs must also be unique:
+
+```sql
+CREATE UNIQUE INDEX sync_logs_sync_run_id_unique_index
+ON sync_logs (sync_run_id)
+WHERE sync_run_id IS NOT NULL;
+```
+
+The recovery index must support bounded expiry scans:
+
+```sql
+CREATE INDEX sync_logs_active_lease_expiry_index
+ON sync_logs (lease_expires_at)
+WHERE status IN ('in_progress', 'paused');
+```
+
+Add a database CHECK constraint requiring non-null `sync_run_id`, `owner_token`, `lease_expires_at`, and `heartbeat_at` whenever status is `in_progress` or `paused`. Postgres primary-database constraints and transactions are the cross-node concurrency authority. Do not use Redis or Cachex for ownership, and do not read ownership from a replica.
+
+Before the implementation migration adds the unique index, inspect existing data for multiple active rows per Event, expired `in_progress` or `paused` rows, and active rows inconsistent with Event status. Do not silently rewrite or delete historical rows to make the index pass. Unexpected active data requires:
+
+```text
+STOP=MIGRATION_ACTIVE_RUN_RECONCILIATION_REQUIRED
+```
+
+The implementation plan must define how operators resolve such data before migration. The recovery index must support bounded expiry scans without a table scan.
+
+### Atomic claim
+
+Starting a run requires a current trusted dashboard identity, a current Event grant, a syncable Event, and no live active run. Revalidate the Event grant immediately before claim. Because dashboard configuration is not part of the database transaction, check it again before the first Tickera request.
+
+Each claim attempt first generates a candidate `sync_run_id` UUID and a separate `owner_token` UUID. These become the run identity only if the transaction commits. Then claim the run in one short transaction:
+
+
+```text
+generate sync_run_id UUID
+generate owner_token UUID
+
+BEGIN
+lock the target Event row for update
+verify the Event is syncable
+inspect the active SyncRun for the Event
+if an expired active run exists, terminalize it as failed / lease_expired
+insert a new in_progress SyncRun with the generated sync_run_id, owner_token, and database-clock lease
+set Event.status=syncing
+COMMIT
+```
+
+All claim, takeover, terminalization, and recovery transactions use the same lock order: Event row first, then the matching SyncRun row. This avoids claim-versus-cleanup lock inversion for the same Event.
+
+A live owner makes the claim fail with `{:error, :sync_already_running}`. The partial unique index is the final race backstop. An Event already marked `syncing` without an active run is inconsistent legacy data. Do not claim over it or reset it by Event ID; stop for explicit reconciliation. No Tickera request starts before the claim commits. Never hold the Event lock, a database connection, or a transaction across Tickera I/O.
+
+An expired run may be terminalized in the same authorized claim transaction before inserting its replacement. The old row becomes failed with reason `lease_expired`. The new run receives a new row ID and a new owner token. The operation remains subject to the partial unique index and row locks.
+
+### Owner fencing
+
+Every SyncRun mutation must match both `sync_run_id` and `owner_token`. This applies to lease renewal, heartbeat, progress, cursor/checkpoint, pause, resume, cancellation, retry state, completion, failure, and terminal cleanup. Every owner-scoped update must check the affected-row result. A stale owner returns `{:error, :stale_owner}` or a deterministic no-write equivalent.
+
+A stale owner cannot mutate the SyncRun, Event sync status, `SyncState`, progress, or control state. It cannot dispatch another Tickera request. Event ID alone is never ownership proof.
+
+Dashboard control requests carry no owner token from the browser. The server first checks the current dashboard identity and Event grant, then resolves and locks the exact active run for that Event inside the SyncRun service. The service uses the persisted token in the owner-scoped transaction. Do not expose the token in HTML, LiveView assigns sent to the client, logs, or API responses.
+
+Takeover never rotates a token on an existing run. An expired run becomes terminal `failed / lease_expired`; an authorized new start inserts a new active row with a new ID and token. A stale process can never become valid again.
+
+### Lease and heartbeat
+
+Freeze these values:
+
+```text
+SYNC_RUN_LEASE_TTL=180 seconds
+SYNC_RUN_HEARTBEAT_INTERVAL=30 seconds
+SYNC_RUN_RECOVERY_SCAN_INTERVAL=60 seconds
+SYNC_RUN_RECOVERY_BATCH_SIZE=100
+```
+
+The ordinary Tickera HTTP timeout is 30 seconds and the existing outer sync-attempt timeout is 120 seconds. The lease exceeds both while still bounding recovery after a worker crash. All lease comparisons and extensions use the Postgres database clock, not application-node clocks.
+
+Renewal must conditionally match the run ID, owner token, active status, and `lease_expires_at > database_now`. Set `heartbeat_at=database_now` and `lease_expires_at=database_now + 180 seconds`. An expired owner cannot renew itself. `EXPIRED_LEASE_RESURRECTION=FORBIDDEN`.
+
+The worker owns a linked heartbeat process or equivalent. Every 30 seconds it rechecks current Event grant and durable ownership, then renews the lease only while both remain valid. The heartbeat dies with its worker. It must not be detached or extend the lease of a dead worker. A paused run continues its heartbeat and lease while the current grant remains valid. Grant revocation stops renewal and enters the revocation terminal path. Loss of durable ownership stops renewal, writes, and external requests.
+
+### Tickera request and response boundaries
+
+Before every sync-owned Tickera HTTP request, including Event-essentials lookup and every `tickets_info` page, the worker must check immediately before dispatch:
+
+```text
+current server-owned Event grant
+matching SyncRun owner token
+active SyncRun status
+unexpired lease, renewed if needed
+```
+
+A check before a prior request or page cannot authorize the next request. No long-lived database lock may be used to span the network request.
+
+A request dispatched while authority and ownership were valid may finish after a grant is revoked. After its response returns, recheck both current Event grant and SyncRun ownership before applying the response, changing progress or cursor, dispatching another request, retrying, or completing successfully.
+
+If authority is revoked while a request is in flight, discard that response for further sync-domain work. Do not write attendees, reconciliation results, Event totals, progress, or completion from that response. Do not issue another request or retry. Terminalize the exact run as `cancelled` with reason `authority_revoked`, then perform only owner-scoped lifecycle cleanup. This cleanup is system authority for that run, not renewed user authority.
+
+A response does not itself authorize database writes. For a response accepted while authority and ownership remain valid, page data and its durable checkpoint must not get out of step. Incomplete runs must not be marked successfully complete or run full reconciliation against a partial fetched set. Writes committed while authority was valid remain valid; a later revocation does not retroactively authorize further writes.
+
+### Retry, pause, resume, and cancellation
+
+Retries stay inside the same active run with the same run ID and owner token. Before each retry, recheck current Event grant, owner token, active status, and lease. If any check fails, do not retry. Do not reset the Event to active between authorized attempts or release active-run uniqueness during retry.
+
+Pause transitions `in_progress -> paused`. The run remains active, the Event remains `syncing`, the token stays unchanged, and the lease heartbeat continues while authority remains valid. No new Tickera request may start while paused. If a request was already in flight when pause took effect, its response may be applied only after authority and ownership checks; pause takes effect before the next request.
+
+Resume requires current Event grant, matching owner, `paused` status, and an unexpired lease. Transition `paused -> in_progress` and update the hot mirror only after the durable transition succeeds. Expired leases cannot resume.
+
+User cancellation requires current Event grant and the exact active run. In one short transaction, set the run to terminal `cancelled / user_cancelled` and change Event `syncing -> active` if it still has that status. After commit, stop the worker and clear only the matching `SyncState`. A late response from the cancelled worker is discarded. No request or write starts after cancellation.
+
+### Terminalization and Event safety
+
+Use one owner-scoped terminalization operation with run ID, owner token, terminal status, and terminal reason. In a short transaction, lock the Event first, then lock the matching active run, verify the exact ID and token, mark that run terminal, and conditionally change the Event from `syncing` to `active`. The run and Event transitions commit atomically. Do not perform HTTP calls in this transaction.
+
+After commit, clear only the `SyncState` entry matching Event ID, run ID, and owner token, then invalidate the relevant Event/list caches. A stale owner receives `:stale_owner` and touches neither the Event nor another run's mirror. If the Event has become archived or another non-syncing state, terminalize the owned run but leave the Event state unchanged.
+
+Terminal reason precedence is:
+
+```text
+successful completion                    -> completed
+user cancellation                        -> cancelled / user_cancelled
+authority revoked during a run           -> cancelled / authority_revoked
+worker failure while authority is valid  -> failed / recorded failure reason
+expired lease or crash recovery          -> failed / lease_expired
+```
+
+If an in-flight Tickera request fails after authority was revoked, `authority_revoked` wins. No retry follows.
+
+### SyncState mirror contract
+
+All mutating hot-state operations must receive the Event ID, SyncRun ID, and owner token. This includes initialization, progress, pause, resume, cancel, clear, and continuation checks. A mismatched owner makes no change and returns a deterministic stale-owner result where the caller needs it.
+
+When durable and hot state both change, update Postgres first. Only mirror the change in `SyncState` after the owner-scoped database operation succeeds. A stale-owner result means no hot-state mutation. `SyncState` never proves ownership. An old worker cannot overwrite or clear a newer run's state, even when both runs belong to the same Event.
+
+### Worker, LiveView, and recovery behavior
+
+A worker exit may trigger immediate owner-scoped failure terminalization if a supervising process still holds the exact run ID and owner token. Process monitors alone are not durable recovery. If no process terminalizes the run, the heartbeat stops and the lease expires.
+
+A LiveView exit does not cancel a healthy worker. If the worker remains alive, its lease is valid, and the current Event grant remains valid, it may continue. No database connection or lock remains open because a LiveView disconnected.
+
+Use a bounded Oban recovery worker to find active runs whose lease has expired. It scans every 60 seconds and processes at most 100 candidate Events per batch using the active status and database-clock expiry predicates backed by the recovery index. For each candidate, a short transaction locks the Event with `FOR UPDATE SKIP LOCKED`, then locks and rechecks the exact SyncRun row and `lease_expires_at <= database_now`. A renewed or terminal run is skipped. An expired run becomes `failed / lease_expired`; its Event changes from `syncing` to `active` only if the status still equals `syncing`. After commit, attempt matching hot-state cleanup. Recovery issues zero Tickera requests and starts zero retries.
+
+Authorized takeover is a new explicit start by a currently trusted dashboard identity with a current Event grant. The claim transaction terminalizes any expired old run and inserts a fresh run ID and token. The recovery worker never takes over or resumes external work. Row locks and the partial unique index serialize recovery and takeover.
+
+### Legacy Event-ID-only reset
+
+`Events.force_reset_sync/2` and `FastCheck.Events.Sync.force_reset_sync/2` are not valid SyncRun ownership primitives. The future implementation must audit every caller. Every active-run lifecycle caller must move to owner-scoped terminalization before SyncRun ownership is accepted. The implementation plan must decide whether the legacy function is removed, made private, or retained only for non-owned maintenance. It must not remain the normal active-run retry, failure, cancellation, or cleanup path.
+
+Existing SyncLog progress, completion, failure, pause, and cancel writes for an active run must also become owner-scoped. Do not load an active log by ID and apply unconditional updates. Every such update must include the run ID, owner token, and expected active state.
+
+### Race outcomes
+
+| Race | Required result |
+|-------|-----------------|
+| Two simultaneous starts | One claim succeeds; the other gets `sync_already_running`; one active row exists. |
+| Paused run plus second start | Paused counts as active; second claim is denied. |
+| Old worker after takeover | Old token is stale; progress, cleanup, mirror mutation, and next request are denied. |
+| Old response after cancellation | Discard response; no domain write or completion overwrite. |
+| Grant revoked during request | Current request may finish; discard its response; no next request or retry; cancel as `authority_revoked`. |
+| Grant restored after revocation | Old run stays terminal; a new explicit start creates a new ID and token. |
+| LiveView exits while worker remains healthy | Worker continues only while lease, owner, and grant checks pass. |
+| Worker exits while LiveView remains | Exact owner may terminalize immediately; otherwise expiry recovery handles it. |
+| LiveView and worker both exit | Lease expires; recovery terminalizes; Event does not remain `syncing`. |
+| Recovery races authorized takeover | Row locks and the partial unique index serialize old-run terminalization and new claim. |
+| Event is archived during cleanup | Run terminalizes; cleanup does not unarchive the Event. |
+
+### Normative state machine
+
+```text
+NO_ACTIVE_RUN
+  └─ authorized atomic claim ─> IN_PROGRESS
+
+IN_PROGRESS
+  ├─ pause ──────────────────> PAUSED
+  ├─ success ────────────────> COMPLETED [terminal]
+  ├─ final failure ─────────> FAILED [terminal]
+  ├─ user cancel ───────────> CANCELLED [terminal]
+  ├─ authority revoked ─────> CANCELLED [terminal]
+  └─ lease expires ─────────> FAILED [terminal]
+
+PAUSED
+  ├─ resume ─────────────────> IN_PROGRESS
+  ├─ user cancel ───────────> CANCELLED [terminal]
+  ├─ authority revoked ─────> CANCELLED [terminal]
+  └─ lease expires ─────────> FAILED [terminal]
+```
+
+Takeover always creates a new SyncRun. A terminal run never becomes active again.
+
+### Side-effect rules
+
+| Operation | Current Event grant | Matching owner token | Tickera request allowed |
+|-----------|---------------------|----------------------|--------------------------|
+| Claim new run | Required | New token created | No |
+| Renew lease or heartbeat | Required | Required | No |
+| Progress or checkpoint | Required | Required | No |
+| Pause, resume, or user cancel | Required | Required | No |
+| Dispatch a Tickera request | Required | Required | One checked request |
+| Retry | Required | Required | Only after fresh checks |
+| Successful completion | Required | Required | No |
+| Failure while authorized | Required | Required | No |
+| Authority-revoked cleanup | Not required | Required | No |
+| Worker-crash cleanup | Not required | Required when owner is alive; otherwise recovery authority | No |
+| Expired-run recovery | Not required | System locks and checks the exact expired run | No |
+| Authorized takeover | Required | New token created | Only after commit and fresh request checks |
+
+No current grant removes permission to start new work. It does not remove the system's duty to clean up the exact run that already started.
+
+### Security and performance invariants
+
+Freeze:
+
+```text
+NO NEW TICKERA REQUEST AFTER GRANT REVOCATION
+NO NEW TICKERA REQUEST AFTER OWNER LOSS
+NO STALE OWNER WRITE
+NO EVENT-ID-ONLY ACTIVE-RUN CLEANUP
+NO OLD RUN CLEARING NEW RUN HOT STATE
+NO TWO ACTIVE RUNS FOR ONE EVENT
+PAUSED RUN COUNTS AS ACTIVE
+NO TERMINAL RUN REACTIVATION
+NO EVENT STUCK SYNCING AFTER EXPIRED-RUN RECOVERY
+NO ACTIVE SYNCRUN LEFT AFTER TERMINAL CLEANUP
+NO LONG DATABASE LOCK ACROSS TICKERA IO
+NO REDIS OR CACHEX OWNERSHIP AUTHORITY
+NO OWNERSHIP READ FROM A REPLICA
+```
+
+Postgres stores durable ownership. `SyncState` holds hot runtime state only. Do not add Redis or Cachex. Keep transactions short, use the primary database for ownership, use bounded indexed recovery scans, and do not hold a database lock or connection across Tickera I/O. SyncRun coordination volume follows administrative sync activity, not attendee request volume.
+
+### Future implementation boundary and sequence
+
+The SyncRun implementation is separate from PR #514. The future reviewed file set may include:
+
+```text
+lib/fastcheck/events/sync_run.ex
+lib/fastcheck/events/sync.ex
+lib/fastcheck/events/sync_log.ex
+lib/fastcheck/events/sync_state.ex
+lib/fastcheck/events.ex
+lib/fastcheck/events/sync_run_recovery_worker.ex
+one migration
+focused sync/run tests
+```
+
+The exact file set must be reviewed during implementation planning. Do not add these files in the authority PR. PR #514 remains blocked until the dedicated ownership implementation merges and passes post-merge CI.
+
+Future implementation slices are:
+
+```text
+R0 schema, indexes, constraints, and SyncRun ownership primitives
+R1 owner-scoped SyncState mirror
+R2 atomic claim, control, and terminalization
+R3 per-request Tickera authority and ownership checks, plus retries
+R4 lease heartbeat, bounded recovery, and authorized takeover
+R5 integration, concurrency, and security regression tests
+R6 merge/closure verification, then unblock PR #514
+```
+
+R0–R6 must not mix in B2, B3, or B4 work. Programme order is:
+
+```text
+v1.3 authority freeze
+→ dedicated SyncRun ownership implementation
+→ review and merge
+→ post-merge CI
+→ rebase PR #514
+→ finish the stale-identity creation correction
+→ final B1 review and merge
+→ B2 → B3 → B4 → B5
+```
+
+Until that sequence reaches the B1 rebase gate:
+
+```text
+PR_514_RESUME_AUTHORIZED=NO
+B2_AUTHORIZED=NO
+B3_AUTHORIZED=NO
+B4_AUTHORIZED=NO
+```
+
+### Required future test matrix
+
+Existing tests that expect an Event to remain `syncing` after a terminal sync failure must be identified and updated to the v1.3 terminal Event and SyncRun contract. Do not update those tests in the authority PR.
+
+The R0–R6 implementation must test:
+
+- Two concurrent claims yield exactly one active run; a paused run blocks a second claim.
+- Claim plus Event transition rolls back atomically. Terminalization plus Event transition also rolls back atomically.
+- Owner-token mismatch causes zero durable and hot-state writes. An old worker cannot update progress, clear newer `SyncState`, or terminalize a newer run after takeover.
+- Only the live owner renews a lease. An expired owner cannot renew. Expired runs are recovered, and recovery issues zero Tickera calls.
+- Authorized takeover creates a new run ID and token.
+- Full and incremental sync each persist `sync_run_id` before the first Tickera request.
+- Full-sync reconciliation has `source_sync_run_id == claimed SyncRun.sync_run_id` and generates no second reconciliation UUID.
+- An authorized retry retains the same `sync_run_id`, `owner_token`, and `sync_logs` row.
+- Takeover creates a different `sync_run_id`, `owner_token`, and `sync_logs` row.
+- Revocation before first request yields zero Tickera calls. Revocation between pages starts no next request. Revocation during a request permits that request to finish but discards its response before domain writes. Revocation before retry leaves retry count unchanged and starts no request.
+- A paused run revoked by authority terminalizes and clears matching state. A worker crash reaches terminal run state and Event `active`. A healthy worker may continue after LiveView exit. Worker plus LiveView failure reaches bounded lease recovery.
+- User cancellation starts no later request or write. Archive racing cleanup never unarchives the Event.
+- Authorized retries retain the same run ID and token. Completed, failed, and cancelled runs cannot renew or mutate.
+- The active-row invariant holds under database concurrency.
+- The original v1.2 revoked-sync terminal-safety regression passes using owner-safe cleanup.
+
+### Implementation stop conditions
+
+The future implementation must stop if any of these holds:
+
+```text
+Event ID alone is used as active-run cleanup ownership
+force_reset_sync/2 is called blindly after revocation
+SyncState Agent state is the only ownership authority
+a database connection or lock spans Tickera I/O
+more than one durable active run can exist per Event, including paused runs
+an old owner can mutate or clear a newer run's SyncState
+an old owner can dispatch another Tickera request after losing authority or ownership
+an expired owner can renew itself
+an expired run is reused for takeover
+recovery starts or retries Tickera work
+a terminal cleanup changes archived to active
+implementation expands into B2, B3, or B4
+P1-D or v1.2 creation authority changes
+second operational SyncRun storage table becomes necessary
+Redis or Cachex is required for ownership
+paused runs cannot participate in active-run uniqueness
+owner fencing cannot cover every active-run mutation
+per-request Tickera dispatch cannot be guarded
+a database connection or lock would span Tickera I/O
+```
+
+Any such condition requires a new authority review. The documentation freeze itself changes no production code, tests, schema, migration, or dependencies.
+
+### SyncLog identity and audit lifecycle
+
+The existing `sync_logs.id` remains the database primary key. `sync_logs.sync_run_id` is generated at atomic claim for every full and incremental run; do not use the numeric primary key as the run ID or add another run-ID column or table. One row represents one logical SyncRun. Authorized retries remain attempts within that row and retain the same `sync_run_id` and owner token. Pause and cancellation must update the durable row rather than only the Agent mirror.
+
+The claim transaction must insert the `sync_logs` row successfully before it changes Event status or commits ownership. If insertion or any other claim write fails, roll back the entire claim. Do not continue with a missing log ID, a nullable run ID, or an untracked Tickera operation. A failed claim produces zero external requests.
+
+Use the Postgres clock for run-owned timestamps. Set `sync_logs.started_at` and `events.sync_started_at` as part of claim. On every terminal state, set `sync_logs.completed_at`, duration, terminal status, and a safe error/reason value in the same owner-checked terminal transaction. Set `events.sync_completed_at` only after successful completion. Failure, cancellation, revocation, and lease expiry must not mark a run as successfully completed. Do not store attendee PII, credentials, secrets, or unredacted Tickera response bodies in run error fields or logs.
+
+The run row remains an audit record after terminalization. Do not delete or reuse it during takeover. A retry does not create another row. If implementation needs a durable attempt count, it must add and document a specific field in its implementation plan; it must not overload the run ID or owner token.
+
+### Terminalization and recovery fencing details
+
+The normal terminalization path locks the Event first, then matches and locks the `sync_logs` row by `sync_run_id`, `owner_token`, and expected active status. The recovery path additionally rechecks `lease_expires_at <= database_now` in the same transaction. If a heartbeat renewed the lease first, recovery skips the row. If recovery terminalized first, a later heartbeat sees terminal status and is stale. Both paths update the Event only when the locked Event still has `status=syncing`.
+
+After the durable terminal transaction commits, hot-state cleanup matches Event ID, `sync_run_id`, and owner token. If the mirror is already absent, cleanup is complete. If it contains another run or token, leave it untouched. Event cache invalidation follows the committed status change and is not evidence of ownership.
