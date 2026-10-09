@@ -71,6 +71,46 @@ defmodule FastCheck.RuntimeConfigurationTest do
     end
   end
 
+  describe "dashboard_event_creation_enabled/1" do
+    test "treats missing, empty, and whitespace-only values as disabled" do
+      for raw_value <- [nil, "", " \t\n "] do
+        assert {:ok, false} = RuntimeConfiguration.dashboard_event_creation_enabled(raw_value)
+      end
+    end
+
+    test "accepts canonical true values" do
+      for raw_value <- ["1", "true", "yes", "on"] do
+        assert {:ok, true} = RuntimeConfiguration.dashboard_event_creation_enabled(raw_value)
+      end
+    end
+
+    test "accepts canonical false values" do
+      for raw_value <- ["0", "false", "no", "off"] do
+        assert {:ok, false} = RuntimeConfiguration.dashboard_event_creation_enabled(raw_value)
+      end
+    end
+
+    test "trims and lowercases before parsing" do
+      assert {:ok, true} = RuntimeConfiguration.dashboard_event_creation_enabled("  TRUE  ")
+      assert {:ok, false} = RuntimeConfiguration.dashboard_event_creation_enabled("\n OFF\t")
+    end
+
+    test "rejects invalid nonblank values" do
+      for raw_value <- ["enabled", "2", "maybe"] do
+        assert {:error, :invalid_dashboard_event_creation_enabled} =
+                 RuntimeConfiguration.dashboard_event_creation_enabled(raw_value)
+      end
+    end
+
+    test "rejects nonbinary input" do
+      assert {:error, :invalid_dashboard_event_creation_enabled} =
+               RuntimeConfiguration.dashboard_event_creation_enabled(true)
+
+      assert {:error, :invalid_dashboard_event_creation_enabled} =
+               RuntimeConfiguration.dashboard_event_creation_enabled(1)
+    end
+  end
+
   describe "dashboard_event_ids/1" do
     test "treats a missing or blank setting as an empty grant" do
       assert {:ok, []} = RuntimeConfiguration.dashboard_event_ids(nil)

@@ -456,10 +456,22 @@ dashboard_allowed_event_ids =
       raise "DASHBOARD_ALLOWED_EVENT_IDS must be a comma-separated list of positive integer event IDs."
   end
 
+dashboard_event_creation_enabled =
+  case FastCheck.RuntimeConfiguration.dashboard_event_creation_enabled(
+         System.get_env("DASHBOARD_EVENT_CREATION_ENABLED")
+       ) do
+    {:ok, enabled} ->
+      enabled
+
+    {:error, :invalid_dashboard_event_creation_enabled} ->
+      raise "DASHBOARD_EVENT_CREATION_ENABLED must be one of 1, true, yes, on, 0, false, no, or off."
+  end
+
 config :fastcheck, :dashboard_auth, %{
   username: dashboard_auth.username,
   password: dashboard_auth.password,
-  allowed_event_ids: dashboard_allowed_event_ids
+  allowed_event_ids: dashboard_allowed_event_ids,
+  event_creation_enabled: dashboard_event_creation_enabled
 }
 
 operations_global_monitoring_usernames =
