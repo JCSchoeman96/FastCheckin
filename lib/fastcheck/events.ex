@@ -484,6 +484,54 @@ defmodule FastCheck.Events do
     )
   end
 
+  @doc """
+  Lists Events for a trusted grant set with dashboard attendee rollups.
+
+  Returns `[]` immediately for an empty grant list without touching the database
+  or the global events list cache.
+  """
+  @spec list_events_by_ids([pos_integer()]) :: [Event.t()]
+  def list_events_by_ids([]), do: []
+
+  def list_events_by_ids(granted_event_ids) when is_list(granted_event_ids) do
+    attendee_rollups =
+      from(a in Attendee,
+        where: a.event_id in ^granted_event_ids,
+        group_by: a.event_id,
+        select: %{
+          event_id: a.event_id,
+          attendee_count: count(a.id),
+          checked_in_count:
+            fragment("sum(case when ? IS NOT NULL then 1 else 0 end)", a.checked_in_at)
+        }
+      )
+      |> Repo.all()
+      |> Map.new(fn %{
+                      event_id: id,
+                      attendee_count: attendee_count,
+                      checked_in_count: checked_in_count
+                    } ->
+        {id, %{attendee_count: attendee_count, checked_in_count: checked_in_count || 0}}
+      end)
+
+    events =
+      from(e in Event,
+        where: e.id in ^granted_event_ids,
+        order_by: [desc: e.inserted_at]
+      )
+      |> Repo.all(timeout: 10_000)
+
+    Enum.map(events, fn event ->
+      rollup = Map.get(attendee_rollups, event.id, %{attendee_count: 0, checked_in_count: 0})
+
+      %{
+        event
+        | attendee_count: rollup.attendee_count,
+          checked_in_count: rollup.checked_in_count
+      }
+    end)
+  end
+
   # Delegation Functions (Backwards Compatibility)
 
   @doc "Lists all cached events."

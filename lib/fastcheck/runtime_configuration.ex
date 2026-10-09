@@ -60,6 +60,26 @@ defmodule FastCheck.RuntimeConfiguration do
 
   def dashboard_event_ids(_raw_value), do: {:error, :invalid_dashboard_event_ids}
 
+  @spec dashboard_event_creation_enabled(term()) ::
+          {:ok, boolean()} | {:error, :invalid_dashboard_event_creation_enabled}
+  def dashboard_event_creation_enabled(nil), do: {:ok, false}
+
+  def dashboard_event_creation_enabled(raw_value) when is_binary(raw_value) do
+    case String.trim(raw_value) do
+      "" ->
+        {:ok, false}
+
+      value ->
+        case strict_boolean(value) do
+          {:ok, enabled} -> {:ok, enabled}
+          :error -> {:error, :invalid_dashboard_event_creation_enabled}
+        end
+    end
+  end
+
+  def dashboard_event_creation_enabled(_raw_value),
+    do: {:error, :invalid_dashboard_event_creation_enabled}
+
   @spec operations_global_monitoring_usernames(term(), term()) ::
           {:ok, [String.t()]}
           | {:error, :invalid_operations_global_monitoring_usernames | :wildcard_not_allowed}

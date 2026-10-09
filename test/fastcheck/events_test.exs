@@ -21,6 +21,113 @@ defmodule FastCheck.EventsTest do
     :ok
   end
 
+  describe "list_events_by_ids/1" do
+    test "returns an empty list with zero database queries for an empty grant set" do
+      {events, query_count} =
+        capture_repo_queries(fn ->
+          Events.list_events_by_ids([])
+        end)
+
+      assert events == []
+      assert query_count == 0
+    end
+
+    test "returns only granted events with correct rollups for a single grant" do
+      event_a = insert_event!("Grant A")
+      event_b = insert_event!("Grant B")
+
+      insert_attendees(event_a, 2)
+      insert_attendees(event_b, 5)
+
+      checked_in_at =
+        DateTime.utc_now()
+        |> DateTime.truncate(:second)
+
+      insert_attendee(%{
+        event_id: event_a.id,
+        checked_in_at: checked_in_at,
+        last_checked_in_at: checked_in_at
+      })
+
+      [listed_a] = Events.list_events_by_ids([event_a.id])
+
+      assert listed_a.id == event_a.id
+      assert listed_a.attendee_count == 3
+      assert listed_a.checked_in_count == 1
+      refute Enum.any?(Events.list_events_by_ids([event_a.id]), &(&1.id == event_b.id))
+    end
+
+    test "returns all granted events with independent rollups" do
+      event_a = insert_event!("Grant A Both")
+      event_b = insert_event!("Grant B Both")
+
+      insert_attendees(event_a, 1)
+      insert_attendees(event_b, 4)
+
+      results =
+        Events.list_events_by_ids([event_a.id, event_b.id])
+        |> Map.new(&{&1.id, &1})
+
+      assert map_size(results) == 2
+      assert results[event_a.id].attendee_count == 1
+      assert results[event_a.id].checked_in_count == 0
+      assert results[event_b.id].attendee_count == 4
+      assert results[event_b.id].checked_in_count == 0
+    end
+
+    test "uses bounded queries independent of grant count" do
+      event_a = insert_event!("Bounded A")
+      event_b = insert_event!("Bounded B")
+      insert_attendees(event_a, 1)
+      insert_attendees(event_b, 1)
+
+      {_events, query_count} =
+        capture_repo_queries(fn ->
+          Events.list_events_by_ids([event_a.id, event_b.id])
+        end)
+
+      assert query_count == 2
+    end
+
+    test "scopes attendee rollups to the grant set" do
+      event_a = insert_event!("Scoped A")
+      event_b = insert_event!("Scoped B")
+      insert_attendees(event_a, 1)
+      insert_attendees(event_b, 1)
+
+      {_events, queries} =
+        capture_repo_queries_with_sql(fn ->
+          Events.list_events_by_ids([event_a.id])
+        end)
+
+      attendee_query =
+        Enum.find(queries, fn query ->
+          is_binary(query) and
+            String.contains?(String.downcase(query), "attendees") and
+            String.contains?(String.downcase(query), "group by")
+        end)
+
+      assert attendee_query
+
+      assert attendee_query =~ ~r/event_id"\s*=\s*ANY\s*\(/i or
+               attendee_query =~ ~r/event_id\s+IN\s/i
+    end
+
+    test "does not read poisoned global events list cache" do
+      event = insert_event!("Cache Bypass")
+      insert_attendees(event, 2)
+
+      poisoned = %{event | attendee_count: 9_999, checked_in_count: 9_999, name: "POISONED"}
+      assert {:ok, true} = CacheManager.put("events:all", [poisoned], ttl: :timer.minutes(15))
+
+      [listed] = Events.list_events_by_ids([event.id])
+
+      assert listed.name == event.name
+      assert listed.attendee_count == 2
+      assert listed.checked_in_count == 0
+    end
+  end
+
   describe "list_events/0" do
     test "returns attendee counts per event" do
       first_event = insert_event!("Summit")
@@ -317,6 +424,66 @@ defmodule FastCheck.EventsTest do
 
   defp unique_ticket_code do
     "CODE-#{System.unique_integer([:positive])}"
+  end
+
+  defp capture_repo_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "events-test-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, _metadata, _config ->
+        send(parent, {:repo_query, ref})
+      end,
+      nil
+    )
+
+    result = fun.()
+    query_count = drain_repo_query_messages(ref, 0)
+    :telemetry.detach(handler_id)
+
+    {result, query_count}
+  end
+
+  defp capture_repo_queries_with_sql(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "events-test-sql-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, metadata, _config ->
+        send(parent, {:repo_query, ref, metadata.query})
+      end,
+      nil
+    )
+
+    result = fun.()
+    queries = drain_repo_queries_with_sql(ref, [])
+    :telemetry.detach(handler_id)
+
+    {result, queries}
+  end
+
+  defp drain_repo_query_messages(ref, count) do
+    receive do
+      {:repo_query, ^ref} -> drain_repo_query_messages(ref, count + 1)
+    after
+      0 -> count
+    end
+  end
+
+  defp drain_repo_queries_with_sql(ref, queries) do
+    receive do
+      {:repo_query, ^ref, query} -> drain_repo_queries_with_sql(ref, [query | queries])
+    after
+      0 -> Enum.reverse(queries)
+    end
   end
 
   defp today_start_of_day do
