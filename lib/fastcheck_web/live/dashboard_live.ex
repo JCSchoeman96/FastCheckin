@@ -21,7 +21,6 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def mount(_params, session, socket) do
-    events = Events.list_events()
     default_site_url = default_tickera_site_url()
     identity = Map.get(session, "dashboard_username") || Map.get(session, :dashboard_username)
 
@@ -30,6 +29,11 @@ defmodule FastCheckWeb.DashboardLive do
         {:ok, actor} -> actor
         {:error, :unauthorized} -> nil
       end
+
+    events =
+      dashboard_actor
+      |> DashboardAccess.allowed_event_ids()
+      |> Events.list_events_by_ids()
 
     {:ok,
      socket
@@ -40,7 +44,6 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:search_query, "")
      |> assign(:selected_event_id, nil)
      |> assign(:show_new_event_form, false)
-     |> assign(:create_enable_whatsapp_sales_checked, false)
      |> assign(:editing_event_id, nil)
      |> assign(:editing_event, nil)
      |> assign(:edit_form, nil)
@@ -72,308 +75,255 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("show_new_event_form", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_new_event_form, true)
-     |> assign(:create_enable_whatsapp_sales_checked, false)}
+    if event_creation_enabled?() do
+      {:noreply, socket |> assign(:show_new_event_form, true) |> refresh_if_grants_changed()}
+    else
+      {:noreply,
+       socket
+       |> refresh_if_grants_changed()
+       |> assign(:sync_status, "Event creation is disabled.")}
+    end
   end
 
   @impl true
   def handle_event("hide_new_event_form", _params, socket) do
-    {:noreply, assign(socket, :show_new_event_form, false)}
+    {:noreply, socket |> assign(:show_new_event_form, false) |> refresh_if_grants_changed()}
   end
 
   @impl true
   def handle_event("create_event", %{"event" => event_params}, socket) do
-    socket = clear_stale_sync_runtime(socket)
-    {enable_whatsapp_sales?, create_params} = pop_create_enable_whatsapp_sales(event_params)
+    if event_creation_enabled?() do
+      case Events.create_event(
+             Map.drop(event_params, ["enable_whatsapp_sales", :enable_whatsapp_sales])
+           ) do
+        {:ok, %Event{} = event} ->
+          socket =
+            socket
+            |> assign(:show_new_event_form, false)
+            |> assign(:form, empty_event_form(socket.assigns.default_tickera_site_url))
+            |> refresh_event_list()
 
-    case Events.create_event(create_params) do
-      {:ok, %Event{} = event} ->
-        {event, whatsapp_enable_warning} =
-          maybe_enable_whatsapp_sales_after_create(
-            event,
-            enable_whatsapp_sales?,
-            socket.assigns.dashboard_actor
-          )
-
-        refreshed_events = Events.list_events()
-        scanner_code = event_scanner_code(event)
-
-        created_status =
-          "Event created: ID #{event.id}, scanner code #{scanner_code}." <>
-            whatsapp_enable_warning
-
-        socket_after_create =
-          socket
-          |> assign(:events, refreshed_events)
-          |> assign(
-            :filtered_events,
-            filter_events(refreshed_events, socket.assigns.search_query)
-          )
-          |> assign(:show_new_event_form, false)
-          |> assign(:create_enable_whatsapp_sales_checked, false)
-          |> assign(:form, empty_event_form(socket.assigns.default_tickera_site_url))
-
-        if sync_task_running?(socket_after_create) do
           {:noreply,
            assign(
-             socket_after_create,
+             socket,
              :sync_status,
-             created_status <>
-               " Auto full sync not started because another sync is already running."
+             "CREATED_PENDING_SERVER_GRANT: Event created with ID #{event.id}."
            )}
-        else
-          {:ok, task_meta} = start_sync_task(event.id, incremental: false)
-          start_time = System.monotonic_time(:second)
 
+        {:error, %Changeset{} = changeset} ->
           {:noreply,
-           socket_after_create
-           |> assign(:selected_event_id, event.id)
-           |> assign(:sync_progress, {0, 0, 0})
-           |> assign(:sync_start_time, start_time)
-           |> assign(:sync_timing_data, [])
-           |> assign(:sync_paused, false)
-           |> assign(:sync_task_pid, task_meta.pid)
-           |> assign(:sync_task_ref, task_meta.monitor_ref)
-           |> assign(:sync_run_ref, task_meta.run_ref)
-           |> assign(:sync_attempt, 1)
+           socket
+           |> refresh_if_grants_changed()
+           |> assign(:sync_status, "Unable to create event: #{format_error(changeset)}")
+           |> assign(:form, to_form(changeset))}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> refresh_if_grants_changed()
+           |> assign(:sync_status, "Unable to create event: #{format_error(reason)}")
            |> assign(
-             :sync_status,
-             created_status <>
-               " Starting full attendee sync (attempt 1/#{@max_sync_attempts})..."
+             :form,
+             sticky_create_event_form(event_params, socket.assigns.default_tickera_site_url)
            )}
-        end
-
-      {:error, %Changeset{} = changeset} ->
-        {:noreply,
-         socket
-         |> assign(:sync_status, "Unable to create event: #{format_error(changeset)}")
-         |> assign(:create_enable_whatsapp_sales_checked, enable_whatsapp_sales?)
-         |> assign(:form, to_form(changeset))}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:sync_status, "Unable to create event: #{format_error(reason)}")
-         |> assign(:create_enable_whatsapp_sales_checked, enable_whatsapp_sales?)
-         |> assign(
-           :form,
-           sticky_create_event_form(event_params, socket.assigns.default_tickera_site_url)
-         )}
+      end
+    else
+      {:noreply,
+       socket
+       |> assign(:show_new_event_form, false)
+       |> refresh_if_grants_changed()
+       |> assign(:sync_status, "Event creation is disabled.")}
     end
   end
 
   def handle_event("create_event", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Invalid event payload")}
+    {:noreply,
+     socket
+     |> refresh_if_grants_changed()
+     |> assign(:sync_status, "Invalid event payload")}
   end
 
   @impl true
   def handle_event("start_sync", %{"event_id" => event_id_param} = params, socket) do
     incremental = Map.get(params, "incremental", "false") == "true"
-    socket = clear_stale_sync_runtime(socket)
 
-    if sync_task_running?(socket) do
-      {:noreply, assign(socket, :sync_status, "A sync is already running for this dashboard")}
-    else
-      with {:ok, event_id} <- parse_event_id(event_id_param),
-           {:ok, task_meta} <- start_sync_task(event_id, incremental: incremental) do
-        start_time = System.monotonic_time(:second)
-        sync_type = if incremental, do: "incremental", else: "full"
+    case authorized_event_id(socket, event_id_param) do
+      {:ok, event_id} ->
+        {:noreply, start_sync_for_granted_event(socket, event_id, incremental)}
 
-        {:noreply,
-         socket
-         |> assign(:selected_event_id, event_id)
-         |> assign(:sync_progress, {0, 0, 0})
-         |> assign(:sync_start_time, start_time)
-         |> assign(:sync_timing_data, [])
-         |> assign(:sync_paused, false)
-         |> assign(:sync_task_pid, task_meta.pid)
-         |> assign(:sync_task_ref, task_meta.monitor_ref)
-         |> assign(:sync_run_ref, task_meta.run_ref)
-         |> assign(:sync_attempt, 1)
-         |> assign(
-           :sync_status,
-           "Starting #{sync_type} attendee sync (attempt 1/#{@max_sync_attempts})..."
-         )}
-      else
-        {:error, reason} ->
-          {:noreply, assign(socket, :sync_status, reason)}
-      end
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
     end
   end
 
   def handle_event("start_sync", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("search_events", %{"query" => query}, socket) do
-    filtered = filter_events(socket.assigns.events, query)
-
     {:noreply,
      socket
      |> assign(:search_query, query)
-     |> assign(:filtered_events, filtered)}
+     |> refresh_event_list()}
   end
 
   def handle_event("search_events", _params, socket) do
-    {:noreply,
-     assign(socket, :search_query, "") |> assign(:filtered_events, socket.assigns.events)}
+    {:noreply, socket |> assign(:search_query, "") |> refresh_event_list()}
   end
 
   @impl true
   def handle_event("switch_events_tab", %{"tab" => tab}, socket)
       when tab in ["active", "archived"] do
-    {:noreply, assign(socket, :events_tab, tab)}
+    {:noreply, socket |> assign(:events_tab, tab) |> refresh_event_list()}
   end
 
-  def handle_event("switch_events_tab", _params, socket), do: {:noreply, socket}
+  def handle_event("switch_events_tab", _params, socket),
+    do: {:noreply, refresh_if_grants_changed(socket)}
 
   @impl true
   def handle_event("archive_event", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param),
+    with {:ok, event_id} <- authorized_event_id(socket, event_id_param),
          {:ok, _event} <- Events.archive_event(event_id) do
-      refreshed_events = Events.list_events()
-
       {:noreply,
        socket
-       |> assign(:events, refreshed_events)
-       |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+       |> refresh_event_list()
        |> assign(:selected_event_id, nil)
        |> assign(:sync_status, "Event archived successfully")}
     else
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
+
       {:error, reason} ->
         {:noreply,
-         assign(socket, :sync_status, "Failed to archive event: #{format_error(reason)}")}
+         event_operation_status(socket, "Failed to archive event: #{format_error(reason)}")}
     end
   end
 
   def handle_event("archive_event", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("unarchive_event", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param),
+    with {:ok, event_id} <- authorized_event_id(socket, event_id_param),
          {:ok, _event} <- Events.unarchive_event(event_id) do
-      refreshed_events = Events.list_events()
-
       {:noreply,
        socket
-       |> assign(:events, refreshed_events)
-       |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+       |> refresh_event_list()
        |> assign(:events_tab, "active")
        |> assign(:sync_status, "Event unarchived successfully")}
     else
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
+
       {:error, reason} ->
         {:noreply,
-         assign(socket, :sync_status, "Failed to unarchive event: #{format_error(reason)}")}
+         event_operation_status(socket, "Failed to unarchive event: #{format_error(reason)}")}
     end
   end
 
   def handle_event("unarchive_event", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("remove_archived_event", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param),
+    with {:ok, event_id} <- authorized_event_id(socket, event_id_param),
          result <- Events.remove_archived_event(event_id) do
       case result do
         {:ok, _removed} ->
-          refreshed_events = Events.list_events()
-
           {:noreply,
            socket
-           |> assign(:events, refreshed_events)
-           |> assign(
-             :filtered_events,
-             filter_events(refreshed_events, socket.assigns.search_query)
-           )
+           |> refresh_event_list()
            |> assign(:events_tab, "archived")
            |> assign(:sync_status, "Archived event removed permanently.")}
 
         {:error, :event_not_archived} ->
-          {:noreply, assign(socket, :sync_status, "Only archived events can be removed.")}
+          {:noreply, event_operation_status(socket, "Only archived events can be removed.")}
 
         {:error, {:dependencies_present, blockers}} ->
           {:noreply,
-           assign(
+           event_operation_status(
              socket,
-             :sync_status,
              "Cannot remove this event because related data exists: #{format_removal_blockers(blockers)}."
            )}
 
         {:error, :integrity_conflict} ->
           {:noreply,
-           assign(
+           event_operation_status(
              socket,
-             :sync_status,
              "Cannot remove this event because related data was created while removal was being checked. Refresh and try again."
            )}
 
         {:error, :not_found} ->
-          {:noreply, assign(socket, :sync_status, "Event not found.")}
+          {:noreply, event_operation_status(socket, "Event not found.")}
 
         {:error, :invalid_event_id} ->
-          {:noreply, assign(socket, :sync_status, "Invalid event identifier.")}
+          {:noreply, event_operation_status(socket, "Invalid event identifier.")}
       end
     else
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
+
       {:error, reason} ->
-        {:noreply, assign(socket, :sync_status, reason)}
+        {:noreply, event_operation_status(socket, reason)}
     end
   end
 
   def handle_event("remove_archived_event", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("enable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param),
+    with {:ok, event_id} <- authorized_event_id(socket, event_id_param),
          {:ok, _event} <-
            Events.enable_whatsapp_sales_for_dashboard(socket.assigns.dashboard_actor, event_id) do
       {:noreply, refresh_events(socket, "WhatsApp Sales enabled for event #{event_id}")}
     else
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
+
       {:error, reason} ->
         {:noreply,
-         assign(
+         event_operation_status(
            socket,
-           :sync_status,
            "Unable to enable WhatsApp Sales: #{whatsapp_sales_error_message(reason)}"
          )}
     end
   end
 
   def handle_event("enable_whatsapp_sales", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("disable_whatsapp_sales", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param),
+    with {:ok, event_id} <- authorized_event_id(socket, event_id_param),
          {:ok, _event} <-
            Events.disable_whatsapp_sales_for_dashboard(socket.assigns.dashboard_actor, event_id) do
       {:noreply, refresh_events(socket, "WhatsApp Sales disabled for event #{event_id}")}
     else
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
+
       {:error, reason} ->
         {:noreply,
-         assign(
+         event_operation_status(
            socket,
-           :sync_status,
            "Unable to disable WhatsApp Sales: #{whatsapp_sales_error_message(reason)}"
          )}
     end
   end
 
   def handle_event("disable_whatsapp_sales", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("show_edit_form", %{"event_id" => event_id_param}, socket) do
-    with {:ok, event_id} <- parse_event_id(event_id_param),
+    with {:ok, event_id} <- authorized_event_id(socket, event_id_param),
          {:ok, %Event{} = event} <- fetch_event_for_edit(event_id) do
       edit_form = build_edit_form(event)
 
@@ -385,21 +335,25 @@ defmodule FastCheckWeb.DashboardLive do
        |> assign(:edit_revealed_secret, nil)
        |> assign(:edit_reveal_show_plain, false)
        |> assign(:edit_reveal_challenge_active, false)
-       |> assign(:reveal_error, nil)}
+       |> assign(:reveal_error, nil)
+       |> refresh_if_grants_changed()}
     else
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
+
       {:error, :not_found} ->
-        {:noreply, assign(socket, :sync_status, "Event not found")}
+        {:noreply, event_operation_status(socket, "Event not found")}
 
       {:error, :load_failed} ->
-        {:noreply, assign(socket, :sync_status, "Unable to load event for editing")}
+        {:noreply, event_operation_status(socket, "Unable to load event for editing")}
 
       _ ->
-        {:noreply, assign(socket, :sync_status, "Event not found")}
+        {:noreply, event_operation_status(socket, "Event not found")}
     end
   end
 
   def handle_event("show_edit_form", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
@@ -412,154 +366,156 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:edit_revealed_secret, nil)
      |> assign(:edit_reveal_show_plain, false)
      |> assign(:edit_reveal_challenge_active, false)
-     |> assign(:reveal_error, nil)}
+     |> assign(:reveal_error, nil)
+     |> refresh_if_grants_changed()}
   end
 
   @impl true
   def handle_event("update_event", %{"event" => event_params}, socket) do
-    event_id = socket.assigns.editing_event_id
+    case authorized_event_id(socket, socket.assigns.editing_event_id) do
+      {:ok, event_id} ->
+        event_params = sanitize_dashboard_edit_event_params(event_params)
 
-    if event_id do
-      event_params = sanitize_dashboard_edit_event_params(event_params)
+        case Events.update_event(event_id, event_params) do
+          {:ok, _event} ->
+            {:noreply,
+             socket
+             |> refresh_event_list()
+             |> assign(:editing_event_id, nil)
+             |> assign(:editing_event, nil)
+             |> assign(:edit_form, nil)
+             |> assign(:edit_revealed_secret, nil)
+             |> assign(:edit_reveal_show_plain, false)
+             |> assign(:edit_reveal_challenge_active, false)
+             |> assign(:reveal_error, nil)
+             |> assign(:sync_status, "Event updated successfully")}
 
-      case Events.update_event(event_id, event_params) do
-        {:ok, _event} ->
-          refreshed_events = Events.list_events()
+          {:error, %Changeset{} = changeset} ->
+            {:noreply,
+             event_operation_status(socket, "Unable to update event: #{format_error(changeset)}")
+             |> assign(:edit_form, to_form(changeset))}
 
-          {:noreply,
-           socket
-           |> assign(:events, refreshed_events)
-           |> assign(
-             :filtered_events,
-             filter_events(refreshed_events, socket.assigns.search_query)
-           )
-           |> assign(:editing_event_id, nil)
-           |> assign(:editing_event, nil)
-           |> assign(:edit_form, nil)
-           |> assign(:edit_revealed_secret, nil)
-           |> assign(:edit_reveal_show_plain, false)
-           |> assign(:edit_reveal_challenge_active, false)
-           |> assign(:reveal_error, nil)
-           |> assign(:sync_status, "Event updated successfully")}
+          {:error, reason} ->
+            {:noreply,
+             event_operation_status(socket, "Unable to update event: #{format_error(reason)}")
+             |> assign(:edit_form, socket.assigns.edit_form)}
+        end
 
-        {:error, %Changeset{} = changeset} ->
-          {:noreply,
-           socket
-           |> assign(:sync_status, "Unable to update event: #{format_error(changeset)}")
-           |> assign(:edit_form, to_form(changeset))}
-
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> assign(:sync_status, "Unable to update event: #{format_error(reason)}")
-           |> assign(:edit_form, socket.assigns.edit_form)}
-      end
-    else
-      {:noreply, assign(socket, :sync_status, "No event selected for editing")}
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, socket.assigns.editing_event_id)}
     end
   end
 
   def handle_event("update_event", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Invalid event payload")}
+    {:noreply, event_operation_status(socket, "Invalid event payload")}
   end
 
   @impl true
   def handle_event("pause_sync", %{"event_id" => event_id_param}, socket) do
-    case parse_event_id(event_id_param) do
+    case authorized_event_id(socket, event_id_param) do
       {:ok, event_id} ->
         SyncState.pause_sync(event_id)
 
         {:noreply,
          socket
          |> assign(:sync_paused, true)
-         |> assign(:sync_status, "Sync paused")}
+         |> event_operation_status("Sync paused")}
 
-      {:error, _reason} ->
-        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
     end
   end
 
   def handle_event("pause_sync", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("resume_sync", %{"event_id" => event_id_param}, socket) do
-    case parse_event_id(event_id_param) do
+    case authorized_event_id(socket, event_id_param) do
       {:ok, event_id} ->
         SyncState.resume_sync(event_id)
 
         {:noreply,
          socket
          |> assign(:sync_paused, false)
-         |> assign(:sync_status, "Sync resumed")}
+         |> event_operation_status("Sync resumed")}
 
-      {:error, _reason} ->
-        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
     end
   end
 
   def handle_event("resume_sync", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("cancel_sync", %{"event_id" => event_id_param}, socket) do
-    case parse_event_id(event_id_param) do
+    case authorized_event_id(socket, event_id_param) do
       {:ok, event_id} ->
         SyncState.cancel_sync(event_id)
         Events.force_reset_sync(event_id, :cancelled)
 
-        if is_pid(socket.assigns.sync_task_pid) and Process.alive?(socket.assigns.sync_task_pid) do
-          Process.exit(socket.assigns.sync_task_pid, :kill)
-        end
+        socket =
+          if socket.assigns.selected_event_id == event_id do
+            if is_pid(socket.assigns.sync_task_pid) and
+                 Process.alive?(socket.assigns.sync_task_pid) do
+              Process.exit(socket.assigns.sync_task_pid, :kill)
+            end
 
-        refreshed_events = Events.list_events()
+            socket
+            |> maybe_demonitor_sync_task()
+            |> reset_sync_runtime()
+            |> assign(:selected_event_id, nil)
+          else
+            socket
+          end
 
         {:noreply,
          socket
-         |> maybe_demonitor_sync_task()
-         |> assign(:events, refreshed_events)
-         |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-         |> reset_sync_runtime()
-         |> assign(:sync_status, "Sync cancelled")
-         |> assign(:selected_event_id, nil)}
+         |> refresh_event_list()
+         |> assign(:sync_status, "Sync cancelled")}
 
-      {:error, _reason} ->
-        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
     end
   end
 
   def handle_event("cancel_sync", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
   def handle_event("show_sync_history", %{"event_id" => event_id_param}, socket) do
-    case parse_event_id(event_id_param) do
+    case authorized_event_id(socket, event_id_param) do
       {:ok, event_id} ->
         case list_sync_history_safe(event_id) do
           {:ok, sync_history} ->
-            {:noreply,
-             socket
-             |> assign(:viewing_sync_history_for, event_id)
-             |> assign(:sync_history, sync_history)}
+            if event_granted?(socket, event_id) do
+              {:noreply,
+               socket
+               |> assign(:viewing_sync_history_for, event_id)
+               |> assign(:sync_history, sync_history)
+               |> refresh_if_grants_changed()}
+            else
+              {:noreply, deny_event_operation(socket, event_id)}
+            end
 
           {:error, _reason} ->
             {:noreply,
-             socket
+             event_operation_status(socket, "Unable to load sync history for this event")
              |> assign(:viewing_sync_history_for, nil)
-             |> assign(:sync_history, [])
-             |> assign(:sync_status, "Unable to load sync history for this event")}
+             |> assign(:sync_history, [])}
         end
 
-      {:error, _reason} ->
-        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
     end
   end
 
   def handle_event("show_sync_history", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
@@ -567,12 +523,13 @@ defmodule FastCheckWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:viewing_sync_history_for, nil)
-     |> assign(:sync_history, [])}
+     |> assign(:sync_history, [])
+     |> refresh_if_grants_changed()}
   end
 
   @impl true
   def handle_event("show_reveal_secret", %{"event_id" => event_id_param}, socket) do
-    case parse_event_id(event_id_param) do
+    case authorized_event_id(socket, event_id_param) do
       {:ok, event_id} ->
         {:noreply,
          socket
@@ -581,15 +538,16 @@ defmodule FastCheckWeb.DashboardLive do
          |> assign(:reveal_no_secret, false)
          |> assign(:reveal_decrypt_error, false)
          |> assign(:reveal_error, nil)
-         |> assign(:reveal_show_plain, false)}
+         |> assign(:reveal_show_plain, false)
+         |> refresh_if_grants_changed()}
 
-      {:error, _} ->
-        {:noreply, assign(socket, :sync_status, "Invalid event identifier")}
+      {:error, :event_denied} ->
+        {:noreply, deny_event_operation(socket, parse_event_id_value(event_id_param))}
     end
   end
 
   def handle_event("show_reveal_secret", _params, socket) do
-    {:noreply, assign(socket, :sync_status, "Missing event identifier")}
+    {:noreply, event_operation_status(socket, "Missing event identifier")}
   end
 
   @impl true
@@ -601,33 +559,52 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:reveal_no_secret, false)
      |> assign(:reveal_decrypt_error, false)
      |> assign(:reveal_error, nil)
-     |> assign(:reveal_show_plain, false)}
+     |> assign(:reveal_show_plain, false)
+     |> refresh_if_grants_changed()}
   end
 
   @impl true
   def handle_event("toggle_reveal_secret_plain", _params, socket) do
-    {:noreply, update(socket, :reveal_show_plain, &(!&1))}
+    if event_granted?(socket, socket.assigns.revealing_event_id) do
+      {:noreply, socket |> update(:reveal_show_plain, &(!&1)) |> refresh_if_grants_changed()}
+    else
+      {:noreply, deny_event_operation(socket, socket.assigns.revealing_event_id)}
+    end
   end
 
   @impl true
   def handle_event("toggle_edit_reveal_secret_plain", _params, socket) do
-    {:noreply, update(socket, :edit_reveal_show_plain, &(!&1))}
+    if event_granted?(socket, socket.assigns.editing_event_id) do
+      {:noreply, socket |> update(:edit_reveal_show_plain, &(!&1)) |> refresh_if_grants_changed()}
+    else
+      {:noreply, deny_event_operation(socket, socket.assigns.editing_event_id)}
+    end
   end
 
   @impl true
   def handle_event("show_edit_reveal_challenge", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:edit_reveal_challenge_active, true)
-     |> assign(:reveal_error, nil)}
+    if event_granted?(socket, socket.assigns.editing_event_id) do
+      {:noreply,
+       socket
+       |> assign(:edit_reveal_challenge_active, true)
+       |> assign(:reveal_error, nil)
+       |> refresh_if_grants_changed()}
+    else
+      {:noreply, deny_event_operation(socket, socket.assigns.editing_event_id)}
+    end
   end
 
   @impl true
   def handle_event("cancel_edit_reveal_challenge", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:edit_reveal_challenge_active, false)
-     |> assign(:reveal_error, nil)}
+    if event_granted?(socket, socket.assigns.editing_event_id) do
+      {:noreply,
+       socket
+       |> assign(:edit_reveal_challenge_active, false)
+       |> assign(:reveal_error, nil)
+       |> refresh_if_grants_changed()}
+    else
+      {:noreply, deny_event_operation(socket, socket.assigns.editing_event_id)}
+    end
   end
 
   @impl true
@@ -637,7 +614,8 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:edit_revealed_secret, nil)
      |> assign(:edit_reveal_show_plain, false)
      |> assign(:edit_reveal_challenge_active, false)
-     |> assign(:reveal_error, nil)}
+     |> assign(:reveal_error, nil)
+     |> refresh_if_grants_changed()}
   end
 
   @impl true
@@ -648,7 +626,8 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:reveal_no_secret, false)
      |> assign(:reveal_decrypt_error, false)
      |> assign(:reveal_show_plain, false)
-     |> assign(:reveal_error, nil)}
+     |> assign(:reveal_error, nil)
+     |> refresh_if_grants_changed()}
   end
 
   @impl true
@@ -670,137 +649,174 @@ defmodule FastCheckWeb.DashboardLive do
 
     case event_id_result do
       {:ok, event_id} ->
-        cond do
-          reveal_locked?(socket, event_id) ->
-            Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=locked")
+        if event_granted?(socket, event_id) do
+          cond do
+            reveal_locked?(socket, event_id) ->
+              Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=locked")
 
-            {:noreply, assign(socket, :reveal_error, reveal_lockout_message())}
+              {:noreply,
+               socket
+               |> assign(:reveal_error, reveal_lockout_message())
+               |> refresh_if_grants_changed()}
 
-          BrowserAuth.valid_admin_password?(admin_password) ->
-            confirm_reveal_secret_authenticated(socket, event_id, source)
+            BrowserAuth.valid_admin_password?(admin_password) ->
+              confirm_reveal_secret_authenticated(socket, event_id, source)
 
-          true ->
-            Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=bad_password")
+            true ->
+              Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=bad_password")
 
-            socket =
-              socket
-              |> record_reveal_failure(event_id)
-              |> assign(:reveal_error, "Incorrect password.")
+              socket =
+                socket
+                |> record_reveal_failure(event_id)
+                |> assign(:reveal_error, "Incorrect password.")
+                |> refresh_if_grants_changed()
 
-            {:noreply, socket}
+              {:noreply, socket}
+          end
+        else
+          {:noreply, deny_event_operation(socket, event_id)}
         end
 
-      {:error, :no_edit_session} ->
-        {:noreply, assign(socket, :reveal_error, "Open the edit dialog for this event first.")}
-
       {:error, _} ->
-        {:noreply, assign(socket, :reveal_error, "Invalid event identifier")}
+        {:noreply, deny_event_operation(socket, nil)}
     end
   end
 
   @impl true
   def handle_event(_event, _params, socket) do
-    {:noreply, socket}
+    {:noreply, refresh_if_grants_changed(socket)}
+  end
+
+  defp start_sync_for_granted_event(socket, event_id, incremental) do
+    socket =
+      socket
+      |> refresh_if_grants_changed()
+      |> clear_stale_sync_runtime()
+
+    if sync_task_running?(socket) do
+      event_operation_status(socket, "A sync is already running for this dashboard")
+    else
+      case start_sync_task(event_id, socket.assigns.dashboard_actor, incremental: incremental) do
+        {:ok, task_meta} ->
+          assign_started_sync(socket, event_id, incremental, task_meta)
+
+        {:error, :event_denied} ->
+          deny_event_operation(socket, event_id)
+      end
+    end
+  end
+
+  defp assign_started_sync(socket, event_id, incremental, task_meta) do
+    sync_type = if incremental, do: "incremental", else: "full"
+
+    socket
+    |> assign(:selected_event_id, event_id)
+    |> assign(:sync_progress, {0, 0, 0})
+    |> assign(:sync_start_time, System.monotonic_time(:second))
+    |> assign(:sync_timing_data, [])
+    |> assign(:sync_paused, false)
+    |> assign(:sync_task_pid, task_meta.pid)
+    |> assign(:sync_task_ref, task_meta.monitor_ref)
+    |> assign(:sync_run_ref, task_meta.run_ref)
+    |> assign(:sync_attempt, 1)
+    |> assign(
+      :sync_status,
+      "Starting #{sync_type} attendee sync (attempt 1/#{@max_sync_attempts})..."
+    )
+    |> refresh_if_grants_changed()
   end
 
   @impl true
   def handle_info({:sync_progress, run_ref, page, total, count}, socket)
       when run_ref == socket.assigns.sync_run_ref do
-    # Track timing data for estimation
-    current_time = System.monotonic_time(:second)
-    start_time = socket.assigns.sync_start_time || current_time
-    elapsed_seconds = current_time - start_time
+    if current_sync_event_granted?(socket) do
+      socket = refresh_if_grants_changed(socket)
+      current_time = System.monotonic_time(:second)
+      start_time = socket.assigns.sync_start_time || current_time
+      elapsed_seconds = current_time - start_time
 
-    # Update timing data (keep last 5 page timings for better accuracy)
-    timing_data =
-      [%{page: page, elapsed: elapsed_seconds} | socket.assigns.sync_timing_data]
-      |> Enum.take(5)
+      timing_data =
+        [%{page: page, elapsed: elapsed_seconds} | socket.assigns.sync_timing_data]
+        |> Enum.take(5)
 
-    # Calculate average time per page
-    avg_time_per_page = calculate_avg_time_per_page(timing_data, page)
+      avg_time_per_page = calculate_avg_time_per_page(timing_data, page)
+      remaining_pages = max(0, (total || 0) - page)
 
-    # Estimate remaining time
-    remaining_pages = max(0, (total || 0) - page)
+      estimated_remaining_seconds =
+        if avg_time_per_page > 0 and remaining_pages > 0 do
+          round(remaining_pages * avg_time_per_page)
+        else
+          nil
+        end
 
-    estimated_remaining_seconds =
-      if avg_time_per_page > 0 and remaining_pages > 0 do
-        round(remaining_pages * avg_time_per_page)
-      else
-        nil
-      end
+      status = progress_status(page, total, count, estimated_remaining_seconds)
 
-    status = progress_status(page, total, count, estimated_remaining_seconds)
-
-    {:noreply,
-     socket
-     |> assign(:sync_progress, {page, total, count})
-     |> assign(:sync_timing_data, timing_data)
-     |> assign(:sync_status, status)}
+      {:noreply,
+       socket
+       |> assign(:sync_progress, {page, total, count})
+       |> assign(:sync_timing_data, timing_data)
+       |> assign(:sync_status, status)}
+    else
+      {:noreply, hide_revoked_sync(socket)}
+    end
   end
 
   @impl true
   def handle_info({:sync_progress, _run_ref, _page, _total, _count}, socket) do
-    {:noreply, socket}
+    {:noreply, refresh_if_grants_changed(socket)}
   end
 
   @impl true
   def handle_info({:sync_retry, run_ref, attempt, max_attempts, reason}, socket)
       when run_ref == socket.assigns.sync_run_ref do
-    next_attempt = min(attempt + 1, max_attempts)
+    if current_sync_event_granted?(socket) do
+      socket = refresh_if_grants_changed(socket)
+      next_attempt = min(attempt + 1, max_attempts)
 
-    {:noreply,
-     socket
-     |> assign(:sync_attempt, next_attempt)
-     |> assign(
-       :sync_status,
-       "Sync attempt #{attempt}/#{max_attempts} failed (#{reason}). Retrying attempt #{next_attempt}/#{max_attempts}..."
-     )}
+      {:noreply,
+       socket
+       |> assign(:sync_attempt, next_attempt)
+       |> assign(
+         :sync_status,
+         "Sync attempt #{attempt}/#{max_attempts} failed (#{reason}). Retrying attempt #{next_attempt}/#{max_attempts}..."
+       )}
+    else
+      {:noreply, hide_revoked_sync(socket)}
+    end
   end
 
   @impl true
   def handle_info({:sync_retry, _run_ref, _attempt, _max_attempts, _reason}, socket) do
-    {:noreply, socket}
+    {:noreply, refresh_if_grants_changed(socket)}
   end
 
   @impl true
   def handle_info({:sync_error, run_ref, message}, socket)
       when run_ref == socket.assigns.sync_run_ref do
-    refreshed_events = Events.list_events()
-
-    {:noreply,
-     socket
-     |> maybe_demonitor_sync_task()
-     |> assign(:events, refreshed_events)
-     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-     |> reset_sync_runtime()
-     |> assign(:sync_status, "Sync failed: #{message}")
-     |> assign(:selected_event_id, nil)}
+    if current_sync_event_granted?(socket) do
+      {:noreply, finish_sync(socket, "Sync failed: #{message}")}
+    else
+      {:noreply, hide_revoked_sync(socket)}
+    end
   end
 
   @impl true
   def handle_info({:sync_error, _run_ref, _message}, socket) do
-    {:noreply, socket}
+    {:noreply, refresh_if_grants_changed(socket)}
   end
 
   @impl true
   def handle_info({:sync_error, message}, socket) do
-    refreshed_events = Events.list_events()
-
-    {:noreply,
-     socket
-     |> maybe_demonitor_sync_task()
-     |> assign(:events, refreshed_events)
-     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-     |> reset_sync_runtime()
-     |> assign(:sync_status, "Sync failed: #{message}")
-     |> assign(:selected_event_id, nil)}
+    if current_sync_event_granted?(socket) do
+      {:noreply, finish_sync(socket, "Sync failed: #{message}")}
+    else
+      {:noreply, finish_sync(socket, "Event is unavailable.")}
+    end
   end
 
   @impl true
   def handle_info({:sync_complete, run_ref, message}, socket)
       when run_ref == socket.assigns.sync_run_ref do
-    refreshed_events = Events.list_events()
-
     final_status =
       case socket.assigns.sync_status do
         nil -> message || "Sync complete!"
@@ -808,19 +824,12 @@ defmodule FastCheckWeb.DashboardLive do
         _ -> message || "Sync complete!"
       end
 
-    {:noreply,
-     socket
-     |> maybe_demonitor_sync_task()
-     |> assign(:events, refreshed_events)
-     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-     |> reset_sync_runtime()
-     |> assign(:sync_status, final_status)
-     |> assign(:selected_event_id, nil)}
+    {:noreply, finish_sync(socket, final_status)}
   end
 
   @impl true
   def handle_info({:sync_complete, _run_ref, _message}, socket) do
-    {:noreply, socket}
+    {:noreply, refresh_if_grants_changed(socket)}
   end
 
   @impl true
@@ -831,49 +840,54 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_info({:sync_complete, _run_ref}, socket) do
-    {:noreply, socket}
+    {:noreply, refresh_if_grants_changed(socket)}
   end
 
   @impl true
   def handle_info(:sync_complete, socket) do
-    refreshed_events = Events.list_events()
-
-    {:noreply,
-     socket
-     |> maybe_demonitor_sync_task()
-     |> assign(:events, refreshed_events)
-     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-     |> reset_sync_runtime()
-     |> assign(:sync_status, "Sync complete!")
-     |> assign(:selected_event_id, nil)}
+    if current_sync_event_granted?(socket) do
+      {:noreply, finish_sync(socket, "Sync complete!")}
+    else
+      {:noreply, finish_sync(socket, "Event is unavailable.")}
+    end
   end
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, socket)
       when ref == socket.assigns.sync_task_ref do
-    refreshed_events = Events.list_events()
     selected_event_id = socket.assigns.selected_event_id
 
-    status_message =
-      case reason do
-        :normal ->
-          socket.assigns.sync_status || "Sync complete!"
+    if event_granted?(socket, selected_event_id) do
+      status_message =
+        case reason do
+          :normal ->
+            socket.assigns.sync_status || "Sync complete!"
 
-        _ ->
-          if is_integer(selected_event_id) do
+          _ ->
             Events.force_reset_sync(selected_event_id, {:worker_exit, reason})
-          end
+            "Sync failed: worker exited unexpectedly (#{inspect(reason)})"
+        end
 
-          "Sync failed: worker exited unexpectedly (#{inspect(reason)})"
-      end
+      {:noreply, finish_sync(socket, status_message)}
+    else
+      {:noreply, finish_sync(socket, "Event is unavailable.")}
+    end
+  end
 
-    {:noreply,
-     socket
-     |> assign(:events, refreshed_events)
-     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-     |> reset_sync_runtime()
-     |> assign(:sync_status, status_message)
-     |> assign(:selected_event_id, nil)}
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, socket) do
+    {:noreply, refresh_if_grants_changed(socket)}
+  end
+
+  @impl true
+  def handle_info({:sync_revoked, run_ref}, socket)
+      when run_ref == socket.assigns.sync_run_ref do
+    {:noreply, finish_sync(socket, "Event is unavailable.")}
+  end
+
+  @impl true
+  def handle_info({:sync_revoked, _run_ref}, socket) do
+    {:noreply, refresh_if_grants_changed(socket)}
   end
 
   @impl true
@@ -906,6 +920,7 @@ defmodule FastCheckWeb.DashboardLive do
           </div>
 
           <.button
+            :if={event_creation_enabled?()}
             id="show-new-event-form-button"
             type="button"
             phx-click="show_new_event_form"
@@ -941,7 +956,7 @@ defmodule FastCheckWeb.DashboardLive do
         </.card>
 
         <.card
-          :if={@show_new_event_form}
+          :if={@show_new_event_form and event_creation_enabled?()}
           variant="outline"
           color="natural"
           rounded="large"
@@ -1044,27 +1059,6 @@ defmodule FastCheckWeb.DashboardLive do
                 </div>
               </details>
 
-              <div class="md:col-span-2 space-y-2 rounded-xl border border-fc-border-default dark:border-glass-border p-4">
-                <.input
-                  id="create-event-enable-whatsapp-sales"
-                  name="event[enable_whatsapp_sales]"
-                  type="checkbox"
-                  label="Enable WhatsApp sales for this event"
-                  value="true"
-                  checked={
-                    @create_enable_whatsapp_sales_checked ||
-                      create_enable_whatsapp_sales_checked?(@form)
-                  }
-                  errors={[]}
-                />
-                <p class="text-xs text-fc-text-muted">
-                  Disabled events will not appear in WhatsApp ticket-buying menus.
-                </p>
-                <p class="text-xs text-fc-text-muted">
-                  Enabling WhatsApp sales does not make the event available until it has an active sellable WhatsApp ticket offer.
-                </p>
-              </div>
-
               <div class="md:col-span-2 flex flex-wrap items-center gap-3">
                 <.button
                   id="create-event-button"
@@ -1073,7 +1067,7 @@ defmodule FastCheckWeb.DashboardLive do
                   variant="shadow"
                   phx-disable-with="Creating..."
                 >
-                  Create event and start sync
+                  Create event
                 </.button>
 
                 <.button
@@ -2228,63 +2222,13 @@ defmodule FastCheckWeb.DashboardLive do
        when is_map(params) and is_binary(default_site_url) do
     params =
       default_create_event_params(default_site_url)
-      |> Map.merge(stringify_form_keys(params))
-      |> Map.drop(["enable_whatsapp_sales"])
-      |> maybe_put_enable_whatsapp_sales_form_param(params)
+      |> Map.merge(
+        params
+        |> Map.drop(["enable_whatsapp_sales", :enable_whatsapp_sales])
+        |> stringify_form_keys()
+      )
 
     to_form(params, as: :event)
-  end
-
-  defp pop_create_enable_whatsapp_sales(params) when is_map(params) do
-    enable? = create_enable_whatsapp_sales_requested?(params)
-    create_params = Map.drop(params, ["enable_whatsapp_sales"])
-    {enable?, create_params}
-  end
-
-  defp create_enable_whatsapp_sales_requested?(params) when is_map(params) do
-    case Map.get(params, "enable_whatsapp_sales") do
-      true -> true
-      "true" -> true
-      "on" -> true
-      _ -> false
-    end
-  end
-
-  defp create_enable_whatsapp_sales_checked?(form) do
-    case safe_form_value(form, :enable_whatsapp_sales) do
-      true -> true
-      "true" -> true
-      "on" -> true
-      _ -> false
-    end
-  end
-
-  defp maybe_put_enable_whatsapp_sales_form_param(form_params, source_params)
-       when is_map(form_params) and is_map(source_params) do
-    if create_enable_whatsapp_sales_requested?(source_params) do
-      Map.put(form_params, "enable_whatsapp_sales", "true")
-    else
-      form_params
-    end
-  end
-
-  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, false, _actor), do: {event, ""}
-
-  defp maybe_enable_whatsapp_sales_after_create(%Event{} = event, true, actor) do
-    case Events.enable_whatsapp_sales_for_dashboard(actor, event.id) do
-      {:ok, enabled_event} ->
-        {enabled_event, ""}
-
-      {:error, :forbidden} ->
-        {event,
-         " WhatsApp Sales remains disabled. A server-side event grant is required before it can be enabled."}
-
-      {:error, reason} ->
-        warning =
-          " Warning: this event was created, but WhatsApp sales could not be enabled and remain disabled (#{whatsapp_sales_error_message(reason)})."
-
-        {event, warning}
-    end
   end
 
   defp build_edit_form(%Event{} = event) do
@@ -2301,12 +2245,43 @@ defmodule FastCheckWeb.DashboardLive do
 
   defp parse_event_id(event_id) when is_binary(event_id) do
     case Integer.parse(event_id) do
-      {value, _} -> {:ok, value}
+      {value, ""} -> {:ok, value}
       :error -> {:error, "Invalid event identifier"}
+      _ -> {:error, "Invalid event identifier"}
     end
   end
 
   defp parse_event_id(_), do: {:error, "Invalid event identifier"}
+
+  defp parse_event_id_value(event_id) do
+    case parse_event_id(event_id) do
+      {:ok, id} -> id
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp authorized_event_id(socket, event_id) do
+    with {:ok, id} <- parse_event_id(event_id),
+         true <- event_granted?(socket, id) do
+      {:ok, id}
+    else
+      _ -> {:error, :event_denied}
+    end
+  end
+
+  defp event_granted?(socket, event_id) do
+    DashboardAccess.event_granted?(socket.assigns.dashboard_actor, event_id)
+  end
+
+  defp current_sync_event_granted?(socket) do
+    event_granted?(socket, socket.assigns.selected_event_id)
+  end
+
+  defp event_creation_enabled? do
+    Application.get_env(:fastcheck, :dashboard_auth, %{})
+    |> Map.get(:event_creation_enabled, false)
+    |> Kernel.==(true)
+  end
 
   defp reveal_rate_limit_window_ms do
     Application.get_env(:fastcheck, :dashboard_reveal_rate_limit_window_ms, 60_000)
@@ -2380,9 +2355,34 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp confirm_reveal_secret_authenticated(socket, event_id, source) do
-    event = Events.get_event!(event_id)
+    if event_granted?(socket, event_id) do
+      event = Events.get_event!(event_id)
 
-    case Events.reveal_mobile_access_secret(event) do
+      if event_granted?(socket, event_id) do
+        reveal_secret_for_event(socket, event_id, source, event)
+      else
+        {:noreply, deny_event_operation(socket, event_id)}
+      end
+    else
+      {:noreply, deny_event_operation(socket, event_id)}
+    end
+  rescue
+    Ecto.NoResultsError ->
+      {:noreply, assign(socket, :reveal_error, "Event is unavailable.")}
+  end
+
+  defp reveal_secret_for_event(socket, event_id, source, event) do
+    result = Events.reveal_mobile_access_secret(event)
+
+    if event_granted?(socket, event_id) do
+      assign_secret_result(socket, event_id, source, result)
+    else
+      {:noreply, deny_event_operation(socket, event_id)}
+    end
+  end
+
+  defp assign_secret_result(socket, event_id, source, result) do
+    case result do
       {:ok, secret} ->
         Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=ok")
 
@@ -2407,7 +2407,7 @@ defmodule FastCheckWeb.DashboardLive do
               |> assign(:reveal_show_plain, false)
           end
 
-        {:noreply, socket}
+        {:noreply, refresh_if_grants_changed(socket)}
 
       {:error, :missing_secret} ->
         Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=missing")
@@ -2434,7 +2434,7 @@ defmodule FastCheckWeb.DashboardLive do
               |> assign(:reveal_decrypt_error, false)
           end
 
-        {:noreply, socket}
+        {:noreply, refresh_if_grants_changed(socket)}
 
       {:error, :decrypt_failed} ->
         Logger.info("admin scanner_secret_reveal event_id=#{event_id} outcome=decrypt_failed")
@@ -2459,11 +2459,8 @@ defmodule FastCheckWeb.DashboardLive do
               |> assign(:reveal_error, nil)
           end
 
-        {:noreply, socket}
+        {:noreply, refresh_if_grants_changed(socket)}
     end
-  rescue
-    Ecto.NoResultsError ->
-      {:noreply, assign(socket, :reveal_error, "Event not found")}
   end
 
   defp fetch_event_for_edit(event_id) do
@@ -2552,35 +2549,41 @@ defmodule FastCheckWeb.DashboardLive do
     end
   end
 
-  defp start_sync_task(event_id, opts) do
-    parent = self()
-    caller = self()
-    incremental = Keyword.get(opts, :incremental, false)
-    max_attempts = Keyword.get(opts, :max_attempts, @max_sync_attempts)
-    attempt_timeout_ms = Keyword.get(opts, :attempt_timeout_ms, @sync_attempt_timeout_ms)
-    run_ref = make_ref()
+  defp start_sync_task(event_id, dashboard_actor, opts) do
+    if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+      parent = self()
+      caller = self()
+      incremental = Keyword.get(opts, :incremental, false)
+      max_attempts = Keyword.get(opts, :max_attempts, @max_sync_attempts)
+      attempt_timeout_ms = Keyword.get(opts, :attempt_timeout_ms, @sync_attempt_timeout_ms)
+      run_ref = make_ref()
 
-    {:ok, pid} =
-      Task.start(fn ->
-        maybe_allow_sandbox_connection(caller)
+      {:ok, pid} =
+        Task.start(fn ->
+          maybe_allow_sandbox_connection(caller)
 
-        run_sync_with_retries(
-          parent,
-          run_ref,
-          event_id,
-          incremental,
-          max_attempts,
-          attempt_timeout_ms
-        )
-      end)
+          run_sync_with_retries(
+            parent,
+            run_ref,
+            event_id,
+            dashboard_actor,
+            incremental,
+            max_attempts,
+            attempt_timeout_ms
+          )
+        end)
 
-    {:ok, %{pid: pid, monitor_ref: Process.monitor(pid), run_ref: run_ref}}
+      {:ok, %{pid: pid, monitor_ref: Process.monitor(pid), run_ref: run_ref}}
+    else
+      {:error, :event_denied}
+    end
   end
 
   defp run_sync_with_retries(
          parent,
          run_ref,
          event_id,
+         dashboard_actor,
          incremental,
          max_attempts,
          attempt_timeout_ms
@@ -2589,6 +2592,7 @@ defmodule FastCheckWeb.DashboardLive do
       parent,
       run_ref,
       event_id,
+      dashboard_actor,
       incremental,
       1,
       max_attempts,
@@ -2596,87 +2600,161 @@ defmodule FastCheckWeb.DashboardLive do
     )
   rescue
     exception ->
-      Events.force_reset_sync(event_id, {:retry_worker_exception, exception})
-      send(parent, {:sync_error, run_ref, "Sync worker crashed: #{Exception.message(exception)}"})
-      send(parent, {:sync_complete, run_ref})
+      report_sync_worker_failure(
+        parent,
+        run_ref,
+        event_id,
+        dashboard_actor,
+        {:retry_worker_exception, exception},
+        "Sync worker crashed: #{Exception.message(exception)}"
+      )
   catch
     kind, reason ->
-      Events.force_reset_sync(event_id, {:retry_worker_throw, {kind, reason}})
-      send(parent, {:sync_error, run_ref, "Sync worker crashed: #{inspect({kind, reason})}"})
-      send(parent, {:sync_complete, run_ref})
+      report_sync_worker_failure(
+        parent,
+        run_ref,
+        event_id,
+        dashboard_actor,
+        {:retry_worker_throw, {kind, reason}},
+        "Sync worker crashed: #{inspect({kind, reason})}"
+      )
   end
 
   defp do_run_sync_attempt(
          parent,
          run_ref,
          event_id,
+         dashboard_actor,
          incremental,
          attempt,
          max_attempts,
          attempt_timeout_ms
        ) do
-    case run_sync_attempt(event_id, incremental, parent, run_ref, attempt_timeout_ms) do
-      {:ok, message} ->
-        send(parent, {:sync_complete, run_ref, message})
+    if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+      case run_sync_attempt(
+             event_id,
+             dashboard_actor,
+             incremental,
+             parent,
+             run_ref,
+             attempt_timeout_ms
+           ) do
+        {:ok, message} ->
+          send(parent, {:sync_complete, run_ref, message})
 
-      {:error, reason} when attempt < max_attempts ->
-        Events.force_reset_sync(event_id, {:retrying_after_error, reason})
+        {:error, :event_denied} ->
+          send(parent, {:sync_revoked, run_ref})
 
-        send(
-          parent,
-          {:sync_retry, run_ref, attempt, max_attempts, shorten_reason(format_error(reason))}
-        )
+        {:error, reason} when attempt < max_attempts ->
+          if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+            Events.force_reset_sync(event_id, {:retrying_after_error, reason})
 
-        do_run_sync_attempt(
-          parent,
-          run_ref,
-          event_id,
-          incremental,
-          attempt + 1,
-          max_attempts,
-          attempt_timeout_ms
-        )
+            send(
+              parent,
+              {:sync_retry, run_ref, attempt, max_attempts, shorten_reason(format_error(reason))}
+            )
 
-      {:error, reason} ->
-        Events.force_reset_sync(event_id, {:final_failure, reason})
+            do_run_sync_attempt(
+              parent,
+              run_ref,
+              event_id,
+              dashboard_actor,
+              incremental,
+              attempt + 1,
+              max_attempts,
+              attempt_timeout_ms
+            )
+          else
+            send(parent, {:sync_revoked, run_ref})
+          end
 
-        send(
-          parent,
-          {:sync_error, run_ref,
-           "Failed to sync after #{max_attempts} attempts: #{shorten_reason(format_error(reason))}"}
-        )
+        {:error, reason} ->
+          if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+            Events.force_reset_sync(event_id, {:final_failure, reason})
 
-        send(parent, {:sync_complete, run_ref})
+            send(
+              parent,
+              {:sync_error, run_ref,
+               "Failed to sync after #{max_attempts} attempts: #{shorten_reason(format_error(reason))}"}
+            )
+
+            send(parent, {:sync_complete, run_ref})
+          else
+            send(parent, {:sync_revoked, run_ref})
+          end
+      end
+    else
+      send(parent, {:sync_revoked, run_ref})
     end
   end
 
-  defp run_sync_attempt(event_id, incremental, parent, run_ref, attempt_timeout_ms) do
-    caller = self()
-    attempt_ref = make_ref()
+  defp report_sync_worker_failure(
+         parent,
+         run_ref,
+         event_id,
+         dashboard_actor,
+         reset_reason,
+         message
+       ) do
+    if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+      Events.force_reset_sync(event_id, reset_reason)
+      send(parent, {:sync_error, run_ref, message})
+      send(parent, {:sync_complete, run_ref})
+    else
+      send(parent, {:sync_revoked, run_ref})
+    end
+  end
 
-    {:ok, pid} =
-      Task.start(fn ->
-        result =
-          try do
-            Events.sync_event(
-              event_id,
-              fn page, total, count ->
-                send(caller, {:attempt_progress, attempt_ref, page, total, count})
-              end,
-              incremental: incremental
-            )
-          rescue
-            exception -> {:error, Exception.message(exception)}
-          catch
-            :throw, {:sync_cancelled, ^event_id} -> {:error, "Sync cancelled"}
-            kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-          end
+  defp run_sync_attempt(
+         event_id,
+         dashboard_actor,
+         incremental,
+         parent,
+         run_ref,
+         attempt_timeout_ms
+       ) do
+    if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+      caller = self()
+      attempt_ref = make_ref()
 
-        send(caller, {:attempt_result, attempt_ref, result})
-      end)
+      {:ok, pid} =
+        Task.start(fn ->
+          result =
+            if DashboardAccess.event_granted?(dashboard_actor, event_id) do
+              try do
+                Events.sync_event(
+                  event_id,
+                  fn page, total, count ->
+                    send(caller, {:attempt_progress, attempt_ref, page, total, count})
+                  end,
+                  incremental: incremental
+                )
+              rescue
+                exception -> {:error, Exception.message(exception)}
+              catch
+                :throw, {:sync_cancelled, ^event_id} -> {:error, "Sync cancelled"}
+                kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+              end
+            else
+              {:error, :event_denied}
+            end
 
-    monitor_ref = Process.monitor(pid)
-    await_sync_attempt_result(parent, run_ref, pid, monitor_ref, attempt_ref, attempt_timeout_ms)
+          send(caller, {:attempt_result, attempt_ref, result})
+        end)
+
+      monitor_ref = Process.monitor(pid)
+
+      await_sync_attempt_result(
+        parent,
+        run_ref,
+        pid,
+        monitor_ref,
+        attempt_ref,
+        attempt_timeout_ms
+      )
+    else
+      {:error, :event_denied}
+    end
   end
 
   defp await_sync_attempt_result(
@@ -2954,15 +3032,43 @@ defmodule FastCheckWeb.DashboardLive do
   defp whatsapp_sales_error_message(reason), do: format_error(reason)
 
   defp refresh_events(socket, status) do
-    refreshed_events = Events.list_events()
+    socket
+    |> refresh_event_list()
+    |> assign(:sync_status, status)
+  end
 
-    socket =
+  defp refresh_event_list(socket) do
+    refreshed_events =
+      socket.assigns.dashboard_actor
+      |> DashboardAccess.allowed_event_ids()
+      |> Events.list_events_by_ids()
+
+    visible_event_ids = MapSet.new(refreshed_events, & &1.id)
+
+    socket
+    |> assign(:events, refreshed_events)
+    |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
+    |> refresh_editing_event(refreshed_events)
+    |> clear_revoked_reveal_state(visible_event_ids)
+    |> clear_revoked_history_state(visible_event_ids)
+    |> hide_revoked_sync_state(visible_event_ids)
+  end
+
+  defp refresh_if_grants_changed(socket) do
+    granted_event_ids = DashboardAccess.allowed_event_ids(socket.assigns.dashboard_actor)
+    assigned_event_ids = Enum.map(socket.assigns.events, & &1.id) |> Enum.sort()
+
+    if assigned_event_ids == granted_event_ids do
       socket
-      |> assign(:events, refreshed_events)
-      |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
-      |> assign(:sync_status, status)
+    else
+      refresh_event_list(socket)
+    end
+  end
 
-    refresh_editing_event(socket, refreshed_events)
+  defp event_operation_status(socket, status) do
+    socket
+    |> refresh_if_grants_changed()
+    |> assign(:sync_status, status)
   end
 
   defp refresh_editing_event(socket, refreshed_events) when is_list(refreshed_events) do
@@ -2973,8 +3079,156 @@ defmodule FastCheckWeb.DashboardLive do
       event_id ->
         case Enum.find(refreshed_events, &(&1.id == event_id)) do
           %Event{} = event -> assign(socket, :editing_event, event)
-          _ -> socket
+          _ -> clear_editing_state(socket)
         end
+    end
+  end
+
+  defp clear_editing_state(socket) do
+    socket
+    |> assign(:editing_event_id, nil)
+    |> assign(:editing_event, nil)
+    |> assign(:edit_form, nil)
+    |> assign(:edit_revealed_secret, nil)
+    |> assign(:edit_reveal_show_plain, false)
+    |> assign(:edit_reveal_challenge_active, false)
+  end
+
+  defp clear_revoked_reveal_state(socket, visible_event_ids) do
+    case socket.assigns.revealing_event_id do
+      event_id when is_integer(event_id) ->
+        if MapSet.member?(visible_event_ids, event_id) do
+          socket
+        else
+          socket
+          |> assign(:revealing_event_id, nil)
+          |> assign(:revealed_secret, nil)
+          |> assign(:reveal_no_secret, false)
+          |> assign(:reveal_decrypt_error, false)
+          |> assign(:reveal_show_plain, false)
+          |> assign(:reveal_error, nil)
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp clear_revoked_history_state(socket, visible_event_ids) do
+    case socket.assigns.viewing_sync_history_for do
+      event_id when is_integer(event_id) ->
+        if MapSet.member?(visible_event_ids, event_id) do
+          socket
+        else
+          socket
+          |> assign(:viewing_sync_history_for, nil)
+          |> assign(:sync_history, [])
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp hide_revoked_sync_state(socket, visible_event_ids) do
+    case socket.assigns.selected_event_id do
+      event_id when is_integer(event_id) ->
+        if MapSet.member?(visible_event_ids, event_id) do
+          socket
+        else
+          socket
+          |> assign(:sync_progress, nil)
+          |> assign(:sync_timing_data, [])
+          |> assign(:sync_status, "Event is unavailable.")
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp hide_revoked_sync(socket) do
+    socket
+    |> clear_event_ui_state(socket.assigns.selected_event_id)
+    |> refresh_event_list()
+    |> assign(:sync_progress, nil)
+    |> assign(:sync_timing_data, [])
+    |> assign(:sync_status, "Event is unavailable.")
+  end
+
+  defp finish_sync(socket, status) do
+    socket =
+      socket
+      |> maybe_demonitor_sync_task()
+      |> reset_sync_runtime()
+      |> refresh_event_list()
+
+    final_status =
+      if event_granted?(socket, socket.assigns.selected_event_id),
+        do: status,
+        else: "Event is unavailable."
+
+    assign(socket, :sync_status, final_status)
+    |> assign(:selected_event_id, nil)
+  end
+
+  defp deny_event_operation(socket, event_id) do
+    socket
+    |> clear_event_ui_state(event_id)
+    |> refresh_event_list()
+    |> assign(:sync_status, "Event is unavailable.")
+  end
+
+  defp clear_event_ui_state(socket, nil) do
+    socket
+    |> clear_editing_state()
+    |> assign(:revealing_event_id, nil)
+    |> assign(:revealed_secret, nil)
+    |> assign(:reveal_no_secret, false)
+    |> assign(:reveal_decrypt_error, false)
+    |> assign(:reveal_show_plain, false)
+    |> assign(:reveal_error, nil)
+    |> assign(:viewing_sync_history_for, nil)
+    |> assign(:sync_history, [])
+  end
+
+  defp clear_event_ui_state(socket, event_id) do
+    socket =
+      if socket.assigns.editing_event_id == event_id do
+        clear_editing_state(socket)
+      else
+        socket
+      end
+
+    socket =
+      if socket.assigns.revealing_event_id == event_id do
+        socket
+        |> assign(:revealing_event_id, nil)
+        |> assign(:revealed_secret, nil)
+        |> assign(:reveal_no_secret, false)
+        |> assign(:reveal_decrypt_error, false)
+        |> assign(:reveal_error, nil)
+        |> assign(:reveal_show_plain, false)
+      else
+        socket
+      end
+
+    socket =
+      if socket.assigns.viewing_sync_history_for == event_id do
+        socket
+        |> assign(:viewing_sync_history_for, nil)
+        |> assign(:sync_history, [])
+      else
+        socket
+      end
+
+    if socket.assigns.selected_event_id == event_id do
+      socket
+      |> assign(:sync_progress, nil)
+      |> assign(:sync_timing_data, [])
+      |> assign(:sync_status, "Event is unavailable.")
+    else
+      socket
     end
   end
 
