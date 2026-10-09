@@ -107,14 +107,62 @@ defmodule FastCheck.Events.SyncRunR0ExpandTest do
     end
   end
 
-  test "lease recovery index covers expiry and id for active leased rows only" do
-    assert [[indexdef]] =
+  test "sync_run_id index is valid and ready" do
+    assert [[indexdef, true, true]] =
              Repo.query!("""
-             SELECT indexdef
-             FROM pg_indexes
-             WHERE schemaname = 'public'
-               AND tablename = 'sync_logs'
-               AND indexname = 'sync_logs_active_lease_expiry_index'
+             SELECT pg_get_indexdef(index_row.oid), index_state.indisvalid, index_state.indisready
+             FROM pg_class AS table_row
+             JOIN pg_namespace AS schema_row ON schema_row.oid = table_row.relnamespace
+             JOIN pg_index AS index_state ON index_state.indrelid = table_row.oid
+             JOIN pg_class AS index_row ON index_row.oid = index_state.indexrelid
+             WHERE schema_row.nspname = 'public'
+               AND table_row.relname = 'sync_logs'
+               AND index_row.relname = 'sync_logs_sync_run_id_unique_index'
+             """).rows
+
+    normalized = String.downcase(indexdef)
+    assert normalized =~ "create unique index"
+    assert normalized =~ "(sync_run_id)"
+    assert normalized =~ "where (sync_run_id is not null)"
+  end
+
+  test "concurrent indexes use separate migrations without disabling migration locking" do
+    index_migrations =
+      Path.wildcard("priv/repo/migrations/*sync_run*index*.exs")
+      |> Map.new(fn path -> {path, File.read!(path)} end)
+
+    sync_run_migrations =
+      Enum.filter(index_migrations, fn {_path, contents} ->
+        contents =~ "sync_logs_sync_run_id_unique_index"
+      end)
+
+    lease_migrations =
+      Enum.filter(index_migrations, fn {_path, contents} ->
+        contents =~ "sync_logs_active_lease_expiry_index"
+      end)
+
+    assert [{sync_run_path, sync_run_contents}] = sync_run_migrations
+    assert [{lease_path, lease_contents}] = lease_migrations
+    refute sync_run_path == lease_path
+
+    for contents <- [sync_run_contents, lease_contents] do
+      assert contents =~ "@disable_ddl_transaction true"
+      refute contents =~ "@disable_migration_lock true"
+      refute contents =~ "IF NOT EXISTS"
+    end
+  end
+
+  test "lease recovery index covers expiry and id for active leased rows only" do
+    assert [[indexdef, true, true]] =
+             Repo.query!("""
+             SELECT pg_get_indexdef(index_row.oid), index_state.indisvalid, index_state.indisready
+             FROM pg_class AS table_row
+             JOIN pg_namespace AS schema_row ON schema_row.oid = table_row.relnamespace
+             JOIN pg_index AS index_state ON index_state.indrelid = table_row.oid
+             JOIN pg_class AS index_row ON index_row.oid = index_state.indexrelid
+             WHERE schema_row.nspname = 'public'
+               AND table_row.relname = 'sync_logs'
+               AND index_row.relname = 'sync_logs_active_lease_expiry_index'
              """).rows
 
     normalized = String.downcase(indexdef)
