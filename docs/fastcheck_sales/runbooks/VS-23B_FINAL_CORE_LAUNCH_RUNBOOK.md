@@ -188,8 +188,13 @@ DB and runtime posture:
 
 ## Secure Ticket Page Checklist
 
-- Confirm secure ticket links resolve through `GET /t/:token`.
-- Confirm a valid delivery token renders the expected ticket page.
+Evidence: [P1E Secure Ticket Ingress Evidence](P1E_SECURE_TICKET_INGRESS_EVIDENCE.md).
+
+- Confirm delivered links use `/t#<delivery-token>`.
+- Confirm `GET /t` is bootstrap-only (no bearer in request target).
+- Confirm fragment exchange `POST`s to `/t/session`.
+- Confirm successful exchange resolves to `/t/view/:ticket_issue_id`.
+- Confirm legacy `/t/:token` and `/t/:token/pdf` return terminal rejection.
 - Confirm expired, revoked, or invalid tokens do not expose a valid ticket.
 - Confirm token hashes are not rendered in HTML.
 - Confirm ticket page behavior after revocation/refund shows no valid scannable

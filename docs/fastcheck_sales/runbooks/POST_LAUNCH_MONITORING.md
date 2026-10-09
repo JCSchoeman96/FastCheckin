@@ -8,10 +8,12 @@ not Event-scoped; `/dashboard/sales/ops` remains limited to Event-attributable
 Sales metrics.
 
 P1-F query-plan evidence and runbook rehearsal are complete, and the P1-F
-implementation/evidence blocker is cleared. P1-E remains independent and open.
-These results do not clear every production launch gate. Verify live monitoring
-and all other launch checks for the actual environment. Do not use ad-hoc SQL as
-a workaround.
+implementation/evidence blocker is cleared. P1-E secure-ticket ingress evidence
+is complete and the implementation/evidence blocker is cleared
+([P1E Secure Ticket Ingress Evidence](P1E_SECURE_TICKET_INGRESS_EVIDENCE.md)).
+This does not clear unrelated environment/provider/runtime launch checks. Verify
+live monitoring and all other launch checks for the actual environment. Do not
+use ad-hoc SQL as a workaround.
 
 ## First Hour
 
@@ -91,4 +93,4 @@ At least hourly during the first day:
 P1F_QUERY_PLAN_EVIDENCE=PASS
 P1F_RUNBOOK_REHEARSAL=PASS
 P1F_GLOBAL_OBAN_BLOCKER=CLEARED
-P1E_INGRESS_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=CLEARED

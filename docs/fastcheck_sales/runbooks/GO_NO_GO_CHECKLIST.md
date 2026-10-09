@@ -109,10 +109,16 @@
 
 ## Secure Ticket Page
 
-- [ ] Valid secure ticket link opens through `GET /t/:token`.
-- [ ] Expired token does not expose a valid ticket.
-- [ ] Revoked ticket link does not expose a valid scannable ticket.
-- [ ] Internal token hashes are not rendered.
+Evidence: [P1E Secure Ticket Ingress Evidence](P1E_SECURE_TICKET_INGRESS_EVIDENCE.md).
+
+- [ ] WhatsApp/customer ticket link uses `/t#<delivery-token>`.
+- [ ] `GET /t` bootstrap loads without bearer in request target.
+- [ ] `POST /t/session` exchanges the fragment bearer.
+- [ ] Successful exchange routes to `/t/view/:ticket_issue_id`.
+- [ ] Legacy `/t/:token` is terminal 404 rejection.
+- [ ] Expired/revoked ticket cannot authorize artifact.
+- [ ] Token/hash material is not rendered or logged.
+- [x] P1E production ingress evidence is complete.
 
 ## Scanner/Mobile
 
@@ -181,4 +187,4 @@
 P1F_QUERY_PLAN_EVIDENCE=PASS
 P1F_RUNBOOK_REHEARSAL=PASS
 P1F_GLOBAL_OBAN_BLOCKER=CLEARED
-P1E_INGRESS_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=CLEARED

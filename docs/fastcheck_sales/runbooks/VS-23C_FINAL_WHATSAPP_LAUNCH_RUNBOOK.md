@@ -130,8 +130,13 @@ WhatsApp-specific immediate responses:
 - [ ] Payment link is sent by `SendWhatsAppPaymentLinkWorker`.
 - [ ] Paystack payment verifies server-side.
 - [ ] Ticket is issued by backend issuer path.
-- [ ] Ticket link is sent by `SendWhatsAppTicketLinkWorker`.
-- [ ] Secure ticket page opens through `GET /t/:token`.
+- [ ] Ticket link is sent by `SendWhatsAppTicketLinkWorker` using
+  `/t#<delivery-token>`.
+- [ ] Browser bootstrap requests `/t` without bearer in request target.
+- [ ] Browser exchanges token through `POST /t/session`.
+- [ ] Successful authorization opens `/t/view/:ticket_issue_id`.
+- [ ] P1E production ingress evidence is complete
+  ([P1E Secure Ticket Ingress Evidence](P1E_SECURE_TICKET_INGRESS_EVIDENCE.md)).
 - [ ] Mobile sync sees issued attendee.
 - [ ] Scanner accepts valid issued ticket.
 - [ ] Revoked/refunded ticket is denied by scanner.
