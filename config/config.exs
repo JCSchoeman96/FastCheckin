@@ -15,6 +15,8 @@ config :fastcheck,
   ash_domains: [FastCheck.Sales],
   generators: [timestamp_type: :utc_datetime]
 
+config :fastcheck, FastCheck.Repo, migration_lock: :pg_advisory_lock
+
 # `GET /api/v1/mobile/attendees`: use :repeatable_read so invalidations + attendees + version
 # share one DB snapshot. Tests use :none (Ecto Sandbox nested transactions cannot always SET TRANSACTION).
 config :fastcheck, :mobile_sync_snapshot_isolation, :repeatable_read

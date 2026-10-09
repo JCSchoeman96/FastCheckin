@@ -33,12 +33,32 @@ defmodule FastCheck.Release do
 
   def migration_repo_config(repo_config, migration_database_url)
 
-  def migration_repo_config(repo_config, nil), do: repo_config
-  def migration_repo_config(repo_config, ""), do: repo_config
+  def migration_repo_config(repo_config, migration_database_url),
+    do: migration_repo_config(repo_config, migration_database_url, :direct)
 
-  def migration_repo_config(repo_config, migration_database_url) do
-    Keyword.put(repo_config, :url, migration_database_url)
+  def migration_repo_config(repo_config, migration_database_url, pooling_mode) do
+    migration_database_url = normalize_migration_database_url(migration_database_url)
+
+    if pooling_mode in [:pgbouncer_transaction, :pgbouncer_session] and
+         is_nil(migration_database_url) do
+      raise ArgumentError,
+            "MIGRATION_DATABASE_URL must point directly to PostgreSQL when DATABASE_POOLING_MODE uses PgBouncer."
+    end
+
+    case migration_database_url do
+      nil -> repo_config
+      url -> Keyword.put(repo_config, :url, url)
+    end
   end
+
+  defp normalize_migration_database_url(url) when is_binary(url) do
+    case String.trim(url) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_migration_database_url(_url), do: nil
 
   defp repos do
     Application.fetch_env!(@app, :ecto_repos)
@@ -51,7 +71,14 @@ defmodule FastCheck.Release do
 
   defp with_migration_database_url(repo, fun) do
     repo_config = Application.get_env(@app, repo, [])
-    updated_config = migration_repo_config(repo_config, System.get_env("MIGRATION_DATABASE_URL"))
+    database_pooling = Application.get_env(@app, :database_pooling, mode: :direct)
+
+    updated_config =
+      migration_repo_config(
+        repo_config,
+        System.get_env("MIGRATION_DATABASE_URL"),
+        Keyword.get(database_pooling, :mode, :direct)
+      )
 
     Application.put_env(@app, repo, updated_config)
 
