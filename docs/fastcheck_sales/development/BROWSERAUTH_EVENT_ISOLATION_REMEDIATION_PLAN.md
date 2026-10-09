@@ -753,7 +753,50 @@ lease_expires_at  timestamptz
 heartbeat_at      timestamptz
 ```
 
-Historical terminal rows may leave ownership fields null. Every new active row must have `sync_run_id`, `owner_token`, `lease_expires_at`, and `heartbeat_at`. The existing sync path already creates a UUID `sync_run_id` for attendee reconciliation. Persist that same run identifier on `sync_logs`; it identifies the logical run and remains distinct from the owner token. Continue passing `sync_run_id` to reconciliation and invalidation code; never persist `owner_token` in attendee or invalidation rows. Generate a separate random, unguessable `owner_token` once per run. Keep the owner token immutable, server-only, and out of browser responses. Do not derive it from an Event ID, username, process identifier, node name, or socket.
+Historical terminal rows may leave ownership fields null. Every new active row must have `sync_run_id`, `owner_token`, `lease_expires_at`, and `heartbeat_at`.
+
+The canonical `sync_run_id` is generated once at atomic claim for every full and incremental SyncRun. Generate it before the active `sync_logs` row is inserted and before the first Tickera request. The current late-generated full-sync reconciliation UUID is the same identity semantic; its generation moves to claim time. Persist the claimed UUID on `sync_logs` and pass it through the worker, `SyncState`, request lifecycle, progress/control/terminalization, and full-sync reconciliation or invalidation when applicable. Incremental runs receive the same durable identity even though they do not perform full-sync absence reconciliation. Full-sync reconciliation consumes the claimed UUID and must not generate a second one.
+
+For a full-sync authoritative snapshot, use this identity flow:
+
+```text
+atomic claim: claimed_sync_run_id
+→ worker
+→ fetched authoritative snapshot
+→ Attendees.create_bulk / reconciliation path
+→ Reconciliation.apply_after_authoritative_snapshot(
+    event_id,
+    imported_ticket_codes,
+    claimed_sync_run_id
+  )
+```
+
+The reconciliation source identity equals the claimed SyncRun UUID. Incremental sync keeps its claimed SyncRun UUID for ownership and lifecycle but does not create a second reconciliation ID.
+
+```text
+SYNC_RUN_ID_TYPE=UUID
+SYNC_RUN_ID_GENERATION=AT_ATOMIC_CLAIM
+SYNC_RUN_ID_GENERATED_ONCE_PER_RUN=YES
+SYNC_RUN_ID_GENERATED_BEFORE_FIRST_TICKERA_REQUEST=YES
+FULL_SYNC_HAS_DURABLE_SYNC_RUN_ID=YES
+INCREMENTAL_SYNC_HAS_DURABLE_SYNC_RUN_ID=YES
+SYNC_RUN_ID_REQUIRED_FOR_FULL_SYNC=YES
+SYNC_RUN_ID_REQUIRED_FOR_INCREMENTAL_SYNC=YES
+SYNC_RUN_ID_PERSISTED_BEFORE_FIRST_TICKERA_REQUEST=YES
+RECONCILIATION_USES_CLAIMED_SYNC_RUN_ID=YES
+RECONCILIATION_GENERATES_SECOND_SYNC_RUN_ID=NO
+RETRY_CREATES_NEW_SYNC_RUN_ID=NO
+RETRY_CREATES_NEW_SYNC_LOG_ROW=NO
+RETRY_REUSES_SYNC_RUN_ID=YES
+RETRY_REUSES_OWNER_TOKEN=YES
+TAKEOVER_REUSES_SYNC_RUN_ID=NO
+TAKEOVER_REUSES_OWNER_TOKEN=NO
+TAKEOVER_NEW_SYNC_RUN_ID=YES
+TAKEOVER_NEW_OWNER_TOKEN=YES
+TAKEOVER_NEW_SYNC_LOG_ROW=YES
+```
+
+Keep these identifiers distinct: `sync_logs.id` is the database row primary key; `sync_logs.sync_run_id` is the logical run UUID generated at claim; `sync_logs.owner_token` is the separate immutable ownership/fencing UUID.
 
 The `SyncState` Agent is a hot mirror only. It does not prove ownership and it may be rebuilt or discarded. Each entry identifies `event_id`, `sync_run_id`, `owner_token`, status, current page, total pages, and attendees processed. Postgres wins if the mirror disagrees.
 
@@ -826,15 +869,19 @@ The implementation plan must define how operators resolve such data before migra
 
 Starting a run requires a current trusted dashboard identity, a current Event grant, a syncable Event, and no live active run. Revalidate the Event grant immediately before claim. Because dashboard configuration is not part of the database transaction, check it again before the first Tickera request.
 
-Claim a run in one short transaction:
+Each claim attempt first generates a candidate `sync_run_id` UUID and a separate `owner_token` UUID. These become the run identity only if the transaction commits. Then claim the run in one short transaction:
+
 
 ```text
+generate sync_run_id UUID
+generate owner_token UUID
+
 BEGIN
 lock the target Event row for update
 verify the Event is syncable
 inspect the active SyncRun for the Event
 if an expired active run exists, terminalize it as failed / lease_expired
-insert a new in_progress SyncRun with a fresh sync_run_id, a distinct owner_token, and a database-clock lease
+insert a new in_progress SyncRun with the generated sync_run_id, owner_token, and database-clock lease
 set Event.status=syncing
 COMMIT
 ```
@@ -1083,6 +1130,10 @@ The R0–R6 implementation must test:
 - Owner-token mismatch causes zero durable and hot-state writes. An old worker cannot update progress, clear newer `SyncState`, or terminalize a newer run after takeover.
 - Only the live owner renews a lease. An expired owner cannot renew. Expired runs are recovered, and recovery issues zero Tickera calls.
 - Authorized takeover creates a new run ID and token.
+- Full and incremental sync each persist `sync_run_id` before the first Tickera request.
+- Full-sync reconciliation has `source_sync_run_id == claimed SyncRun.sync_run_id` and generates no second reconciliation UUID.
+- An authorized retry retains the same `sync_run_id`, `owner_token`, and `sync_logs` row.
+- Takeover creates a different `sync_run_id`, `owner_token`, and `sync_logs` row.
 - Revocation before first request yields zero Tickera calls. Revocation between pages starts no next request. Revocation during a request permits that request to finish but discards its response before domain writes. Revocation before retry leaves retry count unchanged and starts no request.
 - A paused run revoked by authority terminalizes and clears matching state. A worker crash reaches terminal run state and Event `active`. A healthy worker may continue after LiveView exit. Worker plus LiveView failure reaches bounded lease recovery.
 - User cancellation starts no later request or write. Archive racing cleanup never unarchives the Event.
@@ -1120,7 +1171,7 @@ Any such condition requires a new authority review. The documentation freeze its
 
 ### SyncLog identity and audit lifecycle
 
-The existing `sync_logs.id` remains the database primary key. Persist the existing logical-run UUID as `sync_logs.sync_run_id`; do not use the numeric primary key as the run ID or add another run-ID column or table. One row represents one logical SyncRun. Authorized retries remain attempts within that row and retain the same `sync_run_id` and owner token. Pause and cancellation must update the durable row rather than only the Agent mirror.
+The existing `sync_logs.id` remains the database primary key. `sync_logs.sync_run_id` is generated at atomic claim for every full and incremental run; do not use the numeric primary key as the run ID or add another run-ID column or table. One row represents one logical SyncRun. Authorized retries remain attempts within that row and retain the same `sync_run_id` and owner token. Pause and cancellation must update the durable row rather than only the Agent mirror.
 
 The claim transaction must insert the `sync_logs` row successfully before it changes Event status or commits ownership. If insertion or any other claim write fails, roll back the entire claim. Do not continue with a missing log ID, a nullable run ID, or an untracked Tickera operation. A failed claim produces zero external requests.
 
