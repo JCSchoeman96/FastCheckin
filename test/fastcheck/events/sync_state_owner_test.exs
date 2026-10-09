@@ -284,6 +284,76 @@ defmodule FastCheck.Events.SyncStateOwnerTest do
     assert is_nil(SyncState.get_state(context.event_id))
   end
 
+  test "a cancelled owner cannot resume", context do
+    assert :ok = init_owner(context)
+    assert :ok = owner_operation(context, :cancel_sync)
+
+    assert {:error, :terminal_state} = owner_operation(context, :resume_sync)
+    assert {:ok, %{status: :cancelled}} = owner_state(context)
+  end
+
+  test "a cancelled owner cannot pause", context do
+    assert :ok = init_owner(context)
+    assert :ok = owner_operation(context, :cancel_sync)
+
+    assert {:error, :terminal_state} = owner_operation(context, :pause_sync)
+    assert {:ok, %{status: :cancelled}} = owner_state(context)
+  end
+
+  test "a cancelled owner cannot update progress", context do
+    assert :ok = init_owner(context)
+
+    assert :ok =
+             SyncState.update_progress(
+               context.event_id,
+               context.sync_run_id,
+               context.owner_token,
+               2,
+               5,
+               20
+             )
+
+    assert :ok = owner_operation(context, :cancel_sync)
+
+    assert {:error, :terminal_state} =
+             SyncState.update_progress(
+               context.event_id,
+               context.sync_run_id,
+               context.owner_token,
+               4,
+               5,
+               40
+             )
+
+    assert {:ok,
+            %{
+              status: :cancelled,
+              current_page: 2,
+              total_pages: 5,
+              attendees_processed: 20
+            }} = owner_state(context)
+  end
+
+  test "cancelling an already cancelled owner is idempotent", context do
+    assert :ok = init_owner(context)
+    assert :ok = owner_operation(context, :cancel_sync)
+
+    assert :ok = owner_operation(context, :cancel_sync)
+    assert {:ok, %{status: :cancelled}} = owner_state(context)
+  end
+
+  test "pause and resume are idempotent in their current states", context do
+    assert :ok = init_owner(context)
+    assert :ok = owner_operation(context, :pause_sync)
+
+    assert :ok = owner_operation(context, :pause_sync)
+    assert {:ok, %{status: :paused}} = owner_state(context)
+
+    assert :ok = owner_operation(context, :resume_sync)
+    assert :ok = owner_operation(context, :resume_sync)
+    assert {:ok, %{status: :running}} = owner_state(context)
+  end
+
   defp init_owner(context) do
     SyncState.init_sync(
       context.event_id,

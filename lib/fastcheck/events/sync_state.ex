@@ -85,14 +85,20 @@ defmodule FastCheck.Events.SyncState do
   Updates progress only when the supplied owner matches the Event hot mirror.
   """
   @spec update_progress(integer(), String.t(), String.t(), integer(), integer(), integer()) ::
-          :ok | {:error, :not_found | :stale_owner}
+          :ok | {:error, :not_found | :stale_owner | :terminal_state}
   def update_progress(event_id, sync_run_id, owner_token, page, total_pages, attendees_count)
       when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
     update_owned(event_id, sync_run_id, owner_token, fn current_state ->
-      current_state
-      |> Map.put(:current_page, page)
-      |> Map.put(:total_pages, total_pages)
-      |> Map.put(:attendees_processed, attendees_count)
+      case current_state do
+        %{status: :cancelled} ->
+          {:error, :terminal_state}
+
+        current_state ->
+          current_state
+          |> Map.put(:current_page, page)
+          |> Map.put(:total_pages, total_pages)
+          |> Map.put(:attendees_processed, attendees_count)
+      end
     end)
   end
 
@@ -122,10 +128,13 @@ defmodule FastCheck.Events.SyncState do
   Pauses sync only when the supplied owner matches the Event hot mirror.
   """
   @spec pause_sync(integer(), String.t(), String.t()) ::
-          :ok | {:error, :not_found | :stale_owner}
+          :ok | {:error, :not_found | :stale_owner | :terminal_state}
   def pause_sync(event_id, sync_run_id, owner_token)
       when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
-    update_owned(event_id, sync_run_id, owner_token, &Map.put(&1, :status, :paused))
+    update_owned(event_id, sync_run_id, owner_token, fn
+      %{status: :cancelled} -> {:error, :terminal_state}
+      current_state -> Map.put(current_state, :status, :paused)
+    end)
   end
 
   @doc """
@@ -154,10 +163,13 @@ defmodule FastCheck.Events.SyncState do
   Resumes sync only when the supplied owner matches the Event hot mirror.
   """
   @spec resume_sync(integer(), String.t(), String.t()) ::
-          :ok | {:error, :not_found | :stale_owner}
+          :ok | {:error, :not_found | :stale_owner | :terminal_state}
   def resume_sync(event_id, sync_run_id, owner_token)
       when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
-    update_owned(event_id, sync_run_id, owner_token, &Map.put(&1, :status, :running))
+    update_owned(event_id, sync_run_id, owner_token, fn
+      %{status: :cancelled} -> {:error, :terminal_state}
+      current_state -> Map.put(current_state, :status, :running)
+    end)
   end
 
   @doc """
@@ -281,8 +293,14 @@ defmodule FastCheck.Events.SyncState do
       case owned_state(state, event_id, sync_run_id, owner_token) do
         {:ok, current_state} ->
           case update_fun.(current_state) do
-            :delete -> {:ok, Map.delete(state, event_id)}
-            updated_state -> {:ok, Map.put(state, event_id, updated_state)}
+            {:error, reason} ->
+              {{:error, reason}, state}
+
+            :delete ->
+              {:ok, Map.delete(state, event_id)}
+
+            updated_state ->
+              {:ok, Map.put(state, event_id, updated_state)}
           end
 
         {:error, reason} ->
