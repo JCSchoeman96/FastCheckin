@@ -210,13 +210,21 @@ Command rules:
 
 ```text
 0 = back or main menu, depending state
-# = restart / main menu
-help = support/help response
+# = reset navigation and show the state-aware main menu; never cancel an order
+help = support response with the state-aware main menu
 stop = cancel conversation and stop non-essential session responses
 1..9 = menu selection
 free text is accepted only in buyer name/email states
 invalid input returns the current menu with concise correction
 ```
+
+Recovery behavior, updated 2026-10-09:
+
+- A new message in `cancelled`, `expired`, `completed`, or `manual_review` returns a usable menu.
+- An active commercial order keeps its identity when navigation resets. The menu offers status, resend, and help. It never offers a second purchase while that order remains active.
+- Customer cancellation requires a separate menu choice and confirmation. Only unpaid draft or checkout states can qualify. Any payment attempt, ticket issue, or attendee prevents cancellation. Payment and fulfilment states require status or operator support.
+- CheckoutExpiry checks cancellation under the same order advisory lock as payment verification. It reloads authoritative state, releases holds through ReservationLedger, and records both durable cancellation transitions. WhatsApp clears purchase fields only after success.
+- Navigation copy must not describe `#` as cancelling an order. The normal menu retains its existing numbering: buy `1`, help `2`, resend `3`. The existing-order menu uses status `1`, eligible cancellation `2`, resend `3`, help `4`.
 
 ---
 
@@ -597,9 +605,10 @@ Rules:
 - Default language is Afrikaans.
 - Number-only menu navigation.
 - Free text only allowed for buyer name/email states.
-- `0` goes back/main menu.
-- `#` restarts/main menu.
-- `help` returns support guidance.
+- `0` goes back or returns to the applicable menu.
+- `#` resets navigation to a usable state-aware main menu without cancelling an order.
+- `help` returns support guidance with the available navigation options.
+- With an active commercial order, the menu offers status, resend, and help. It offers cancellation only for eligible unpaid orders and requires a separate confirmation.
 - `stop` cancels the session.
 - Invalid input repeats current menu with a concise correction.
 - Confirming an order must call an approved Sales checkout boundary once and must be idempotent.

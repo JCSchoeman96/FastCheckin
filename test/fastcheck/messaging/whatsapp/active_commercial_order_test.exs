@@ -82,11 +82,13 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
     assert {:ok, nil} = ActiveCommercialOrder.find_active_order(conversation)
   end
 
-  test "direct restart Ash action rejects an active Order hidden from state_data", %{offer: offer} do
+  test "direct restart Ash action preserves an active Order hidden from state_data", %{
+    offer: offer
+  } do
     conversation = insert_conversation!(58, "payment_pending", %{})
     order = create_order!(conversation, offer, "hidden-restart-order-#{conversation.id}")
 
-    assert {:error, _reason} =
+    assert {:ok, restarted} =
              conversation
              |> Changeset.for_update(
                :restart_to_main_menu,
@@ -106,7 +108,9 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
              from c in "sales_conversations",
                where: c.id == ^conversation.id,
                select: c.state
-           ) == "payment_pending"
+           ) == "main_menu"
+
+    assert restarted.state_data["sales_order_id"] == order.id
 
     assert Repo.one!(
              from o in "sales_orders",

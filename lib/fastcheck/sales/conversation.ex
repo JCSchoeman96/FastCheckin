@@ -206,8 +206,18 @@ defmodule FastCheck.Sales.Conversation do
     :return_to_buyer_name_collection,
     :return_to_email_collection,
     :return_to_main_menu,
-    :restart_to_main_menu,
     :cancel_conversation,
+    :submit_resend_name,
+    :submit_resend_email,
+    :return_to_resend_name_collection,
+    :return_to_resend_email_collection,
+    :verify_resend_otp,
+    :queue_verified_resend_delivery
+  ]
+
+  @recovery_resend_actions [
+    :choose_resend_ticket,
+    :return_to_main_menu,
     :submit_resend_name,
     :submit_resend_email,
     :return_to_resend_name_collection,
@@ -576,6 +586,7 @@ defmodule FastCheck.Sales.Conversation do
       argument(:correlation_id, :string)
       argument(:idempotency_key, :string)
       argument(:transition_metadata, :map)
+      change(&preserve_order_on_navigation_reset/2)
       change(&transition_state(&1, &2, :restart_to_main_menu))
     end
 
@@ -967,6 +978,32 @@ defmodule FastCheck.Sales.Conversation do
     |> transition_state(context, :choose_buy_tickets)
   end
 
+  defp preserve_order_on_navigation_reset(changeset, _context) do
+    conversation = %{
+      id: Changeset.get_data(changeset, :id),
+      state_data: current_state_data(changeset)
+    }
+
+    case ActiveCommercialOrder.find_active_order(conversation) do
+      {:ok, nil} ->
+        changeset
+
+      {:ok, order} ->
+        data =
+          changeset
+          |> changeset_state_data()
+          |> Map.merge(%{
+            "sales_order_id" => order.id,
+            "order_public_reference" => order.public_reference
+          })
+
+        Changeset.force_change_attribute(changeset, :state_data, data)
+
+      {:error, _reason} ->
+        Changeset.force_change_attribute(changeset, :state_data, current_state_data(changeset))
+    end
+  end
+
   defp transition_state(changeset, context, action_name) do
     %{allowed_from: allowed_from, to_state: to_state} = Map.fetch!(@transition_specs, action_name)
     from_state = Changeset.get_data(changeset, :state)
@@ -1008,7 +1045,7 @@ defmodule FastCheck.Sales.Conversation do
         )
 
       action_name in @commercially_guarded_actions ->
-        case commercial_transition_guard(changeset) do
+        case commercial_transition_guard(changeset, action_name) do
           :ok ->
             record_transition(changeset, transition)
 
@@ -1024,16 +1061,31 @@ defmodule FastCheck.Sales.Conversation do
     end
   end
 
-  defp commercial_transition_guard(changeset) do
+  defp commercial_transition_guard(changeset, action_name) do
     conversation = %{
       id: Changeset.get_data(changeset, :id),
       state_data: current_state_data(changeset)
     }
 
     case ActiveCommercialOrder.find_active_order(conversation) do
-      {:ok, nil} -> :ok
-      {:ok, _order} -> {:error, :active_commercial_order}
-      {:error, reason} -> {:error, reason}
+      {:ok, nil} ->
+        :ok
+
+      {:ok, order} ->
+        data = changeset_state_data(changeset)
+        current_data = current_state_data(changeset)
+
+        if action_name in @recovery_resend_actions and
+             ((data["recovery_resend"] == true and data["sales_order_id"] == order.id) or
+                (current_data["recovery_resend"] == true and
+                   current_data["sales_order_id"] == order.id)) do
+          :ok
+        else
+          {:error, :active_commercial_order}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

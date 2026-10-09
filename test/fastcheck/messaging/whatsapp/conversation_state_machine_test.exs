@@ -1365,7 +1365,166 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     refute restarted_uppercase.response_body =~ "restart"
   end
 
-  test "restart, stop, and back recover an active order committed before its Conversation checkpoint",
+  test "historical manual review conversation can navigate away from its unpaid order", %{
+    event: event,
+    offer: offer
+  } do
+    conversation = insert_conversation!(state: "manual_review", state_data: %{})
+    order = create_active_order!(conversation, event, offer, "historical-#{conversation.id}")
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id), set: [status: "draft"])
+
+    assert {:ok, initial} = handle(conversation, "Hi", "wamid.historical-hi")
+
+    assert initial.response_body =~ "1. Gaan voort"
+    assert initial.response_body =~ "Hulp"
+
+    assert {:ok, restarted} = handle(initial.conversation, "#", "wamid.historical-restart")
+    assert restarted.conversation.state == "main_menu"
+    assert restarted.response_body =~ "1."
+    assert restarted.response_body =~ "Hulp"
+    assert restarted.conversation.state_data["sales_order_id"] == order.id
+
+    assert Repo.one!(from(o in "sales_orders", where: o.id == ^order.id, select: o.status)) ==
+             "draft"
+  end
+
+  test "terminal conversation greetings recover the normal menu", %{conversation: _conversation} do
+    for state <- ["manual_review", "cancelled", "expired", "completed"],
+        input <- ["Hi", "menu", "#", "Help"] do
+      conversation = insert_conversation!(state: state)
+      assert {:ok, result} = handle(conversation, input, "wamid.recovery-#{state}-#{input}")
+      assert result.conversation.state == "main_menu"
+      assert result.response_body =~ "1. Koop kaartjies"
+      assert result.response_body =~ "Hulp"
+    end
+  end
+
+  test "unpaid cancellation requires confirmation before a fresh purchase", %{
+    event: event,
+    offer: offer
+  } do
+    conversation = insert_conversation!(state: "manual_review")
+    order = create_active_order!(conversation, event, offer, "cancel-flow-#{conversation.id}")
+    snapshot = commercial_order_snapshot(order.id)
+    assert {:ok, menu} = handle(conversation, "#", "wamid.cancel-menu")
+    assert menu.response_body =~ "2. Kanselleer"
+    assert commercial_order_snapshot(order.id) == snapshot
+
+    assert {:ok, confirmation} = handle(menu.conversation, "2", "wamid.cancel-ask")
+    assert confirmation.response_body =~ "1. Ja"
+    assert commercial_order_snapshot(order.id) == snapshot
+
+    assert {:ok, cancelled} = handle(confirmation.conversation, "1", "wamid.cancel-yes")
+    assert cancelled.conversation.state == "main_menu"
+    assert cancelled.response_body =~ "1. Koop kaartjies"
+    assert PurchaseFlowIdentity.valid?(cancelled.conversation.state_data["purchase_flow_id"])
+    refute cancelled.conversation.state_data["sales_order_id"]
+
+    assert Repo.one!(from(o in "sales_orders", where: o.id == ^order.id, select: o.status)) ==
+             "cancelled"
+
+    assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
+    assert availability.reserved_quantity == 0
+
+    Application.put_env(:fastcheck, :paystack_request_fun, PaymentSupport.success_request_fun())
+
+    fresh =
+      cancelled.conversation
+      |> progress("1", "fresh-buy")
+      |> progress("1", "fresh-event")
+      |> progress("1", "fresh-offer")
+      |> progress("1", "fresh-quantity")
+      |> progress("Test Buyer", "fresh-name")
+      |> progress("buyer@example.com", "fresh-email")
+      |> progress("1", "fresh-confirm")
+
+    assert fresh.conversation.state == "payment_pending"
+    assert fresh.conversation.state_data["sales_order_id"] != order.id
+
+    assert Repo.one!(
+             from(o in "sales_orders",
+               where:
+                 o.sales_conversation_id == ^conversation.id and
+                   o.status in ["draft", "awaiting_payment", "payment_pending"],
+               select: count(o.id)
+             )
+           ) == 1
+  end
+
+  test "payment status changing after cancellation prompt refuses cancellation", %{
+    event: event,
+    offer: offer
+  } do
+    conversation = insert_conversation!(state: "manual_review")
+    order = create_active_order!(conversation, event, offer, "cancel-race-#{conversation.id}")
+    assert {:ok, menu} = handle(conversation, "#", "wamid.stale-menu")
+    assert {:ok, confirmation} = handle(menu.conversation, "2", "wamid.stale-ask")
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [status: "paid_verified"]
+    )
+
+    assert {:ok, result} = handle(confirmation.conversation, "1", "wamid.stale-yes")
+    refute result.response_body =~ "Kanselleer"
+    assert result.conversation.state_data["sales_order_id"] == order.id
+
+    assert Repo.one!(from(o in "sales_orders", where: o.id == ^order.id, select: o.status)) ==
+             "paid_verified"
+
+    assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
+    assert availability.reserved_quantity == 1
+  end
+
+  test "recovery resend and help remain usable without opening another purchase", %{
+    event: event,
+    offer: offer
+  } do
+    conversation = insert_conversation!(state: "manual_review")
+    order = create_active_order!(conversation, event, offer, "resend-recovery-#{conversation.id}")
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [status: "manual_review"]
+    )
+
+    assert {:ok, menu} = handle(conversation, "#", "wamid.recovery-resend-menu")
+    assert {:ok, help} = handle(menu.conversation, "4", "wamid.recovery-help")
+    assert help.response_body =~ "3. Stuur"
+    assert {:ok, resend} = handle(help.conversation, "3", "wamid.recovery-resend")
+    assert resend.conversation.state == "collecting_resend_name"
+    assert {:ok, named} = handle(resend.conversation, "Test Buyer", "wamid.recovery-resend-name")
+    assert named.conversation.state == "collecting_resend_email"
+    assert {:ok, returned} = handle(named.conversation, "#", "wamid.recovery-resend-back")
+    assert returned.conversation.state == "main_menu"
+    assert returned.conversation.state_data["sales_order_id"] == order.id
+    refute returned.response_body =~ "Koop kaartjies"
+
+    assert Repo.one!(
+             from(o in "sales_orders",
+               where: o.sales_conversation_id == ^conversation.id,
+               select: count(o.id)
+             )
+           ) == 1
+  end
+
+  test "back from cancellation confirmation preserves order and hold", %{
+    event: event,
+    offer: offer
+  } do
+    conversation = insert_conversation!(state: "manual_review")
+    order = create_active_order!(conversation, event, offer, "cancel-back-#{conversation.id}")
+    before = commercial_order_snapshot(order.id)
+    assert {:ok, menu} = handle(conversation, "#", "wamid.cancel-back-menu")
+    assert {:ok, confirmation} = handle(menu.conversation, "2", "wamid.cancel-back-ask")
+    assert {:ok, returned} = handle(confirmation.conversation, "0", "wamid.cancel-back-no")
+    assert returned.response_body =~ "2. Kanselleer"
+    refute returned.conversation.state_data["cancel_order_id"]
+    assert commercial_order_snapshot(order.id) == before
+    assert {:ok, availability} = ReservationLedger.get_availability(offer.id)
+    assert availability.reserved_quantity == 1
+  end
+
+  test "restart, stop, and back show a menu for an order committed before its Conversation checkpoint",
        %{
          event: event,
          offer: offer
@@ -1398,11 +1557,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       assert {:ok, result} =
                handle(conversation, input, "wamid.guard-#{suffix}-#{conversation.id}")
 
-      assert result.conversation.state == "payment_pending"
+      assert result.conversation.state == "main_menu"
       assert result.conversation.state_data["purchase_flow_id"] == purchase_flow_id
       assert result.conversation.state_data["sales_order_id"] == order.id
       assert result.conversation.state_data["order_public_reference"] == order.public_reference
-      assert result.response_body =~ "betaling"
+      assert result.response_body =~ "1. Gaan voort"
       assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == before_count
     end
   end
@@ -1423,14 +1582,14 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
       assert {:ok, result} = handle(conversation, choice, "wamid.hidden-#{suffix}")
 
-      assert result.conversation.state == "payment_pending"
+      assert result.conversation.state == "main_menu"
       assert result.conversation.state_data["sales_order_id"] == order.id
       refute Map.has_key?(result.conversation.state_data, "purchase_flow_id")
       assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == before_count
     end
   end
 
-  test "restart preserves each active Order status and reports its durable status", %{
+  test "restart preserves each active Order status and offers only safe menu choices", %{
     event: event,
     offer: offer
   } do
@@ -1462,24 +1621,17 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
       assert {:ok, result} = handle(conversation, "#", "wamid.restart-#{status}")
 
-      assert result.conversation.state == "payment_pending"
+      assert result.conversation.state == "main_menu"
       assert result.conversation.state_data["sales_order_id"] == order.id
       assert result.conversation.state_data["order_public_reference"] == order.public_reference
 
-      cond do
-        status in ["awaiting_payment", "payment_pending", "paid_unverified"] ->
-          assert result.response_body =~ "betaling"
+      assert result.response_body =~ "1. Gaan voort"
+      assert result.response_body =~ "Hulp"
 
-        status in [
-          "paid_verified",
-          "fulfillment_queued",
-          "partially_issued",
-          "issuance_retry_queued"
-        ] ->
-          assert result.response_body =~ "kaartjie word voorberei"
-
-        true ->
-          assert result.response_body =~ "ondersteuning"
+      if status in ["draft", "awaiting_payment", "payment_pending"] do
+        assert result.response_body =~ "2. Kanselleer"
+      else
+        refute result.response_body =~ "Kanselleer"
       end
 
       assert Repo.one!(
@@ -1529,7 +1681,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert {:ok, result} = handle(conversation, "#", "wamid.multiple-active")
 
     assert result.response_body =~ "ondersteuning"
-    assert result.conversation.state == "manual_review"
+    assert result.conversation.state == "main_menu"
     assert Repo.one!(from(o in "sales_orders", select: count(o.id))) == before_count
   end
 

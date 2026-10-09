@@ -26,6 +26,65 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     |> Enum.join("\n")
   end
 
+  @spec main_menu(String.t() | nil, map() | nil, boolean()) :: String.t()
+  def main_menu(language, order, cancellation_available? \\ false)
+
+  def main_menu(language, nil, _cancellation_available?), do: main_menu(language)
+
+  def main_menu(language, order, cancellation_available?) do
+    english? = language == "en"
+
+    [
+      Copy.text(language, :main_menu_title),
+      if(english?, do: "You have an existing order.", else: "Jy het 'n bestaande bestelling."),
+      if(english?, do: "1. Continue / order status", else: "1. Gaan voort / bestellingstatus"),
+      if(cancellation_available? and cancellable_status?(order),
+        do:
+          if(english?,
+            do: "2. Cancel unpaid order and start over",
+            else: "2. Kanselleer onbetaalde bestelling en begin oor"
+          )
+      ),
+      "3. #{Copy.text(language, :resend_ticket)}",
+      "4. #{Copy.text(language, :help)}",
+      restart_line(language)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  @spec cancellable_status?(map()) :: boolean()
+  def cancellable_status?(%{status: status}),
+    do: status in ["draft", "awaiting_payment", "payment_pending"]
+
+  @spec cancellation_confirmation(String.t() | nil) :: String.t()
+  def cancellation_confirmation("en") do
+    "Cancel this unpaid order?\n1. Yes, cancel and start over\n0. Back\n#. Main menu"
+  end
+
+  def cancellation_confirmation(_language) do
+    "Wil jy hierdie onbetaalde bestelling kanselleer?\n1. Ja, kanselleer en begin oor\n0. Terug\n#. Hoofkieslys"
+  end
+
+  @spec cancellation_refused(String.t() | nil) :: String.t()
+  def cancellation_refused("en") do
+    "We cannot safely cancel this order yet. Check its status or contact support."
+  end
+
+  def cancellation_refused(_language) do
+    "Ons kan hierdie bestelling nog nie veilig kanselleer nie. Bekyk die status of vra hulp."
+  end
+
+  @spec recovery_unavailable(String.t() | nil) :: String.t()
+  def recovery_unavailable(language) do
+    [help(language), "1. #{Copy.text(language, :help)}", restart_line(language)]
+    |> Enum.join("\n")
+  end
+
+  @spec status_navigation(String.t() | nil) :: String.t()
+  def status_navigation(language),
+    do: restart_line(language) <> "\nHelp. " <> Copy.text(language, :help)
+
   @spec event_menu(String.t() | nil, [map()]) :: String.t()
   def event_menu(language, events) do
     render_options(language, Copy.text(language, :choose_event), events)

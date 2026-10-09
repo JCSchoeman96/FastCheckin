@@ -38,6 +38,32 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
   end
 
   describe "dynamic menus" do
+    test "recovery menu never offers cancellation for paid orders" do
+      for status <- [
+            "paid_unverified",
+            "paid_verified",
+            "ticket_issued",
+            "manual_review",
+            "partially_issued"
+          ],
+          language <- ["en", "af"] do
+        body = MenuRenderer.main_menu(language, %{status: status}, true)
+        assert body =~ "1."
+        assert body =~ "3."
+        assert body =~ "4."
+        refute body =~ "2."
+        refute body =~ "Cancel"
+        refute body =~ "Kanselleer"
+      end
+    end
+
+    test "unpaid menu requires an explicit cancellation availability hint" do
+      order = %{status: "awaiting_payment"}
+      refute MenuRenderer.main_menu("en", order) =~ "Cancel"
+      assert MenuRenderer.main_menu("en", order, true) =~ "2. Cancel unpaid order"
+      assert MenuRenderer.main_menu("af", order, true) =~ "2. Kanselleer onbetaalde bestelling"
+    end
+
     test "renders event options without exposing raw internal labels" do
       body =
         MenuRenderer.event_menu("af", [
@@ -48,7 +74,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "1. Voelgoed Live"
       assert body =~ "2. Somer Fees"
       assert body =~ "0. Terug"
-      assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
+      assert body =~ "#. Terug na hoof kieslys"
       refute body =~ "101"
       refute body =~ "202"
       refute body =~ "R999"
@@ -65,7 +91,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "1. General Admission - R999"
       assert body =~ "2. VIP - R1999.50"
       assert body =~ "0. Terug"
-      assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
+      assert body =~ "#. Terug na hoof kieslys"
       refute body =~ "101"
       refute body =~ "202"
     end
@@ -98,14 +124,14 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
 
       for body <- [quantity, buyer_name, email, resend_name, resend_email, resend_otp] do
         assert body =~ "0. Terug"
-        assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
+        assert body =~ "#. Terug na hoof kieslys"
         refute body =~ "restart"
       end
 
       english_email = MenuRenderer.email_prompt("en")
 
       assert english_email =~ "0. Back"
-      assert english_email =~ "#. Back to main menu (Cancel and start over)"
+      assert english_email =~ "#. Back to main menu"
 
       assert MenuRenderer.resend_name_prompt("en") =~ "name"
       assert MenuRenderer.resend_email_prompt("en") =~ "email"
@@ -207,7 +233,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "Is hierdie korrek? Gaan voort na betaling."
       assert body =~ "1. OK"
       assert body =~ "0. Terug"
-      assert body =~ "#. Terug na hoof kieslys (Kanselleer en begin oor)"
+      assert body =~ "#. Terug na hoof kieslys"
       refute body =~ "restart"
     end
 
@@ -233,7 +259,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "Is this correct? Continue to payment."
       assert body =~ "1. OK"
       assert body =~ "0. Back"
-      assert body =~ "#. Back to main menu (Cancel and start over)"
+      assert body =~ "#. Back to main menu"
     end
 
     test "renders invalid prices as unavailable without implying free tickets" do

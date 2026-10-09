@@ -214,11 +214,6 @@ defmodule FastCheck.Tickets.TicketSessionReader do
     :ok
   end
 
-  defp map_artifact_result({:ok, artifact}), do: {:ok, artifact}
-
-  defp map_artifact_result({:error, %ArtifactError{state: state}}),
-    do: {:error, map_artifact_state(state)}
-
   defp map_artifact_state(:not_found), do: :not_found
   defp map_artifact_state(:expired_link), do: :expired_link
   defp map_artifact_state(:ticket_revoked), do: :ticket_revoked

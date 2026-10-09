@@ -234,12 +234,14 @@ defmodule FastCheck.Sales.Payments.TestSupport do
     alias FastCheck.Sales.Payments.TransactionInitialization
     alias FastCheck.SalesCheckoutFixtures, as: Fixtures
 
-    {order, session} = checkout_ready_for_payment!(offer)
+    checkout_overrides = Keyword.take(opts, [:sales_conversation_id])
+    payment_opts = Keyword.drop(opts, [:sales_conversation_id])
+    {order, session} = checkout_ready_for_payment!(offer, Map.new(checkout_overrides))
 
     Application.put_env(
       :fastcheck,
       :paystack_request_fun,
-      init_and_verify_request_fun(opts)
+      init_and_verify_request_fun(payment_opts)
     )
 
     case TransactionInitialization.initialize_for_checkout_session(

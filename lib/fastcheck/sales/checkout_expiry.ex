@@ -9,7 +9,10 @@ defmodule FastCheck.Sales.CheckoutExpiry do
 
   import Ecto.Query
 
+  require Ash.Expr
   require Ash.Query
+
+  import Ash.Expr
 
   alias Ash.Changeset
   alias Ash.Query
@@ -22,6 +25,8 @@ defmodule FastCheck.Sales.CheckoutExpiry do
 
   @sweeper_statuses ~w(hold_attached payment_link_sent payment_started)
   @expirable_order_statuses ~w(awaiting_payment payment_pending)
+  @cancelable_order_statuses ~w(draft awaiting_payment payment_pending)
+  @cancelable_session_statuses ~w(created hold_attached payment_link_sent payment_started)
   @hold_anomaly_reason "checkout_expiry_hold_state_mismatch"
   @default_batch_size 200
 
@@ -131,6 +136,240 @@ defmodule FastCheck.Sales.CheckoutExpiry do
       end)
       |> normalize_transaction_result()
     end
+  end
+
+  @doc """
+  Cancels an unpaid order owned by the supplied conversation.
+
+  The order advisory lock covers the authoritative reload, payment-attempt
+  checks, hold release, and durable Order and CheckoutSession transitions.
+  A cancelled order never releases inventory through another path.
+  """
+  @spec cancel_order(integer(), integer(), keyword()) ::
+          {:ok, :cancelled | :already_cancelled} | {:error, atom()}
+  def cancel_order(order_id, conversation_id, opts \\ [])
+
+  def cancel_order(order_id, conversation_id, opts)
+      when is_integer(order_id) and is_integer(conversation_id) and is_list(opts) do
+    correlation_id = Keyword.get(opts, :correlation_id)
+    reason = Keyword.get(opts, :reason, "customer_requested")
+
+    Repo.transaction(fn ->
+      Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
+
+      with {:ok, order} <- load_order(order_id),
+           {:ok, session} <- load_session_for_order(order_id),
+           :ok <- verify_conversation_owner(order, conversation_id) do
+        cancel_locked(order, session, reason, correlation_id)
+      else
+        {:error, error} -> Repo.rollback(error)
+      end
+    end)
+    |> normalize_transaction_result()
+  end
+
+  def cancel_order(_order_id, _conversation_id, _opts),
+    do: {:error, :invalid_cancellation_request}
+
+  @doc """
+  Returns the best-effort menu hint for whether customer cancellation can be shown.
+
+  This read-only hint is deliberately weaker than `cancel_order/3`: the durable
+  cancellation API reloads all records and rechecks these conditions while
+  holding the order advisory lock.
+  """
+  @spec customer_cancellation_available?(map()) :: boolean()
+  def customer_cancellation_available?(%{id: order_id, status: status})
+      when is_integer(order_id) and status in @cancelable_order_statuses do
+    not cancellation_blocker_exists?(order_id)
+  end
+
+  def customer_cancellation_available?(_order), do: false
+
+  defp cancel_locked(order, session, reason, correlation_id) do
+    case classify_cancellation(order, session) do
+      :already_cancelled ->
+        :already_cancelled
+
+      {:error, error} ->
+        Repo.rollback(error)
+
+      {:ok, hold_context} ->
+        case release_hold_for_cancellation(hold_context) do
+          :ok ->
+            context = cancellation_context(session, order, correlation_id, reason)
+
+            case cancel_durable(order, session, reason, context) do
+              :ok ->
+                :telemetry.execute(
+                  [:fastcheck, :sales, :checkout_expiry, :cancelled],
+                  %{count: 1},
+                  %{
+                    checkout_session_id: session.id,
+                    order_id: order.id,
+                    correlation_id: correlation_id
+                  }
+                )
+
+                :cancelled
+
+              {:error, error} ->
+                Repo.rollback(error)
+            end
+
+          {:error, error} ->
+            Repo.rollback(error)
+        end
+    end
+  end
+
+  defp classify_cancellation(order, session) do
+    with :ok <- cancellation_state_status(order, session),
+         :ok <- cancellation_artifact_status(order.id),
+         :ok <- payment_attempt_cancellation_block(order.id),
+         :ok <- cancellation_session_status(session) do
+      resolve_cancellation_hold_context(session, order)
+    end
+  end
+
+  defp cancellation_state_status(order, session) do
+    cond do
+      order.status == "cancelled" and session.status == "cancelled" ->
+        :already_cancelled
+
+      order.status == "cancelled" or session.status == "cancelled" ->
+        {:error, :cancellation_state_mismatch}
+
+      order.status not in @cancelable_order_statuses ->
+        {:error, :order_not_cancellable}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp cancellation_artifact_status(order_id) do
+    cond do
+      ticket_issue_exists?(order_id) -> {:error, :ticket_issue_exists}
+      attendee_exists?(order_id) -> {:error, :attendee_exists}
+      true -> :ok
+    end
+  end
+
+  defp cancellation_session_status(%{status: status}) do
+    if status in @cancelable_session_statuses,
+      do: :ok,
+      else: {:error, :session_not_cancellable}
+  end
+
+  defp cancellation_session_status(_session), do: {:error, :session_not_cancellable}
+
+  defp cancellation_blocker_exists?(order_id) do
+    payment_attempt_exists?(order_id) or
+      ticket_issue_exists?(order_id) or
+      attendee_exists?(order_id)
+  end
+
+  defp payment_attempt_exists?(order_id) do
+    Repo.exists?(
+      from(pa in "sales_payment_attempts",
+        where: pa.sales_order_id == ^order_id,
+        select: 1
+      )
+    )
+  end
+
+  defp payment_attempt_cancellation_block(order_id) do
+    cond do
+      verified_payment_attempt_exists?(order_id) -> {:error, :payment_verified}
+      payment_attempt_exists?(order_id) -> {:error, :payment_attempt_unresolved}
+      true -> :ok
+    end
+  end
+
+  defp verified_payment_attempt_exists?(order_id) do
+    Repo.exists?(
+      from(pa in "sales_payment_attempts",
+        where: pa.sales_order_id == ^order_id,
+        where: pa.status == "verified_success",
+        select: 1
+      )
+    )
+  end
+
+  defp resolve_cancellation_hold_context(session, order) do
+    context = build_context(session, order)
+
+    cond do
+      order.status == "draft" and session.status == "created" and clear_no_hold?(session) ->
+        {:ok, nil}
+
+      session.status == "created" ->
+        {:error, :hold_state_anomaly}
+
+      session.status in @sweeper_statuses ->
+        case resolve_hold_context(session, order, context) do
+          {:ok, hold_context} -> {:ok, hold_context}
+          {:error, :manual_review, _reason} -> {:error, :hold_state_anomaly}
+        end
+
+      true ->
+        {:error, :session_not_cancellable}
+    end
+  end
+
+  defp release_hold_for_cancellation(nil), do: :ok
+
+  defp release_hold_for_cancellation(hold_context) do
+    case release_hold(hold_context) do
+      :ok -> :ok
+      {:manual_review, _reason} -> {:error, :hold_state_anomaly}
+      {:retry, reason} -> {:error, reason}
+    end
+  end
+
+  defp cancel_durable(order, session, reason, context) do
+    actor = system_actor()
+
+    with {:ok, _order} <-
+           order
+           |> Changeset.for_update(
+             :cancel_order,
+             %{manual_review_reason: reason},
+             reason: reason,
+             actor: actor
+           )
+           |> Ash.update(authorize?: false, context: context),
+         {:ok, _session} <-
+           session
+           |> Changeset.for_update(:cancel_session, %{}, reason: reason, actor: actor)
+           |> Ash.update(authorize?: false, context: context) do
+      :ok
+    else
+      {:error, _error} -> {:error, :cancellation_transition_failed}
+    end
+  end
+
+  defp verify_conversation_owner(%{sales_conversation_id: conversation_id}, conversation_id),
+    do: :ok
+
+  defp verify_conversation_owner(_order, _conversation_id),
+    do: {:error, :conversation_mismatch}
+
+  defp load_session_for_order(order_id) do
+    case CheckoutSession
+         |> Query.filter(expr(sales_order_id == ^order_id))
+         |> Ash.read_one(authorize?: false) do
+      {:ok, nil} -> {:error, :checkout_session_not_found}
+      {:ok, session} -> {:ok, session}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp cancellation_context(session, order, correlation_id, reason) do
+    build_context(session, order)
+    |> Map.put(:correlation_id, correlation_id || "checkout-cancel-#{session.id}")
+    |> Map.put(:transition_metadata, %{reason_code: reason, source: "customer_cancel"})
   end
 
   defp classify_after_lock(session, order) do
