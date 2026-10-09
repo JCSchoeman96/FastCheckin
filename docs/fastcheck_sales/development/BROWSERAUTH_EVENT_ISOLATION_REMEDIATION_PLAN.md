@@ -3,18 +3,20 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | BROWSERAUTH-EVENT-ISOLATION-REMEDIATION |
-| **Plan version** | 1.1 |
+| **Plan version** | 1.2 |
 | **Status** | FROZEN |
 | **Scope** | Close the remaining P0 gap: general BrowserAuth surfaces that operate on Events must enforce server-owned per-Event authority (P1-D grant semantics) before reads, mutations, exports, scanner actions, occupancy, and secret reveal |
 | **Authority** | This file is the **active contract** for BrowserAuth Event-isolation implementation (B0–B5). P1-D (`FastCheck.Sales.DashboardAccess` + Sales routes) is **accepted and frozen**; do not reopen P1-D behavior in this workstream. Launch/runbook policy docs are **out of scope** until implementation evidence exists. |
 | **Accepted base** | `BASE_SHA=a56d2cc0e119ae84d1509e508486d19ee5e12663`, `BASE_TREE=2018bda825474a7cf04f67724c74028e10a036d9` |
 | **Tracking** | `FastCheckin-v6u9` (Beads / `bd`; verified locally 2026-10-09) |
 | **Last updated** | 2026-10-09 |
+| **Change summary (1.2)** | Clarify creation authority: revalidate the current trusted dashboard identity and creation flag before bounded pre-insert Tickera credential/metadata resolution; forbid post-insert Event-owned operational work; require stale-identity and revoked-sync terminal-safety tests |
 | **Change summary (1.1)** | Master-review corrections: preserve empty Event-grant semantics; freeze `DASHBOARD_EVENT_CREATION_ENABLED` parsing; require grant-scoped Event and attendee aggregate queries (no global `events:all` filter) |
 | **Change summary (1.0)** | Initial authority freeze: existing-Event grants via `DASHBOARD_ALLOWED_EVENT_IDS`; creation via `DASHBOARD_EVENT_CREATION_ENABLED`; query-scoped dashboard list; decoupled create/sync; implementation slices B0–B5 |
 
 ### Revision log
 
+- `1.2` — Clarify creation-input authority: the current trusted dashboard identity plus creation capability is required before any external validation; bounded pre-insert Tickera credential and Event-essentials discovery is permitted, while post-insert Event-owned operational work remains grant-gated. Add stale-identity and revoked-sync terminal-safety regression requirements.
 - `1.1` — Master-review corrections: preserve empty Event-grant semantics, freeze creation-flag parsing, and require grant-scoped Event plus attendee aggregate queries without filtering the global Event cache.
 - `1.0` — Authority freeze (documentation only). No production code.
 
@@ -108,7 +110,7 @@ General BrowserAuth remediation **reuses** this module; neutralizing the `Sales`
 Creation has no pre-existing Event ID; it requires a **separate global** server-owned flag:
 
 ```text
-EVENT_CREATION_AUTHORITY=DASHBOARD_EVENT_CREATION_ENABLED
+EVENT_CREATION_CAPABILITY=DASHBOARD_EVENT_CREATION_ENABLED
 ```
 
 **Parsing contract (frozen; B0 must not choose different semantics):**
@@ -132,31 +134,86 @@ EVENT_CREATION_INVALID_NONBLANK=BOOT_ERROR
 
 **Must not infer creation permission from:** role, query params, LiveView assigns, existing Event grants, or “has any allowed Event”.
 
-### 4. Creation side effects
-
-Creation permission authorizes **insert of the Event record only**.
-
-A successful create **must not** automatically:
+Creation authority requires both current identity and the creation capability:
 
 ```text
-append new Event ID to DASHBOARD_ALLOWED_EVENT_IDS
-create browser/session Event grant
-start full or incremental sync
-enable WhatsApp Sales
-reveal mobile/scanner secrets
-subscribe to Event PubSub
-perform Event-owned external API work
+CREATION_AUTHORITY=
+CURRENT_TRUSTED_DASHBOARD_IDENTITY
+AND
+DASHBOARD_EVENT_CREATION_ENABLED
 ```
 
-**Operational state after create:**
+At the `DashboardLive` action boundary, re-resolve the authenticated dashboard identity through `DashboardAccess.actor_for_identity/1` against the current server configuration. A trusted actor assigned at mount is not sufficient: if that identity is no longer the currently configured trusted identity, the stale LiveView is denied. Revalidate both conditions immediately before any creation-time external request.
+
+### 4. Creation input resolution and post-insert side effects
+
+Creation requires the current trusted dashboard identity **and** the separate creation capability. Both must be revalidated at the action boundary before the first creation-time external request. A stale socket does not retain creation authority.
+
+If the current identity is invalid or creation is disabled, deny terminally before any Event row, Tickera request, or cache mutation:
 
 ```text
-CREATED_PENDING_SERVER_GRANT
+CURRENT_IDENTITY_INVALID
+→ EVENT_ROW=NO
+→ TICKERA_REQUEST=NO
+→ CACHE_MUTATION=NO
+→ TERMINAL_DENIED
+
+CREATION_FLAG_FALSE
+→ EVENT_ROW=NO
+→ TICKERA_REQUEST=NO
+→ CACHE_MUTATION=NO
+→ TERMINAL_DENIED
 ```
 
-The Event becomes ordinarily operable only when its ID is in `DASHBOARD_ALLOWED_EVENT_IDS` (config change + deploy/restart per existing ops procedure).
+After both checks pass, creation may perform only the bounded pre-insert work already required by the `Events.create_event/1` domain contract. Call this work `CREATION_INPUT_RESOLUTION`:
 
-**Edge case:** If the new Event’s ID was **pre-listed** in `DASHBOARD_ALLOWED_EVENT_IDS`, later requests may treat it as granted—but **creation itself still must not auto-start sync**. Creation and synchronization are decoupled.
+```text
+1. Tickera credential validation: TickeraClient.check_credentials/2
+2. Tickera Event metadata discovery needed to construct the Event:
+   TickeraClient.get_event_essentials/2
+3. Local normalization, credential encryption, and changeset preparation
+4. One durable Event-row insert
+5. Internal Event cache persistence/invalidation needed for consistency
+```
+
+This bounded pre-insert validation and discovery does not grant authority over the Event. Do not broaden the permitted Tickera surface beyond the calls required by the existing creation contract. In particular, attendee-list retrieval (`tickets_info`) is not creation-input resolution.
+
+After the Event row exists, creation itself must not automatically perform:
+
+```text
+full attendee sync
+incremental attendee sync
+tickets_info / attendee-list retrieval
+automatic sync retry
+WhatsApp Sales enablement
+WhatsApp offer mutation
+browser/session auto-grant
+DASHBOARD_ALLOWED_EVENT_IDS mutation
+scanner/mobile secret reveal
+Event PubSub subscription
+Event PubSub broadcast
+other Event-owned external operational work
+```
+
+Freeze:
+
+```text
+CREATE_AUTO_SYNC=NO
+CREATE_AUTO_WHATSAPP_ENABLE=NO
+CREATE_AUTO_GRANT=NO
+CREATE_POST_INSERT_EXTERNAL_EVENT_WORK=NO
+```
+
+**Operational state after successful creation:**
+
+```text
+EVENT_CREATED
+→ CREATED_PENDING_SERVER_GRANT
+```
+
+The Event becomes ordinarily operable only when its ID is in the current server-owned `DASHBOARD_ALLOWED_EVENT_IDS` set (config change + deploy/restart per existing ops procedure).
+
+**Edge case:** If the new Event’s ID was **pre-listed** in `DASHBOARD_ALLOWED_EVENT_IDS`, later requests may treat it as granted after insertion—but creation itself still must not auto-start sync or enable WhatsApp. Creation and synchronization remain separate operations.
 
 **Baseline coupling to remove:** `DashboardLive.handle_event("create_event", …)` currently calls `start_sync_task(event.id, incremental: false)` after create (see accepted SHA).
 
@@ -338,7 +395,11 @@ Layer 2 — Identity → grant resolution (cold config, hot membership)
   allowed_event_ids ← DASHBOARD_ALLOWED_EVENT_IDS (runtime)
 
 Layer 3 — Creation (no Event ID yet)
-  DASHBOARD_EVENT_CREATION_ENABLED → may insert Event row only
+  revalidate current authenticated identity with DashboardAccess.actor_for_identity/1
+  AND require DASHBOARD_EVENT_CREATION_ENABLED
+  → bounded CREATION_INPUT_RESOLUTION
+  → one Event-row insert
+  → CREATED_PENDING_SERVER_GRANT
 
 Layer 4 — Per-Event enforcement (every existing Event operation)
   DashboardAccess.event_granted?(actor, event_id)
@@ -394,11 +455,16 @@ Layer 5 — Sensitive sub-operations
 ### Event creation lifecycle
 
 ```text
-CREATE_DISABLED
-  → terminal: no Event row, no side effects
+CURRENT_IDENTITY_INVALID
+  → terminal: no Event row, Tickera request, or cache mutation
 
-CREATE_ENABLED
-  → EVENT_CREATED (DB row only)
+CREATION_FLAG_FALSE
+  → terminal: no Event row, Tickera request, or cache mutation
+
+CURRENT_TRUSTED_DASHBOARD_IDENTITY
+AND DASHBOARD_EVENT_CREATION_ENABLED
+  → CREATION_INPUT_RESOLUTION (bounded pre-insert validation/discovery)
+  → EVENT_CREATED (one durable Event row + internal cache consistency only)
   → CREATED_PENDING_SERVER_GRANT
 
 CREATED_PENDING_SERVER_GRANT
@@ -439,7 +505,7 @@ AUTHENTICATED
 | Variable | Purpose | Default / semantics |
 |----------|---------|---------------------|
 | `DASHBOARD_ALLOWED_EVENT_IDS` | Existing-Event read/mutate/export/scanner/occupancy/reveal | missing/blank → valid, **empty grant set**, fail closed; nonblank → comma-separated positive integers (dedupe + sort); malformed nonblank → boot error |
-| `DASHBOARD_EVENT_CREATION_ENABLED` | Allow `Events.create_event/1` from dashboard only | missing/blank → **false**; see frozen parser in §3 (`1`/`true`/`yes`/`on` vs `0`/`false`/`no`/`off`; other nonblank → boot error) |
+| `DASHBOARD_EVENT_CREATION_ENABLED` | Creation capability; requires current trusted dashboard identity and permits bounded creation-input resolution plus one Event insert | missing/blank → **false**; see frozen parser in §3 (`1`/`true`/`yes`/`on` vs `0`/`false`/`no`/`off`; other nonblank → boot error) |
 
 ```text
 DASHBOARD_ALLOWED_EVENT_IDS_REQUIRED_IN_PROD=NO
@@ -452,7 +518,7 @@ DASHBOARD_ALLOWED_EVENT_IDS_REQUIRED_IN_PROD=NO
 | Route / action | Auth pipeline | Event grant | Creation flag |
 |----------------|---------------|-------------|---------------|
 | `/`, `/dashboard` list | dashboard_auth | grant set scopes query | — |
-| `create_event` | dashboard_auth | — | required |
+| `create_event` | dashboard_auth plus current identity revalidation via `DashboardAccess.actor_for_identity/1` | — | required |
 | `update_event`, archive, unarchive, remove | dashboard_auth | required | — |
 | sync * | dashboard_auth | required | — |
 | secret reveal * | dashboard_auth | required (+ existing password challenge) | — |
@@ -470,7 +536,9 @@ DASHBOARD_ALLOWED_EVENT_IDS_REQUIRED_IN_PROD=NO
 
 | Side effect | Guard |
 |-------------|-------|
-| `Repo.insert/update/delete` on Event | grant or creation flag |
+| Event row insert | Current trusted dashboard identity **and** creation flag, revalidated before creation-input external requests |
+| Existing Event update/delete | Current per-Event grant |
+| Creation-time Tickera credential/essentials request | Current trusted dashboard identity **and** creation flag, revalidated immediately before the request |
 | `start_sync_task` / sync Task | grant |
 | Oban jobs for Event | grant at enqueue time |
 | `Attendees` check-in/out (scanner) | grant before mutation |
@@ -521,7 +589,8 @@ Root list: **bounded set-based queries** scoped to `granted_event_ids` (Event ro
 | Empty grant set | Dashboard list empty; all Event operations denied |
 | Malformed `DASHBOARD_ALLOWED_EVENT_IDS` | Boot fail (existing) |
 | Malformed creation flag | Boot fail closed |
-| Creation disabled | `create_event` denied; no row |
+| Current dashboard identity no longer trusted | `create_event` denied; no row, Tickera request, or cache mutation |
+| Creation disabled | `create_event` denied; no row, Tickera request, or cache mutation |
 | Forged `event_id` in LiveView event | Denied; no mutation |
 | Stale socket / second tab | Re-check grant on each event |
 | Event deleted after mount | Operation fails safely; no leak |
@@ -544,9 +613,18 @@ Root list: **bounded set-based queries** scoped to `granted_event_ids` (Event ro
 
 **Creation:**
 
-- flag false → no Event created
-- flag true → Event row created
-- success → no auto-sync, no auto-grant, no WhatsApp enable from create path
+- stale/untrusted dashboard identity with flag true → denied; zero Tickera requests and zero Event rows
+- current trusted identity with flag false → denied; zero Tickera requests and zero Event rows
+- current trusted identity with flag true → bounded credential check and Event-essentials discovery may run; Event row created and marked pending server grant
+- successful create → no `tickets_info`/attendee sync request, no auto-sync, no auto-grant, and no WhatsApp enable from create path
+
+**Revoked sync terminal safety:**
+
+- granted sync starts and reaches running state
+- grant is removed, then the worker fails, throws, or times out
+- no retry or new external request starts
+- durable Event and SyncState reach a non-stuck terminal state
+- if this test fails, stop and report the cleanup semantics needed; this requirement does not authorize a production-code change by itself
 
 **Mutations (each class):** A granted → baseline behavior; B ungranted → denied; DB/Oban/Task unchanged; secret not decrypted.
 
@@ -571,7 +649,7 @@ Each slice must preserve fail-closed behavior **before** later slices land. Docu
 | Slice | Contents | Depends on |
 |-------|----------|------------|
 | **B0** | `DASHBOARD_EVENT_CREATION_ENABLED` parsing (frozen strict boolean vocabulary); shared grant helper(s) if needed; `Events.list_events_by_ids/1` with grant-scoped Event + attendee rollup queries (empty grants → `[]`, zero DB/cache); unit tests for config + query | — |
-| **B1** | `DashboardLive` query-scoped mount/refresh; grant on all Event `handle_event`; creation policy; **remove create→sync coupling** | B0 |
+| **B1** | `DashboardLive` query-scoped mount/refresh; grant on all Event `handle_event`; creation policy including current identity revalidation and bounded creation-input resolution; **remove create→sync coupling** | B0 |
 | **B2** | `ExportController` grant enforcement + tests | B0 |
 | **B3** | `ScannerLive` grant enforcement + tests | B0 |
 | **B4** | `OccupancyLive` grant enforcement + tests | B0 |
@@ -630,7 +708,7 @@ Pointers for implementers rebasing to `a56d2cc0e119ae84d1509e508486d19ee5e12663`
 
 ```text
 EXISTING EVENTS → per-Event allowlist only (DASHBOARD_ALLOWED_EVENT_IDS)
-NEW EVENT CREATION → DASHBOARD_EVENT_CREATION_ENABLED only
+NEW EVENT CREATION → CURRENT_TRUSTED_DASHBOARD_IDENTITY AND DASHBOARD_EVENT_CREATION_ENABLED
 NEW EVENT → no grant and no sync as side effect of creation
 ROOT LIST → query-scoped by granted IDs
 ALL LISTED ROUTES → grant before side effects
@@ -642,4 +720,4 @@ NO Redis / permission DB / new index for grants
 
 ## Plan-only PR gate
 
-This document version `1.1` / `FROZEN` is the repository authority contract once merged to `main`. **No B0 implementation** until human merge gate on PR #512 completes.
+This document version `1.2` / `FROZEN` is the repository authority contract once merged to `main`. **No B0 implementation** until human merge gate on PR #512 completes.
