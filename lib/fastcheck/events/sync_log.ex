@@ -15,8 +15,12 @@ defmodule FastCheck.Events.SyncLog do
           event: FastCheck.Events.Event.t() | Ecto.Association.NotLoaded.t(),
           id: integer() | nil,
           event_id: integer() | nil,
+          sync_run_id: binary() | nil,
+          owner_token: binary() | nil,
           started_at: DateTime.t() | nil,
           completed_at: DateTime.t() | nil,
+          lease_expires_at: DateTime.t() | nil,
+          heartbeat_at: DateTime.t() | nil,
           status: String.t() | nil,
           attendees_synced: integer() | nil,
           total_pages: integer() | nil,
@@ -30,8 +34,12 @@ defmodule FastCheck.Events.SyncLog do
   schema "sync_logs" do
     belongs_to :event, FastCheck.Events.Event
 
+    field :sync_run_id, Ecto.UUID
+    field :owner_token, Ecto.UUID
     field :started_at, :utc_datetime
     field :completed_at, :utc_datetime
+    field :lease_expires_at, :utc_datetime_usec
+    field :heartbeat_at, :utc_datetime_usec
     field :status, :string
     field :attendees_synced, :integer, default: 0
     field :total_pages, :integer
