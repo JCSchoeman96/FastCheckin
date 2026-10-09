@@ -40,16 +40,14 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
 
     test "concurrent requests admit exactly the allowed count without member collapse" do
       token = "concurrent-#{System.unique_integer([:positive])}"
+      client_ip = "203.0.113.44"
       limit = TicketRateLimiter.exchange_token_limit()
 
       results =
         1..(limit + 3)
         |> Task.async_stream(
           fn _ ->
-            TicketRateLimiter.check_exchange(
-              token,
-              "203.0.113.#{rem(System.unique_integer([]), 200)}"
-            )
+            TicketRateLimiter.check_exchange(token, client_ip)
           end,
           max_concurrency: limit + 3,
           timeout: 30_000
@@ -58,6 +56,119 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
 
       allowed = Enum.count(results, &(&1 == :allowed))
       assert allowed == limit
+
+      key = TicketRateLimiter.token_redis_key(token)
+
+      {:ok, zrange_with_scores} =
+        Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1, "WITHSCORES"])
+
+      member_score_pairs = Enum.chunk_every(zrange_with_scores, 2)
+      members = Enum.map(member_score_pairs, fn [member, _score] -> member end)
+
+      assert length(members) == limit
+      assert MapSet.new(members) |> MapSet.size() == limit
+
+      for [member, score_str] <- member_score_pairs do
+        [timestamp_part, nonce] = String.split(member, ":", parts: 2)
+        score = parse_redis_zset_score_usec(score_str)
+        timestamp = parse_redis_time_member_usec(timestamp_part)
+        assert score > 0
+        assert timestamp > 0
+        # Member prefix uses Lua tostring(now_usec); large values may lose sub-micro precision.
+        assert abs(timestamp - score) <= 1_000
+        assert Regex.match?(~r/^[A-Za-z0-9_-]+$/, nonce)
+        assert byte_size(Base.url_decode64!(nonce, padding: false)) == 16
+      end
+    end
+
+    test "ten concurrent customers each perform fifty unique exchanges behind one client IP" do
+      shared_ip = "203.0.113.250"
+      parent = self()
+
+      tasks =
+        for customer <- 1..10 do
+          Task.async(fn ->
+            send(parent, :ready)
+
+            receive do
+              {^parent, :go} -> :ok
+            end
+
+            for index <- 1..50 do
+              token = "p1e-g-c#{customer}-i#{index}-#{System.unique_integer([:positive])}"
+
+              assert :allowed = TicketRateLimiter.check_exchange(token, shared_ip)
+            end
+
+            :ok
+          end)
+        end
+
+      for _ <- 1..10, do: assert_receive(:ready, 5_000)
+
+      for task <- tasks, do: send(task.pid, {parent, :go})
+
+      results = Task.await_many(tasks, 120_000)
+      assert Enum.all?(results, &(&1 == :ok))
+
+      ip_key = TicketRateLimiter.ip_redis_key(shared_ip)
+      {:ok, count} = Redix.command(FastCheck.Redix, ["ZCARD", ip_key])
+      assert count == 500
+    end
+
+    test "rate limiter sliding window remains Redis TIME authoritative" do
+      source = File.read!("lib/fastcheck/tickets/ticket_rate_limiter.ex")
+
+      assert source =~ "redis.call('TIME')"
+      refute source =~ "System.system_time"
+      refute source =~ "System.os_time"
+      refute source =~ "DateTime.utc_now"
+
+      token = "redis-time-#{System.unique_integer([:positive])}"
+      key = TicketRateLimiter.token_redis_key(token)
+
+      redis_before = redis_now_usec()
+      assert :allowed = TicketRateLimiter.check_exchange(token, @client_ip)
+      redis_after = redis_now_usec()
+
+      {:ok, [_member, score_str]} =
+        Redix.command(FastCheck.Redix, ["ZRANGE", key, 0, -1, "WITHSCORES"])
+
+      score = parse_redis_zset_score_usec(score_str)
+      assert score >= redis_before
+      assert score <= redis_after
+    end
+
+    test "independent Redix clients share one exchange token bucket" do
+      secondary = :p1e_g_secondary_redix
+      redis_url = Application.fetch_env!(:fastcheck, :redis_url)
+
+      {:ok, pid} = Redix.start_link(redis_url, name: secondary)
+
+      on_exit(fn ->
+        if Process.alive?(pid) do
+          _ = GenServer.stop(pid, :normal, 5_000)
+        end
+      end)
+
+      token = "shared-redix-#{System.unique_integer([:positive])}"
+      client_ip = "203.0.113.251"
+
+      assert :allowed =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: FastCheck.Redix)
+
+      assert :allowed = TicketRateLimiter.check_exchange(token, client_ip, redix_name: secondary)
+
+      assert :allowed =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: FastCheck.Redix)
+
+      assert :allowed = TicketRateLimiter.check_exchange(token, client_ip, redix_name: secondary)
+
+      assert :allowed =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: FastCheck.Redix)
+
+      assert {:rate_limited, _} =
+               TicketRateLimiter.check_exchange(token, client_ip, redix_name: secondary)
     end
 
     test "rate-limit key TTL is positive and stale ZSET members are pruned on check" do
@@ -196,6 +307,24 @@ defmodule FastCheck.Tickets.TicketRateLimiterTest do
   defp redis_now_usec do
     {:ok, [sec, usec]} = Redix.command(FastCheck.Redix, ["TIME"])
     String.to_integer(sec) * 1_000_000 + String.to_integer(usec)
+  end
+
+  defp parse_redis_zset_score_usec(score_str) when is_binary(score_str) do
+    case Integer.parse(score_str) do
+      {int, ""} -> int
+      _ -> score_str |> String.to_float() |> trunc()
+    end
+  end
+
+  defp parse_redis_time_member_usec(timestamp_part) when is_binary(timestamp_part) do
+    case Integer.parse(timestamp_part) do
+      {int, ""} ->
+        int
+
+      _ ->
+        {float, _} = Float.parse(timestamp_part)
+        trunc(float)
+    end
   end
 
   defp cleanup_rate_keys do

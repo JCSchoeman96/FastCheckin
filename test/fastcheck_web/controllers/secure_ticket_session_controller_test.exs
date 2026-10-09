@@ -189,6 +189,70 @@ defmodule FastCheckWeb.SecureTicketSessionControllerTest do
       refute session_cookie(conn)
     end
 
+    test "fifty ticket exchanges reuse one browser session cookie and create fifty independent bindings",
+         %{conn: conn} do
+      tickets =
+        for _ <- 1..50 do
+          issued_ticket_fixture()
+        end
+
+      cookie_name = SecureTicketSessionCookie.cookie_name()
+
+      {_conn, _cookie, browser_session_id} =
+        Enum.reduce(tickets, {conn, nil, nil}, fn %{
+                                                    token: token,
+                                                    ticket_issue_id: ticket_issue_id
+                                                  },
+                                                  {current_conn, req_cookie, first_session} ->
+          current_conn =
+            if req_cookie do
+              build_conn()
+              |> post_session(%{"delivery_token" => token}, req_cookie: req_cookie)
+            else
+              post_session(current_conn, %{"delivery_token" => token})
+            end
+
+          assert current_conn.status == 200
+
+          assert %{"redirect_to" => redirect} = json_response(current_conn, 200)
+          assert redirect == "/t/view/#{ticket_issue_id}"
+
+          returned_cookie = session_cookie(current_conn)
+          assert returned_cookie != nil
+          assert Map.has_key?(current_conn.resp_cookies, cookie_name)
+
+          cookie_names = Map.keys(current_conn.resp_cookies)
+
+          assert cookie_name in cookie_names
+
+          refute Enum.any?(cookie_names, fn name ->
+                   name != cookie_name and String.starts_with?(name, "_fastcheck_ticket")
+                 end)
+
+          assert {:ok, decoded_session} = SecureTicketSessionCookie.verify(returned_cookie)
+
+          if first_session do
+            assert decoded_session == first_session
+          end
+
+          {current_conn, returned_cookie, first_session || decoded_session}
+        end)
+
+      assert browser_session_id != nil
+
+      registry_key = TicketSession.registry_key(browser_session_id)
+      {:ok, field_count} = Redix.command(FastCheck.Redix, ["HLEN", registry_key])
+      assert field_count == 50
+
+      for %{ticket_issue_id: ticket_issue_id} <- tickets do
+        assert redis_hget(browser_session_id, ticket_issue_id) != nil
+      end
+
+      on_exit(fn ->
+        _ = Redix.command(FastCheck.Redix, ["DEL", registry_key])
+      end)
+    end
+
     test "rate limit treats whitespace-padded forms as one credential bucket", %{conn: _conn} do
       %{token: token} = issued_ticket_fixture()
 

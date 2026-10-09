@@ -276,6 +276,54 @@ defmodule FastCheck.Tickets.TicketSessionTest do
     assert {:error, :invalid_binding} = TicketSession.fetch_binding(session, @ticket_issue_id)
   end
 
+  test "concurrent G1 and G2 binds can never leave the session at G1" do
+    fp1 = TicketSession.generation_fingerprint(@delivery_hash_a)
+    fp2 = TicketSession.generation_fingerprint(@delivery_hash_b)
+    parent = self()
+
+    for race <- 1..15 do
+      session = TicketSession.new_browser_session_id()
+      ticket_issue_id = 900_000 + race
+
+      task_g1 =
+        Task.async(fn ->
+          send(parent, :race_ready)
+
+          receive do
+            {^parent, :race_go} -> :ok
+          end
+
+          TicketSession.bind(session, ticket_issue_id, 1, fp1, 86_400)
+        end)
+
+      task_g2 =
+        Task.async(fn ->
+          send(parent, :race_ready)
+
+          receive do
+            {^parent, :race_go} -> :ok
+          end
+
+          TicketSession.bind(session, ticket_issue_id, 2, fp2, 86_400)
+        end)
+
+      assert_receive(:race_ready, 5_000)
+      assert_receive(:race_ready, 5_000)
+      send(task_g1.pid, {parent, :race_go})
+      send(task_g2.pid, {parent, :race_go})
+
+      g1_result = Task.await(task_g1, 5_000)
+      g2_result = Task.await(task_g2, 5_000)
+
+      assert g2_result == {:ok, :bound}
+
+      assert g1_result in [{:ok, :bound}, {:error, :stale_generation}]
+
+      assert {:ok, %{generation: 2, fingerprint: ^fp2}} =
+               TicketSession.fetch_binding(session, ticket_issue_id)
+    end
+  end
+
   defp redis_hget!(browser_session_id, ticket_issue_id) do
     key = TicketSession.registry_key(browser_session_id)
     field = "ticket:#{ticket_issue_id}"
