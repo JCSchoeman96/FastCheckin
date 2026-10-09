@@ -40,6 +40,25 @@ defmodule FastCheck.Events.SyncState do
   end
 
   @doc """
+  Initializes the hot mirror for an owner-scoped sync run.
+  """
+  @spec init_sync(integer(), String.t(), String.t(), integer() | nil) :: :ok
+  def init_sync(event_id, sync_run_id, owner_token, sync_log_id \\ nil)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    Agent.update(__MODULE__, fn state ->
+      Map.put(state, event_id, %{
+        sync_run_id: sync_run_id,
+        owner_token: owner_token,
+        status: :running,
+        current_page: 0,
+        total_pages: nil,
+        attendees_processed: 0,
+        sync_log_id: sync_log_id
+      })
+    end)
+  end
+
+  @doc """
   Updates sync progress.
   """
   @spec update_progress(integer(), integer(), integer(), integer()) :: :ok
@@ -59,6 +78,21 @@ defmodule FastCheck.Events.SyncState do
 
           Map.put(state, event_id, updated)
       end
+    end)
+  end
+
+  @doc """
+  Updates progress only when the supplied owner matches the Event hot mirror.
+  """
+  @spec update_progress(integer(), String.t(), String.t(), integer(), integer(), integer()) ::
+          :ok | {:error, :not_found | :stale_owner}
+  def update_progress(event_id, sync_run_id, owner_token, page, total_pages, attendees_count)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    update_owned(event_id, sync_run_id, owner_token, fn current_state ->
+      current_state
+      |> Map.put(:current_page, page)
+      |> Map.put(:total_pages, total_pages)
+      |> Map.put(:attendees_processed, attendees_count)
     end)
   end
 
@@ -85,6 +119,16 @@ defmodule FastCheck.Events.SyncState do
   end
 
   @doc """
+  Pauses sync only when the supplied owner matches the Event hot mirror.
+  """
+  @spec pause_sync(integer(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :stale_owner}
+  def pause_sync(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    update_owned(event_id, sync_run_id, owner_token, &Map.put(&1, :status, :paused))
+  end
+
+  @doc """
   Resumes sync for an event.
   """
   @spec resume_sync(integer()) :: :ok | {:error, :not_found}
@@ -107,6 +151,16 @@ defmodule FastCheck.Events.SyncState do
   end
 
   @doc """
+  Resumes sync only when the supplied owner matches the Event hot mirror.
+  """
+  @spec resume_sync(integer(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :stale_owner}
+  def resume_sync(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    update_owned(event_id, sync_run_id, owner_token, &Map.put(&1, :status, :running))
+  end
+
+  @doc """
   Cancels sync for an event.
   """
   @spec cancel_sync(integer()) :: :ok
@@ -124,11 +178,36 @@ defmodule FastCheck.Events.SyncState do
   end
 
   @doc """
+  Cancels sync only when the supplied owner matches the Event hot mirror.
+  """
+  @spec cancel_sync(integer(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :stale_owner}
+  def cancel_sync(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    update_owned(event_id, sync_run_id, owner_token, &Map.put(&1, :status, :cancelled))
+  end
+
+  @doc """
   Gets sync state for an event.
   """
   @spec get_state(integer()) :: state_map() | nil
   def get_state(event_id) when is_integer(event_id) do
     Agent.get(__MODULE__, &Map.get(&1, event_id))
+  end
+
+  @doc """
+  Gets sync state only when the supplied owner matches the Event hot mirror.
+  """
+  @spec get_state(integer(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, :not_found | :stale_owner}
+  def get_state(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    Agent.get(__MODULE__, fn state ->
+      case owned_state(state, event_id, sync_run_id, owner_token) do
+        {:ok, current_state} -> {:ok, current_state}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
   end
 
   @doc """
@@ -138,6 +217,18 @@ defmodule FastCheck.Events.SyncState do
   def should_continue?(event_id) when is_integer(event_id) do
     case get_state(event_id) do
       %{status: :running} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Checks whether the matching owner has a running sync.
+  """
+  @spec should_continue?(integer(), String.t(), String.t()) :: boolean()
+  def should_continue?(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    case get_state(event_id, sync_run_id, owner_token) do
+      {:ok, %{status: :running}} -> true
       _ -> false
     end
   end
@@ -153,6 +244,16 @@ defmodule FastCheck.Events.SyncState do
   end
 
   @doc """
+  Clears sync state only when the supplied owner matches the Event hot mirror.
+  """
+  @spec clear_state(integer(), String.t(), String.t()) ::
+          :ok | {:error, :not_found | :stale_owner}
+  def clear_state(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    update_owned(event_id, sync_run_id, owner_token, fn _current_state -> :delete end)
+  end
+
+  @doc """
   Gets the last processed page for resuming.
   """
   @spec get_resume_page(integer()) :: integer()
@@ -160,6 +261,46 @@ defmodule FastCheck.Events.SyncState do
     case get_state(event_id) do
       %{current_page: page} when is_integer(page) -> max(0, page)
       _ -> 0
+    end
+  end
+
+  @doc """
+  Gets the resume page only when the supplied owner matches the Event hot mirror.
+  """
+  @spec get_resume_page(integer(), String.t(), String.t()) :: integer()
+  def get_resume_page(event_id, sync_run_id, owner_token)
+      when is_integer(event_id) and is_binary(sync_run_id) and is_binary(owner_token) do
+    case get_state(event_id, sync_run_id, owner_token) do
+      {:ok, %{current_page: page}} when is_integer(page) -> max(0, page)
+      _ -> 0
+    end
+  end
+
+  defp update_owned(event_id, sync_run_id, owner_token, update_fun) do
+    Agent.get_and_update(__MODULE__, fn state ->
+      case owned_state(state, event_id, sync_run_id, owner_token) do
+        {:ok, current_state} ->
+          case update_fun.(current_state) do
+            :delete -> {:ok, Map.delete(state, event_id)}
+            updated_state -> {:ok, Map.put(state, event_id, updated_state)}
+          end
+
+        {:error, reason} ->
+          {{:error, reason}, state}
+      end
+    end)
+  end
+
+  defp owned_state(state, event_id, sync_run_id, owner_token) do
+    case Map.fetch(state, event_id) do
+      :error ->
+        {:error, :not_found}
+
+      {:ok, %{sync_run_id: ^sync_run_id, owner_token: ^owner_token} = current_state} ->
+        {:ok, current_state}
+
+      {:ok, _current_state} ->
+        {:error, :stale_owner}
     end
   end
 end
