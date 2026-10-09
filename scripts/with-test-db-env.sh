@@ -20,12 +20,18 @@ if [[ -z "${FASTCHECK_TEST_DB_PASSWORD:-}" ]]; then
     exit 1
   fi
 
-  FASTCHECK_TEST_DB_PASSWORD="$(
+  if ! FASTCHECK_TEST_DB_PASSWORD="$(
     {
-      source "$credential_file" >/dev/null
-      printf '%s' "${FASTCHECK_TEST_DB_PASSWORD:-}"
+      if ! source "$credential_file" >/dev/null; then
+        exit 1
+      fi
+
+      builtin printf '%s' "${FASTCHECK_TEST_DB_PASSWORD:-}"
     } 2>/dev/null
-  )"
+  )"; then
+    printf 'Failed to load FastCheck TEST credentials from the configured credential authority.\n' >&2
+    exit 1
+  fi
 fi
 
 if [[ -z "${FASTCHECK_TEST_DB_PASSWORD:-}" ]]; then

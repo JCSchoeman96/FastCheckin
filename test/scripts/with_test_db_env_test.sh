@@ -85,6 +85,30 @@ if [[ -e "$marker_file" || "$output" == *'fake-test-password'* || "$output" == *
   exit 1
 fi
 
+malformed_credential_file="$tmp_dir/malformed.env"
+printf '%s\n' \
+  'set +e' \
+  'FASTCHECK_TEST_DB_PASSWORD=fake-test-password' \
+  'this is not valid bash {' \
+  >"$malformed_credential_file"
+
+malformed_marker_file="$tmp_dir/malformed-child-ran"
+if output="$(env -u FASTCHECK_TEST_DB_PASSWORD \
+  DEVCORE_PROJECT_DB_ENV_FILE="$malformed_credential_file" \
+  "$wrapper" bash -c 'printf ran >"$1"' _ "$malformed_marker_file" 2>&1)"; then
+  if [[ -e "$malformed_marker_file" ]]; then
+    printf 'Malformed credential authority executed the child command.\n' >&2
+  else
+    printf 'Malformed credential authority unexpectedly returned success.\n' >&2
+  fi
+  exit 1
+fi
+
+if [[ -e "$malformed_marker_file" || "$output" == *'fake-test-password'* ]]; then
+  printf 'Malformed credential authority executed the child or exposed a secret.\n' >&2
+  exit 1
+fi
+
 if output="$(DEVCORE_PROJECT_DB_ENV_FILE="$missing_credential_file" \
   bash -x "$wrapper" bash -c 'printf ran >"$1"' _ "$marker_file" 2>&1)"; then
   printf 'Expected xtrace-enabled execution to fail.\n' >&2
