@@ -46,13 +46,35 @@ For internal pilot and admin-assisted sales:
 
 ## Ingress logging evidence (secure ticket launch gate)
 
-Before declaring production secure-ticket logging fully safe end-to-end,
-operators must confirm the host reverse proxy in front of FastCheck does **not**
-log raw `/t/:token` request URIs. The repository documents Compose/app binding
-but does not ship proxy configuration; capture attestation or configuration
-review evidence out of band. Until verified, treat
-`INGRESS_REQUEST_LOGGING_SAFE=UNVERIFIED` and keep the P1-E launch blocker open
-on ingress even when application request logging hardening is merged.
+Railway/request-edge raw path logging is confirmed and may remain enabled.
+
+The secure-ticket ingress launch gate requires proof that the **supported** ticket
+flow does not place a valid delivery bearer in the HTTP request target.
+
+Supported production flow:
+
+- Outbound link: `/t#<delivery-token>`
+- Bootstrap request target: `/t`
+- Exchange request target: `/t/session`, bearer in `POST` body
+- Authorized reads: `/t/view/:ticket_issue_id` and optional `/t/view/:ticket_issue_id/pdf`
+- Legacy `/t/:token` and `/t/:token/pdf` are rejection-only sinks
+
+A legacy or attacker-controlled arbitrary path may still appear in raw path logs;
+that does not constitute supported-flow bearer leakage.
+
+P1E-H production evidence on 2026-10-09 proved:
+
+- Positive-control legacy path was visible in Railway HTTP logs
+- Fragment marker was absent from request paths
+- Body marker was absent from request paths
+- Both markers were absent from bounded application/service logs
+
+Durable record: [P1E Secure Ticket Ingress Evidence](../runbooks/P1E_SECURE_TICKET_INGRESS_EVIDENCE.md).
+
+```text
+INGRESS_REQUEST_LOGGING_SAFE=PASS
+P1E_INGRESS_BLOCKER=CLEARED
+```
 
 ## Deferred Web Checkout Runbook
 

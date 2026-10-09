@@ -302,7 +302,10 @@ retry jobs, pause queues, or delete jobs as a monitoring response.
 P1F_QUERY_PLAN_EVIDENCE=PASS
 P1F_RUNBOOK_REHEARSAL=PASS
 P1F_GLOBAL_OBAN_BLOCKER=CLEARED
-P1E_INGRESS_BLOCKER=OPEN
+P1E_INGRESS_BLOCKER=CLEARED
+
+P1-E secure-ticket ingress evidence:
+[P1E Secure Ticket Ingress Evidence](P1E_SECURE_TICKET_INGRESS_EVIDENCE.md).
 
 ## Ops dashboard unavailable
 
