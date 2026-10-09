@@ -3,13 +3,14 @@
 | Field | Value |
 |-------|-------|
 | **Plan ID** | BROWSERAUTH-EVENT-ISOLATION-REMEDIATION |
-| **Plan version** | 1.3 |
+| **Plan version** | 1.4 |
 | **Status** | FROZEN |
 | **Scope** | Preserve BrowserAuth Event isolation and freeze durable Postgres SyncRun ownership after the revoked-sync terminal-safety regression showed that Event-ID-only cleanup is unsafe. |
 | **Authority** | This file is the active contract for B0–B5 and the separate SyncRun ownership workstream R0–R6. P1-D and all v1.2 creation-authority semantics remain frozen. PR #514 stays blocked until the SyncRun ownership implementation is reviewed, merged, and verified. |
-| **Accepted base** | `BASE_SHA=db8e5eb2a51bdbcc45fde2818c49b572e2c7ec53`, `BASE_TREE=3dc265243580bf52fd72fc6c734caf535723e52f` |
+| **Accepted base** | `BASE_SHA=7052b2145f5de10a4f1ccc484b5813bd47b9d0d5`, `BASE_TREE=d55a67ef3535c4d13da69f4bc22b50468e1dcfaa` |
 | **Tracking** | `FastCheckin-v6u9` (Beads / `bd`; verified locally 2026-10-09) |
 | **Last updated** | 2026-10-09 |
+| **Change summary (1.4)** | v1.4 clarifies that durable SyncRun ownership is shared infrastructure with caller-supplied server authority guards, preserving DashboardAccess authority for BrowserAuth and existing event-scoped ScannerAuth semantics for ScannerPortal. It also freezes an expand/cutover/enforce rollout so final active-run DB constraints cannot break legacy writers during deployment. |
 | **Change summary (1.3)** | Freeze durable SyncRun ownership in sync_logs, owner fencing, one active run per Event, database-clock leases, per-request authorization, and bounded crash recovery; keep SyncRun implementation separate from PR #514. |
 | **Change summary (1.2)** | Clarify creation authority: revalidate the current trusted dashboard identity and creation flag before bounded pre-insert Tickera credential/metadata resolution; forbid post-insert Event-owned operational work; require stale-identity and revoked-sync terminal-safety tests |
 | **Change summary (1.1)** | Master-review corrections: preserve empty Event-grant semantics; freeze `DASHBOARD_EVENT_CREATION_ENABLED` parsing; require grant-scoped Event and attendee aggregate queries (no global `events:all` filter) |
@@ -17,6 +18,7 @@
 
 ### Revision log
 
+- `1.4` — Clarify that durable SyncRun ownership is shared infrastructure with caller-supplied server authority guards, preserving DashboardAccess authority for BrowserAuth and existing event-scoped ScannerAuth semantics for ScannerPortal. Freeze an expand/cutover/enforce rollout so final active-run database constraints cannot break legacy writers during deployment. Preserve all other v1.3 ownership, lease, identity, takeover, and terminal semantics.
 - `1.3` — Freeze durable Postgres SyncRun ownership after the B1 revoked-sync terminal-safety regression showed Event-ID-only cleanup is unsafe. Define owner-fenced active-run semantics, atomic Event/run transitions, leases, request-boundary authority checks, bounded crash recovery, and stale-worker fencing. Preserve v1.2 creation authority.
 - `1.2` — Clarify creation-input authority: the current trusted dashboard identity plus creation capability is required before any external validation; bounded pre-insert Tickera credential and Event-essentials discovery is permitted, while post-insert Event-owned operational work remains grant-gated. Add stale-identity and revoked-sync terminal-safety regression requirements.
 - `1.1` — Master-review corrections: preserve empty Event-grant semantics, freeze creation-flag parsing, and require grant-scoped Event plus attendee aggregate queries without filtering the global Event cache.
@@ -722,7 +724,7 @@ NO Redis / permission DB / new index for grants
 
 ## Plan-only PR gate
 
-This document version `1.3` / `FROZEN` is the repository authority contract once merged to `main`. P1-D and v1.2 creation authority remain frozen. The separate SyncRun ownership implementation must merge and pass post-merge CI before PR #514 resumes. Do not implement SyncRun ownership in this authority change.
+This document version `1.4` / `FROZEN` is the repository authority contract once merged to `main`. P1-D and v1.2 creation authority remain frozen. The separate SyncRun ownership implementation must merge and pass post-merge CI before PR #514 resumes. Do not implement SyncRun ownership in this authority change.
 
 ## v1.3 durable SyncRun ownership authority
 
@@ -1184,3 +1186,296 @@ The run row remains an audit record after terminalization. Do not delete or reus
 The normal terminalization path locks the Event first, then matches and locks the `sync_logs` row by `sync_run_id`, `owner_token`, and expected active status. The recovery path additionally rechecks `lease_expires_at <= database_now` in the same transaction. If a heartbeat renewed the lease first, recovery skips the row. If recovery terminalized first, a later heartbeat sees terminal status and is stale. Both paths update the Event only when the locked Event still has `status=syncing`.
 
 After the durable terminal transaction commits, hot-state cleanup matches Event ID, `sync_run_id`, and owner token. If the mirror is already absent, cleanup is complete. If it contains another run or token, leave it untouched. Event cache invalidation follows the committed status change and is not evidence of ownership.
+
+## v1.4 shared SyncRun authority and deployment-safe rollout
+
+This section is normative for SyncRun work and supersedes conflicting v1.3 rollout and caller-authorization wording above. It preserves all other v1.3 ownership, lease, identity, takeover, and terminal semantics. This documentation revision authorizes no implementation.
+
+v1.4 clarifies that durable SyncRun ownership is shared infrastructure with caller-supplied server authority guards, preserving DashboardAccess authority for BrowserAuth and existing event-scoped ScannerAuth semantics for ScannerPortal. It also freezes an expand/cutover/enforce rollout so final active-run DB constraints cannot break legacy writers during deployment.
+
+### Shared synchronization callers
+
+The repository has two browser entry points that call the shared `Events.sync_event/3` function under different authentication models:
+
+```text
+DashboardLive
+  -> BrowserAuth / :dashboard_auth authority
+  -> Events.sync_event/3
+
+ScannerPortalLive
+  -> ScannerAuth / :scanner_auth authority
+  -> Events.sync_event/3
+```
+
+The current `FastCheck.Events.SyncLog.log_sync_start/1` inserts `in_progress` rows without `sync_run_id`, `owner_token`, `lease_expires_at`, or `heartbeat_at`. A final active-row CHECK constraint cannot be deployed while older application writers may still create those rows.
+
+Freeze:
+
+```text
+SYNC_RUN_AUTHORIZATION_POLICY=CALLER_SUPPLIED_SERVER_GUARD
+SYNC_RUN_DOMAIN_HARDCODES_DASHBOARD_ACCESS=NO
+PRODUCTION_ALLOW_ALL_AUTHORITY=NO
+EXPAND_CUTOVER_ENFORCE_ROLLOUT=REQUIRED
+```
+
+The shared sync domain may invoke a guard but must not know about Phoenix sessions or web plugs. It must not hardcode `FastCheck.Sales.DashboardAccess` as the authority for every run. Production must not use `ALLOW_ALL`, `NO_AUTH`, `SYSTEM_DEFAULT_AUTHORITY`, or an equivalent allow-all callback.
+
+### Sync authority guard contract
+
+`SYNC_AUTHORITY_GUARD` is an in-memory, server-side capability supplied by the authenticated entry point to the worker. It is not durable SyncRun ownership, a second permission database, or user-visible data. Its conceptual contract is:
+
+```text
+check(event_id)
+  -> :ok
+  -> {:error, :authority_revoked}
+```
+
+The exact implementation may use a function or a small internal struct or module. The shared sync domain calls it at the required boundaries without depending on the web session or plug implementation.
+
+```text
+AUTHORITY_GUARD_PERSISTED=NO
+AUTHORITY_GUARD_BROWSER_VISIBLE=NO
+AUTHORITY_GUARD_REDIS_STORED=NO
+AUTHORITY_GUARD_DB_STORED=NO
+```
+
+#### Dashboard guard
+
+Dashboard sync uses:
+
+```text
+AUTHORITY_KIND=dashboard_event_grant
+```
+
+The guard captures only the authenticated dashboard identity needed to resolve current server authority. Every check re-resolves that identity through both existing functions:
+
+```text
+FastCheck.Sales.DashboardAccess.actor_for_identity/1
+FastCheck.Sales.DashboardAccess.event_granted?/2
+```
+
+Permission requires the identity to remain the current trusted dashboard identity and the requested Event to remain granted. A stale socket identity or removed Event grant returns `{:error, :authority_revoked}`.
+
+Do not authorize from mount-time `allowed_event_ids`, a socket actor grant snapshot, browser parameters, or an Event object alone.
+
+```text
+CURRENT_TRUSTED_DASHBOARD_IDENTITY=YES
+CURRENT_EVENT_GRANT=YES
+```
+
+#### ScannerPortal guard
+
+`/scanner/:event_id` keeps the existing `FastCheckWeb.Plugs.ScannerAuth` boundary. Do not convert ScannerPortal to DashboardAccess, add it to `DASHBOARD_ALLOWED_EVENT_IDS`, or create a scanner permission table.
+
+```text
+AUTHORITY_KIND=scanner_portal_event_scope
+```
+
+Create the scanner authority context only after the existing authenticated scanner session has been validated and bound to one Event. Its immutable scope contains only `SCOPED_EVENT_ID`. On each guard check, require all of the following:
+
+```text
+requested event_id == scoped event id
+Event still exists
+Event remains scannable under existing Events.can_check_in?/1 semantics
+```
+
+Otherwise return `{:error, :authority_revoked}`. The scanner scope cannot widen to another Event.
+
+```text
+SCANNER_SYNC_CROSS_EVENT_AUTHORITY=NO
+SCANNER_USES_DASHBOARD_GRANTS=NO
+SCANNER_PERMISSION_DB=NO
+```
+
+The current scanner session is cookie/session based and has no separate server-side revocation registry. v1.4 does not add one. The guard preserves current semantics: the authenticated Event scope established at ScannerPortal mount plus a fresh server-side Event existence and scannability check. This does not redesign scanner authentication or authorize B3.
+
+### Request fencing with authority guards
+
+For each Tickera request in an active SyncRun, use this order:
+
+```text
+AUTHORITY_GUARD_CHECK
+→ OWNER_TOKEN_CHECK
+→ ACTIVE_STATUS_CHECK
+→ LEASE_CHECK/RENEW
+→ DISPATCH ONE REQUEST
+```
+
+After each response, use this order before any sync-domain work:
+
+```text
+AUTHORITY_GUARD_CHECK
+→ OWNER_TOKEN_CHECK
+→ apply domain mutation / progress / next request / retry only if both pass
+```
+
+If the authority guard fails after an in-flight request, discard the response for further sync-domain work. Make no attendee, reconciliation, Event-total, progress, or completion update from that response. Issue no next Tickera request and no retry. Perform only owner-scoped terminalization as `cancelled / authority_revoked` and owner-scoped cleanup.
+
+All other v1.3 owner and lease checks remain required. A process retains its in-memory guard for its lifetime. A healthy worker may outlive its LiveView as v1.3 allows. If the worker exits, its guard disappears. Recovery needs no user or scanner guard because it performs terminal cleanup only, issues zero Tickera calls, and starts zero retries. Do not persist authority context to enable worker resurrection. Crash recovery creates no replacement external worker.
+
+A missing guard fails closed:
+
+```text
+MISSING_AUTHORITY_GUARD
+→ NO CLAIM FOR USER-INITIATED EXTERNAL WORK
+→ NO TICKERA REQUEST
+```
+
+There is no production default equivalent to `fn event_id -> :ok end`. Tests may supply explicit test-only guards. Every production caller must supply its actual authority policy.
+
+The only caller adapters authorized for the future SyncRun implementation are the existing `DashboardLive` sync-start/task boundary and `ScannerPortalLive` incremental-sync task boundary. This does not authorize general B1 implementation inside the SyncRun PR, Dashboard Event-list changes, creation-authority changes, edit/archive/reveal changes, B2 ExportController work, B3 ScannerLive `/scan/:event_id` work, B4 OccupancyLive work, or ScannerPortal authentication redesign.
+
+### Expand, cutover, and enforce rollout
+
+Use separate forward-only migrations where needed. Do not require all database enforcement in the first R0 merge.
+
+```text
+R0 = EXPAND
+R1 = HOT_MIRROR
+R2 = DURABLE_PRIMITIVES
+R3 = GUARDED_RUNNER
+R4 = CUTOVER + HEARTBEAT + RECOVERY
+R5 = ENFORCE + LEGACY_REMOVAL
+R6 = CLOSURE
+```
+
+#### R0: expand only
+
+R0 may add the nullable columns `sync_run_id`, `owner_token`, `lease_expires_at`, and `heartbeat_at`, plus their schema representation. It may add indexes safe for legacy writers, including a unique `sync_run_id` index with `WHERE sync_run_id IS NOT NULL` and a lease-expiry recovery index.
+
+R0 preserves existing runtime behavior. It must not add the active-ownership CHECK constraint or enforce one active run per Event while legacy writers remain possible.
+
+```text
+R0_ACTIVE_OWNER_CHECK=NO
+R0_ACTIVE_RUN_UNIQUE_ENFORCEMENT=NO
+R0_EXPAND_MIGRATION=YES
+```
+
+#### R1: owner-scoped hot mirror
+
+R1 adds owner-scoped `SyncState` hot-mirror semantics. It remains additive until cutover. Do not switch external sync behavior merely because R1 has merged.
+
+#### R2: durable SyncRun primitives
+
+R2 adds and test-drives atomic claim, owner checks, lease renewal, owner-scoped terminalization, and control transitions. These primitives may exist before they become the public production sync path. No Tickera path is cut over in R2.
+
+#### R3: guarded runner
+
+R3 builds the complete guarded path with claimed `sync_run_id`, `owner_token`, owner-scoped `SyncState`, caller authority guard, request and response fencing, retry ownership, and identity propagation through full and incremental sync. It includes the narrow adapters for both current production sync callers.
+
+R3 stays non-default and non-cutover until R4 supplies heartbeat and recovery. Do not leave a partially leased production worker without heartbeat and recovery.
+
+```text
+R3_PRODUCTION_CUTOVER=NO
+```
+
+#### R4: cutover
+
+R4 adds a 30-second heartbeat, a 180-second lease, recovery every 60 seconds in batches of at most 100, and authorized takeover. Only after these parts exist may production sync entry points switch from the legacy lifecycle to the SyncRun lifecycle. R4 is the first behavior-changing cutover.
+
+At R4 completion:
+
+```text
+ALL_NEW_ACTIVE_RUNS_POPULATE_OWNERSHIP_FIELDS=YES
+ALL_PRODUCTION_SYNC_CALLERS_SUPPLY_AUTHORITY_GUARD=YES
+LEGACY_EXTERNAL_SYNC_START_PATH=NO
+R4_PRODUCTION_CUTOVER=YES
+```
+
+Do not add final database enforcement in R4.
+
+#### R5: enforce after cutover
+
+R5 may begin only after R4 has merged, deployed, passed post-merge and post-deploy verification, and old application writers are no longer active. Before adding final constraints, inspect active rows and require:
+
+```text
+no duplicate active runs per Event
+no active row missing sync_run_id
+no active row missing owner_token
+no active row missing heartbeat_at
+no active row missing lease_expires_at
+```
+
+Unexpected active data stops the migration:
+
+```text
+STOP=MIGRATION_ACTIVE_RUN_RECONCILIATION_REQUIRED
+```
+
+Only after those checks may R5 add the partial unique index on `event_id` for statuses `in_progress` and `paused`, and the active-ownership CHECK constraint. Prefer deployment-safe PostgreSQL techniques where compatible with Ecto and PostgreSQL migration structure, including `CREATE UNIQUE INDEX CONCURRENTLY`, `CHECK ... NOT VALID`, then `VALIDATE CONSTRAINT`. Do not hold application transactions across index construction.
+
+R5 removes or neutralizes legacy Event-ID-only lifecycle writers after all callers have migrated.
+
+```text
+R5_FINAL_CONSTRAINT_ENFORCEMENT=YES
+R5_ENFORCEMENT_MIGRATION=YES
+SINGLE_MIGRATION_REQUIREMENT=NO
+```
+
+Separate R0 expansion and R5 enforcement migrations are authorized. Never edit a merged migration to add later enforcement. Use forward-only migrations.
+
+#### R6: closure and sequencing
+
+Each R-slice may use a focused PR. The required sequence is:
+
+```text
+v1.4 authority merge + CI
+→ R0 merge + CI
+→ R1 merge + CI
+→ R2 merge + CI
+→ R3 merge + CI
+→ R4 cutover merge + CI/deploy verification
+→ R5 enforcement merge + CI/deploy verification
+→ R6 closure
+→ rebase PR #514
+→ finish B1 correction
+```
+
+Start each next slice from the accepted merge of the previous slice. Do not stack behavior changes on an unverified base. Keep PR #514 remotely untouched until SyncRun ownership is fully accepted.
+
+### Unchanged lifecycle and operating limits
+
+Preserve v1.3 lifecycle states and terminal reasons:
+
+```text
+ACTIVE:
+in_progress
+paused
+
+TERMINAL:
+completed
+failed
+cancelled
+
+authority revoked -> cancelled / authority_revoked
+lease expired -> failed / lease_expired
+user cancel -> cancelled / user_cancelled
+success -> completed
+```
+
+Paused remains active. Takeover creates a new row, run ID, and token. A terminal run never becomes active again.
+
+```text
+DURABLE_RUN_AUTHORITY=Postgres primary
+HOT_RUNTIME_STATE=SyncState
+REDIS_REQUIRED=NO
+CACHEX_REQUIRED=NO
+READ_REPLICA_FOR_OWNERSHIP=NO
+LONG_DB_LOCK_ACROSS_TICKERA=NO
+```
+
+Keep guards bounded. Dashboard checks resolve the current trusted identity and current Event grant. Scanner checks inspect only the scoped Event's existence and scannability. Do not add list-wide Event reads or permission scans per Tickera request. Do not add polling, Redis locks, or distributed BEAM-only ownership authority.
+
+v1.4 does not authorize a scanner-session database, a new permission table, Redis permissions or SyncRun locks, B2, B3, B4, PR #514 changes, new mobile JWT sync behavior, or scanner authentication redesign.
+
+### Required future tests
+
+Keep all v1.3 ownership and concurrency tests. Add tests for both caller policies and the rollout:
+
+- Dashboard current identity plus current Event grant allows a request. Removing the identity or Event grant denies the next request. Revocation during a request discards the response.
+- Scanner-authenticated Event A permits A sync. A forged Event B is denied. An archived or otherwise unscannable Event is denied at the next check. Scanner authority does not consult dashboard grants.
+- A production SyncRun external start without a guard is rejected and makes zero Tickera calls.
+- The R0 migration remains compatible with legacy `SyncLog.log_sync_start/1` writes.
+- R5 constraints reject active ownership-null rows and the active unique index rejects a second active run.
+
+Existing v1.3 tests continue to prove owner fencing, leases, takeover, retries, terminalization, and recovery.
