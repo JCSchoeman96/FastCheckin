@@ -116,6 +116,29 @@ defmodule FastCheck.Sales.CheckoutSession do
       end)
     end
 
+    update :cancel_session do
+      require_atomic?(false)
+      accept([])
+      argument(:reason, :string)
+
+      change(fn changeset, context ->
+        from_state = Changeset.get_data(changeset, :status)
+        reason = Changeset.get_argument(changeset, :reason)
+
+        if from_state == "cancelled" do
+          changeset
+        else
+          transition_status(
+            changeset,
+            context,
+            "cancelled",
+            allowed_from: ["created", "hold_attached", "payment_link_sent", "payment_started"],
+            reason: reason
+          )
+        end
+      end)
+    end
+
     update :mark_manual_review do
       require_atomic?(false)
       accept([:state_data])
@@ -217,12 +240,12 @@ defmodule FastCheck.Sales.CheckoutSession do
       authorize_if({FastCheck.Sales.PolicyChecks.EventAllowed, relationship_path: [:order]})
     end
 
-    policy action([:create_session, :release_session, :mark_manual_review]) do
+    policy action([:create_session, :release_session, :cancel_session, :mark_manual_review]) do
       access_type(:strict)
       authorize_if({FastCheck.Sales.PolicyChecks.ActorTypeIn, actor_types: [:admin]})
     end
 
-    policy action([:create_session, :release_session, :mark_manual_review]) do
+    policy action([:create_session, :release_session, :cancel_session, :mark_manual_review]) do
       authorize_if(
         {FastCheck.Sales.PolicyChecks.EventAllowed,
          relationship_path: [:order], actor_types: [:admin]}

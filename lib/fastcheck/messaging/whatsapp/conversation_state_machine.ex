@@ -19,11 +19,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   alias FastCheck.Messaging.WhatsApp.MessageCommand
   alias FastCheck.Messaging.WhatsApp.PaymentFlow
   alias FastCheck.Messaging.WhatsApp.PaymentStatusRenderer
+  alias FastCheck.Messaging.WhatsApp.PurchaseFlowIdentity
   alias FastCheck.Messaging.WhatsApp.ResendDeliveryFlow
   alias FastCheck.Messaging.WhatsApp.ResendFlow
   alias FastCheck.Messaging.WhatsApp.SessionStore
   alias FastCheck.Messaging.WhatsApp.TicketLinkRenderer
   alias FastCheck.Repo
+  alias FastCheck.Sales.CheckoutExpiry
   alias FastCheck.Sales.Conversation
   alias FastCheck.Sales.PurchaseLimits
   alias FastCheck.Sales.TicketOffer
@@ -77,7 +79,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
                    @buyer_keys ++
                    @order_flow_keys ++
                    @resend_flow_keys ++
-                   ["purchase_flow_id"]
+                   ["purchase_flow_id", "recovery_menu", "cancel_order_id", "recovery_resend"]
 
   @spec handle_inbound(MessageCommand.t(), Conversation.t()) ::
           {:ok, FlowResult.t()} | {:error, term()}
@@ -103,6 +105,36 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     end
   end
 
+  defp dispatch_with_commercial_order_guard(command, conversation, {:ok, :restart}) do
+    recover_to_menu(command, conversation)
+  end
+
+  defp dispatch_with_commercial_order_guard(command, conversation, {:ok, :help}) do
+    recover_to_menu(command, conversation, MenuRenderer.help(language(conversation)))
+  end
+
+  defp dispatch_with_commercial_order_guard(command, %{state: "main_menu"} = conversation, input) do
+    case ActiveCommercialOrder.find_active_order(conversation) do
+      {:ok, nil} ->
+        if state_data(conversation)["recovery_menu"] do
+          recover_to_menu(command, conversation)
+        else
+          dispatch(command, conversation, input)
+        end
+
+      {:ok, order} ->
+        dispatch_recovery_menu(command, conversation, order, input)
+
+      {:error, reason} ->
+        recovery_lookup_failed(command, conversation, reason)
+    end
+  end
+
+  defp dispatch_with_commercial_order_guard(command, %{state: state} = conversation, _input)
+       when state in ["manual_review", "cancelled", "expired", "completed"] do
+    recover_to_menu(command, conversation)
+  end
+
   defp dispatch_with_commercial_order_guard(command, conversation, normalized) do
     if commercial_order_guard_required?(conversation, normalized) do
       case ActiveCommercialOrder.find_active_order(conversation) do
@@ -110,7 +142,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
           dispatch(command, conversation, normalized)
 
         {:ok, order} ->
-          PaymentFlow.respond_to_active_order(command, conversation, order)
+          if normalized in [{:ok, :back}, {:ok, :stop}] do
+            render_recovery_menu(command, conversation, order)
+          else
+            PaymentFlow.respond_to_active_order(command, conversation, order)
+          end
 
         {:error, reason} ->
           fail_closed_commercial_order_lookup(command, conversation, reason)
@@ -120,11 +156,153 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
     end
   end
 
+  defp recover_to_menu(command, conversation, notice \\ nil) do
+    case ActiveCommercialOrder.find_active_order(conversation) do
+      {:ok, order} -> render_recovery_menu(command, conversation, order, notice)
+      {:error, reason} -> recovery_lookup_failed(command, conversation, reason)
+    end
+  end
+
+  defp render_recovery_menu(command, conversation, order, notice \\ nil) do
+    data = clear_current_flow(state_data(conversation))
+
+    data =
+      if order do
+        data
+        |> Map.merge(Map.take(state_data(conversation), ["purchase_flow_id"]))
+        |> Map.merge(%{
+          "sales_order_id" => order.id,
+          "order_public_reference" => order.public_reference,
+          "recovery_menu" => true
+        })
+      else
+        data
+      end
+
+    with {:ok, conversation} <-
+           transition(command, conversation, :restart_to_main_menu, %{state_data: data}) do
+      body =
+        MenuRenderer.main_menu(
+          language(conversation),
+          order,
+          CheckoutExpiry.customer_cancellation_available?(order)
+        )
+
+      body = if notice, do: notice <> "\n\n" <> body, else: body
+      {:ok, result(conversation, body, command)}
+    end
+  end
+
+  defp dispatch_recovery_menu(command, conversation, order, input) do
+    data = state_data(conversation)
+
+    cond do
+      data["recovery_menu"] != true or data["sales_order_id"] != order.id ->
+        render_recovery_menu(command, conversation, order)
+
+      is_integer(data["cancel_order_id"]) ->
+        confirm_order_cancellation(command, conversation, order, input)
+
+      input == {:ok, {:number, 1}} ->
+        with {:ok, response} <- PaymentFlow.respond_to_active_order(command, conversation, order) do
+          body =
+            response.response_body <>
+              "\n\n" <> MenuRenderer.status_navigation(language(conversation))
+
+          {:ok, %{response | response_body: body}}
+        end
+
+      input == {:ok, {:number, 2}} and CheckoutExpiry.customer_cancellation_available?(order) ->
+        data = Map.put(data, "cancel_order_id", order.id)
+
+        with {:ok, conversation} <-
+               transition(command, conversation, :restart_to_main_menu, %{state_data: data}) do
+          {:ok,
+           result(
+             conversation,
+             MenuRenderer.cancellation_confirmation(language(conversation)),
+             command
+           )}
+        end
+
+      input == {:ok, {:number, 3}} ->
+        data = Map.put(data, "recovery_resend", true)
+
+        with {:ok, conversation} <-
+               transition(command, conversation, :choose_resend_ticket, %{state_data: data}) do
+          {:ok,
+           result(conversation, MenuRenderer.resend_name_prompt(language(conversation)), command)}
+        end
+
+      input == {:ok, {:number, 4}} ->
+        render_recovery_menu(
+          command,
+          conversation,
+          order,
+          MenuRenderer.help(language(conversation))
+        )
+
+      true ->
+        render_recovery_menu(command, conversation, order)
+    end
+  end
+
+  defp confirm_order_cancellation(command, conversation, order, {:ok, {:number, 1}}) do
+    if state_data(conversation)["cancel_order_id"] == order.id do
+      case CheckoutExpiry.cancel_order(order.id, conversation.id,
+             correlation_id: command.correlation_id
+           ) do
+        {:ok, status} when status in [:cancelled, :already_cancelled] ->
+          data =
+            conversation
+            |> state_data()
+            |> clear_current_flow()
+            |> Map.put("purchase_flow_id", PurchaseFlowIdentity.new())
+
+          with {:ok, conversation} <-
+                 transition(command, conversation, :restart_to_main_menu, %{state_data: data}) do
+            {:ok, result(conversation, MenuRenderer.main_menu(language(conversation)), command)}
+          end
+
+        {:error, _reason} ->
+          recover_to_menu(
+            command,
+            conversation,
+            MenuRenderer.cancellation_refused(language(conversation))
+          )
+      end
+    else
+      recover_to_menu(command, conversation)
+    end
+  end
+
+  defp confirm_order_cancellation(command, conversation, order, _input),
+    do: render_recovery_menu(command, conversation, order)
+
+  defp recovery_lookup_failed(command, conversation, reason) do
+    handoff_reason =
+      case reason do
+        :multiple_active_orders -> "multiple_active_commercial_orders"
+        :conversation_order_mismatch -> "conversation_order_mismatch"
+        _other -> "commercial_order_lookup_failed"
+      end
+
+    with {:ok, conversation} <-
+           transition(command, conversation, :restart_to_main_menu, %{
+             state_data: state_data(conversation),
+             needs_human: true,
+             handoff_reason: handoff_reason
+           }) do
+      {:ok,
+       result(conversation, MenuRenderer.recovery_unavailable(language(conversation)), command)}
+    end
+  end
+
   defp commercial_order_guard_required?(_conversation, {:ok, :restart}), do: true
   defp commercial_order_guard_required?(_conversation, {:ok, :stop}), do: true
   defp commercial_order_guard_required?(_conversation, {:ok, :back}), do: true
 
-  defp commercial_order_guard_required?(%{state: state}, _normalized)
+  defp commercial_order_guard_required?(%{state: state, state_data: data}, _normalized)
        when state in [
               "collecting_resend_name",
               "collecting_resend_email",
@@ -132,7 +310,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
               "awaiting_verified_resend_delivery",
               "verified_resend_delivery_queued"
             ],
-       do: true
+       do: not is_map(data) or data["recovery_resend"] != true
 
   defp commercial_order_guard_required?(%{state: "main_menu"}, {:ok, {:number, number}})
        when number in [1, 3],
@@ -283,7 +461,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
 
   defp dispatch(command, conversation, {:ok, {:number, 2}})
        when conversation.state == "main_menu" do
-    {:ok, result(conversation, MenuRenderer.help(language(conversation)), command)}
+    recover_to_menu(command, conversation, MenuRenderer.help(language(conversation)))
   end
 
   defp dispatch(command, conversation, {:ok, {:number, 3}})
@@ -1011,7 +1189,13 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
   defp verified_resend_delivery_state_data(conversation, updates) do
     conversation
     |> state_data()
-    |> Map.take(["resend_otp_verified_at", "resend_otp_verification_status"])
+    |> Map.take([
+      "resend_otp_verified_at",
+      "resend_otp_verification_status",
+      "recovery_resend",
+      "sales_order_id",
+      "order_public_reference"
+    ])
     |> Map.merge(updates)
   end
 

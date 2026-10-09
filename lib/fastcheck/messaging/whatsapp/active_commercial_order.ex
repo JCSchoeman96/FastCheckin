@@ -1,6 +1,6 @@
 defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrder do
   @moduledoc """
-  Finds the one non-terminal Order that prevents a WhatsApp Conversation reset.
+  Finds the one non-terminal Order that prevents a duplicate WhatsApp purchase.
   """
 
   import Ash.Expr

@@ -310,22 +310,61 @@ defmodule FastCheck.Sales.Payments.TransactionInitialization do
     end
   end
 
-  defp reserve_initializing_attempt(_session, order, idempotency_key, context) do
+  defp reserve_initializing_attempt(session, order, idempotency_key, context) do
     provider_reference = generate_provider_reference(order)
 
     order.id
-    |> lock_and_reserve_attempt(idempotency_key, provider_reference, order, context)
+    |> lock_and_reserve_attempt(idempotency_key, provider_reference, session, order, context)
     |> normalize_reserve_result(order)
   end
 
-  defp lock_and_reserve_attempt(order_id, idempotency_key, provider_reference, order, context) do
+  defp lock_and_reserve_attempt(
+         order_id,
+         idempotency_key,
+         provider_reference,
+         session,
+         order,
+         context
+       ) do
     Repo.transaction(fn ->
       Repo.query!("SELECT pg_advisory_xact_lock($1)", [order_id])
-      handle_locked_attempt_lookup(idempotency_key, provider_reference, order, context)
+
+      case reload_initialization_authority(order.id, session.id) do
+        {:ok, current_order, current_session} ->
+          handle_locked_attempt_lookup(
+            idempotency_key,
+            provider_reference,
+            current_order,
+            current_session,
+            context
+          )
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
     end)
   end
 
-  defp handle_locked_attempt_lookup(idempotency_key, provider_reference, order, context) do
+  defp reload_initialization_authority(order_id, session_id) do
+    with {:ok, order} <- load_order(order_id),
+         :ok <- validate_order(order),
+         {:ok, session} <- load_session(session_id),
+         :ok <- validate_session_for_init(session),
+         {:ok, lines} <- load_order_lines(order),
+         :ok <- validate_amounts(order, lines),
+         :ok <- validate_hold(session, lines),
+         :ok <- validate_buyer_email(order) do
+      {:ok, order, session}
+    end
+  end
+
+  defp handle_locked_attempt_lookup(
+         idempotency_key,
+         provider_reference,
+         order,
+         _session,
+         context
+       ) do
     case lookup_active_attempt(idempotency_key) do
       {:ok, %{status: "initialized"} = attempt} ->
         Repo.rollback({:idempotent_replay, success_result(attempt, true)})
