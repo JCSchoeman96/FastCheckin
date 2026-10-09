@@ -63,6 +63,20 @@ DURABLE_BUSINESS_WRITE=NO
 
 Three synthetic, non-secret markers (`p1eh-fragment-<synthetic-nonce>`, `p1eh-session-body-<synthetic-nonce>`, `p1eh-legacy-control-<synthetic-nonce>`). Random nonce values are not recorded here.
 
+### Evidence retrieval
+
+`T0` and `T1` record when the three synthetic production requests were issued.
+
+A strict Railway query scoped to `T0`–`T1` with `--until` returned no lines, consistent with log-ingestion latency for the sub-second request sequence. No safety conclusion was drawn from that empty result.
+
+After log ingestion:
+
+- The three expected HTTP requests were verified by their exact Railway request IDs (recorded below).
+- Marker absence was checked against a bounded approximately 10-minute Railway HTTP log capture containing **4** lines: fragment marker **0**, session-body marker **0**, legacy positive-control marker **1**.
+- Application/service marker absence was checked against a bounded approximately 10-minute Railway service-log capture containing **6** lines: fragment and session-body marker matches **0** each.
+
+Request IDs establish the expected `GET /t`, `POST /t/session`, and legacy `404` requests. The bounded HTTP capture establishes marker match counts.
+
 ### Bootstrap (fragment negative control)
 
 - Client-visible URL: `/t#<fragment-marker>`
@@ -84,7 +98,7 @@ Three synthetic, non-secret markers (`p1eh-fragment-<synthetic-nonce>`, `p1eh-se
 
 ## Railway positive-control evidence
 
-Railway HTTP logs showed exactly one matching legacy positive-control request:
+Railway HTTP evidence collected after log ingestion (exact request-id lookup) showed the legacy positive-control request:
 
 ```json
 {"method":"GET","path":"/t/p1eh-legacy-control-<synthetic-nonce>","httpStatus":404,"requestId":"QLZGcpAEQEm1ZEMHN8N_Fg","deploymentId":"438f5e5e-5dfa-46e1-9cec-3e7d3a6770e9"}
@@ -94,16 +108,16 @@ This proves raw request-path logging and search work. Arbitrary legacy-path stri
 
 ## Supported-flow negative-control evidence
 
-Railway HTTP logs for the canary window:
+Railway HTTP evidence collected after log ingestion:
 
+- Bootstrap and exchange: verified by request IDs above (`GET /t` `200`, `POST /t/session` `422`).
+- Marker match counts: bounded approximately 10-minute HTTP capture (**4** lines total).
 - Fragment marker: **0** matches in request `path` fields
 - Session body marker: **0** matches in request `path` fields
-- Bootstrap observed: `GET` `/t` `200` (request id above)
-- Exchange observed: `POST` `/t/session` `422` (request id above)
 
 ## Application/service-log evidence
 
-Bounded Railway service logs in the canary window:
+A bounded approximately 10-minute Railway service-log capture containing the canary period (**6** lines total) showed:
 
 ```text
 APP_LOG_FRAGMENT_MARKER_MATCHES=0
