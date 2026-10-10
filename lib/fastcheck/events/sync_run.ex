@@ -65,6 +65,34 @@ defmodule FastCheck.Events.SyncRun do
     end
   end
 
+  @doc false
+  def with_owned_write(event_id, sync_run_id, owner_token, write_fun)
+      when is_function(write_fun, 2) do
+    Repo.transaction(fn ->
+      event = lock_event(event_id)
+      if is_nil(event), do: Repo.rollback(:not_found)
+
+      case lock_owned_run(event_id, sync_run_id, owner_token) do
+        {:ok, run} ->
+          now = database_now()
+
+          with :ok <- validate_token(run, owner_token),
+               :ok <- validate_active(run),
+               :ok <- validate_live_lease(run, now) do
+            case write_fun.(event, run) do
+              {:error, reason} -> Repo.rollback(reason)
+              result -> result
+            end
+          else
+            {:error, reason} -> Repo.rollback(reason)
+          end
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
+  end
+
   @doc """
   Renews the lease at a request boundary only when this exact owner is still active.
 

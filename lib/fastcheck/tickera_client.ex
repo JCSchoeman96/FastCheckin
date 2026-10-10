@@ -652,7 +652,7 @@ defmodule FastCheck.TickeraClient do
 
     case get_tickets_info(site_url, api_key, per_page, 1) do
       {:ok, first_resp} ->
-        {data, _additional} = extract_tickets_page(first_resp)
+        {data, _additional} = extract_ticket_page(first_resp)
         page_count = length(data)
 
         parsed = Enum.map(data, &parse_attendee/1)
@@ -931,7 +931,7 @@ defmodule FastCheck.TickeraClient do
 
     case get_tickets_info(site_url, api_key, per_page, page) do
       {:ok, response} ->
-        {data, _additional} = extract_tickets_page(response)
+        {data, _additional} = extract_ticket_page(response)
         page_count = length(data)
         parsed = Enum.map(data, &parse_attendee/1)
         maybe_callback(callback, page, nil, page_count)
@@ -949,7 +949,8 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp extract_tickets_page(%{} = response) do
+  @doc false
+  def extract_ticket_page(%{} = response) do
     data =
       case Map.get(response, "data", Map.get(response, :data)) do
         list when is_list(list) -> list
@@ -961,7 +962,7 @@ defmodule FastCheck.TickeraClient do
     {Enum.map(data, &extract_ticket_data/1), additional}
   end
 
-  defp extract_tickets_page(response) when is_list(response) do
+  def extract_ticket_page(response) when is_list(response) do
     Enum.reduce(response, {[], %{}}, fn item, {acc_data, acc_additional} ->
       cond do
         is_map(item) and is_map(Map.get(item, "data")) ->
@@ -982,6 +983,8 @@ defmodule FastCheck.TickeraClient do
     end)
     |> then(fn {data, additional} -> {Enum.reverse(data), additional} end)
   end
+
+  def extract_ticket_page(_response), do: {[], %{}}
 
   defp extract_ticket_data(%{"data" => %{} = inner}), do: inner
   defp extract_ticket_data(%{data: %{} = inner}), do: inner

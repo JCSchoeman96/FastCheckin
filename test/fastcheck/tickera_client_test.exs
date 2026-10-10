@@ -194,6 +194,33 @@ defmodule FastCheck.TickeraClientTest do
     assert attendee.email == "example@example.com"
   end
 
+  test "shared ticket page extraction keeps map and list metadata outside attendee rows" do
+    ticket1 = %{"checksum" => "PARITY-1"}
+    ticket2 = %{"checksum" => "PARITY-2"}
+    metadata = %{"results_count" => "2"}
+
+    map_response = %{"data" => [ticket1, ticket2], "additional" => metadata}
+
+    list_response = [
+      %{"data" => ticket1},
+      %{"data" => ticket2},
+      %{"additional" => metadata},
+      %{"unrelated_metadata" => true}
+    ]
+
+    assert {map_rows, ^metadata} = TickeraClient.extract_ticket_page(map_response)
+    assert {list_rows, ^metadata} = TickeraClient.extract_ticket_page(list_response)
+
+    assert Enum.map(map_rows, &TickeraClient.parse_attendee/1) |> Enum.map(& &1.ticket_code) ==
+             ["PARITY-1", "PARITY-2"]
+
+    assert Enum.map(list_rows, &TickeraClient.parse_attendee/1) |> Enum.map(& &1.ticket_code) ==
+             ["PARITY-1", "PARITY-2"]
+
+    assert length(map_rows) == 2
+    assert length(list_rows) == 2
+  end
+
   defp set_request_sequence(responses, requests_key, responses_key) do
     Process.put(requests_key, [])
     Process.put(responses_key, responses)

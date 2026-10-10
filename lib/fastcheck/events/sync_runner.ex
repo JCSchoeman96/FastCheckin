@@ -26,7 +26,7 @@ defmodule FastCheck.Events.SyncRunner do
   def run(event_id, authority_guard, progress_callback, opts)
       when is_integer(event_id) and is_list(opts) do
     with :ok <- validate_guard(authority_guard),
-         {:ok, incremental, max_attempts} <- validate_options(opts),
+         {:ok, incremental, max_attempts, before_owner_write} <- validate_options(opts),
          :ok <- authority_check(authority_guard, event_id),
          {:ok, run} <- SyncRun.claim(event_id) do
       :ok = SyncState.init_sync(event_id, run.sync_run_id, run.owner_token, run.id)
@@ -38,6 +38,7 @@ defmodule FastCheck.Events.SyncRunner do
         callback: progress_callback,
         incremental: incremental,
         max_attempts: max_attempts,
+        before_owner_write: before_owner_write,
         pages: 0
       }
 
@@ -62,13 +63,33 @@ defmodule FastCheck.Events.SyncRunner do
              TickeraClient.get_event_essentials_guarded(event.tickera_site_url, api_key, hook)
            end),
          :ok <- persist_event_essentials(context, event, essentials),
-         {:ok, attendees, page_count} <- fetch_pages(context, event, api_key, 1, [], 0) do
-      persist_snapshot(context, event, attendees, page_count)
+         {:ok, attendees, page_count, final_context} <-
+           fetch_pages(context, event, api_key, 1, [], 0) do
+      persist_snapshot(final_context, event, attendees, page_count)
     else
-      {:error, :authority_revoked} -> finish_cancel(context, :authority_revoked)
-      {:error, :paused} -> {:error, :paused}
-      {:error, :stale_owner} -> {:error, :stale_owner}
-      {:error, reason} -> finish_failure(context, safe_failure_reason(reason))
+      {:error, :authority_revoked} ->
+        finish_cancel(context, :authority_revoked)
+
+      {:error, :paused} ->
+        {:error, :paused}
+
+      {:error, :stale_owner} ->
+        {:error, :stale_owner}
+
+      {:error, :authority_revoked, failed_context} ->
+        finish_cancel(failed_context, :authority_revoked)
+
+      {:error, :paused, _failed_context} ->
+        {:error, :paused}
+
+      {:error, :stale_owner, _failed_context} ->
+        {:error, :stale_owner}
+
+      {:error, reason, failed_context} ->
+        finish_failure(failed_context, safe_failure_reason(reason))
+
+      {:error, reason} ->
+        finish_failure(context, safe_failure_reason(reason))
     end
   end
 
@@ -84,17 +105,24 @@ defmodule FastCheck.Events.SyncRunner do
         )
       end)
 
-    with {:ok, response} <- result,
-         {:ok, rows} <- extract_page(response),
-         next_count = count + length(rows),
-         {:ok, next_context} <- record_progress(context, page, next_count) do
-      next_acc = Enum.reverse(rows, acc)
+    case result do
+      {:ok, response} ->
+        with {:ok, rows} <- extract_page(response),
+             next_count = count + length(rows),
+             {:ok, next_context} <- record_progress(context, page, next_count) do
+          next_acc = Enum.reverse(rows, acc)
 
-      if length(rows) == @per_page do
-        fetch_pages(next_context, event, api_key, page + 1, next_acc, next_count)
-      else
-        {:ok, Enum.reverse(next_acc), next_count}
-      end
+          if length(rows) == @per_page do
+            fetch_pages(next_context, event, api_key, page + 1, next_acc, next_count)
+          else
+            {:ok, Enum.reverse(next_acc), next_count, next_context}
+          end
+        else
+          {:error, reason} -> {:error, reason, context}
+        end
+
+      {:error, reason} ->
+        {:error, reason, context}
     end
   end
 
@@ -186,33 +214,50 @@ defmodule FastCheck.Events.SyncRunner do
     end
   end
 
-  defp persist_event_essentials(context, event, essentials) do
-    with :ok <- post_response_fence(context) do
-      total = extract_total_tickets(essentials)
-      start_date = normalize_remote_datetime(Map.get(essentials, "event_start_date"))
-      end_date = normalize_remote_datetime(Map.get(essentials, "event_end_date"))
+  defp persist_event_essentials(context, _event, essentials) do
+    with :ok <- authority_check(context.guard, context.event_id),
+         :ok <- invoke_owner_write_hook(context, :event_essentials),
+         {:ok, write_result} <-
+           SyncRun.with_owned_write(
+             context.event_id,
+             context.run.sync_run_id,
+             context.run.owner_token,
+             fn locked_event, _run ->
+               total = extract_total_tickets(essentials)
+               start_date = normalize_remote_datetime(Map.get(essentials, "event_start_date"))
+               end_date = normalize_remote_datetime(Map.get(essentials, "event_end_date"))
 
-      attrs =
-        [total_tickets: total, tickera_start_date: start_date, tickera_end_date: end_date]
-        |> Enum.reject(fn
-          {:total_tickets, nil} -> true
-          {_field, nil} -> true
-          {field, value} -> Map.get(event, field) == value
-        end)
-        |> Map.new()
+               attrs =
+                 [
+                   total_tickets: total,
+                   tickera_start_date: start_date,
+                   tickera_end_date: end_date
+                 ]
+                 |> Enum.reject(fn
+                   {:total_tickets, nil} -> true
+                   {_field, nil} -> true
+                   {field, value} -> Map.get(locked_event, field) == value
+                 end)
+                 |> Map.new()
 
-      if map_size(attrs) > 0 do
-        case event |> Event.changeset(attrs) |> Repo.update() do
-          {:ok, updated} ->
-            _ = Cache.invalidate_event_cache(updated.id)
-            _ = Cache.invalidate_events_list_cache()
-            :ok
+               if map_size(attrs) > 0 do
+                 case locked_event |> Event.changeset(attrs) |> Repo.update() do
+                   {:ok, updated} -> {:updated, updated}
+                   {:error, _changeset} -> Repo.rollback(:worker_failed)
+                 end
+               else
+                 :unchanged
+               end
+             end
+           ) do
+      case write_result do
+        {:updated, updated} ->
+          _ = Cache.invalidate_event_cache(updated.id)
+          _ = Cache.invalidate_events_list_cache()
+          :ok
 
-          {:error, _changeset} ->
-            {:error, :worker_failed}
-        end
-      else
-        :ok
+        :unchanged ->
+          :ok
       end
     end
   end
@@ -229,120 +274,86 @@ defmodule FastCheck.Events.SyncRunner do
   defp normalize_remote_datetime(_value), do: nil
 
   defp persist_snapshot(context, event, attendees, total_count) do
-    case post_response_fence(context) do
-      :ok ->
-        to_write =
-          if context.incremental do
-            Events.Sync.incremental_attendees_for_sync(event.id, attendees, event.last_sync_at)
-          else
-            attendees
-          end
-
-        persisted =
-          if context.incremental do
-            case Attendees.create_bulk(event.id, to_write, incremental: true) do
-              {:ok, count} ->
-                Events.bump_event_sync_version!(event.id)
-                {:ok, count}
-
-              {:error, reason} ->
-                {:error, reason}
-            end
-          else
-            imported_codes =
-              attendees
-              |> Enum.map(&(TickeraClient.parse_attendee(&1) |> Map.get(:ticket_code)))
-              |> Enum.reject(&is_nil/1)
-              |> Enum.uniq()
-
-            persist_authoritative_snapshot(
-              event.id,
-              to_write,
-              imported_codes,
-              context.run.sync_run_id
-            )
-          end
-
-        with {:ok, processed_count} <- persisted,
-             :ok <- post_response_fence(context),
-             {:ok, _completed} <-
-               SyncRun.complete(
-                 event.id,
-                 context.run.sync_run_id,
-                 context.run.owner_token,
-                 processed_count,
-                 context.pages
-               ) do
-          clear_owned_state(context)
-          invalidate_sync_caches(event.id)
-          {:ok, "Synced #{processed_count} attendees from #{total_count} Tickera tickets"}
-        else
-          {:error, :authority_revoked} -> finish_cancel(context, :authority_revoked)
-          {:error, reason} -> finish_failure(context, safe_failure_reason(reason))
-        end
-
-      {:error, :authority_revoked} ->
-        finish_cancel(context, :authority_revoked)
-
-      {:error, reason} ->
-        {:error, reason}
+    with :ok <- authority_check(context.guard, context.event_id),
+         :ok <- invoke_owner_write_hook(context, :attendee_snapshot),
+         {:ok, processed_count} <-
+           persist_attendees_under_owner(context, event.id, attendees),
+         :ok <- post_response_fence(context),
+         {:ok, _completed} <-
+           SyncRun.complete(
+             event.id,
+             context.run.sync_run_id,
+             context.run.owner_token,
+             processed_count,
+             context.pages
+           ) do
+      clear_owned_state(context)
+      invalidate_sync_caches(event.id)
+      {:ok, "Synced #{processed_count} attendees from #{total_count} Tickera tickets"}
+    else
+      {:error, :authority_revoked} -> finish_cancel(context, :authority_revoked)
+      {:error, reason} -> finish_failure(context, safe_failure_reason(reason))
     end
   end
 
-  defp persist_authoritative_snapshot(event_id, attendees, imported_codes, sync_run_id) do
-    Repo.transaction(fn ->
-      case Attendees.create_bulk(event_id, attendees,
-             incremental: false,
-             skip_inner_transaction: true
-           ) do
-        {:ok, count} ->
-          :ok =
-            Reconciliation.apply_after_authoritative_snapshot(
-              event_id,
-              imported_codes,
-              sync_run_id
+  defp persist_attendees_under_owner(context, event_id, attendees) do
+    SyncRun.with_owned_write(
+      event_id,
+      context.run.sync_run_id,
+      context.run.owner_token,
+      fn locked_event, _run ->
+        if context.incremental do
+          attendees =
+            Events.Sync.incremental_attendees_for_sync(
+              locked_event.id,
+              attendees,
+              locked_event.last_sync_at
             )
 
-          count
+          case Attendees.create_bulk(locked_event.id, attendees,
+                 incremental: true,
+                 skip_inner_transaction: true
+               ) do
+            {:ok, count} ->
+              Events.bump_event_sync_version!(locked_event.id)
+              count
 
-        {:error, reason} ->
-          Repo.rollback(reason)
+            {:error, reason} ->
+              Repo.rollback(reason)
+          end
+        else
+          imported_codes =
+            attendees
+            |> Enum.map(&(TickeraClient.parse_attendee(&1) |> Map.get(:ticket_code)))
+            |> Enum.reject(&is_nil/1)
+            |> Enum.uniq()
+
+          case Attendees.create_bulk(locked_event.id, attendees,
+                 incremental: false,
+                 skip_inner_transaction: true
+               ) do
+            {:ok, count} ->
+              :ok =
+                Reconciliation.apply_after_authoritative_snapshot(
+                  locked_event.id,
+                  imported_codes,
+                  context.run.sync_run_id
+                )
+
+              count
+
+            {:error, reason} ->
+              Repo.rollback(reason)
+          end
+        end
       end
-    end)
+    )
   end
 
-  defp extract_page(%{} = response) do
-    data = Map.get(response, "data", Map.get(response, :data))
-
-    rows =
-      case data do
-        list when is_list(list) -> Enum.map(list, &extract_ticket/1)
-        map when is_map(map) -> [extract_ticket(map)]
-        _ -> []
-      end
-
-    {:ok, Enum.reject(rows, &(&1 == %{}))}
-  end
-
-  defp extract_page(response) when is_list(response) do
-    rows =
-      response
-      |> Enum.flat_map(fn
-        %{"data" => %{} = row} -> [row]
-        %{data: %{} = row} -> [row]
-        %{} = row -> [row]
-        _ -> []
-      end)
-
+  defp extract_page(response) do
+    {rows, _additional} = TickeraClient.extract_ticket_page(response)
     {:ok, rows}
   end
-
-  defp extract_page(_), do: {:error, :invalid_response}
-
-  defp extract_ticket(%{"data" => %{} = row}), do: row
-  defp extract_ticket(%{data: %{} = row}), do: row
-  defp extract_ticket(%{} = row), do: row
-  defp extract_ticket(_), do: %{}
 
   defp extract_total_tickets(essentials) when is_map(essentials) do
     essentials
@@ -431,15 +442,24 @@ defmodule FastCheck.Events.SyncRunner do
     if Keyword.keyword?(opts) do
       incremental = Keyword.get(opts, :incremental, false)
       max_attempts = Keyword.get(opts, :max_attempts, 3)
+      before_owner_write = Keyword.get(opts, :before_owner_write)
 
-      if is_boolean(incremental) and is_integer(max_attempts) and max_attempts > 0 do
-        {:ok, incremental, max_attempts}
+      if is_boolean(incremental) and is_integer(max_attempts) and max_attempts > 0 and
+           (is_nil(before_owner_write) or is_function(before_owner_write, 1)) do
+        {:ok, incremental, max_attempts, before_owner_write}
       else
         {:error, :invalid_options}
       end
     else
       {:error, :invalid_options}
     end
+  end
+
+  defp invoke_owner_write_hook(%{before_owner_write: nil}, _stage), do: :ok
+
+  defp invoke_owner_write_hook(%{before_owner_write: hook}, stage) when is_function(hook, 1) do
+    hook.(stage)
+    :ok
   end
 
   defp safe_failure_reason(:authority_revoked), do: :authority_revoked
