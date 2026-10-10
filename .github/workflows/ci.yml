@@ -25,7 +25,7 @@ jobs:
     # PostgreSQL service for tests
     services:
       postgres:
-        image: postgres:18
+        image: public.ecr.aws/docker/library/postgres:18
         env:
           POSTGRES_USER: fastcheck_ci_bootstrap
           POSTGRES_HOST_AUTH_METHOD: trust
@@ -38,7 +38,7 @@ jobs:
         ports:
           - 5432:5432
       redis:
-        image: redis:7-alpine
+        image: public.ecr.aws/docker/library/redis:7-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
