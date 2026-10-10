@@ -123,6 +123,34 @@ defmodule FastCheck.Events.SyncRunTest do
     assert {:error, :not_found} = SyncRun.check_owner(-1, run.sync_run_id, run.owner_token)
   end
 
+  test "request preparation renews only an in-progress owner's live lease" do
+    event = create_event()
+    run = claim!(event.id)
+
+    assert {:ok, prepared} = SyncRun.prepare_request(event.id, run.sync_run_id, run.owner_token)
+    assert prepared.heartbeat_at >= run.heartbeat_at
+    assert DateTime.diff(prepared.lease_expires_at, prepared.heartbeat_at, :second) in 179..180
+
+    assert {:error, :stale_owner} =
+             SyncRun.prepare_request(event.id, run.sync_run_id, Ecto.UUID.generate())
+
+    assert {:ok, paused} = SyncRun.pause(event.id, run.sync_run_id, run.owner_token)
+
+    assert {:error, :paused} =
+             SyncRun.prepare_request(event.id, paused.sync_run_id, paused.owner_token)
+
+    expired = insert_owned_run(event.id, "in_progress", expired: true)
+
+    assert {:error, :lease_expired} =
+             SyncRun.prepare_request(event.id, expired.sync_run_id, expired.owner_token)
+
+    assert {:ok, completed} =
+             SyncRun.complete(event.id, prepared.sync_run_id, prepared.owner_token, 0, 0)
+
+    assert {:error, :terminal_state} =
+             SyncRun.prepare_request(event.id, completed.sync_run_id, completed.owner_token)
+  end
+
   test "wrong run ids and tokens cannot mutate any durable ownership state" do
     event = create_event()
     run = claim!(event.id)
@@ -251,6 +279,8 @@ defmodule FastCheck.Events.SyncRunTest do
     assert completed.error_message == nil
     assert event.status == "active"
     assert event.sync_completed_at
+    assert event.last_sync_at == event.sync_completed_at
+    assert event.last_soft_sync_at == event.sync_completed_at
   end
 
   test "failure stores safe reasons and does not set sync completion time" do
@@ -271,6 +301,7 @@ defmodule FastCheck.Events.SyncRunTest do
     assert failed.completed_at
     assert event.status == "active"
     assert is_nil(event.sync_completed_at)
+    assert event.last_soft_sync_at
 
     assert {:error, :terminal_state} =
              SyncRun.fail(event.id, run.sync_run_id, run.owner_token, :lease_expired, 4)

@@ -52,6 +52,36 @@ defmodule FastCheck.TickeraClientTest do
     assert String.contains?(fallback_request.url.query || "", "_fc=")
   end
 
+  test "guarded empty-body fallback checks authority before each HTTP dispatch" do
+    requests_key = {:tickera_guarded_requests, make_ref()}
+    responses_key = {:tickera_guarded_responses, make_ref()}
+
+    set_request_sequence(
+      [
+        {:ok, %Response{status: 200, body: "", headers: []}},
+        {:ok, %Response{status: 200, body: "", headers: []}},
+        {:ok, %Response{status: 200, body: ~s({"pass":true}), headers: []}}
+      ],
+      requests_key,
+      responses_key
+    )
+
+    Process.put(:guarded_tickera_gate_count, 0)
+
+    hook = fn ->
+      count = Process.get(:guarded_tickera_gate_count, 0) + 1
+      Process.put(:guarded_tickera_gate_count, count)
+      if count < 3, do: :ok, else: {:error, :authority_revoked}
+    end
+
+    assert {:error, _reason} =
+             TickeraClient.get_event_essentials_guarded("https://example.com", "api-123", hook)
+
+    requests = Process.get(requests_key, [])
+    assert Process.get(:guarded_tickera_gate_count) == 3
+    assert length(requests) == 2
+  end
+
   test "returns empty_body after exhausting all empty-body retries" do
     requests_key = {:tickera_mock_requests, make_ref()}
     responses_key = {:tickera_mock_responses, make_ref()}
@@ -162,6 +192,33 @@ defmodule FastCheck.TickeraClientTest do
     assert attendee.first_name == "Carlynn"
     assert attendee.last_name == "Adams"
     assert attendee.email == "example@example.com"
+  end
+
+  test "shared ticket page extraction keeps map and list metadata outside attendee rows" do
+    ticket1 = %{"checksum" => "PARITY-1"}
+    ticket2 = %{"checksum" => "PARITY-2"}
+    metadata = %{"results_count" => "2"}
+
+    map_response = %{"data" => [ticket1, ticket2], "additional" => metadata}
+
+    list_response = [
+      %{"data" => ticket1},
+      %{"data" => ticket2},
+      %{"additional" => metadata},
+      %{"unrelated_metadata" => true}
+    ]
+
+    assert {map_rows, ^metadata} = TickeraClient.extract_ticket_page(map_response)
+    assert {list_rows, ^metadata} = TickeraClient.extract_ticket_page(list_response)
+
+    assert Enum.map(map_rows, &TickeraClient.parse_attendee/1) |> Enum.map(& &1.ticket_code) ==
+             ["PARITY-1", "PARITY-2"]
+
+    assert Enum.map(list_rows, &TickeraClient.parse_attendee/1) |> Enum.map(& &1.ticket_code) ==
+             ["PARITY-1", "PARITY-2"]
+
+    assert length(map_rows) == 2
+    assert length(list_rows) == 2
   end
 
   defp set_request_sequence(responses, requests_key, responses_key) do

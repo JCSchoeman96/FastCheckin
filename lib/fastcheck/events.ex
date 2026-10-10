@@ -569,6 +569,13 @@ defmodule FastCheck.Events do
           {:ok, String.t()} | {:error, String.t()}
   defdelegate sync_event(event_id, progress_callback \\ nil, opts \\ []), to: Sync
 
+  @doc "Runs an explicitly guarded, non-default event sync."
+  @spec sync_event_guarded(integer(), function() | nil, function() | nil, keyword()) ::
+          {:ok, String.t()} | {:error, term()}
+  defdelegate sync_event_guarded(event_id, authority_guard, progress_callback \\ nil, opts \\ []),
+    to: FastCheck.Events.SyncRunner,
+    as: :run
+
   @doc "Force-resets sync state when an external worker exits unexpectedly."
   @spec force_reset_sync(integer(), term()) :: :ok
   defdelegate force_reset_sync(event_id, reason \\ :unspecified), to: Sync
