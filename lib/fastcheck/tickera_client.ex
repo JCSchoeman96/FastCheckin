@@ -288,6 +288,22 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
+  @doc "Guarded variant that invokes `request_hook` immediately before every HTTP dispatch."
+  def get_event_essentials_guarded(site_url, api_key, request_hook)
+      when is_function(request_hook, 0) do
+    url = build_url(site_url, api_key, "event_essentials")
+
+    with {:ok, data} <- fetch_json(url, request_hook) do
+      normalized =
+        data
+        |> Map.update("event_date_time", nil, &parse_datetime/1)
+        |> Map.update("event_start_date", nil, &parse_datetime/1)
+        |> Map.update("event_end_date", nil, &parse_datetime/1)
+
+      {:ok, normalized}
+    end
+  end
+
   @doc """
   Retrieves live event occupancy statistics from Tickera.
 
@@ -370,6 +386,18 @@ defmodule FastCheck.TickeraClient do
     site_url
     |> build_url(api_key, endpoint)
     |> fetch_json()
+  end
+
+  @doc "Guarded variant that invokes `request_hook` immediately before every HTTP dispatch."
+  def get_tickets_info_guarded(site_url, api_key, per_page, page, request_hook)
+      when is_function(request_hook, 0) do
+    per_page = max(1, per_page)
+    page = max(1, page)
+    endpoint = "tickets_info/#{per_page}/#{page}/"
+
+    site_url
+    |> build_url(api_key, endpoint)
+    |> fetch_json(request_hook)
   end
 
   @doc """
@@ -1783,8 +1811,23 @@ defmodule FastCheck.TickeraClient do
     Regex.replace(~r{/tc-api/[^/?#]+}, url, "/tc-api/[REDACTED]")
   end
 
+  defp dispatch_request(method, url, opts, nil), do: request(method, url, opts)
+
+  defp dispatch_request(method, url, opts, request_hook) when is_function(request_hook, 0) do
+    case request_hook.() do
+      :ok -> request(method, url, opts)
+      {:error, reason} -> {:error, {:request_hook, reason}}
+      _ -> {:error, {:request_hook, :request_blocked}}
+    end
+  end
+
+  defp dispatch_request(_method, _url, _opts, _request_hook),
+    do: {:error, {:request_hook, :request_blocked}}
+
   @spec fetch_json(binary()) :: {:ok, map() | list()} | {:error, term()}
-  defp fetch_json(url) do
+  defp fetch_json(url), do: fetch_json(url, nil)
+
+  defp fetch_json(url, request_hook) do
     Logger.debug("TickeraClient GET #{safe_log_url(url)}")
 
     try do
@@ -1792,19 +1835,23 @@ defmodule FastCheck.TickeraClient do
         [{"accept", "application/json"}]
         |> default_tickera_headers()
 
-      case request(:get, url,
-             headers: headers,
-             connect_timeout: @timeout,
-             receive_timeout: @timeout
+      case dispatch_request(
+             :get,
+             url,
+             [headers: headers, connect_timeout: @timeout, receive_timeout: @timeout],
+             request_hook
            ) do
         {:ok, %Response{status: code, body: raw_body, headers: response_headers}}
         when code in 200..299 ->
-          handle_fetch_json_success(url, code, raw_body, response_headers, headers)
+          handle_fetch_json_success(url, code, raw_body, response_headers, headers, request_hook)
 
         {:ok, %Response{status: code, body: body}} ->
           normalized = normalize_response_body(body)
           reason = classify_http_status(code, normalized)
           Logger.error("Tickera request failed (status #{code}): #{body_preview(normalized)}")
+          {:error, reason}
+
+        {:error, {:request_hook, reason}} ->
           {:error, reason}
 
         {:error, error} ->
@@ -1819,28 +1866,36 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp handle_fetch_json_success(url, status, raw_body, response_headers, request_headers) do
+  defp handle_fetch_json_success(
+         url,
+         status,
+         raw_body,
+         response_headers,
+         request_headers,
+         request_hook
+       ) do
     body = normalize_response_body(raw_body)
 
     if body == "" do
       log_empty_body_response(url, status, raw_body, response_headers, :initial)
-      retry_empty_body_request(url, request_headers)
+      retry_empty_body_request(url, request_headers, request_hook)
     else
       decode_json_body(body, url)
     end
   end
 
-  defp retry_empty_body_request(url, headers) do
+  defp retry_empty_body_request(url, headers, request_hook) do
     retry_url = add_cache_buster(url)
 
     Logger.warning(
       "Retrying Tickera request after empty body for #{safe_log_url(url)} as #{safe_log_url(retry_url)}"
     )
 
-    case request(:get, retry_url,
-           headers: headers,
-           connect_timeout: @timeout,
-           receive_timeout: @timeout
+    case dispatch_request(
+           :get,
+           retry_url,
+           [headers: headers, connect_timeout: @timeout, receive_timeout: @timeout],
+           request_hook
          ) do
       {:ok, %Response{status: code, body: raw_body, headers: response_headers}}
       when code in 200..299 ->
@@ -1851,7 +1906,7 @@ defmodule FastCheck.TickeraClient do
 
           headers
           |> build_empty_body_fallback_headers(url)
-          |> retry_empty_body_request_with_fallback_profile(url)
+          |> retry_empty_body_request_with_fallback_profile(url, request_hook)
         else
           decode_json_body(body, retry_url)
         end
@@ -1862,6 +1917,9 @@ defmodule FastCheck.TickeraClient do
         Logger.error("Tickera retry request failed (status #{code}): #{body_preview(normalized)}")
         {:error, reason}
 
+      {:error, {:request_hook, reason}} ->
+        {:error, reason}
+
       {:error, error} ->
         classified = classify_network_error(error)
         Logger.error("Tickera retry request error: #{inspect(error)}")
@@ -1869,7 +1927,7 @@ defmodule FastCheck.TickeraClient do
     end
   end
 
-  defp retry_empty_body_request_with_fallback_profile(headers, url) do
+  defp retry_empty_body_request_with_fallback_profile(headers, url, request_hook) do
     retry_url =
       url
       |> ensure_endpoint_trailing_slash()
@@ -1879,10 +1937,11 @@ defmodule FastCheck.TickeraClient do
       "Retrying Tickera request with fallback profile after empty body for #{safe_log_url(url)} as #{safe_log_url(retry_url)}"
     )
 
-    case request(:get, retry_url,
-           headers: headers,
-           connect_timeout: @timeout,
-           receive_timeout: @timeout
+    case dispatch_request(
+           :get,
+           retry_url,
+           [headers: headers, connect_timeout: @timeout, receive_timeout: @timeout],
+           request_hook
          ) do
       {:ok, %Response{status: code, body: raw_body, headers: response_headers}}
       when code in 200..299 ->
@@ -1903,6 +1962,9 @@ defmodule FastCheck.TickeraClient do
           "Tickera fallback-profile request failed (status #{code}): #{body_preview(normalized)}"
         )
 
+        {:error, reason}
+
+      {:error, {:request_hook, reason}} ->
         {:error, reason}
 
       {:error, error} ->

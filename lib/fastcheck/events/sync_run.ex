@@ -65,6 +65,43 @@ defmodule FastCheck.Events.SyncRun do
     end
   end
 
+  @doc """
+  Renews the lease at a request boundary only when this exact owner is still active.
+
+  Unlike `check_owner/3`, a paused run cannot prepare another external request.
+  """
+  def prepare_request(event_id, sync_run_id, owner_token) do
+    result =
+      Repo.transaction(fn ->
+        case lock_owned_run(event_id, sync_run_id, owner_token) do
+          {:ok, run} ->
+            now = database_now()
+
+            with :ok <- validate_token(run, owner_token),
+                 :ok <- validate_request_status(run),
+                 :ok <- validate_live_lease(run, now) do
+              {:ok, updated_run} =
+                update_run!(run, %{
+                  heartbeat_at: now,
+                  lease_expires_at: DateTime.add(now, @lease_ttl_seconds, :second)
+                })
+
+              updated_run
+            else
+              {:error, reason} -> Repo.rollback(reason)
+            end
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
+      end)
+
+    case result do
+      {:ok, run} -> {:ok, run}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @doc "Renews a live run lease without allowing an expired lease to return."
   def renew_lease(event_id, sync_run_id, owner_token) do
     mutate_owned_run(event_id, sync_run_id, owner_token, fn run, now ->
@@ -339,13 +376,24 @@ defmodule FastCheck.Events.SyncRun do
   end
 
   defp terminal_event_updates(%Event{status: "syncing"}, completed_at, true),
-    do: %{status: "active", sync_completed_at: completed_at}
+    do: %{
+      status: "active",
+      sync_completed_at: completed_at,
+      last_sync_at: completed_at,
+      last_soft_sync_at: completed_at
+    }
 
-  defp terminal_event_updates(%Event{status: "syncing"}, _completed_at, false),
-    do: %{status: "active"}
+  defp terminal_event_updates(%Event{status: "syncing"}, completed_at, false),
+    do: %{status: "active", last_soft_sync_at: completed_at}
 
-  defp terminal_event_updates(_event, completed_at, true), do: %{sync_completed_at: completed_at}
-  defp terminal_event_updates(_event, _completed_at, false), do: %{}
+  defp terminal_event_updates(_event, completed_at, true),
+    do: %{
+      sync_completed_at: completed_at,
+      last_sync_at: completed_at,
+      last_soft_sync_at: completed_at
+    }
+
+  defp terminal_event_updates(_event, completed_at, false), do: %{last_soft_sync_at: completed_at}
 
   defp lock_owned_run(event_id, sync_run_id, owner_token) do
     run =
@@ -380,6 +428,10 @@ defmodule FastCheck.Events.SyncRun do
     do: {:error, :terminal_state}
 
   defp validate_active(%SyncLog{}), do: {:error, :terminal_state}
+
+  defp validate_request_status(%SyncLog{status: "in_progress"}), do: :ok
+  defp validate_request_status(%SyncLog{status: "paused"}), do: {:error, :paused}
+  defp validate_request_status(%SyncLog{}), do: {:error, :terminal_state}
 
   defp validate_live_lease(%SyncLog{lease_expires_at: expires}, now) do
     if DateTime.compare(expires, now) == :gt, do: :ok, else: {:error, :lease_expired}

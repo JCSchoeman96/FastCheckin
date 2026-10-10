@@ -52,6 +52,36 @@ defmodule FastCheck.TickeraClientTest do
     assert String.contains?(fallback_request.url.query || "", "_fc=")
   end
 
+  test "guarded empty-body fallback checks authority before each HTTP dispatch" do
+    requests_key = {:tickera_guarded_requests, make_ref()}
+    responses_key = {:tickera_guarded_responses, make_ref()}
+
+    set_request_sequence(
+      [
+        {:ok, %Response{status: 200, body: "", headers: []}},
+        {:ok, %Response{status: 200, body: "", headers: []}},
+        {:ok, %Response{status: 200, body: ~s({"pass":true}), headers: []}}
+      ],
+      requests_key,
+      responses_key
+    )
+
+    Process.put(:guarded_tickera_gate_count, 0)
+
+    hook = fn ->
+      count = Process.get(:guarded_tickera_gate_count, 0) + 1
+      Process.put(:guarded_tickera_gate_count, count)
+      if count < 3, do: :ok, else: {:error, :authority_revoked}
+    end
+
+    assert {:error, _reason} =
+             TickeraClient.get_event_essentials_guarded("https://example.com", "api-123", hook)
+
+    requests = Process.get(requests_key, [])
+    assert Process.get(:guarded_tickera_gate_count) == 3
+    assert length(requests) == 2
+  end
+
   test "returns empty_body after exhausting all empty-body retries" do
     requests_key = {:tickera_mock_requests, make_ref()}
     responses_key = {:tickera_mock_responses, make_ref()}
