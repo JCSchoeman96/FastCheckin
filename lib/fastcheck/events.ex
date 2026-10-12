@@ -21,7 +21,8 @@ defmodule FastCheck.Events do
     Events.Cache,
     Events.Config,
     Events.Event,
-    Events.Sync
+    Events.Sync,
+    Events.SyncRunControl
   }
 
   alias Plug.Crypto, as: PlugCrypto
@@ -575,6 +576,18 @@ defmodule FastCheck.Events do
   defdelegate sync_event_guarded(event_id, authority_guard, progress_callback \\ nil, opts \\ []),
     to: FastCheck.Events.SyncRunner,
     as: :run
+
+  @doc "Pauses the current durable sync run after the caller's authority guard passes."
+  def pause_sync_guarded(event_id, authority_guard),
+    do: SyncRunControl.pause(event_id, authority_guard)
+
+  @doc "Resumes the current durable sync run after the caller's authority guard passes."
+  def resume_sync_guarded(event_id, authority_guard),
+    do: SyncRunControl.resume(event_id, authority_guard)
+
+  @doc "Cancels the current durable sync run after the caller's authority guard passes."
+  def cancel_sync_guarded(event_id, authority_guard),
+    do: SyncRunControl.cancel(event_id, authority_guard)
 
   @doc "Force-resets sync state when an external worker exits unexpectedly."
   @spec force_reset_sync(integer(), term()) :: :ok

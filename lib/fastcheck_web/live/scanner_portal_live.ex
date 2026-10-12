@@ -280,8 +280,10 @@ defmodule FastCheckWeb.ScannerPortalLive do
     if socket.assigns.syncing do
       {:noreply, socket}
     else
-      {:ok, pid} = start_incremental_sync_task(socket.assigns.event_id, self())
-      {:noreply, assign_sync_started(socket, pid)}
+      case start_incremental_sync_task(socket.assigns.event_id, self()) do
+        {:ok, pid} -> {:noreply, assign_sync_started(socket, pid)}
+        {:error, _reason} -> {:noreply, assign(socket, :sync_status, "Unable to start sync")}
+      end
     end
   end
 
@@ -1448,18 +1450,32 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   defp start_incremental_sync_task(event_id, parent) do
-    Task.start_link(fn ->
-      result =
-        Events.sync_event(
-          event_id,
-          fn page, total, count ->
-            send(parent, {:scanner_sync_progress, page, total, count})
-          end,
-          incremental: true
-        )
+    guard = FastCheckWeb.SyncAuthorityGuard.scanner_portal(event_id)
 
-      send(parent, {:scanner_sync_complete, result})
-    end)
+    case guard.(event_id) do
+      :ok ->
+        caller = self()
+        inherited_callers = Process.get(:"$callers", [])
+
+        Task.start(fn ->
+          maybe_allow_sandbox_connection(caller, inherited_callers)
+
+          result =
+            Events.sync_event_guarded(
+              event_id,
+              guard,
+              fn page, total, count ->
+                send(parent, {:scanner_sync_progress, page, total, count})
+              end,
+              incremental: true
+            )
+
+          send(parent, {:scanner_sync_complete, result})
+        end)
+
+      _ ->
+        {:error, :authority_revoked}
+    end
   end
 
   defp assign_sync_started(socket, pid) do
@@ -1689,12 +1705,21 @@ defmodule FastCheckWeb.ScannerPortalLive do
   end
 
   defp maybe_allow_sandbox_connection(caller) when is_pid(caller) do
+    maybe_allow_sandbox_connection(caller, [])
+  end
+
+  defp maybe_allow_sandbox_connection(caller, inherited_callers) when is_pid(caller) do
     if sandbox_pool?() do
-      try do
-        Ecto.Adapters.SQL.Sandbox.allow(FastCheck.Repo, caller, self())
-      rescue
-        _ -> :ok
-      end
+      [caller | inherited_callers ++ Process.get(:"$callers", [])]
+      |> Enum.filter(&is_pid/1)
+      |> Enum.uniq()
+      |> Enum.each(fn owner ->
+        try do
+          Ecto.Adapters.SQL.Sandbox.allow(FastCheck.Repo, owner, self())
+        rescue
+          _ -> :ok
+        end
+      end)
     end
 
     :ok

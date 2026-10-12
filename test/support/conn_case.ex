@@ -32,8 +32,8 @@ defmodule FastCheckWeb.ConnCase do
   end
 
   setup tags do
-    FastCheck.DataCase.setup_sandbox(tags)
-    {:ok, conn: Phoenix.ConnTest.build_conn()}
+    sandbox_owner = FastCheck.DataCase.setup_sandbox(tags)
+    {:ok, conn: Phoenix.ConnTest.build_conn(), sandbox_owner: sandbox_owner}
   end
 
   @doc """

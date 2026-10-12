@@ -28,6 +28,7 @@ config :fastcheck, Oban,
     sales_inventory: 5,
     payments: 5,
     ticketing: 5,
+    sync_maintenance: 1,
     sales_maintenance: 3,
     whatsapp_inbound: 5,
     whatsapp_outbound: 5
@@ -37,7 +38,8 @@ config :fastcheck, Oban,
     {Oban.Plugins.Cron,
      crontab: [
        {"*/2 * * * *", FastCheck.Workers.CheckoutExpirySweeperWorker},
-       {"*/2 * * * *", FastCheck.Sales.Payments.PaymentRecoverySweepWorker}
+       {"*/2 * * * *", FastCheck.Sales.Payments.PaymentRecoverySweepWorker},
+       {"* * * * *", FastCheck.Workers.SyncRunRecoveryWorker}
      ]}
   ]
 

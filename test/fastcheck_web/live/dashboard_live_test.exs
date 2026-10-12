@@ -8,6 +8,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
   alias FastCheck.Events
   alias FastCheck.Events.Cache
   alias FastCheck.Events.Event
+  alias FastCheck.Events.SyncLog
   alias FastCheck.Repo
   alias FastCheckWeb.SalesWebFixtures, as: SalesWebFixtures
   alias Req.Response
@@ -84,7 +85,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       event = insert_event!(%{name: "Gate Stable On Edit"})
       assert {:ok, _} = Events.enable_whatsapp_sales(event.id)
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view |> element("#show-edit-event-#{event.id}") |> render_click()
 
@@ -110,7 +111,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
     test "operator can set an event to turnstile admission", %{conn: conn} do
       event = insert_event!(%{name: "Turnstile Dashboard Event"})
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
       view |> element("#show-edit-event-#{event.id}") |> render_click()
 
       assert has_element?(view, "select[name='event[admission_mode]']")
@@ -560,6 +561,33 @@ defmodule FastCheckWeb.DashboardLiveTest do
   end
 
   describe "event card sync totals" do
+    test "sync start rechecks the current Event grant before starting a worker", %{conn: conn} do
+      event = insert_event!(%{name: "Grant Recheck Event"})
+      parent = self()
+
+      Application.put_env(:fastcheck, :tickera_request_fun, fn request ->
+        send(parent, {:tickera_request, request})
+        {:ok, %Response{status: 200, body: %{}}}
+      end)
+
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
+      current_auth = Application.get_env(:fastcheck, :dashboard_auth)
+
+      Application.put_env(
+        :fastcheck,
+        :dashboard_auth,
+        Map.put(current_auth, :allowed_event_ids, [])
+      )
+
+      view
+      |> element("#full-sync-#{event.id}")
+      |> render_click()
+
+      assert render(view) =~ "Sync authorization expired."
+      assert Repo.aggregate(SyncLog, :count) == 0
+      refute_received {:tickera_request, _request}
+    end
+
     test "full sync refreshes Tickets on the dashboard without changing Total semantics", %{
       conn: conn
     } do
@@ -576,7 +604,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
         ticket_delay_ms: 0
       )
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view
       |> element("#full-sync-#{event.id}")
@@ -615,7 +643,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
         ticket_delay_ms: 1_000
       )
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
 
       view
       |> element("#full-sync-#{event.id}")
@@ -628,7 +656,11 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> render_click()
 
       assert render(view) =~ "Sync cancelled"
-      assert Repo.get!(Event, event.id).total_tickets == 10
+
+      html = render(view)
+      assert html =~ "Tickets"
+      assert html =~ ~r/<p class="mt-1 text-xl font-semibold text-fc-text-primary">\s*10\s*<\/p>/
+      refute html =~ ~r/<p class="mt-1 text-xl font-semibold text-fc-text-primary">\s*88\s*<\/p>/
     end
   end
 
@@ -721,10 +753,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert html =~
                "Event created: ID #{created.id}, scanner code #{created.scanner_login_code}."
 
-      assert html =~ "Starting full attendee sync"
+      assert html =~ "sync authorization is unavailable"
       refute has_element?(view, "#create-event-form")
-
-      assert_sync_finishes(view)
+      assert Repo.aggregate(SyncLog, :count) == 0
       refute Events.get_event!(created.id).whatsapp_sales_enabled
     end
 
@@ -769,8 +800,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert %Event{} = created
       refute Events.get_event!(created.id).whatsapp_sales_enabled
       assert render(view) =~ "A server-side event grant is required"
-      assert render(view) =~ "Starting full attendee sync"
-      assert_sync_finishes(view)
+      assert render(view) =~ "sync authorization is unavailable"
+      assert Repo.aggregate(SyncLog, :count) == 0
     end
 
     test "failed create keeps WhatsApp sales checkbox selection sticky", %{conn: conn} do
@@ -821,13 +852,13 @@ defmodule FastCheckWeb.DashboardLiveTest do
         ticket_delay_ms: 700
       )
 
-      {:ok, view, _html} = mount_dashboard(conn)
+      {:ok, view, _html} = mount_dashboard(conn, [existing_event.id])
 
       view
       |> element("#full-sync-#{existing_event.id}")
       |> render_click()
 
-      assert render(view) =~ "Starting full attendee sync (attempt 1/3)..."
+      assert render(view) =~ "Starting full attendee sync..."
 
       view
       |> element("#show-new-event-form-button")

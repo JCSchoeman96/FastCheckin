@@ -57,6 +57,7 @@ defmodule FastCheck.Sales.Vs01fBoundaryTest do
              "lib/fastcheck/workers/refund_inventory_worker.ex",
              "lib/fastcheck/workers/send_whatsapp_payment_link_worker.ex",
              "lib/fastcheck/workers/send_whatsapp_ticket_link_worker.ex",
+             "lib/fastcheck/workers/sync_run_recovery_worker.ex",
              "lib/fastcheck/workers/ticket_delivery_coordinator_worker.ex",
              "lib/fastcheck/workers/whatsapp_inbound_worker.ex"
            ]

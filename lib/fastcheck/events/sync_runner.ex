@@ -8,7 +8,17 @@ defmodule FastCheck.Events.SyncRunner do
   alias FastCheck.Attendees
   alias FastCheck.Attendees.Reconciliation
   alias FastCheck.Events
-  alias FastCheck.Events.{Cache, Event, Stats, SyncRun, SyncState}
+
+  alias FastCheck.Events.{
+    Cache,
+    Event,
+    Stats,
+    SyncRun,
+    SyncRunControl,
+    SyncRunHeartbeat,
+    SyncState
+  }
+
   alias FastCheck.Repo
   alias FastCheck.TickeraClient
 
@@ -26,23 +36,40 @@ defmodule FastCheck.Events.SyncRunner do
   def run(event_id, authority_guard, progress_callback, opts)
       when is_integer(event_id) and is_list(opts) do
     with :ok <- validate_guard(authority_guard),
-         {:ok, incremental, max_attempts, before_owner_write} <- validate_options(opts),
+         {:ok, incremental, max_attempts, before_owner_write, after_claim} <-
+           validate_options(opts),
          :ok <- authority_check(authority_guard, event_id),
          {:ok, run} <- SyncRun.claim(event_id) do
       :ok = SyncState.init_sync(event_id, run.sync_run_id, run.owner_token, run.id)
 
-      context = %{
-        event_id: event_id,
-        run: run,
-        guard: authority_guard,
-        callback: progress_callback,
-        incremental: incremental,
-        max_attempts: max_attempts,
-        before_owner_write: before_owner_write,
-        pages: 0
-      }
+      case SyncRunHeartbeat.start_link(event_id, run, authority_guard, notify: self()) do
+        {:ok, heartbeat} ->
+          :ok = SyncRunControl.subscribe(event_id, run.sync_run_id)
+          invoke_after_claim(after_claim)
 
-      execute(context)
+          context = %{
+            event_id: event_id,
+            run: run,
+            guard: authority_guard,
+            callback: progress_callback,
+            incremental: incremental,
+            max_attempts: max_attempts,
+            before_owner_write: before_owner_write,
+            reported_sold_count: nil,
+            pages: 0
+          }
+
+          try do
+            execute(context)
+          after
+            SyncRunHeartbeat.stop(heartbeat)
+          end
+
+        {:error, _reason} ->
+          _ = SyncRun.fail(event_id, run.sync_run_id, run.owner_token, :worker_failed, 0)
+          _ = SyncState.clear_state(event_id, run.sync_run_id, run.owner_token)
+          {:error, :worker_failed}
+      end
     end
   end
 
@@ -62,6 +89,7 @@ defmodule FastCheck.Events.SyncRunner do
            request_with_retry(context, fn hook ->
              TickeraClient.get_event_essentials_guarded(event.tickera_site_url, api_key, hook)
            end),
+         context = %{context | reported_sold_count: extract_total_tickets(essentials)},
          :ok <- persist_event_essentials(context, event, essentials),
          {:ok, attendees, page_count, final_context} <-
            fetch_pages(context, event, api_key, 1, [], 0) do
@@ -138,7 +166,7 @@ defmodule FastCheck.Events.SyncRunner do
             {:ok, response}
 
           {:error, :paused} ->
-            {:error, :paused}
+            await_resume(context, dispatch, attempt)
 
           {:error, :stale_owner} ->
             {:error, :stale_owner}
@@ -152,6 +180,33 @@ defmodule FastCheck.Events.SyncRunner do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp await_resume(context, dispatch, attempt) do
+    receive do
+      {:sync_run_control, event_id, sync_run_id, :resumed}
+      when event_id == context.event_id and sync_run_id == context.run.sync_run_id ->
+        request_with_retry(context, dispatch, attempt)
+
+      {:sync_run_control, event_id, sync_run_id, :cancelled}
+      when event_id == context.event_id and sync_run_id == context.run.sync_run_id ->
+        {:error, :terminal_state}
+
+      {:sync_run_heartbeat, :renewed, "in_progress"} ->
+        request_with_retry(context, dispatch, attempt)
+
+      {:sync_run_heartbeat, :renewed, "paused"} ->
+        await_resume(context, dispatch, attempt)
+
+      {:sync_run_heartbeat, :terminal, :authority_revoked} ->
+        {:error, :authority_revoked}
+
+      {:sync_run_heartbeat, :terminal, reason} ->
+        {:error, reason}
+    after
+      30_000 ->
+        request_with_retry(context, dispatch, attempt)
     end
   end
 
@@ -289,7 +344,8 @@ defmodule FastCheck.Events.SyncRunner do
            ) do
       clear_owned_state(context)
       invalidate_sync_caches(event.id)
-      {:ok, "Synced #{processed_count} attendees from #{total_count} Tickera tickets"}
+      message = "Synced #{processed_count} attendees from #{total_count} Tickera tickets"
+      {:ok, append_ticket_visibility_warning(message, context, total_count)}
     else
       {:error, :authority_revoked} -> finish_cancel(context, :authority_revoked)
       {:error, reason} -> finish_failure(context, safe_failure_reason(reason))
@@ -383,6 +439,22 @@ defmodule FastCheck.Events.SyncRunner do
 
   defp normalize_non_negative_integer(_value), do: nil
 
+  defp append_ticket_visibility_warning(message, context, fetched_count)
+       when is_integer(context.reported_sold_count) and
+              context.reported_sold_count > fetched_count do
+    sold_count = context.reported_sold_count
+    missing_count = sold_count - fetched_count
+
+    warning =
+      "Warning: Tickera reports #{sold_count} sold tickets, but tickets_info returned " <>
+        "#{fetched_count} rows. #{missing_count} ticket(s) may be hidden by cache or " <>
+        "upstream ticket visibility rules and will not scan until tickets_info exposes them."
+
+    message <> "\n" <> warning
+  end
+
+  defp append_ticket_visibility_warning(message, _context, _fetched_count), do: message
+
   defp finish_cancel(context, reason) do
     _ = SyncRun.cancel(context.event_id, context.run.sync_run_id, context.run.owner_token, reason)
     clear_owned_state(context)
@@ -443,10 +515,12 @@ defmodule FastCheck.Events.SyncRunner do
       incremental = Keyword.get(opts, :incremental, false)
       max_attempts = Keyword.get(opts, :max_attempts, 3)
       before_owner_write = Keyword.get(opts, :before_owner_write)
+      after_claim = Keyword.get(opts, :after_claim)
 
       if is_boolean(incremental) and is_integer(max_attempts) and max_attempts > 0 and
-           (is_nil(before_owner_write) or is_function(before_owner_write, 1)) do
-        {:ok, incremental, max_attempts, before_owner_write}
+           (is_nil(before_owner_write) or is_function(before_owner_write, 1)) and
+           (is_nil(after_claim) or is_function(after_claim, 0)) do
+        {:ok, incremental, max_attempts, before_owner_write, after_claim}
       else
         {:error, :invalid_options}
       end
@@ -454,6 +528,16 @@ defmodule FastCheck.Events.SyncRunner do
       {:error, :invalid_options}
     end
   end
+
+  defp invoke_after_claim(callback) when is_function(callback, 0) do
+    callback.()
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp invoke_after_claim(_callback), do: :ok
 
   defp invoke_owner_write_hook(%{before_owner_write: nil}, _stage), do: :ok
 
