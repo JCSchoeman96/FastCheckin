@@ -4,7 +4,7 @@
 
 **Goal:** Enforce one active SyncRun per Event and complete ownership fields in PostgreSQL, while removing public Event-ID-only start and reset paths.
 
-**Architecture:** Add separate forward-only migrations for the partial unique index and active ownership CHECK constraint, preserving nullable ownership for terminal history. Keep `SyncRunner` and caller-supplied authority guards as the only production sync start path, and keep shared credential helpers used by `SyncRunner`.
+**Architecture:** Add three forward-only enforcement migrations: the concurrent partial unique index, an active-ownership CHECK added `NOT VALID`, then validation in a later migration version. Keep terminal history ownership nullable. Keep `SyncRunner` and caller-supplied authority guards as the only production sync start path, and keep shared credential helpers used by `SyncRunner`.
 
 **Tech Stack:** Elixir, Phoenix, Ecto, PostgreSQL, ExUnit, Mix, GitHub CLI.
 
@@ -14,15 +14,16 @@
 
 This plan implements only R5 of `docs/fastcheck_sales/development/BROWSERAUTH_EVENT_ISOLATION_REMEDIATION_PLAN.md`, authority version 1.4 / FROZEN. That document defines lifecycle semantics and remains authoritative. This plan does not change R0–R4 semantics, begin R6, modify PR #514, deploy, or merge.
 
-Production migration preflight is a deployment requirement, not an implementation-time production query. Before either R5 migration runs in production, inspect duplicate active runs per Event, each required ownership field on active rows, expired active rows, and active rows inconsistent with Event status. Unexpected active data must stop deployment with `STOP=MIGRATION_ACTIVE_RUN_RECONCILIATION_REQUIRED`; do not clean or repair production rows in these migrations.
+Production migration preflight is a deployment requirement, not an implementation-time production query. Before any R5 enforcement migration runs in production, inspect duplicate active runs per Event, each required ownership field on active rows, expired active rows, and active rows inconsistent with Event status. Unexpected active data must stop deployment with `STOP=MIGRATION_ACTIVE_RUN_RECONCILIATION_REQUIRED`; do not clean or repair production rows in these migrations.
 
 Performance decisions are fixed by v1.4: Postgres remains durable ownership authority; `SyncState` remains hot state; no Redis ownership or distributed locks; retain `sync_logs_active_lease_expiry_index`; add a partial unique `event_id` index only for `in_progress` and `paused`; leave lease TTL, cache TTL, cache invalidation, and PubSub behavior unchanged.
 
 ## Files and responsibilities
 
 - `test/fastcheck/events/sync_run_r5_enforcement_test.exs`: exercise real PostgreSQL uniqueness and CHECK constraints, terminal history compatibility, and public API exports.
-- `priv/repo/migrations/<timestamp>_add_sync_run_active_unique_index.exs`: create and reverse the named partial unique index concurrently.
-- `priv/repo/migrations/<timestamp>_add_sync_run_active_ownership_constraint.exs`: add and validate the named active ownership CHECK constraint without global NOT NULL changes.
+- `priv/repo/migrations/20261012120000_add_sync_run_active_unique_index.exs`: create and reverse the named partial unique index concurrently.
+- `priv/repo/migrations/20261012120100_add_sync_run_active_ownership_constraint.exs`: add the named active ownership CHECK constraint as `NOT VALID`, using the normal migration transaction.
+- `priv/repo/migrations/20261012120200_validate_sync_run_active_ownership_constraint.exs`: validate the check in its own normal migration transaction. Separate versions make validation failure restartable after operator reconciliation without re-running `ADD CONSTRAINT`.
 - `lib/fastcheck/events.ex`: remove public unguarded `sync_event` and Event-ID-only `force_reset_sync` delegates.
 - `lib/fastcheck/events/sync.ex`: retain shared helpers needed by `SyncRunner`; make legacy executor and Event-ID-only lifecycle operations unreachable or remove them.
 - `test/fastcheck/events/sync_test.exs`, `test/fastcheck/integration/end_to_end_test.exs`: move meaningful existing sync coverage to the guarded runner with explicit test-only authority functions.
@@ -44,11 +45,13 @@ Performance decisions are fixed by v1.4: Postgres remains durable ownership auth
 - [ ] Do not edit the R0 expansion migration or the existing lease recovery index migration; do not include row cleanup.
 - [ ] Run the focused database test and migration forward/rollback on a disposable test database.
 
-## Task 3: Add active ownership CHECK migration
+## Task 3: Add and validate the active ownership CHECK
 
-- [ ] Add `sync_logs_active_ownership_fields_check` using `CHECK (...) NOT VALID`, followed by validation.
+- [ ] Add `sync_logs_active_ownership_fields_check` using `CHECK (...) NOT VALID` in migration version `20261012120100`.
 - [ ] Require all four ownership fields only for `in_progress` and `paused`; allow NULL ownership in terminal history.
 - [ ] Do not backfill ownership or make columns globally NOT NULL.
+- [ ] Validate in migration version `20261012120200`, separately from the ADD version. A failed validation must be restartable after operator reconciliation without re-running `ADD CONSTRAINT`.
+- [ ] Prove failed validation leaves the ADD version recorded and VALIDATE unapplied on a disposable test database, then reconcile the disposable row and retry successfully.
 - [ ] Run the focused database test and migration forward/rollback on a disposable test database.
 
 ## Task 4: Remove legacy Event-ID-only public lifecycle APIs

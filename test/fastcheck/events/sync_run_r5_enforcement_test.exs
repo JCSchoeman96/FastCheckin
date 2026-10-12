@@ -101,6 +101,32 @@ defmodule FastCheck.Events.SyncRunR5EnforcementTest do
     end
   end
 
+  test "ownership constraint add and validation use separate transactional migrations" do
+    add_migration =
+      File.read!(
+        "priv/repo/migrations/20261012120100_add_sync_run_active_ownership_constraint.exs"
+      )
+
+    validate_migration =
+      File.read!(
+        "priv/repo/migrations/20261012120200_validate_sync_run_active_ownership_constraint.exs"
+      )
+
+    assert add_migration =~ "SET LOCAL lock_timeout = '5s'"
+    assert add_migration =~ "ADD CONSTRAINT sync_logs_active_ownership_fields_check"
+    assert add_migration =~ "NOT VALID"
+    refute add_migration =~ "VALIDATE CONSTRAINT"
+    refute add_migration =~ "@disable_ddl_transaction true"
+    refute add_migration =~ "@disable_migration_lock true"
+    assert length(Regex.scan(~r/SET LOCAL lock_timeout = '5s'/, add_migration)) == 2
+    assert add_migration =~ "DROP CONSTRAINT IF EXISTS sync_logs_active_ownership_fields_check"
+
+    assert validate_migration =~ "SET LOCAL lock_timeout = '5s'"
+    assert validate_migration =~ "VALIDATE CONSTRAINT sync_logs_active_ownership_fields_check"
+    refute validate_migration =~ "@disable_ddl_transaction true"
+    refute validate_migration =~ "@disable_migration_lock true"
+  end
+
   test "claim concurrency still creates one active row per event" do
     event = create_event()
     parent = self()
