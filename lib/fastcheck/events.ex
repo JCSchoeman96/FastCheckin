@@ -561,15 +561,6 @@ defmodule FastCheck.Events do
 
   def get_event_by_scanner_login_code(_), do: nil
 
-  @doc "Synchronizes attendees for the specified event."
-  @spec sync_event(
-          integer(),
-          (pos_integer(), pos_integer(), non_neg_integer() -> any()) | nil,
-          keyword()
-        ) ::
-          {:ok, String.t()} | {:error, String.t()}
-  defdelegate sync_event(event_id, progress_callback \\ nil, opts \\ []), to: Sync
-
   @doc "Runs an explicitly guarded, non-default event sync."
   @spec sync_event_guarded(integer(), function() | nil, function() | nil, keyword()) ::
           {:ok, String.t()} | {:error, term()}
@@ -588,10 +579,6 @@ defmodule FastCheck.Events do
   @doc "Cancels the current durable sync run after the caller's authority guard passes."
   def cancel_sync_guarded(event_id, authority_guard),
     do: SyncRunControl.cancel(event_id, authority_guard)
-
-  @doc "Force-resets sync state when an external worker exits unexpectedly."
-  @spec force_reset_sync(integer(), term()) :: :ok
-  defdelegate force_reset_sync(event_id, reason \\ :unspecified), to: Sync
 
   @doc "Returns event with refreshed stats."
   @spec get_event_with_stats(integer()) :: Event.t()

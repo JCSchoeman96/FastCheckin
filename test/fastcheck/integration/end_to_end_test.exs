@@ -72,7 +72,7 @@ defmodule FastCheck.Integration.EndToEndTest do
       assert event.status == "active"
 
       # Step 2: Sync attendees from Tickera (mocked)
-      assert {:ok, message} = Events.sync_event(event.id)
+      assert {:ok, message} = guarded_sync(event.id)
       assert message =~ "Synced"
 
       refreshed_event = Repo.get!(Event, event.id)
@@ -142,8 +142,8 @@ defmodule FastCheck.Integration.EndToEndTest do
         Plug.Conn.resp(conn, 200, Jason.encode!(response))
       end)
 
-      assert {:ok, incremental_message} = Events.sync_event(event.id, nil, incremental: true)
-      assert incremental_message =~ "Incremental sync" || incremental_message =~ "new/updated"
+      assert {:ok, incremental_message} = guarded_sync(event.id, nil, incremental: true)
+      assert incremental_message =~ "Synced"
 
       refreshed_event = Repo.get!(Event, event.id)
       assert refreshed_event.total_tickets == 60
@@ -162,11 +162,11 @@ defmodule FastCheck.Integration.EndToEndTest do
       # Simulate API error
       Bypass.down(bypass)
 
-      assert {:error, _reason} = Events.sync_event(event.id)
+      assert {:error, _reason} = guarded_sync(event.id)
 
       # Verify event status is updated
       refreshed_event = Repo.get!(Event, event.id)
-      assert refreshed_event.status == "syncing"
+      assert refreshed_event.status == "active"
     end
 
     test "tests bulk entry mode", %{conn: conn, event: event} do
@@ -206,6 +206,15 @@ defmodule FastCheck.Integration.EndToEndTest do
   end
 
   # Helper functions
+
+  defp guarded_sync(event_id, progress_callback \\ nil, opts \\ []) do
+    Events.sync_event_guarded(
+      event_id,
+      fn _authorized_event_id -> :ok end,
+      progress_callback,
+      opts
+    )
+  end
 
   defp setup_bypass_routes(bypass, api_key) do
     # Mock check_credentials endpoint
