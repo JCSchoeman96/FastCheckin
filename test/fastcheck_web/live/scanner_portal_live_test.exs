@@ -1,6 +1,7 @@
 defmodule FastCheckWeb.ScannerPortalLiveTest do
   use FastCheckWeb.ConnCase, async: true
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
 
   alias FastCheck.Attendees
@@ -9,6 +10,7 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
   alias FastCheck.Attendees.CheckInSession
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
+  alias FastCheck.Events.SyncLog
   alias FastCheck.Repo
 
   @credential "scanner-password"
@@ -469,6 +471,58 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
   end
 
   describe "incremental sync utility" do
+    test "sync worker continues after the LiveView disconnects",
+         %{conn: conn, event: event, sandbox_owner: sandbox_owner} do
+      parent = self()
+      previous_trap_exit = Process.flag(:trap_exit, true)
+      previous_request_fun = Application.get_env(:fastcheck, :tickera_request_fun)
+
+      on_exit(fn ->
+        Process.flag(:trap_exit, previous_trap_exit)
+
+        if is_nil(previous_request_fun),
+          do: Application.delete_env(:fastcheck, :tickera_request_fun),
+          else: Application.put_env(:fastcheck, :tickera_request_fun, previous_request_fun)
+      end)
+
+      Application.put_env(:fastcheck, :tickera_request_fun, fn request ->
+        path = request.url.path || ""
+
+        if String.contains?(path, "event_essentials") do
+          send(parent, {:scanner_sync_request, :essentials, self()})
+
+          receive do
+            :release_essentials -> {:ok, %Req.Response{status: 200, body: %{}}}
+          after
+            2_000 -> raise "essentials response release timed out"
+          end
+        else
+          send(parent, {:scanner_sync_request, :tickets, path})
+          {:ok, %Req.Response{status: 200, body: %{"data" => []}}}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/scanner/#{event.id}")
+      view |> element("#scanner-menu-sync-action") |> render_click()
+
+      assert_receive {:scanner_sync_request, :essentials, request_pid}, 1_000
+      Ecto.Adapters.SQL.Sandbox.allow(Repo, sandbox_owner, request_pid)
+      monitor = Process.monitor(view.pid)
+      Process.exit(view.pid, :kill)
+      assert_receive {:DOWN, ^monitor, :process, _view_pid, :killed}, 1_000
+      send(request_pid, :release_essentials)
+
+      assert_receive {:scanner_sync_request, :tickets, path}, 1_000
+      assert path =~ "tickets_info/50/1"
+
+      assert_eventually(fn ->
+        Repo.one!(from log in SyncLog, where: log.event_id == ^event.id).status == "completed"
+      end)
+
+      run = Repo.one!(from log in SyncLog, where: log.event_id == ^event.id)
+      assert run.status == "completed"
+    end
+
     test "secondary sync utility starts incremental sync and renders compact status", %{
       conn: conn,
       event: event
@@ -695,6 +749,19 @@ defmodule FastCheckWeb.ScannerPortalLiveTest do
 
     view |> element("##{button_id}") |> render_click()
   end
+
+  defp assert_eventually(assertion, attempts \\ 100)
+
+  defp assert_eventually(assertion, attempts) when attempts > 0 do
+    if assertion.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(assertion, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_assertion, 0), do: flunk("condition did not become true")
 
   defp assert_result_before_preview(view) do
     html = render(view)

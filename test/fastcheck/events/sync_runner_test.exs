@@ -487,32 +487,44 @@ defmodule FastCheck.Events.SyncRunnerTest do
     assert is_nil(attendee_row.last_authoritative_sync_run_id)
   end
 
-  test "paused run accepts its in-flight response and blocks the next request" do
+  test "paused run accepts its in-flight response and resumes the same request attempt" do
     event = create_event()
     parent = self()
 
-    set_request_fun(fn _request ->
-      send(parent, {:request_dispatched, self()})
+    set_request_fun(fn request ->
+      path = request.url.path || ""
 
-      receive do
-        :release_response -> {:ok, %Response{status: 200, body: %{}}}
-      after
-        2_000 -> raise "request release timed out"
+      if String.contains?(path, "event_essentials") do
+        send(parent, {:request_dispatched, self()})
+
+        receive do
+          :release_response -> {:ok, %Response{status: 200, body: %{}}}
+        after
+          2_000 -> raise "request release timed out"
+        end
+      else
+        send(parent, :ticket_request_dispatched)
+        {:ok, %Response{status: 200, body: %{"data" => []}}}
       end
     end)
 
     task = Task.async(fn -> SyncRunner.run(event.id, fn _event_id -> :ok end) end)
     assert_receive {:request_dispatched, request_pid}, 1_000
     run = Repo.one!(from log in SyncLog, where: log.event_id == ^event.id)
-    assert {:ok, paused} = SyncRun.pause(event.id, run.sync_run_id, run.owner_token)
+    assert :ok = FastCheck.Events.pause_sync_guarded(event.id, fn _event_id -> :ok end)
     send(request_pid, :release_response)
 
-    assert {:error, :paused} = Task.await(task, 2_000)
+    refute_receive :ticket_request_dispatched, 100
     assert Repo.get!(SyncLog, run.id).status == "paused"
-    assert {:ok, resumed} = SyncRun.resume(event.id, run.sync_run_id, run.owner_token)
-    assert resumed.sync_run_id == paused.sync_run_id
-    assert resumed.owner_token == paused.owner_token
-    assert {:ok, _state} = SyncState.get_state(event.id, run.sync_run_id, run.owner_token)
+    assert :ok = FastCheck.Events.resume_sync_guarded(event.id, fn _event_id -> :ok end)
+    assert_receive :ticket_request_dispatched, 1_000
+    assert {:ok, _message} = Task.await(task, 2_000)
+
+    completed = Repo.get!(SyncLog, run.id)
+    assert completed.status == "completed"
+    assert completed.sync_run_id == run.sync_run_id
+    assert completed.owner_token == run.owner_token
+    assert Repo.aggregate(SyncLog, :count) == 1
   end
 
   test "partial full snapshot is neither reconciled nor marked complete" do
