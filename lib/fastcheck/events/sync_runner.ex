@@ -2,7 +2,7 @@ defmodule FastCheck.Events.SyncRunner do
   @moduledoc """
   Explicit, non-default guarded SyncRun execution path.
 
-  Production callers remain on `FastCheck.Events.Sync` until the later cutover phase.
+  DashboardLive and ScannerPortalLive production callers use this guarded SyncRun path.
   """
 
   alias FastCheck.Attendees

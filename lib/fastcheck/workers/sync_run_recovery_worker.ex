@@ -6,5 +6,5 @@ defmodule FastCheck.Workers.SyncRunRecoveryWorker do
   alias FastCheck.Events.SyncRunRecovery
 
   @impl Oban.Worker
-  def perform(_job), do: SyncRunRecovery.recover_expired()
+  def perform(_job), do: {:ok, SyncRunRecovery.recover_expired()}
 end
