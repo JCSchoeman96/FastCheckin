@@ -6,6 +6,7 @@ defmodule FastCheckWeb.ScannerLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.{Attendees, Events}
+  alias FastCheck.Sales.DashboardAccess
   alias Phoenix.LiveView.JS
   alias Phoenix.PubSub
   import FastCheckWeb.Components.ScannerComponents
@@ -22,11 +23,17 @@ defmodule FastCheckWeb.ScannerLive do
   @default_force_refresh_every_n_scans 20
 
   @impl true
-  def mount(%{"event_id" => event_id_param}, _session, socket) do
+  def mount(%{"event_id" => event_id_param}, session, socket) do
+    dashboard_identity = dashboard_identity(session)
+
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         {:ok, event} <- fetch_event(event_id) do
-      stats = Attendees.get_event_stats(event_id)
-      occupancy = Attendees.get_occupancy_breakdown(event_id)
+         :ok <- current_event_grant(dashboard_identity, event_id),
+         {:ok, event} <- fetch_event(event_id),
+         :ok <- current_event_grant(dashboard_identity, event_id),
+         stats <- Attendees.get_event_stats(event_id),
+         :ok <- current_event_grant(dashboard_identity, event_id),
+         occupancy <- Attendees.get_occupancy_breakdown(event_id),
+         :ok <- current_event_grant(dashboard_identity, event_id) do
       current_occupancy = Map.get(occupancy, :currently_inside, 0)
       occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
       stats_reconcile_ms = scanner_stats_reconcile_ms()
@@ -37,6 +44,7 @@ defmodule FastCheckWeb.ScannerLive do
         |> assign(
           event: event,
           event_id: event_id,
+          dashboard_identity: dashboard_identity,
           ticket_code: "",
           last_scan_status: nil,
           last_scan_result: nil,
@@ -66,25 +74,20 @@ defmodule FastCheckWeb.ScannerLive do
         )
         |> assign_event_state()
 
-      socket =
-        if connected?(socket) do
-          PubSub.subscribe(FastCheck.PubSub, event_topic(event_id))
-          PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
+      if connected?(socket) do
+        case subscribe_to_event_topics(socket) do
+          :ok ->
+            {:ok, socket |> schedule_event_state_refresh() |> schedule_stats_reconcile()}
 
-          socket
-          |> schedule_event_state_refresh()
-          |> schedule_stats_reconcile()
-        else
-          socket
+          :error ->
+            {:ok, deny_event_access(socket)}
         end
-
-      {:ok, socket}
+      else
+        {:ok, socket}
+      end
     else
       _ ->
-        {:ok,
-         socket
-         |> put_flash(:error, "Event not found")
-         |> push_navigate(to: ~p"/dashboard")}
+        {:ok, deny_event_access(socket)}
     end
   end
 
@@ -158,9 +161,14 @@ defmodule FastCheckWeb.ScannerLive do
        |> assign(:search_truncated?, false)
        |> assign(:search_loading, false)}
     else
-      send(self(), {:perform_attendee_search, trimmed})
+      case current_event_grant(socket) do
+        :ok ->
+          send(self(), {:perform_attendee_search, trimmed})
+          {:noreply, assign(socket, :search_loading, true)}
 
-      {:noreply, assign(socket, :search_loading, true)}
+        :error ->
+          {:noreply, deny_event_access(socket)}
+      end
     end
   end
 
@@ -233,12 +241,18 @@ defmodule FastCheckWeb.ScannerLive do
        ])}
     else
       # Start async processing
-      send(self(), {:process_bulk_codes_async, codes})
+      case current_event_grant(socket) do
+        :ok ->
+          send(self(), {:process_bulk_codes_async, codes})
 
-      {:noreply,
-       socket
-       |> assign(:bulk_processing, true)
-       |> assign(:bulk_results, [])}
+          {:noreply,
+           socket
+           |> assign(:bulk_processing, true)
+           |> assign(:bulk_results, [])}
+
+        :error ->
+          {:noreply, deny_event_access(socket)}
+      end
     end
   end
 
@@ -295,7 +309,10 @@ defmodule FastCheckWeb.ScannerLive do
   @impl true
   def handle_info({:event_stats_updated, event_id, stats}, socket) do
     if socket.assigns.event_id == event_id do
-      {:noreply, socket |> assign(:stats, stats) |> assign_event_state()}
+      case current_event_grant(socket) do
+        :ok -> {:noreply, socket |> assign(:stats, stats) |> assign_event_state()}
+        :error -> {:noreply, deny_event_access(socket)}
+      end
     else
       {:noreply, socket}
     end
@@ -303,48 +320,75 @@ defmodule FastCheckWeb.ScannerLive do
 
   def handle_info({:occupancy_update, %{event_id: event_id} = payload}, socket)
       when event_id == socket.assigns.event_id do
-    {:noreply,
-     assign_occupancy(socket, payload.inside_count,
-       capacity: payload.capacity,
-       percentage: payload.percentage
-     )}
+    case current_event_grant(socket) do
+      :ok ->
+        {:noreply,
+         assign_occupancy(socket, payload.inside_count,
+           capacity: payload.capacity,
+           percentage: payload.percentage
+         )}
+
+      :error ->
+        {:noreply, deny_event_access(socket)}
+    end
   end
 
   def handle_info({:occupancy_changed, count, _type}, socket) do
-    {:noreply, assign_occupancy(socket, count)}
+    case current_event_grant(socket) do
+      :ok -> {:noreply, assign_occupancy(socket, count)}
+      :error -> {:noreply, deny_event_access(socket)}
+    end
   end
 
   def handle_info({:occupancy_breakdown_updated, event_id, breakdown}, socket) do
     if socket.assigns.event_id == event_id do
-      count =
-        breakdown
-        |> Map.get(:currently_inside)
-        |> case do
-          nil -> Map.get(breakdown, "currently_inside")
-          value -> value
-        end
-        |> Kernel.||(0)
+      case current_event_grant(socket) do
+        :ok ->
+          count =
+            breakdown
+            |> Map.get(:currently_inside)
+            |> case do
+              nil -> Map.get(breakdown, "currently_inside")
+              value -> value
+            end
+            |> Kernel.||(0)
 
-      {:noreply, assign_occupancy(socket, count)}
+          {:noreply, assign_occupancy(socket, count)}
+
+        :error ->
+          {:noreply, deny_event_access(socket)}
+      end
     else
       {:noreply, socket}
     end
   end
 
   def handle_info({:perform_attendee_search, query}, socket) do
-    current_query = socket.assigns.search_query |> to_string() |> String.trim()
+    case current_event_grant(socket) do
+      :ok ->
+        current_query = socket.assigns.search_query |> to_string() |> String.trim()
 
-    if current_query == query do
-      %{rows: rows, truncated?: truncated?} =
-        Attendees.search_event_attendees_with_meta(socket.assigns.event_id, query, 50)
+        if current_query == query do
+          %{rows: rows, truncated?: truncated?} =
+            Attendees.search_event_attendees_with_meta(socket.assigns.event_id, query, 50)
 
-      {:noreply,
-       socket
-       |> assign(:search_results, rows)
-       |> assign(:search_truncated?, truncated?)
-       |> assign(:search_loading, false)}
-    else
-      {:noreply, socket}
+          case current_event_grant(socket) do
+            :ok ->
+              {:noreply,
+               socket
+               |> assign(:search_results, rows)
+               |> assign(:search_truncated?, truncated?)
+               |> assign(:search_loading, false)}
+
+            :error ->
+              {:noreply, deny_event_access(socket)}
+          end
+        else
+          {:noreply, socket}
+        end
+
+      :error ->
+        {:noreply, deny_event_access(socket)}
     end
   rescue
     exception ->
@@ -359,116 +403,120 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   def handle_info(:refresh_event_state, socket) do
-    {:noreply, socket |> assign_event_state() |> schedule_event_state_refresh()}
+    case current_event_grant(socket) do
+      :ok -> {:noreply, socket |> assign_event_state() |> schedule_event_state_refresh()}
+      :error -> {:noreply, deny_event_access(socket)}
+    end
   end
 
   def handle_info(:reconcile_scanner_metrics, socket) do
-    event_id = socket.assigns.event_id
-    stats = Attendees.get_event_stats(event_id)
-    occupancy = Attendees.get_occupancy_breakdown(event_id)
-    current_occupancy = Map.get(occupancy, :currently_inside, 0)
-    occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
+    case load_scanner_metrics(socket) do
+      {:ok, stats, current_occupancy, occupancy_percentage} ->
+        {:noreply,
+         socket
+         |> assign(:stats, stats)
+         |> assign(:current_occupancy, current_occupancy)
+         |> assign(:occupancy_percentage, occupancy_percentage)
+         |> schedule_stats_reconcile()}
 
-    {:noreply,
-     socket
-     |> assign(:stats, stats)
-     |> assign(:current_occupancy, current_occupancy)
-     |> assign(:occupancy_percentage, occupancy_percentage)
-     |> schedule_stats_reconcile()}
+      :error ->
+        {:noreply, deny_event_access(socket)}
+    end
   end
 
   def handle_info(:reconcile_scanner_metrics_now, socket) do
-    event_id = socket.assigns.event_id
-    stats = Attendees.get_event_stats(event_id)
-    occupancy = Attendees.get_occupancy_breakdown(event_id)
-    current_occupancy = Map.get(occupancy, :currently_inside, 0)
-    occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
+    case load_scanner_metrics(socket) do
+      {:ok, stats, current_occupancy, occupancy_percentage} ->
+        {:noreply,
+         socket
+         |> assign(:stats, stats)
+         |> assign(:current_occupancy, current_occupancy)
+         |> assign(:occupancy_percentage, occupancy_percentage)}
 
-    {:noreply,
-     socket
-     |> assign(:stats, stats)
-     |> assign(:current_occupancy, current_occupancy)
-     |> assign(:occupancy_percentage, occupancy_percentage)}
+      :error ->
+        {:noreply, deny_event_access(socket)}
+    end
   end
 
   @impl true
   def handle_info({:process_bulk_codes_async, codes}, socket) do
+    case current_event_grant(socket) do
+      :ok -> process_bulk_codes_async(codes, socket)
+      :error -> {:noreply, deny_event_access(socket)}
+    end
+  end
+
+  def handle_info(_message, socket) do
+    {:noreply, socket}
+  end
+
+  defp process_bulk_codes_async(codes, socket) do
+    case collect_bulk_scan_results(codes, socket) do
+      {:ok, results} -> finish_bulk_scan_results(results, socket)
+      :revoked -> {:noreply, deny_event_access(socket)}
+    end
+  end
+
+  defp collect_bulk_scan_results(codes, socket) do
     check_in_type = socket.assigns.check_in_type || "entry"
     event_id = socket.assigns.event_id
     entrance_name = socket.assigns.event.entrance_name || "Main"
     bulk_operator = if(check_in_type == "exit", do: "Bulk Exit", else: "Bulk Entry")
 
-    # Process each code sequentially
-    results =
-      Enum.map(codes, fn code ->
-        case perform_scan_action(event_id, code, check_in_type, entrance_name, bulk_operator) do
-          {:ok, attendee, message} ->
-            scan_entry =
-              build_scan_history_entry(code, attendee, :success, message, check_in_type)
+    Enum.reduce_while(codes, {:ok, []}, fn code, {:ok, acc} ->
+      case current_event_grant(socket) do
+        :ok ->
+          result =
+            build_bulk_scan_result(
+              event_id,
+              code,
+              check_in_type,
+              entrance_name,
+              bulk_operator
+            )
 
-            %{
-              code: code,
-              status: :success,
-              attendee: attendee,
-              message: message,
-              scan_entry: scan_entry
-            }
+          {:cont, {:ok, [result | acc]}}
 
-          {:error, error_code, message} ->
-            # Normalize error code to lowercase atom for consistent scan history display.
-            # Error codes from Attendees.check_in_advanced are uppercase strings like "LIMIT_EXCEEDED".
-            # Use normalize_error_code/1 to safely convert to known atoms only
-            normalized_status = normalize_error_code(error_code)
-
-            scan_entry =
-              build_scan_history_entry(code, nil, normalized_status, message, check_in_type)
-
-            %{
-              code: code,
-              status: :error,
-              error_code: error_code,
-              message: message,
-              scan_entry: scan_entry
-            }
-        end
-      end)
-
-    # Update scan history with all results
-    updated_history =
-      Enum.reduce(results, socket.assigns.scan_history, fn result, acc ->
-        if result.scan_entry do
-          add_to_scan_history(acc, result.scan_entry)
-        else
-          acc
-        end
-      end)
-
-    # Refresh stats
-    stats = Attendees.get_event_stats(event_id)
-    occupancy = Attendees.get_occupancy_breakdown(event_id)
-    current_occupancy = Map.get(occupancy, :currently_inside, 0)
-    occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
-
-    success_count = Enum.count(results, &(&1.status == :success))
-    error_count = Enum.count(results, &(&1.status == :error))
-
-    {:noreply,
-     socket
-     |> assign(:bulk_processing, false)
-     |> assign(:bulk_results, results)
-     |> assign(:scan_history, updated_history)
-     |> assign(:stats, stats)
-     |> assign(:current_occupancy, current_occupancy)
-     |> assign(:occupancy_percentage, occupancy_percentage)
-     |> assign(:last_scan_status, if(success_count > 0, do: :success, else: :error))
-     |> assign(
-       :last_scan_result,
-       "Processed #{length(results)} codes: #{success_count} successful, #{error_count} errors"
-     )}
+        :error ->
+          {:halt, :revoked}
+      end
+    end)
   end
 
-  def handle_info(_message, socket) do
-    {:noreply, socket}
+  defp finish_bulk_scan_results(reversed_results, socket) do
+    results = Enum.reverse(reversed_results)
+
+    case load_scanner_metrics(socket) do
+      {:ok, stats, current_occupancy, occupancy_percentage} ->
+        updated_history =
+          Enum.reduce(results, socket.assigns.scan_history, fn result, acc ->
+            if result.scan_entry do
+              add_to_scan_history(acc, result.scan_entry)
+            else
+              acc
+            end
+          end)
+
+        success_count = Enum.count(results, &(&1.status == :success))
+        error_count = Enum.count(results, &(&1.status == :error))
+
+        {:noreply,
+         socket
+         |> assign(:bulk_processing, false)
+         |> assign(:bulk_results, results)
+         |> assign(:scan_history, updated_history)
+         |> assign(:stats, stats)
+         |> assign(:current_occupancy, current_occupancy)
+         |> assign(:occupancy_percentage, occupancy_percentage)
+         |> assign(:last_scan_status, if(success_count > 0, do: :success, else: :error))
+         |> assign(
+           :last_scan_result,
+           "Processed #{length(results)} codes: #{success_count} successful, #{error_count} errors"
+         )}
+
+      :error ->
+        {:noreply, deny_event_access(socket)}
+    end
   end
 
   @impl true
@@ -1107,19 +1155,25 @@ defmodule FastCheckWeb.ScannerLive do
   end
 
   defp process_scan(code, socket) do
-    if socket.assigns.scans_disabled? do
-      message = socket.assigns.scans_disabled_message || "Event archived, scanning disabled"
+    case current_event_grant(socket) do
+      :ok ->
+        if socket.assigns.scans_disabled? do
+          message = socket.assigns.scans_disabled_message || "Event archived, scanning disabled"
 
-      {:noreply,
-       socket
-       |> assign(:last_scan_status, :archived)
-       |> assign(:last_scan_result, message)
-       |> assign(:last_scan_reason, nil)
-       |> assign(:last_scan_checkins_used, 0)
-       |> assign(:last_scan_checkins_allowed, 0)
-       |> assign(:ticket_code, "")}
-    else
-      do_process_scan(code, socket)
+          {:noreply,
+           socket
+           |> assign(:last_scan_status, :archived)
+           |> assign(:last_scan_result, message)
+           |> assign(:last_scan_reason, nil)
+           |> assign(:last_scan_checkins_used, 0)
+           |> assign(:last_scan_checkins_allowed, 0)
+           |> assign(:ticket_code, "")}
+        else
+          do_process_scan(code, socket)
+        end
+
+      :error ->
+        {:noreply, deny_event_access(socket)}
     end
   end
 
@@ -1295,6 +1349,35 @@ defmodule FastCheckWeb.ScannerLive do
 
       _ ->
         Attendees.check_in_advanced(event_id, code, "entry", entrance_name, operator)
+    end
+  end
+
+  defp build_bulk_scan_result(event_id, code, check_in_type, entrance_name, bulk_operator) do
+    case perform_scan_action(event_id, code, check_in_type, entrance_name, bulk_operator) do
+      {:ok, attendee, message} ->
+        scan_entry = build_scan_history_entry(code, attendee, :success, message, check_in_type)
+
+        %{
+          code: code,
+          status: :success,
+          attendee: attendee,
+          message: message,
+          scan_entry: scan_entry
+        }
+
+      {:error, error_code, message} ->
+        normalized_status = normalize_error_code(error_code)
+
+        scan_entry =
+          build_scan_history_entry(code, nil, normalized_status, message, check_in_type)
+
+        %{
+          code: code,
+          status: :error,
+          error_code: error_code,
+          message: message,
+          scan_entry: scan_entry
+        }
     end
   end
 
@@ -1530,6 +1613,57 @@ defmodule FastCheckWeb.ScannerLive do
     {:ok, Events.get_event!(event_id)}
   rescue
     Ecto.NoResultsError -> {:error, :not_found}
+  end
+
+  defp dashboard_identity(session) do
+    Map.get(session, "dashboard_username") || Map.get(session, :dashboard_username)
+  end
+
+  defp current_event_grant(socket) do
+    current_event_grant(socket.assigns.dashboard_identity, socket.assigns.event_id)
+  end
+
+  defp current_event_grant(identity, event_id) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(identity),
+         true <- DashboardAccess.event_granted?(actor, event_id) do
+      :ok
+    else
+      _ -> :error
+    end
+  end
+
+  defp deny_event_access(socket) do
+    socket
+    |> put_flash(:error, "Event not found")
+    |> push_navigate(to: ~p"/dashboard")
+  end
+
+  defp subscribe_to_event_topics(socket) do
+    with :ok <- current_event_grant(socket),
+         :ok <- PubSub.subscribe(FastCheck.PubSub, event_topic(socket.assigns.event_id)),
+         :ok <- current_event_grant(socket),
+         :ok <- PubSub.subscribe(FastCheck.PubSub, occupancy_topic(socket.assigns.event_id)) do
+      :ok
+    else
+      _ -> :error
+    end
+  end
+
+  defp load_scanner_metrics(socket) do
+    event_id = socket.assigns.event_id
+
+    with :ok <- current_event_grant(socket),
+         stats <- Attendees.get_event_stats(event_id),
+         :ok <- current_event_grant(socket),
+         occupancy <- Attendees.get_occupancy_breakdown(event_id),
+         :ok <- current_event_grant(socket) do
+      current_occupancy = Map.get(occupancy, :currently_inside, 0)
+      occupancy_percentage = calculate_occupancy_percentage(current_occupancy, stats.total)
+
+      {:ok, stats, current_occupancy, occupancy_percentage}
+    else
+      _ -> :error
+    end
   end
 
   defp event_topic(event_id), do: "event:#{event_id}:stats"
