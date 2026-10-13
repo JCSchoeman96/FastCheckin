@@ -1036,6 +1036,58 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute_receive :disabled_create_tickera_request, 100
     end
 
+    test "creation revalidates dashboard identity after mount", %{conn: conn} do
+      auth = Application.get_env(:fastcheck, :dashboard_auth, %{})
+
+      Application.put_env(
+        :fastcheck,
+        :dashboard_auth,
+        auth |> Map.put(:username, "admin") |> Map.put(:event_creation_enabled, true)
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn, [])
+
+      view
+      |> element("#show-new-event-form-button")
+      |> render_click()
+
+      event_count_before = Repo.aggregate(Event, :count)
+      sync_log_count_before = Repo.aggregate(SyncLog, :count)
+
+      Application.put_env(
+        :fastcheck,
+        :dashboard_auth,
+        Application.get_env(:fastcheck, :dashboard_auth)
+        |> Map.put(:username, "replacement-admin")
+      )
+
+      assert Application.get_env(:fastcheck, :dashboard_auth).event_creation_enabled
+
+      test_pid = self()
+
+      Application.put_env(:fastcheck, :tickera_request_fun, fn _req ->
+        send(test_pid, :stale_identity_tickera_request)
+        {:ok, %Response{status: 200, body: %{"pass" => true}}}
+      end)
+
+      render_click(view, "create_event", %{
+        "event" => %{
+          "name" => "Stale Identity Event Must Not Exist",
+          "tickera_api_key_encrypted" => "stale-identity-api-key",
+          "mobile_access_code" => "stale-door-secret",
+          "tickera_site_url" => "https://voelgoed.co.za",
+          "enable_whatsapp_sales" => "true"
+        }
+      })
+
+      assert Repo.get_by(Event, name: "Stale Identity Event Must Not Exist") == nil
+      assert Repo.aggregate(Event, :count) == event_count_before
+      assert Repo.aggregate(SyncLog, :count) == sync_log_count_before
+      assert render(view) =~ "Event creation is unavailable"
+      refute has_element?(view, "#create-event-form")
+      refute_receive :stale_identity_tickera_request, 100
+    end
+
     test "failed create keeps the form open without creation-only WhatsApp controls", %{
       conn: conn
     } do

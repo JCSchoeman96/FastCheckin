@@ -71,13 +71,14 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("show_new_event_form", _params, socket) do
-    if event_creation_enabled?() do
+    if current_creation_authority?(socket) do
       {:noreply, socket |> assign(:show_new_event_form, true) |> refresh_if_grants_changed()}
     else
       {:noreply,
        socket
+       |> assign(:show_new_event_form, false)
        |> refresh_if_grants_changed()
-       |> assign(:sync_status, "Event creation is disabled.")}
+       |> assign(:sync_status, creation_unavailable_message())}
     end
   end
 
@@ -88,7 +89,7 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("create_event", %{"event" => event_params}, socket) do
-    if event_creation_enabled?() do
+    if current_creation_authority?(socket) do
       case Events.create_event(
              Map.drop(event_params, ["enable_whatsapp_sales", :enable_whatsapp_sales])
            ) do
@@ -128,7 +129,7 @@ defmodule FastCheckWeb.DashboardLive do
        socket
        |> assign(:show_new_event_form, false)
        |> refresh_if_grants_changed()
-       |> assign(:sync_status, "Event creation is disabled.")}
+       |> assign(:sync_status, creation_unavailable_message())}
     end
   end
 
@@ -2241,6 +2242,17 @@ defmodule FastCheckWeb.DashboardLive do
     Application.get_env(:fastcheck, :dashboard_auth, %{})
     |> Map.get(:event_creation_enabled, false)
     |> Kernel.==(true)
+  end
+
+  defp current_creation_authority?(socket) do
+    match?({:ok, _actor}, DashboardAccess.actor_for_identity(socket.assigns.dashboard_identity)) and
+      event_creation_enabled?()
+  end
+
+  defp creation_unavailable_message do
+    if event_creation_enabled?(),
+      do: "Event creation is unavailable.",
+      else: "Event creation is disabled."
   end
 
   defp reveal_rate_limit_window_ms do
