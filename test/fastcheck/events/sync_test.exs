@@ -27,8 +27,13 @@ defmodule FastCheck.Events.SyncTest do
   end
 
   describe "module exports" do
-    test "exports sync_event/3" do
-      assert_exported(Sync, :sync_event, 3)
+    test "does not export the unguarded sync lifecycle entry point" do
+      refute function_exported?(Events, :sync_event, 1)
+      refute function_exported?(Events, :sync_event, 2)
+      refute function_exported?(Events, :sync_event, 3)
+      refute function_exported?(Sync, :sync_event, 1)
+      refute function_exported?(Sync, :sync_event, 2)
+      refute function_exported?(Sync, :sync_event, 3)
     end
 
     test "exports get_tickera_api_key/1" do
@@ -60,12 +65,12 @@ defmodule FastCheck.Events.SyncTest do
     end
   end
 
-  describe "sync_event/3 refreshes total_tickets" do
+  describe "guarded SyncRunner refreshes total_tickets" do
     test "updates total_tickets after a successful full sync" do
       event = create_event(%{total_tickets: 10})
       mock_tickera_sync_requests(event_total: 137, attendees: [])
 
-      assert {:ok, _message} = Events.sync_event(event.id)
+      assert {:ok, _message} = guarded_sync(event.id)
 
       assert Repo.get!(Event, event.id).total_tickets == 137
     end
@@ -78,9 +83,9 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee("MATCH-1"), unchanged_remote_attendee("MATCH-2")]
       )
 
-      assert {:ok, message} = Events.sync_event(event.id)
+      assert {:ok, message} = guarded_sync(event.id)
 
-      assert message == "Synced 2 attendees"
+      assert message == "Synced 2 attendees from 2 Tickera tickets"
       refute message =~ "Warning:"
     end
 
@@ -92,7 +97,7 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee("VISIBLE-1")]
       )
 
-      assert {:ok, message} = Events.sync_event(event.id)
+      assert {:ok, message} = guarded_sync(event.id)
 
       assert message =~ "Synced 1 attendees"
       assert message =~ "Warning: Tickera reports 2 sold tickets"
@@ -110,8 +115,8 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee(existing_attendee.ticket_code)]
       )
 
-      assert {:ok, message} = Events.sync_event(event.id, nil, incremental: true)
-      assert message =~ "0 new/updated out of 1 total"
+      assert {:ok, message} = guarded_sync(event.id, nil, incremental: true)
+      assert message =~ "Synced 0 attendees from 1 Tickera tickets"
       assert Repo.get!(Event, event.id).total_tickets == 42
     end
 
@@ -125,9 +130,9 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee(existing_attendee.ticket_code)]
       )
 
-      assert {:ok, message} = Events.sync_event(event.id, nil, incremental: true)
+      assert {:ok, message} = guarded_sync(event.id, nil, incremental: true)
 
-      assert message =~ "Incremental sync: 0 new/updated out of 1 total"
+      assert message =~ "Synced 0 attendees from 1 Tickera tickets"
       assert message =~ "Warning: Tickera reports 2 sold tickets"
       assert message =~ "tickets_info returned 1 rows"
     end
@@ -140,19 +145,19 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee("UNKNOWN-SOLD-1")]
       )
 
-      assert {:ok, message} = Events.sync_event(event.id)
+      assert {:ok, message} = guarded_sync(event.id)
 
-      assert message == "Synced 1 attendees"
+      assert message == "Synced 1 attendees from 1 Tickera tickets"
       refute message =~ "Warning:"
     end
 
-    test "leaves total_tickets untouched when sync fails" do
+    test "keeps refreshed total_tickets when attendee sync fails" do
       event = create_event(%{total_tickets: 10})
       mock_tickera_sync_requests(event_total: 55, tickets_error: {:http_error, :timeout, "boom"})
 
-      assert {:error, _message} = Events.sync_event(event.id)
+      assert {:error, _message} = guarded_sync(event.id)
 
-      assert Repo.get!(Event, event.id).total_tickets == 10
+      assert Repo.get!(Event, event.id).total_tickets == 55
     end
 
     test "returns an error when total_tickets persistence fails during completion" do
@@ -163,7 +168,7 @@ defmodule FastCheck.Events.SyncTest do
 
       task =
         Task.async(fn ->
-          Events.sync_event(event.id, fn _page, _total_pages, _count ->
+          guarded_sync(event.id, fn _page, _total_pages, _count ->
             send(parent, :sync_progress_reached)
 
             receive do
@@ -178,7 +183,7 @@ defmodule FastCheck.Events.SyncTest do
       Repo.delete!(Repo.get!(Event, event.id))
       send(task.pid, :continue_sync)
 
-      assert {:error, "Failed to refresh event ticket totals"} = Task.await(task, 2_000)
+      assert {:error, :not_found} = Task.await(task, 2_000)
       assert Repo.get(Event, event.id) == nil
     end
 
@@ -188,7 +193,7 @@ defmodule FastCheck.Events.SyncTest do
 
       {result, event_update_count} =
         capture_event_update_queries(fn ->
-          Events.sync_event(event.id)
+          guarded_sync(event.id)
         end)
 
       assert {:ok, _message} = result
@@ -207,7 +212,7 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee("KEEP-AUTH")]
       )
 
-      assert {:ok, _message} = Events.sync_event(event.id)
+      assert {:ok, _message} = guarded_sync(event.id)
 
       assert Repo.get_by!(Attendee, event_id: event.id, ticket_code: "KEEP-AUTH").scan_eligibility ==
                "active"
@@ -238,7 +243,7 @@ defmodule FastCheck.Events.SyncTest do
         attendees: []
       )
 
-      assert {:ok, _message} = Events.sync_event(event.id)
+      assert {:ok, _message} = guarded_sync(event.id)
 
       persisted = Repo.get!(Attendee, sales_attendee.id)
       assert persisted.scan_eligibility == "active"
@@ -264,10 +269,19 @@ defmodule FastCheck.Events.SyncTest do
         attendees: [unchanged_remote_attendee("ONLY-REMOTE")]
       )
 
-      assert {:ok, _message} = Events.sync_event(event.id, nil, incremental: true)
+      assert {:ok, _message} = guarded_sync(event.id, nil, incremental: true)
 
       assert Repo.get_by!(Attendee, id: stale.id).scan_eligibility == "active"
     end
+  end
+
+  defp guarded_sync(event_id, progress_callback \\ nil, opts \\ []) do
+    Events.sync_event_guarded(
+      event_id,
+      fn _authorized_event_id -> :ok end,
+      progress_callback,
+      opts
+    )
   end
 
   describe "incremental_attendees_for_sync/3" do

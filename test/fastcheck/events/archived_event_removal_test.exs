@@ -98,7 +98,11 @@ defmodule FastCheck.Events.ArchivedEventRemovalTest do
     })
     |> Repo.insert!()
 
-    {:ok, _sync_log} = SyncLog.log_sync_start(event.id)
+    Repo.insert!(%SyncLog{
+      event_id: event.id,
+      started_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      status: "completed"
+    })
 
     %MobileIdempotencyLog{}
     |> MobileIdempotencyLog.changeset(%{

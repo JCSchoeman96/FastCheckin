@@ -51,18 +51,9 @@ defmodule FastCheck.Events.SyncRunControlTest do
     assert {:error, :not_found} = SyncState.get_state(event.id, run.sync_run_id, run.owner_token)
   end
 
-  test "fails closed for no active run, multiple active rows, and expired lease" do
+  test "fails closed for no active run and expired lease" do
     event = create_event()
     assert {:error, :not_found} = SyncRunControl.pause(event.id, &allow_event/1)
-
-    event_with_runs = create_event()
-    first = insert_active_run(event_with_runs.id, "in_progress")
-    _second = insert_active_run(event_with_runs.id, "paused")
-
-    assert {:error, :inconsistent_active_runs} =
-             SyncRunControl.cancel(event_with_runs.id, &allow_event/1)
-
-    assert Repo.get!(SyncLog, first.id).status == "in_progress"
 
     expired_event = create_event()
     expired = insert_active_run(expired_event.id, "paused", expired: true)
@@ -80,7 +71,7 @@ defmodule FastCheck.Events.SyncRunControlTest do
 
   defp allow_event(_event_id), do: :ok
 
-  defp insert_active_run(event_id, status, opts \\ []) do
+  defp insert_active_run(event_id, status, opts) do
     now = DateTime.utc_now()
     started_at = DateTime.truncate(now, :second)
 

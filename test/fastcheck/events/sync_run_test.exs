@@ -50,17 +50,11 @@ defmodule FastCheck.Events.SyncRunTest do
     assert active_count(event.id) == 1
   end
 
-  test "a syncing event without an active run and multiple active rows are inconsistent" do
+  test "a syncing event without an active run is inconsistent" do
     syncing = create_event(%{status: "syncing"})
     assert {:error, :inconsistent_syncing_event} = SyncRun.claim(syncing.id)
     assert Repo.get!(Event, syncing.id).status == "syncing"
     assert active_count(syncing.id) == 0
-
-    event = create_event()
-    _ = insert_legacy_run(event.id, "in_progress")
-    _ = insert_legacy_run(event.id, "paused")
-    assert {:error, :inconsistent_active_runs} = SyncRun.claim(event.id)
-    assert active_count(event.id) == 2
   end
 
   test "concurrent claims serialize on the event row" do
@@ -139,10 +133,11 @@ defmodule FastCheck.Events.SyncRunTest do
     assert {:error, :paused} =
              SyncRun.prepare_request(event.id, paused.sync_run_id, paused.owner_token)
 
-    expired = insert_owned_run(event.id, "in_progress", expired: true)
+    expired_event = create_event()
+    expired = insert_owned_run(expired_event.id, "in_progress", expired: true)
 
     assert {:error, :lease_expired} =
-             SyncRun.prepare_request(event.id, expired.sync_run_id, expired.owner_token)
+             SyncRun.prepare_request(expired_event.id, expired.sync_run_id, expired.owner_token)
 
     assert {:ok, completed} =
              SyncRun.complete(event.id, prepared.sync_run_id, prepared.owner_token, 0, 0)
@@ -188,23 +183,31 @@ defmodule FastCheck.Events.SyncRunTest do
     assert renewed.heartbeat_at >= run.heartbeat_at
     assert renewed.lease_expires_at > run.lease_expires_at
 
-    expired = insert_owned_run(event.id, "in_progress", expired: true)
+    expired_event = create_event()
+    expired = insert_owned_run(expired_event.id, "in_progress", expired: true)
 
     assert {:error, :lease_expired} =
-             SyncRun.renew_lease(event.id, expired.sync_run_id, expired.owner_token)
+             SyncRun.renew_lease(expired_event.id, expired.sync_run_id, expired.owner_token)
 
     expired_after = Repo.get!(SyncLog, expired.id)
     assert expired_after.heartbeat_at == expired.heartbeat_at
     assert expired_after.lease_expires_at == expired.lease_expires_at
 
     assert {:error, :lease_expired} =
-             SyncRun.update_progress(event.id, expired.sync_run_id, expired.owner_token, 1, 1, 1)
+             SyncRun.update_progress(
+               expired_event.id,
+               expired.sync_run_id,
+               expired.owner_token,
+               1,
+               1,
+               1
+             )
 
     assert {:error, :lease_expired} =
-             SyncRun.pause(event.id, expired.sync_run_id, expired.owner_token)
+             SyncRun.pause(expired_event.id, expired.sync_run_id, expired.owner_token)
 
     assert {:error, :lease_expired} =
-             SyncRun.resume(event.id, expired.sync_run_id, expired.owner_token)
+             SyncRun.resume(expired_event.id, expired.sync_run_id, expired.owner_token)
 
     assert Repo.get!(SyncLog, expired.id).status == "in_progress"
 
@@ -281,6 +284,19 @@ defmodule FastCheck.Events.SyncRunTest do
     assert event.sync_completed_at
     assert event.last_sync_at == event.sync_completed_at
     assert event.last_soft_sync_at == event.sync_completed_at
+  end
+
+  test "a terminalized run releases the event for a new claim" do
+    event = create_event()
+    old = claim!(event.id)
+
+    assert {:ok, completed} = SyncRun.complete(event.id, old.sync_run_id, old.owner_token, 0, 0)
+    assert {:ok, next} = SyncRun.claim(event.id)
+
+    assert completed.status == "completed"
+    assert next.status == "in_progress"
+    refute next.id == completed.id
+    assert active_count(event.id) == 1
   end
 
   test "failure stores safe reasons and does not set sync completion time" do
@@ -407,16 +423,6 @@ defmodule FastCheck.Events.SyncRunTest do
   defp claim!(event_id) do
     assert {:ok, run} = SyncRun.claim(event_id)
     run
-  end
-
-  defp insert_legacy_run(event_id, status) do
-    Repo.insert!(%SyncLog{
-      event_id: event_id,
-      status: status,
-      started_at: DateTime.truncate(db_now(), :second),
-      pages_processed: 0,
-      attendees_synced: 0
-    })
   end
 
   defp insert_owned_run(event_id, status, opts) do
