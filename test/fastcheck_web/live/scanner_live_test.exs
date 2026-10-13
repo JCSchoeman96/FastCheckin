@@ -1,5 +1,5 @@
 defmodule FastCheckWeb.ScannerLiveTest do
-  use FastCheckWeb.ConnCase, async: true
+  use FastCheckWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
 
@@ -7,6 +7,7 @@ defmodule FastCheckWeb.ScannerLiveTest do
   alias FastCheck.Attendees.CheckInSession
   alias FastCheck.Events.Event
   alias FastCheck.Repo
+  alias FastCheckWeb.SalesWebFixtures
 
   @api_key "api-key"
   @valid_event_attrs %{
@@ -337,6 +338,227 @@ defmodule FastCheckWeb.ScannerLiveTest do
     end
   end
 
+  describe "dashboard event grants" do
+    test "mounts the scanner for a granted event", %{conn: conn} do
+      event = insert_event()
+
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      assert has_element?(view, "#admin-scanner-root")
+      assert render(view) =~ event.name
+      assert render(view) =~ "Total tickets"
+      assert render(view) =~ "Current occupancy"
+    end
+
+    test "denies an existing ungranted event like a nonexistent event", %{conn: conn} do
+      event = insert_event(%{name: "Private Event Sentinel"})
+      granted_event = insert_event()
+
+      ungranted_result = mount_scanner(conn, event, [granted_event.id])
+      missing_result = mount_scanner(conn, 999_999_999, [granted_event.id])
+
+      assert {:error, {:live_redirect, ungranted_redirect}} = ungranted_result
+      assert {:error, {:live_redirect, missing_redirect}} = missing_result
+      assert ungranted_redirect.to == "/dashboard"
+      assert missing_redirect.to == "/dashboard"
+      assert ungranted_redirect.flash == missing_redirect.flash
+      assert ungranted_redirect.flash["error"] == "Event not found"
+      refute inspect(ungranted_redirect) =~ event.name
+    end
+
+    test "denies an existing event when the grant set is empty", %{conn: conn} do
+      event = insert_event(%{name: "Empty Grant Event Sentinel"})
+
+      assert {:error, {:live_redirect, %{to: "/dashboard", flash: flash}}} =
+               mount_scanner(conn, event, [])
+
+      assert flash["error"] == "Event not found"
+      refute inspect(flash) =~ event.name
+    end
+
+    test "revocation blocks a scan before check-in mutation", %{conn: conn} do
+      event = insert_event()
+      attendee = insert_attendee(event, @valid_attendee_attrs)
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+
+      view
+      |> form("#scanner-form", %{ticket_code: attendee.ticket_code})
+      |> render_submit()
+
+      assert_redirect(view, "/dashboard")
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert is_nil(refreshed.checked_in_at)
+      assert is_nil(Repo.get_by(CheckInSession, attendee_id: attendee.id, event_id: event.id))
+    end
+
+    test "revocation blocks a manual exit before check-out mutation", %{conn: conn} do
+      event = insert_event(%{entrance_name: "Main Gate"})
+
+      attendee =
+        insert_attendee(event, %{
+          ticket_code: "REVOKED-EXIT-123",
+          first_name: "Sam",
+          last_name: "Exit",
+          checked_in_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          is_currently_inside: true,
+          checkins_remaining: 0
+        })
+
+      session = insert_active_session(attendee, event.entrance_name)
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("#exit-mode-button")
+      |> render_click()
+
+      SalesWebFixtures.configure_dashboard_grants([])
+
+      view
+      |> render_hook("manual_check_in", %{"ticket_code" => attendee.ticket_code})
+
+      assert_redirect(view, "/dashboard")
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert is_nil(refreshed.checked_out_at)
+      assert refreshed.is_currently_inside
+      assert Repo.get!(CheckInSession, session.id)
+    end
+
+    test "revocation blocks attendee search before it is queued", %{conn: conn} do
+      event = insert_event()
+      insert_attendee(event, %{first_name: "Private Search Sentinel"})
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+
+      view
+      |> element("form#attendee-search-form")
+      |> render_change(%{"query" => "Private Search Sentinel"})
+
+      flash = assert_redirect(view, "/dashboard")
+      refute inspect(flash) =~ "Private Search Sentinel"
+    end
+
+    test "revocation blocks an already queued attendee search", %{conn: conn} do
+      event = insert_event()
+      attendee = insert_attendee(event, %{first_name: "Queued Search Sentinel"})
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      view
+      |> element("form#attendee-search-form")
+      |> render_change(%{"query" => attendee.first_name})
+
+      assert has_element?(view, "[data-test=\"manual-check-in-#{attendee.ticket_code}\"]")
+
+      :sys.suspend(view.pid)
+      send(view.pid, {:perform_attendee_search, attendee.first_name})
+      SalesWebFixtures.configure_dashboard_grants([])
+      :sys.resume(view.pid)
+
+      flash = assert_redirect(view, "/dashboard")
+      refute inspect(flash) =~ attendee.first_name
+    end
+
+    test "revocation blocks bulk work before it is queued", %{conn: conn} do
+      event = insert_event()
+      attendee = insert_attendee(event, @valid_attendee_attrs)
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+
+      view
+      |> element("#bulk-mode-toggle")
+      |> render_click()
+
+      view
+      |> form("#bulk-scan-form", %{codes: attendee.ticket_code})
+      |> render_submit()
+
+      assert_redirect(view, "/dashboard")
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert is_nil(refreshed.checked_in_at)
+      assert is_nil(Repo.get_by(CheckInSession, attendee_id: attendee.id, event_id: event.id))
+    end
+
+    test "revocation blocks queued bulk work before any mutation", %{conn: conn} do
+      event = insert_event()
+      attendee = insert_attendee(event, @valid_attendee_attrs)
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      :sys.suspend(view.pid)
+      send(view.pid, {:process_bulk_codes_async, [attendee.ticket_code]})
+      SalesWebFixtures.configure_dashboard_grants([])
+      :sys.resume(view.pid)
+
+      assert_redirect(view, "/dashboard")
+      refreshed = Repo.get!(Attendee, attendee.id)
+      assert is_nil(refreshed.checked_in_at)
+      assert is_nil(Repo.get_by(CheckInSession, attendee_id: attendee.id, event_id: event.id))
+    end
+
+    test "revocation blocks metrics reconciliation", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+      send(view.pid, :reconcile_scanner_metrics_now)
+
+      assert_redirect(view, "/dashboard")
+    end
+
+    test "revocation blocks scheduled metrics reconciliation", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+      send(view.pid, :reconcile_scanner_metrics)
+
+      assert_redirect(view, "/dashboard")
+    end
+
+    test "revocation terminates an idle scanner on lifecycle refresh", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+      send(view.pid, :refresh_event_state)
+
+      assert_redirect(view, "/dashboard")
+    end
+
+    test "revocation blocks Event stats PubSub payloads", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+
+      send(
+        view.pid,
+        {:event_stats_updated, event.id, %{total: 987_654, checked_in: 0, pending: 0}}
+      )
+
+      flash = assert_redirect(view, "/dashboard")
+      refute inspect(flash) =~ "987,654"
+    end
+
+    test "revocation blocks occupancy PubSub payloads", %{conn: conn} do
+      event = insert_event()
+      {:ok, view, _html} = mount_scanner(conn, event)
+
+      SalesWebFixtures.configure_dashboard_grants([])
+
+      send(
+        view.pid,
+        {:occupancy_update,
+         %{event_id: event.id, inside_count: 654_321, capacity: 999_999, percentage: 65.4}}
+      )
+
+      flash = assert_redirect(view, "/dashboard")
+      refute inspect(flash) =~ "654,321"
+    end
+  end
+
   defp insert_event(attrs \\ %{}) do
     attrs = Map.merge(@valid_event_attrs, attrs)
     api_key = Map.get(attrs, :tickera_api_key, @api_key)
@@ -379,9 +601,12 @@ defmodule FastCheckWeb.ScannerLiveTest do
     |> Repo.insert!()
   end
 
-  defp mount_scanner(conn, event) do
+  defp mount_scanner(conn, event, event_ids \\ :event) do
+    event_id = if match?(%Event{}, event), do: event.id, else: event
+    event_ids = if event_ids == :event, do: [event_id], else: event_ids
+
     conn
-    |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
-    |> live(~p"/scan/#{event.id}")
+    |> SalesWebFixtures.authenticated_conn(event_ids)
+    |> live(~p"/scan/#{event_id}")
   end
 end
