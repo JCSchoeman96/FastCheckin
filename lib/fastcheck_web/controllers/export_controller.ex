@@ -5,12 +5,14 @@ defmodule FastCheckWeb.ExportController do
   use FastCheckWeb, :controller
 
   alias FastCheck.{Attendees, Events}
+  alias FastCheck.Sales.DashboardAccess
 
   @doc """
   Exports attendees for an event as CSV.
   """
   def export_attendees(conn, %{"event_id" => event_id_param}) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
+         :ok <- authorize_event(conn, event_id),
          {:ok, %Events.Event{} = event} <- fetch_event(event_id) do
       attendees = Attendees.list_event_attendees(event_id)
 
@@ -23,9 +25,7 @@ defmodule FastCheckWeb.ExportController do
       |> send_resp(200, csv_content)
     else
       {:error, :event_not_found} ->
-        conn
-        |> put_status(:not_found)
-        |> json(%{error: "Event not found"})
+        event_not_found(conn)
 
       {:error, :invalid_event_id} ->
         conn
@@ -45,6 +45,7 @@ defmodule FastCheckWeb.ExportController do
   """
   def export_check_ins(conn, %{"event_id" => event_id_param}) do
     with {:ok, event_id} <- parse_event_id(event_id_param),
+         :ok <- authorize_event(conn, event_id),
          {:ok, %Events.Event{} = event} <- fetch_event(event_id) do
       check_ins = Attendees.list_event_check_ins(event_id)
 
@@ -57,9 +58,7 @@ defmodule FastCheckWeb.ExportController do
       |> send_resp(200, csv_content)
     else
       {:error, :event_not_found} ->
-        conn
-        |> put_status(:not_found)
-        |> json(%{error: "Event not found"})
+        event_not_found(conn)
 
       {:error, :invalid_event_id} ->
         conn
@@ -91,6 +90,22 @@ defmodule FastCheckWeb.ExportController do
     {:ok, Events.get_event!(event_id)}
   rescue
     Ecto.NoResultsError -> {:error, :event_not_found}
+  end
+
+  defp authorize_event(conn, event_id) do
+    with %{username: username} when is_binary(username) <- conn.assigns[:current_user],
+         {:ok, actor} <- DashboardAccess.actor_for_identity(username),
+         true <- DashboardAccess.event_granted?(actor, event_id) do
+      :ok
+    else
+      _ -> {:error, :event_not_found}
+    end
+  end
+
+  defp event_not_found(conn) do
+    conn
+    |> put_status(:not_found)
+    |> json(%{error: "Event not found"})
   end
 
   defp generate_attendees_csv(attendees) do

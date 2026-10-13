@@ -48,6 +48,8 @@ defmodule FastCheck.Integration.EndToEndTest do
       }
       |> Repo.insert!()
 
+    FastCheckWeb.SalesWebFixtures.configure_dashboard_grants([event.id])
+
     # Setup Bypass routes for Tickera API
     setup_bypass_routes(bypass, api_key)
 
