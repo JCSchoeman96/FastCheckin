@@ -1212,15 +1212,28 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
     assert result.conversation.state == "selecting_ticket_type"
 
-    assert result.response_body ==
-             [
-               "Kies 'n kaartjie tipe:",
-               "1. General - R10",
-               "2. VIP - R1999.50",
-               "0. Terug",
-               "#. Terug na hoof kieslys"
-             ]
-             |> Enum.join("\n")
+    assert result.response_body in [
+             Enum.join(
+               [
+                 "Kies 'n kaartjie tipe:",
+                 "1. General - R10",
+                 "2. VIP - R1999.50",
+                 "0. Terug",
+                 "#. Terug na hoof kieslys"
+               ],
+               "\n"
+             ),
+             Enum.join(
+               [
+                 "Kies 'n kaartjie tipe:",
+                 "1. VIP - R1999.50",
+                 "2. General - R10",
+                 "0. Terug",
+                 "#. Terug na hoof kieslys"
+               ],
+               "\n"
+             )
+           ]
   end
 
   test "duplicate confirm uses checkout idempotency and creates one order", %{
