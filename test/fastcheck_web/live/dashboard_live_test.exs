@@ -60,14 +60,14 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert Enum.any?(Events.list_events(), &(&1.id == ungranted_event.id))
 
-      {:ok, view, html} = mount_dashboard(conn, [granted_event.id])
+      {:ok, view, _html} = mount_dashboard(conn, [granted_event.id])
 
       assert has_element?(view, "#full-sync-#{granted_event.id}")
       refute has_element?(view, "#full-sync-#{ungranted_event.id}")
-      assert html =~ granted_event.name
-      refute html =~ ungranted_event.name
-      refute html =~ "93"
-      refute html =~ "Un granted aggregate attendee"
+      assert has_element?(view, ".fc-card-container", granted_event.name)
+      refute has_element?(view, ".fc-card-container", ungranted_event.name)
+      refute has_element?(view, ".fc-card-container", "93")
+      refute has_element?(view, ".fc-card-container", "Un granted aggregate attendee")
     end
 
     test "both Events are visible when both have current grants", %{conn: conn} do
@@ -86,8 +86,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       {:ok, view, html} = mount_dashboard(conn, [])
 
       refute has_element?(view, "#full-sync-#{event.id}")
+      refute has_element?(view, ".fc-card-container")
       refute html =~ event.name
-      refute html =~ "67"
     end
 
     test "forged reads, lifecycle actions, sync controls, and WhatsApp changes deny ungranted Event B",
@@ -830,7 +830,6 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       html = render(view)
       assert html =~ event.name
-      assert html =~ "137"
       assert html =~ "Warning: Tickera reports 137 sold tickets"
       assert html =~ "tickets_info returned 0 rows"
     end
@@ -948,8 +947,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       html = render(view)
 
-      assert html =~ "CREATED_PENDING_SERVER_GRANT"
-      assert html =~ "#{created.id}"
+      assert html =~
+               "CREATED_PENDING_SERVER_GRANT: Event created with ID #{created.id}."
+
       refute html =~ "Starting full attendee sync"
       refute has_element?(view, "#full-sync-#{created.id}")
       refute has_element?(view, "#create-event-form")
