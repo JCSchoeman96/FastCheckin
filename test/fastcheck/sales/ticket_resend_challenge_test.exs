@@ -91,8 +91,8 @@ defmodule FastCheck.Sales.TicketResendChallengeTest do
     inspected = inspect(challenge)
 
     refute inspected =~ challenge.public_id
-    refute inspected =~ to_string(challenge.sales_order_id)
-    refute inspected =~ to_string(challenge.ticket_issue_id)
+    refute inspected =~ "sales_order_id"
+    refute inspected =~ "ticket_issue_id"
     refute inspected =~ challenge.otp_hash
     refute inspected =~ challenge.request_email_hash
     refute inspected =~ challenge.request_name_hash
