@@ -16,13 +16,19 @@
 - [ ] `TICKET_TOKEN_PEPPER` is present and not logged.
 - [ ] `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` authenticate the
   configured dashboard-admin identity.
-- [ ] `DASHBOARD_ALLOWED_EVENT_IDS` is configured with only the Event IDs the
-  dashboard should access for Sales; blank means no Sales Event access, and a
-  malformed nonblank value must fail startup.
+- [ ] `DASHBOARD_ALLOWED_EVENT_IDS` is the server-owned existing-Event grant
+  for dashboard Event administration and sync, Event CSV exports, browser
+  `ScannerLive`, `OccupancyLive`, and P1-D Sales Event access. Missing or blank
+  means zero existing-Event access; a malformed nonblank value must fail
+  startup.
+- [ ] `DASHBOARD_EVENT_CREATION_ENABLED` is separate from existing-Event
+  grants. Creation requires the currently trusted dashboard identity and this
+  flag. A created Event is not automatically granted, and creation does not
+  start sync or enable WhatsApp Sales. Operators must add the new Event ID to
+  `DASHBOARD_ALLOWED_EVENT_IDS` and use the existing deployment/restart
+  configuration procedure before ordinary Event operation.
 - [ ] `OPERATIONS_GLOBAL_MONITORING_USERNAMES` is configured for global worker
   monitoring, or is blank to use only `DASHBOARD_USERNAME`.
-- [ ] Event administration/sync, CSV exports, scanner, and occupancy remain a
-  separate BrowserAuth event-isolation review; P1-D does not cover those routes.
 - [ ] Paystack secret variables are present and not logged.
 - [ ] Meta/WhatsApp secret variables are present and not logged.
 - [ ] `MOBILE_JWT_SECRET` is present and not logged.
