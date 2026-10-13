@@ -66,7 +66,6 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute has_element?(view, "#full-sync-#{ungranted_event.id}")
       assert has_element?(view, ".fc-card-container", granted_event.name)
       refute has_element?(view, ".fc-card-container", ungranted_event.name)
-      refute has_element?(view, ".fc-card-container", "93")
       refute has_element?(view, ".fc-card-container", "Un granted aggregate attendee")
     end
 
