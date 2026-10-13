@@ -7,30 +7,31 @@ defmodule FastCheckWeb.OccupancyLive do
   use FastCheckWeb, :live_view
 
   alias FastCheck.Events
+  alias FastCheck.Sales.DashboardAccess
   alias Phoenix.PubSub
 
   @impl true
-  def mount(%{"event_id" => event_id_param}, _session, socket) do
+  def mount(%{"event_id" => event_id_param}, session, socket) do
+    identity = dashboard_identity(session)
+
     with {:ok, event_id} <- parse_event_id(event_id_param),
-         {:ok, event} <- fetch_event(event_id) do
-      stats = Events.get_event_advanced_stats(event_id)
-
-      socket =
-        socket
-        |> assign(:event_id, event_id)
-        |> assign_dashboard(event, stats)
-
-      if connected?(socket) do
-        PubSub.subscribe(FastCheck.PubSub, occupancy_topic(event_id))
-      end
-
-      {:ok, socket}
+         true <- current_event_grant?(identity, event_id),
+         {:ok, event} <- fetch_event(event_id),
+         true <- current_event_grant?(identity, event_id),
+         stats <- Events.get_event_advanced_stats(event_id),
+         true <- current_event_grant?(identity, event_id),
+         :ok <- maybe_subscribe(socket, identity, event_id) do
+      {:ok,
+       socket
+       |> assign(:dashboard_identity, identity)
+       |> assign(:event_id, event_id)
+       |> assign_dashboard(event, stats)}
     else
       {:error, _reason} ->
-        {:ok,
-         socket
-         |> put_flash(:error, "Event not found")
-         |> push_navigate(to: ~p"/")}
+        {:ok, deny_event_access(socket)}
+
+      false ->
+        {:ok, deny_event_access(socket)}
     end
   end
 
@@ -43,26 +44,37 @@ defmodule FastCheckWeb.OccupancyLive do
 
   @impl true
   def handle_info({:occupancy_changed, _count, _type}, socket) do
-    event = Events.get_event_with_stats(socket.assigns.event_id)
-    stats = Events.get_event_advanced_stats(socket.assigns.event_id)
-
-    {:noreply, assign_dashboard(socket, event, stats)}
+    with :ok <- current_event_grant(socket),
+         event <- Events.get_event_with_stats(socket.assigns.event_id),
+         :ok <- current_event_grant(socket),
+         stats <- Events.get_event_advanced_stats(socket.assigns.event_id),
+         :ok <- current_event_grant(socket) do
+      {:noreply, assign_dashboard(socket, event, stats)}
+    else
+      {:error, :unauthorized} -> {:noreply, deny_event_access(socket)}
+    end
   end
 
   def handle_info({:occupancy_update, %{event_id: event_id} = payload}, socket)
       when event_id == socket.assigns.event_id do
-    percentage = payload.percentage |> normalize_percentage()
-    counts = Map.put(socket.assigns.counts, :currently_inside, payload.inside_count || 0)
+    case current_event_grant(socket) do
+      :ok ->
+        percentage = payload.percentage |> normalize_percentage()
+        counts = Map.put(socket.assigns.counts, :currently_inside, payload.inside_count || 0)
 
-    socket =
-      socket
-      |> assign(:counts, counts)
-      |> assign(:capacity, payload.capacity || socket.assigns.capacity)
-      |> assign(:percentage, percentage)
-      |> assign(:alerts, generate_alerts(percentage))
-      |> assign(:last_updated, DateTime.utc_now())
+        socket =
+          socket
+          |> assign(:counts, counts)
+          |> assign(:capacity, payload.capacity || socket.assigns.capacity)
+          |> assign(:percentage, percentage)
+          |> assign(:alerts, generate_alerts(percentage))
+          |> assign(:last_updated, DateTime.utc_now())
 
-    {:noreply, socket}
+        {:noreply, socket}
+
+      {:error, :unauthorized} ->
+        {:noreply, deny_event_access(socket)}
+    end
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -444,6 +456,53 @@ defmodule FastCheckWeb.OccupancyLive do
 
   defp parse_event_id(value) when is_integer(value) and value > 0, do: {:ok, value}
   defp parse_event_id(_), do: {:error, :invalid}
+
+  defp dashboard_identity(session) do
+    Map.get(session, "dashboard_username") || Map.get(session, :dashboard_username)
+  end
+
+  defp current_event_grant?(identity, event_id) do
+    with {:ok, actor} <- DashboardAccess.actor_for_identity(identity),
+         true <- DashboardAccess.event_granted?(actor, event_id) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp current_event_grant(socket) do
+    if current_event_grant?(socket.assigns.dashboard_identity, socket.assigns.event_id) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  defp maybe_subscribe(socket, identity, event_id) do
+    if connected?(socket) do
+      if current_event_grant?(identity, event_id) do
+        topic = occupancy_topic(event_id)
+        :ok = PubSub.subscribe(FastCheck.PubSub, topic)
+
+        if current_event_grant?(identity, event_id) do
+          :ok
+        else
+          :ok = PubSub.unsubscribe(FastCheck.PubSub, topic)
+          {:error, :unauthorized}
+        end
+      else
+        {:error, :unauthorized}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp deny_event_access(socket) do
+    socket
+    |> put_flash(:error, "Event not found")
+    |> push_navigate(to: ~p"/")
+  end
 
   defp fetch_event(event_id) do
     {:ok, Events.get_event_with_stats(event_id)}
