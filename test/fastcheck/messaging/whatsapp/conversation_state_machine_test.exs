@@ -89,8 +89,15 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-4")
     assert result.conversation.state == "selecting_ticket_type"
     assert result.conversation.state_data["purchase_flow_id"] == purchase_flow_id
-    assert result.response_body =~ "General - R10"
-    refute exposes_raw_id?(result.response_body, offer.id)
+
+    assert result.response_body ==
+             [
+               "Kies 'n kaartjie tipe:",
+               "1. General - R10",
+               "0. Terug",
+               "#. Terug na hoof kieslys"
+             ]
+             |> Enum.join("\n")
 
     assert {:ok, result} = handle(result.conversation, "1", "wamid.flow-5")
     assert result.conversation.state == "collecting_quantity"
@@ -237,16 +244,25 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("1", "offer-map-4")
 
     assert selecting.conversation.state == "selecting_ticket_type"
-    assert selecting.conversation.state_data["offer_options"]["1"] == offer.id
-    assert selecting.conversation.state_data["offer_options"]["2"] == offer_b.id
+    initial_offer_options = selecting.conversation.state_data["offer_options"]
+
+    assert Enum.sort(Map.values(initial_offer_options)) == Enum.sort([offer.id, offer_b.id])
+
+    offer_option =
+      Enum.find_value(initial_offer_options, fn {option, offer_id} ->
+        if offer_id == offer.id, do: option
+      end)
+
+    assert is_binary(offer_option)
 
     offer
     |> Changeset.for_update(:disable_sales, %{}, actor: SalesFixtures.admin_actor([event.id]))
     |> Ash.update!(authorize?: false)
 
-    assert {:ok, refreshed} = handle(selecting.conversation, "1", "offer-map-5")
+    assert {:ok, refreshed} = handle(selecting.conversation, offer_option, "offer-map-5")
     assert refreshed.conversation.state == "selecting_ticket_type"
-    assert refreshed.conversation.state_data["offer_options"]["1"] == offer_b.id
+    refute Map.has_key?(refreshed.conversation.state_data, "selected_offer_id")
+    assert refreshed.conversation.state_data["offer_options"] == %{"1" => offer_b.id}
     assert refreshed.response_body =~ "VIP"
 
     assert {:ok, selected} = handle(refreshed.conversation, "1", "offer-map-6")
@@ -1133,9 +1149,7 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
   end
 
   test "confirmation summary renders skipped email without exposing hidden fields", %{
-    conversation: conversation,
-    event: event,
-    offer: offer
+    conversation: conversation
   } do
     result =
       conversation
@@ -1149,14 +1163,24 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("1", "skip-email-8")
 
     assert result.conversation.state == "confirming_order"
-    assert result.response_body =~ "Naam: Jan Burger"
-    assert result.response_body =~ "E-pos: Nie verskaf nie"
-    assert result.response_body =~ "Geleentheid: Voelgoed Live"
-    assert result.response_body =~ "Kaartjie: General - R10"
-    assert result.response_body =~ "Aantal: 2"
-    assert result.response_body =~ "Totaal betaalbaar: R20"
-    refute exposes_raw_id?(result.response_body, event.id)
-    refute exposes_raw_id?(result.response_body, offer.id)
+
+    assert result.response_body ==
+             [
+               "Bevestig jou bestelling:",
+               "Naam: Jan Burger",
+               "E-pos: Nie verskaf nie",
+               "Geleentheid: Voelgoed Live",
+               "Kaartjie: General - R10",
+               "Aantal: 2",
+               "Totaal betaalbaar: R20",
+               "",
+               "Is hierdie korrek? Gaan voort na betaling.",
+               "1. OK",
+               "0. Terug",
+               "#. Terug na hoof kieslys"
+             ]
+             |> Enum.join("\n")
+
     refute result.response_body =~ "https://"
     refute result.response_body =~ "payment_url"
     refute result.response_body =~ "ticket_url"
@@ -1167,7 +1191,6 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
 
   test "ticket type menu renders prices for multiple active offers without exposing ids", %{
     conversation: conversation,
-    offer: offer,
     event: event
   } do
     vip =
@@ -1188,11 +1211,16 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       |> progress("1", "multi-4")
 
     assert result.conversation.state == "selecting_ticket_type"
-    assert result.response_body =~ ~r/\d+\. General - R10/
-    assert result.response_body =~ ~r/\d+\. VIP - R1999\.50/
-    assert result.response_body =~ "0. Terug"
-    refute exposes_raw_id?(result.response_body, offer.id)
-    refute exposes_raw_id?(result.response_body, vip.id)
+
+    assert result.response_body ==
+             [
+               "Kies 'n kaartjie tipe:",
+               "1. General - R10",
+               "2. VIP - R1999.50",
+               "0. Terug",
+               "#. Terug na hoof kieslys"
+             ]
+             |> Enum.join("\n")
   end
 
   test "duplicate confirm uses checkout idempotency and creates one order", %{
@@ -2583,10 +2611,6 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     |> rem(1_000_000)
     |> Integer.to_string()
     |> String.pad_leading(6, "0")
-  end
-
-  defp exposes_raw_id?(body, id) do
-    Regex.match?(~r/(?<![A-Za-z0-9])#{Regex.escape(to_string(id))}(?![A-Za-z0-9])/, body)
   end
 
   defp extract_single_otp_from_email! do
