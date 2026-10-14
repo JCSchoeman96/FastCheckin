@@ -93,9 +93,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     assert result.response_body ==
              [
                "Kies 'n kaartjie tipe:",
+               "```",
                "1. General - R10",
                "0. Terug",
-               "#. Terug na hoof kieslys"
+               "#. Terug na hoof kieslys",
+               "```"
              ]
              |> Enum.join("\n")
 
@@ -1175,9 +1177,11 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
                "Totaal betaalbaar: R20",
                "",
                "Is hierdie korrek? Gaan voort na betaling.",
+               "```",
                "1. OK",
                "0. Terug",
-               "#. Terug na hoof kieslys"
+               "#. Terug na hoof kieslys",
+               "```"
              ]
              |> Enum.join("\n")
 
@@ -1216,20 +1220,24 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
              Enum.join(
                [
                  "Kies 'n kaartjie tipe:",
+                 "```",
                  "1. General - R10",
                  "2. VIP - R1999.50",
                  "0. Terug",
-                 "#. Terug na hoof kieslys"
+                 "#. Terug na hoof kieslys",
+                 "```"
                ],
                "\n"
              ),
              Enum.join(
                [
                  "Kies 'n kaartjie tipe:",
+                 "```",
                  "1. VIP - R1999.50",
                  "2. General - R10",
                  "0. Terug",
-                 "#. Terug na hoof kieslys"
+                 "#. Terug na hoof kieslys",
+                 "```"
                ],
                "\n"
              )
@@ -1439,6 +1447,113 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       assert result.response_body =~ "1. Koop kaartjies"
       assert result.response_body =~ "Hulp"
     end
+  end
+
+  test "restart recovers a terminal legacy order and clears only its stale handoff", %{
+    event: event,
+    offer: offer
+  } do
+    conversation =
+      insert_conversation!(
+        state: "main_menu",
+        state_data: %{},
+        needs_human: true,
+        handoff_reason: "conversation_order_mismatch"
+      )
+
+    order =
+      create_active_order!(
+        conversation,
+        event,
+        offer,
+        PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)
+      )
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [status: "expired", sales_conversation_id: nil]
+    )
+
+    order_before = commercial_order_snapshot(order.id)
+    order_count_before = Repo.aggregate(from(o in "sales_orders"), :count, :id)
+    assert {:ok, inventory_before} = ReservationLedger.get_availability(offer.id)
+
+    assert {:ok, recovered} = handle(conversation, "#", "wamid.stale-mismatch-restart")
+    assert recovered.conversation.state == "main_menu"
+    refute recovered.conversation.needs_human
+    assert is_nil(recovered.conversation.handoff_reason)
+    assert recovered.response_body =~ "1. Koop kaartjies"
+    refute recovered.response_body =~ "Antwoord met 1 om kaartjies te koop"
+    refute Map.has_key?(recovered.conversation.state_data, "sales_order_id")
+    refute Map.has_key?(recovered.conversation.state_data, "purchase_flow_id")
+
+    assert Repo.aggregate(from(o in "sales_orders"), :count, :id) == order_count_before
+    assert commercial_order_snapshot(order.id) == order_before
+    assert {:ok, inventory_after_recovery} = ReservationLedger.get_availability(offer.id)
+    assert inventory_after_recovery == inventory_before
+
+    assert {:ok, selecting_event} =
+             handle(recovered.conversation, "1", "wamid.stale-mismatch-buy")
+
+    assert selecting_event.conversation.state == "selecting_event"
+    assert selecting_event.response_body =~ "Voelgoed Live"
+    assert Repo.aggregate(from(o in "sales_orders"), :count, :id) == order_count_before
+    assert commercial_order_snapshot(order.id) == order_before
+    assert {:ok, inventory_after_buy_selection} = ReservationLedger.get_availability(offer.id)
+    assert inventory_after_buy_selection == inventory_before
+  end
+
+  test "restart keeps an active unbound legacy order fail-closed", %{event: event, offer: offer} do
+    conversation =
+      insert_conversation!(
+        state: "main_menu",
+        state_data: %{},
+        needs_human: true,
+        handoff_reason: "conversation_order_mismatch"
+      )
+
+    order =
+      create_active_order!(
+        conversation,
+        event,
+        offer,
+        PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)
+      )
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [sales_conversation_id: nil]
+    )
+
+    order_before = commercial_order_snapshot(order.id)
+    order_count_before = Repo.aggregate(from(o in "sales_orders"), :count, :id)
+    assert {:ok, inventory_before} = ReservationLedger.get_availability(offer.id)
+
+    assert {:ok, result} = handle(conversation, "#", "wamid.active-unbound-restart")
+    assert result.conversation.state == "main_menu"
+    assert result.conversation.needs_human
+    assert result.conversation.handoff_reason == "conversation_order_mismatch"
+    assert result.response_body =~ "Antwoord met 1 om kaartjies te koop"
+    refute result.conversation.state_data["recovery_menu"]
+    refute result.conversation.state_data["sales_order_id"]
+    assert Repo.aggregate(from(o in "sales_orders"), :count, :id) == order_count_before
+    assert commercial_order_snapshot(order.id) == order_before
+    assert {:ok, inventory_after} = ReservationLedger.get_availability(offer.id)
+    assert inventory_after == inventory_before
+  end
+
+  test "restart preserves a handoff reason unrelated to order mismatch" do
+    conversation =
+      insert_conversation!(
+        state: "main_menu",
+        state_data: %{},
+        needs_human: true,
+        handoff_reason: "operator_requested_review"
+      )
+
+    assert {:ok, result} = handle(conversation, "#", "wamid.other-handoff-restart")
+    assert result.conversation.state == "main_menu"
+    assert result.response_body =~ "1. Koop kaartjies"
+    assert result.conversation.needs_human
+    assert result.conversation.handoff_reason == "operator_requested_review"
   end
 
   test "unpaid cancellation requires confirmation before a fresh purchase", %{
@@ -2565,6 +2680,8 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
     last_inbound_message_id = Keyword.get(opts, :last_inbound_message_id)
     state = Keyword.get(opts, :state, "new")
     state_data = Keyword.get(opts, :state_data, %{})
+    needs_human = Keyword.get(opts, :needs_human, false)
+    handoff_reason = Keyword.get(opts, :handoff_reason)
 
     suffix =
       System.unique_integer([:positive])
@@ -2584,12 +2701,12 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachineTest do
       Repo.query!(
         """
         INSERT INTO sales_conversations
-          (phone_e164, wa_id, preferred_language, state, state_data, last_inbound_message_id, needs_human, inserted_at, updated_at)
+          (phone_e164, wa_id, preferred_language, state, state_data, last_inbound_message_id, needs_human, handoff_reason, inserted_at, updated_at)
         VALUES
-          ($1, $2, 'af', $3, $4, $5, false, now(), now())
+          ($1, $2, 'af', $3, $4, $5, $6, $7, now(), now())
         RETURNING id
         """,
-        [phone, wa_id, state, state_data, last_inbound_message_id]
+        [phone, wa_id, state, state_data, last_inbound_message_id, needs_human, handoff_reason]
       )
 
     Conversation

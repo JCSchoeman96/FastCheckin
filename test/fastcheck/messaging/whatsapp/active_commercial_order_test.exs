@@ -46,6 +46,38 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
     assert found.id == order.id
   end
 
+  test "an active legacy-key order without a conversation binding fails closed", %{offer: offer} do
+    conversation = insert_conversation!(60, "main_menu", %{})
+
+    order =
+      create_order!(
+        conversation,
+        offer,
+        PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)
+      )
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [sales_conversation_id: nil]
+    )
+
+    assert {:error, :conversation_order_mismatch} =
+             ActiveCommercialOrder.find_active_order(conversation)
+  end
+
+  test "an active legacy-key order bound to another conversation fails closed", %{offer: offer} do
+    conversation = insert_conversation!(61, "main_menu", %{})
+    other_conversation = insert_conversation!(62, "main_menu", %{})
+
+    create_order!(
+      other_conversation,
+      offer,
+      PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)
+    )
+
+    assert {:error, :conversation_order_mismatch} =
+             ActiveCommercialOrder.find_active_order(conversation)
+  end
+
   test "conversation order lookup repairs a checkpoint lost by the old restart", %{offer: offer} do
     conversation = insert_conversation!(53, "main_menu", %{})
     order = create_order!(conversation, offer, "legacy-lost-checkpoint-#{conversation.id}")
@@ -71,6 +103,19 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
     assert {:error, :conversation_order_mismatch} = ActiveCommercialOrder.find_active_order(other)
   end
 
+  test "a terminal order checkpointed from another conversation fails closed", %{offer: offer} do
+    owner = insert_conversation!(63, "main_menu", %{})
+    order = create_order!(owner, offer, "foreign-terminal-order-#{owner.id}")
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [status: "expired"]
+    )
+
+    other = insert_conversation!(64, "main_menu", %{"sales_order_id" => order.id})
+
+    assert {:error, :conversation_order_mismatch} = ActiveCommercialOrder.find_active_order(other)
+  end
+
   test "terminal orders no longer block a later purchase", %{offer: offer} do
     conversation = insert_conversation!(57, "main_menu", %{})
     order = create_order!(conversation, offer, "terminal-order-#{conversation.id}")
@@ -79,6 +124,26 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
       set: [status: "ticket_issued"]
     )
 
+    assert {:ok, nil} = ActiveCommercialOrder.find_active_order(conversation)
+  end
+
+  test "expired legacy-key order without a conversation binding does not block a later purchase",
+       %{offer: offer} do
+    conversation = insert_conversation!(59, "main_menu", %{})
+
+    order =
+      create_order!(
+        conversation,
+        offer,
+        PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation.id)
+      )
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [status: "expired", sales_conversation_id: nil]
+    )
+
+    refute Map.has_key?(conversation.state_data, "purchase_flow_id")
+    refute Map.has_key?(conversation.state_data, "sales_order_id")
     assert {:ok, nil} = ActiveCommercialOrder.find_active_order(conversation)
   end
 

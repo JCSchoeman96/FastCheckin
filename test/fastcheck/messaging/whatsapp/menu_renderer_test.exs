@@ -5,13 +5,12 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
 
   describe "language_prompt/0" do
     test "renders the Afrikaans-first language prompt" do
-      assert """
-             Welkom by FastCheck Tickets.
-             1. Afrikaans
-             2. English
-             """ = MenuRenderer.language_prompt()
+      body = MenuRenderer.language_prompt()
 
-      refute MenuRenderer.language_prompt() =~ "#."
+      assert String.starts_with?(body, "Welkom by FastCheck Tickets.\n```")
+      assert String.trim(option_block!(body)) == "1. Afrikaans\n2. English"
+
+      refute body =~ "#."
     end
   end
 
@@ -35,6 +34,16 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "3. Re-send my ticket"
       assert body =~ "0. Back"
     end
+  end
+
+  test "renders normal menu options in one WhatsApp monospace block" do
+    body = MenuRenderer.main_menu("af")
+
+    assert String.starts_with?(body, "Kies 'n opsie:\n```")
+    options = option_block!(body)
+    assert options =~ "1. Koop kaartjies"
+    assert options =~ "2. Hulp"
+    assert options =~ "0. Terug"
   end
 
   describe "dynamic menus" do
@@ -79,6 +88,22 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       refute body =~ "202"
       refute body =~ "R999"
       refute body =~ "restart"
+
+      options = option_block!(body)
+      assert options =~ "1. Voelgoed Live"
+      assert options =~ "0. Terug"
+      assert options =~ "#. Terug na hoof kieslys"
+    end
+
+    test "event labels cannot terminate the WhatsApp monospace block" do
+      body = MenuRenderer.event_menu("en", [%{id: 303, label: "VIP ``` Special"}])
+
+      assert length(Regex.scan(~r/```/, body)) == 2
+
+      options = option_block!(body)
+      assert String.replace(options, "\u200B", "") =~ "1. VIP ``` Special"
+      assert options =~ "0. Back"
+      assert options =~ "#. Back to main menu"
     end
 
     test "renders ZAR prices next to offer options without exposing offer ids" do
@@ -94,6 +119,20 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "#. Terug na hoof kieslys"
       refute body =~ "101"
       refute body =~ "202"
+    end
+
+    test "offer labels cannot terminate the WhatsApp monospace block" do
+      body =
+        MenuRenderer.offer_menu("en", [
+          %{id: 404, label: "VIP ``` Special", price_cents: 5_000, currency: "ZAR"}
+        ])
+
+      assert length(Regex.scan(~r/```/, body)) == 2
+
+      options = option_block!(body)
+      assert String.replace(options, "\u200B", "") =~ "1. VIP ``` Special - R50"
+      assert options =~ "0. Back"
+      assert options =~ "#. Back to main menu"
     end
 
     test "renders quantity prompt with localized range and navigation" do
@@ -327,5 +366,10 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRendererTest do
       assert body =~ "Total payable: R3999"
       refute body =~ "R3999.00"
     end
+  end
+
+  defp option_block!(body) do
+    assert [_, options] = Regex.run(~r/```(.*?)```/s, body)
+    options
   end
 end

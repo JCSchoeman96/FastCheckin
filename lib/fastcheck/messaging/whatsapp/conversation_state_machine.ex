@@ -179,8 +179,17 @@ defmodule FastCheck.Messaging.WhatsApp.ConversationStateMachine do
         data
       end
 
+    transition_attrs = %{state_data: data}
+
+    transition_attrs =
+      if is_nil(order) and conversation.handoff_reason == "conversation_order_mismatch" do
+        Map.merge(transition_attrs, %{needs_human: false, handoff_reason: nil})
+      else
+        transition_attrs
+      end
+
     with {:ok, conversation} <-
-           transition(command, conversation, :restart_to_main_menu, %{state_data: data}) do
+           transition(command, conversation, :restart_to_main_menu, transition_attrs) do
       body =
         MenuRenderer.main_menu(
           language(conversation),
