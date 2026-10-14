@@ -103,6 +103,10 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrder do
 
   defp validate_conversation_order({:ok, nil}, _conversation_id), do: {:ok, nil}
 
+  defp validate_conversation_order({:ok, %{status: status}}, _conversation_id)
+       when status not in @active_statuses,
+       do: {:ok, nil}
+
   defp validate_conversation_order(
          {:ok, %{sales_conversation_id: conversation_id} = order},
          conversation_id

@@ -7,21 +7,22 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   @spec language_prompt() :: String.t()
   def language_prompt do
-    """
-    Welkom by FastCheck Tickets.
-    1. Afrikaans
-    2. English
-    """
+    Enum.join(
+      ["Welkom by FastCheck Tickets.", render_options_block(["1. Afrikaans", "2. English"])],
+      "\n"
+    ) <> "\n"
   end
 
   @spec main_menu(String.t() | nil) :: String.t()
   def main_menu(language) do
     [
       Copy.text(language, :main_menu_title),
-      "1. #{Copy.text(language, :buy_tickets)}",
-      "2. #{Copy.text(language, :help)}",
-      "3. #{Copy.text(language, :resend_ticket)}",
-      "0. #{Copy.text(language, :back)}"
+      render_options_block([
+        "1. #{Copy.text(language, :buy_tickets)}",
+        "2. #{Copy.text(language, :help)}",
+        "3. #{Copy.text(language, :resend_ticket)}",
+        "0. #{Copy.text(language, :back)}"
+      ])
     ]
     |> Enum.join("\n")
   end
@@ -37,19 +38,20 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     [
       Copy.text(language, :main_menu_title),
       if(english?, do: "You have an existing order.", else: "Jy het 'n bestaande bestelling."),
-      if(english?, do: "1. Continue / order status", else: "1. Gaan voort / bestellingstatus"),
-      if(cancellation_available? and cancellable_status?(order),
-        do:
-          if(english?,
-            do: "2. Cancel unpaid order and start over",
-            else: "2. Kanselleer onbetaalde bestelling en begin oor"
-          )
-      ),
-      "3. #{Copy.text(language, :resend_ticket)}",
-      "4. #{Copy.text(language, :help)}",
-      restart_line(language)
+      render_options_block([
+        if(english?, do: "1. Continue / order status", else: "1. Gaan voort / bestellingstatus"),
+        if(cancellation_available? and cancellable_status?(order),
+          do:
+            if(english?,
+              do: "2. Cancel unpaid order and start over",
+              else: "2. Kanselleer onbetaalde bestelling en begin oor"
+            )
+        ),
+        "3. #{Copy.text(language, :resend_ticket)}",
+        "4. #{Copy.text(language, :help)}",
+        restart_line(language)
+      ])
     ]
-    |> Enum.reject(&is_nil/1)
     |> Enum.join("\n")
   end
 
@@ -59,11 +61,19 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   @spec cancellation_confirmation(String.t() | nil) :: String.t()
   def cancellation_confirmation("en") do
-    "Cancel this unpaid order?\n1. Yes, cancel and start over\n0. Back\n#. Main menu"
+    [
+      "Cancel this unpaid order?",
+      render_options_block(["1. Yes, cancel and start over", "0. Back", "#. Main menu"])
+    ]
+    |> Enum.join("\n")
   end
 
   def cancellation_confirmation(_language) do
-    "Wil jy hierdie onbetaalde bestelling kanselleer?\n1. Ja, kanselleer en begin oor\n0. Terug\n#. Hoofkieslys"
+    [
+      "Wil jy hierdie onbetaalde bestelling kanselleer?",
+      render_options_block(["1. Ja, kanselleer en begin oor", "0. Terug", "#. Hoofkieslys"])
+    ]
+    |> Enum.join("\n")
   end
 
   @spec cancellation_refused(String.t() | nil) :: String.t()
@@ -77,13 +87,17 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   @spec recovery_unavailable(String.t() | nil) :: String.t()
   def recovery_unavailable(language) do
-    [help(language), "1. #{Copy.text(language, :help)}", restart_line(language)]
+    [
+      help(language),
+      render_options_block(["1. #{Copy.text(language, :help)}", restart_line(language)])
+    ]
     |> Enum.join("\n")
   end
 
   @spec status_navigation(String.t() | nil) :: String.t()
-  def status_navigation(language),
-    do: restart_line(language) <> "\nHelp. " <> Copy.text(language, :help)
+  def status_navigation(language) do
+    render_options_block([restart_line(language), "Help. #{Copy.text(language, :help)}"])
+  end
 
   @spec event_menu(String.t() | nil, [map()]) :: String.t()
   def event_menu(language, events) do
@@ -138,41 +152,53 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
       "#{Copy.text(language, :confirm_total_payable)}: #{total}",
       "",
       Copy.text(language, :confirm_continue_payment),
-      "1. OK",
-      navigation_lines(language)
+      render_options_block(["1. OK" | navigation_lines(language)])
     ]
-    |> List.flatten()
     |> Enum.join("\n")
   end
 
   @spec quantity_prompt(String.t() | nil, pos_integer()) :: String.t()
   def quantity_prompt(language, effective_max)
       when is_integer(effective_max) and effective_max > 0 do
-    ([Copy.text(language, :quantity), Copy.quantity_range_instruction(language, effective_max)] ++
-       navigation_lines(language))
+    [
+      Copy.text(language, :quantity),
+      Copy.quantity_range_instruction(language, effective_max),
+      render_options_block(navigation_lines(language))
+    ]
     |> Enum.join("\n")
   end
 
   @spec buyer_name_prompt(String.t() | nil) :: String.t()
   def buyer_name_prompt(language),
-    do: ([Copy.text(language, :buyer_name)] ++ navigation_lines(language)) |> Enum.join("\n")
+    do:
+      [Copy.text(language, :buyer_name), render_options_block(navigation_lines(language))]
+      |> Enum.join("\n")
 
   @spec email_prompt(String.t() | nil) :: String.t()
   def email_prompt(language),
-    do: ([Copy.text(language, :email)] ++ navigation_lines(language)) |> Enum.join("\n")
+    do:
+      [Copy.text(language, :email), render_options_block(navigation_lines(language))]
+      |> Enum.join("\n")
 
   @spec resend_name_prompt(String.t() | nil) :: String.t()
   def resend_name_prompt(language),
-    do: ([Copy.text(language, :resend_name)] ++ navigation_lines(language)) |> Enum.join("\n")
+    do:
+      [Copy.text(language, :resend_name), render_options_block(navigation_lines(language))]
+      |> Enum.join("\n")
 
   @spec resend_email_prompt(String.t() | nil) :: String.t()
   def resend_email_prompt(language),
-    do: ([Copy.text(language, :resend_email)] ++ navigation_lines(language)) |> Enum.join("\n")
+    do:
+      [Copy.text(language, :resend_email), render_options_block(navigation_lines(language))]
+      |> Enum.join("\n")
 
   @spec resend_otp_prompt(String.t() | nil) :: String.t()
   def resend_otp_prompt(language) do
-    ([Copy.text(language, :resend_check_email), Copy.text(language, :resend_enter_otp)] ++
-       navigation_lines(language))
+    [
+      Copy.text(language, :resend_check_email),
+      Copy.text(language, :resend_enter_otp),
+      render_options_block(navigation_lines(language))
+    ]
     |> Enum.join("\n")
   end
 
@@ -186,13 +212,16 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
 
   @spec resend_locked_otp_prompt(String.t() | nil) :: String.t()
   def resend_locked_otp_prompt(language) do
-    ([Copy.text(language, :resend_otp_locked)] ++ navigation_lines(language))
+    [Copy.text(language, :resend_otp_locked), render_options_block(navigation_lines(language))]
     |> Enum.join("\n")
   end
 
   @spec resend_verified_prompt(String.t() | nil) :: String.t()
   def resend_verified_prompt(language) do
-    [Copy.text(language, :resend_delivery_pending), restart_line(language)]
+    [
+      Copy.text(language, :resend_delivery_pending),
+      render_options_block([restart_line(language)])
+    ]
     |> Enum.join("\n")
   end
 
@@ -227,7 +256,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
       |> Enum.with_index(1)
       |> Enum.map(fn {row, index} -> "#{index}. #{Map.fetch!(row, :label)}" end)
 
-    ([title] ++ options ++ navigation_lines(language))
+    [title, render_options_block(options ++ navigation_lines(language))]
     |> Enum.join("\n")
   end
 
@@ -240,7 +269,7 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
         "#{index}. #{Map.fetch!(offer, :label)} - #{format_price(language, Map.get(offer, :price_cents), Map.get(offer, :currency))}"
       end)
 
-    ([title] ++ options ++ navigation_lines(language))
+    [title, render_options_block(options ++ navigation_lines(language))]
     |> Enum.join("\n")
   end
 
@@ -249,6 +278,15 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
   defp restart_line(language), do: "#. #{Copy.text(language, :restart_main_menu)}"
 
   defp navigation_lines(language), do: [back_line(language), restart_line(language)]
+
+  defp render_options_block(rows) do
+    options =
+      rows
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n")
+
+    "```\n" <> options <> "\n```"
+  end
 
   defp format_price(_language, cents, currency) when is_integer(cents) and cents >= 0 do
     case normalize_currency(currency) do
