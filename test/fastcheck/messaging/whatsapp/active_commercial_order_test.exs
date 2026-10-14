@@ -103,6 +103,19 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrderTest do
     assert {:error, :conversation_order_mismatch} = ActiveCommercialOrder.find_active_order(other)
   end
 
+  test "a terminal order checkpointed from another conversation fails closed", %{offer: offer} do
+    owner = insert_conversation!(63, "main_menu", %{})
+    order = create_order!(owner, offer, "foreign-terminal-order-#{owner.id}")
+
+    Repo.update_all(from(o in "sales_orders", where: o.id == ^order.id),
+      set: [status: "expired"]
+    )
+
+    other = insert_conversation!(64, "main_menu", %{"sales_order_id" => order.id})
+
+    assert {:error, :conversation_order_mismatch} = ActiveCommercialOrder.find_active_order(other)
+  end
+
   test "terminal orders no longer block a later purchase", %{offer: offer} do
     conversation = insert_conversation!(57, "main_menu", %{})
     order = create_order!(conversation, offer, "terminal-order-#{conversation.id}")

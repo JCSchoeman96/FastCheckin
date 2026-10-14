@@ -76,7 +76,7 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrder do
 
       nil ->
         key = PurchaseFlowIdentity.legacy_checkout_idempotency_key(conversation_id)
-        order_by_idempotency_key(key) |> validate_conversation_order(conversation_id)
+        order_by_idempotency_key(key) |> ignore_terminal_legacy_order(conversation_id)
 
       _invalid_purchase_flow_id ->
         {:error, :conversation_order_mismatch}
@@ -101,11 +101,14 @@ defmodule FastCheck.Messaging.WhatsApp.ActiveCommercialOrder do
   defp unwrap_order({:ok, order}), do: {:ok, order}
   defp unwrap_order({:error, reason}), do: {:error, reason}
 
-  defp validate_conversation_order({:ok, nil}, _conversation_id), do: {:ok, nil}
-
-  defp validate_conversation_order({:ok, %{status: status}}, _conversation_id)
+  defp ignore_terminal_legacy_order({:ok, %{status: status}}, _conversation_id)
        when status not in @active_statuses,
        do: {:ok, nil}
+
+  defp ignore_terminal_legacy_order(order_result, conversation_id),
+    do: validate_conversation_order(order_result, conversation_id)
+
+  defp validate_conversation_order({:ok, nil}, _conversation_id), do: {:ok, nil}
 
   defp validate_conversation_order(
          {:ok, %{sales_conversation_id: conversation_id} = order},

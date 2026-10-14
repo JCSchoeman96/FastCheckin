@@ -283,10 +283,12 @@ defmodule FastCheck.Messaging.WhatsApp.MenuRenderer do
     options =
       rows
       |> Enum.reject(&is_nil/1)
-      |> Enum.join("\n")
+      |> Enum.map_join("\n", &neutralize_monospace_delimiter/1)
 
     "```\n" <> options <> "\n```"
   end
+
+  defp neutralize_monospace_delimiter(row), do: String.replace(row, "```", "``\u200B`")
 
   defp format_price(_language, cents, currency) when is_integer(cents) and cents >= 0 do
     case normalize_currency(currency) do
