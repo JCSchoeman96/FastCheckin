@@ -527,10 +527,12 @@ Daar is nie nou kaartjies beskikbaar nie. Probeer asseblief later weer.
 
 Required shape:
 
+The no-events response remains in `main_menu` in V1, so numbered actions must preserve main-menu numbering; Help is option `2`.
+
 ```text
 Daar is nie nou kaartjies beskikbaar nie.
 
-1. Hulp
+2. Hulp
 0. Hoofkieslys
 ```
 
