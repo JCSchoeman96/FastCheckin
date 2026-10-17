@@ -51,6 +51,8 @@ defmodule FastCheck.Events.Event do
           last_config_sync: DateTime.t() | nil,
           event_sync_version: integer() | nil,
           attendees: [FastCheck.Attendees.Attendee.t()] | Ecto.Association.NotLoaded.t(),
+          dashboard_event_grants:
+            [FastCheck.Access.DashboardEventGrant.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: NaiveDateTime.t() | nil,
           updated_at: NaiveDateTime.t() | nil
         }
@@ -108,6 +110,7 @@ defmodule FastCheck.Events.Event do
 
     # Relationship to all attendees belonging to the event
     has_many :attendees, FastCheck.Attendees.Attendee
+    has_many :dashboard_event_grants, FastCheck.Access.DashboardEventGrant
 
     # inserted_at/updated_at timestamps for auditing changes
     timestamps()
