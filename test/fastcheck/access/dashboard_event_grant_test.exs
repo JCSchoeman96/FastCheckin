@@ -7,6 +7,15 @@ defmodule FastCheck.Access.DashboardEventGrantTest do
   @dashboard_identity "dashboard-owner"
   @granted_by "dashboard-operator"
 
+  test "grant schema publishes its struct remote type" do
+    assert {:ok, types} = Code.Typespec.fetch_types(DashboardEventGrant)
+
+    assert Enum.any?(types, fn
+             {:type, {:t, _type, _meta}} -> true
+             _other -> false
+           end)
+  end
+
   test "active grant persists with no revoked timestamp" do
     event = create_event()
 
@@ -15,6 +24,48 @@ defmodule FastCheck.Access.DashboardEventGrantTest do
     assert grant.state == "active"
     assert grant.revoked_at == nil
     assert Repo.get!(DashboardEventGrant, grant.id).revoked_at == nil
+  end
+
+  test "creation fixes lifecycle fields despite caller-supplied values" do
+    event = create_event()
+    revoked_at = timestamp()
+
+    changeset =
+      DashboardEventGrant.changeset(%DashboardEventGrant{}, %{
+        dashboard_identity: @dashboard_identity,
+        event_id: event.id,
+        granted_at: timestamp(),
+        granted_by: @granted_by,
+        state: "revoked",
+        revoked_at: revoked_at,
+        lock_version: 99
+      })
+
+    assert changeset.valid?
+    assert get_field(changeset, :state) == "active"
+    assert is_nil(get_field(changeset, :revoked_at))
+    assert get_field(changeset, :lock_version) == 1
+
+    grant = Repo.insert!(changeset)
+    assert grant.state == "active"
+    assert is_nil(grant.revoked_at)
+    assert grant.lock_version == 1
+  end
+
+  test "creation changeset cannot reactivate a persisted revoked grant" do
+    event = create_event()
+    revoked = insert_revoked_grant!(event)
+
+    changeset =
+      DashboardEventGrant.changeset(revoked, %{
+        state: "active",
+        revoked_at: nil,
+        lock_version: 99
+      })
+
+    refute changeset.valid?
+    assert get_field(changeset, :state) == "revoked"
+    assert get_field(changeset, :revoked_at)
   end
 
   test "Postgres rejects an unsupported state" do
@@ -65,12 +116,8 @@ defmodule FastCheck.Access.DashboardEventGrantTest do
     )
   end
 
-  test "a nonpositive lock version is rejected by the changeset and Postgres" do
+  test "Postgres rejects a nonpositive lock version" do
     event = create_event()
-    attrs = grant_attrs(event, %{lock_version: 0})
-
-    changeset = DashboardEventGrant.changeset(%DashboardEventGrant{}, attrs)
-    assert errors_on(changeset).lock_version
 
     assert_database_constraint(event, %{lock_version: 0},
       name: "dashboard_event_grants_lock_version_positive"
@@ -90,7 +137,7 @@ defmodule FastCheck.Access.DashboardEventGrantTest do
     event = create_event()
     revoked_at = timestamp()
 
-    revoked = insert_grant!(event, %{state: "revoked", revoked_at: revoked_at})
+    revoked = insert_revoked_grant!(event, revoked_at)
     active = insert_grant!(event)
 
     assert revoked.state == "revoked"
@@ -125,6 +172,20 @@ defmodule FastCheck.Access.DashboardEventGrantTest do
     |> grant_attrs(overrides)
     |> then(&DashboardEventGrant.changeset(%DashboardEventGrant{}, &1))
     |> Repo.insert!()
+  end
+
+  defp insert_revoked_grant!(event, revoked_at \\ timestamp()) do
+    attrs = grant_attrs(event, %{state: "revoked", revoked_at: revoked_at})
+    now = timestamp()
+
+    row =
+      attrs
+      |> Map.put(:inserted_at, now)
+      |> Map.put(:updated_at, now)
+
+    {1, [%{id: id}]} = Repo.insert_all(DashboardEventGrant, [row], returning: [:id])
+
+    Repo.get!(DashboardEventGrant, id)
   end
 
   defp grant_attrs(event, overrides) do
