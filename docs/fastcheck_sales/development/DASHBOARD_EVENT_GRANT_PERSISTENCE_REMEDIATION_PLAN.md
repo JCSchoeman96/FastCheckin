@@ -3,14 +3,14 @@
 | Field | Value |
 |---|---|
 | Plan ID | `DASHBOARD-EVENT-GRANT-PERSISTENCE-REMEDIATION` |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Proposed authority supersession. Effective only after this document merges. |
 | Accepted planning base | `SHA=84b968f825557078ed55e83beb9990063892665c`, `TREE=f64e8fabbef74405127da85641605bba28357310` |
-| Related frozen authority | `docs/fastcheck_sales/development/BROWSERAUTH_EVENT_ISOLATION_REMEDIATION_PLAN.md`, version 1.4 |
+| Related frozen authorities | `docs/fastcheck_sales/development/BROWSERAUTH_EVENT_ISOLATION_REMEDIATION_PLAN.md`, version 1.4; `docs/fastcheck_sales/feature_packs/0057_P1-D_event-scoped-sales-dashboard-authorization/pack.json` (merged as PR #491) |
 | Implementation authorization | No. Merge of this document does not authorize implementation. |
 | Tracking | `FastCheckin-qb8j`, which remains blocked pending this authority supersession and later implementation authorization. |
 
-This document changes authority only after merge. It does not edit or replace the historical BrowserAuth plan. Until merge, version 1.4 remains the active authority. After merge, this document takes precedence only for the clauses listed under "Superseded clauses." All other BrowserAuth and SyncRun requirements in version 1.4 remain in force.
+This document changes authority only after merge. It does not edit or replace the historical BrowserAuth plan or P1-D feature pack. Until merge, both frozen authorities remain active. After merge, this document takes precedence only for the clauses listed under "Superseded clauses." All other BrowserAuth, SyncRun, and P1-D requirements remain in force.
 
 ## 1. Problem statement and production evidence
 
@@ -30,11 +30,25 @@ That workflow makes an ordinary Event creation depend on a production configurat
 
 ## 2. Authority hierarchy
 
-The frozen BrowserAuth version 1.4 document remains the historical record. This document supersedes only the config-only Event-authority rules, the prohibition on durable application-owned Event grants, and the post-creation pending-grant rule identified below.
+The frozen BrowserAuth version 1.4 document and merged P1-D feature pack remain historical records. This document supersedes only the BrowserAuth config-only Event-authority rules, prohibition on durable application-owned Event grants, and post-creation pending-grant rule, plus the specific P1-D grant-source and lookup prohibitions identified below. It does not supersede the remaining P1-D Sales security or business contracts.
+
+After this authority merges, all BrowserAuth and P1-D Sales surfaces that authorize dashboard Event operations share one effective Event-authority rule through `FastCheck.Sales.DashboardAccess`:
+
+```text
+verified server dashboard identity
+        +
+(
+  configured bootstrap Event grant
+  OR
+  active durable server-owned Postgres Event grant
+)
+```
+
+There is no config-only Sales exception and no separate BrowserAuth-versus-Sales grant resolution. This is an authority change only; implementation remains gated and separately unauthorized until explicitly approved.
 
 This document does not authorize code changes by itself. Its merge establishes the new authority contract. Each implementation gate still requires review, merge, successful post-merge CI, and explicit authorization to begin the next gate. `FastCheckin-qb8j` stays blocked until that later authorization.
 
-## 3. Superseded BrowserAuth version 1.4 clauses
+## 3. Superseded BrowserAuth and P1-D clauses
 
 On merge, supersede these clauses and only their effect on BrowserAuth Event grants:
 
@@ -46,9 +60,17 @@ On merge, supersede these clauses and only their effect on BrowserAuth Event gra
 
 The prohibition on adding a second configuration allowlist remains in force. The only grant sources are the existing bootstrap configuration and the durable grant resource defined here.
 
+For the P1-D authority at `docs/fastcheck_sales/feature_packs/0057_P1-D_event-scoped-sales-dashboard-authorization/pack.json`, supersede only these grant-source decisions, and only insofar as they prohibit the durable server-owned grant mechanism authorized here:
+
+1. `authority.configuration = DASHBOARD_ALLOWED_EVENT_IDS` as the exclusive Event-grant source. The effective source becomes the configured bootstrap grant OR an active durable grant for the verified dashboard identity and Event.
+2. `performance.permission_database = false` as a prohibition on using the durable grant table as an authority source.
+3. `performance.per_row_grant_lookup = false` as a prohibition on the bounded exact indexed lookup required by this authority.
+
+No other P1-D clause is superseded. In particular, its authenticated identity source, forbidden browser and LiveView authority sources, Event ownership filters, fail-closed cross-Event behavior, and payment, refund, revocation, and inventory semantics remain authoritative. Its ban on Redis permission authority and per-Event query loops also remains in force.
+
 Within version 1.4 §2, only the config-only result of `allowed_event_ids/1` and `event_granted?/2` is superseded. `FastCheck.Sales.DashboardAccess`, its current-identity verification, and its role as the compatibility-facing authorization boundary remain authoritative. Extend its result to the union authority without renaming the module or starting a broad namespace refactor.
 
-## 4. Preserved BrowserAuth invariants
+## 4. Preserved BrowserAuth and P1-D invariants
 
 These version 1.4 and PR #513/#514 invariants remain authoritative:
 
@@ -56,6 +78,10 @@ These version 1.4 and PR #513/#514 invariants remain authoritative:
 - Knowing an Event ID grants nothing.
 - BrowserAuth has no global all-Event authority and must not restore `Events.list_events()` as an authorization shortcut.
 - The browser, LiveView assigns, session data, request parameters, and caller-supplied `allowed_event_ids` cannot grant Event access.
+- For P1-D Sales surfaces, the authenticated dashboard identity remains the identity source. Browser parameters, LiveView state, a requested Event or record, and a loaded Order or TicketIssue are not authority.
+- There is no implicit all-Events fallback. Required Event-ownership filters remain in place, and rejected cross-Event operations fail closed without side effects.
+- Existing payment, refund, revocation, and inventory semantics remain unchanged.
+- P1-D Sales dashboards, refunds and revocations, ticket PDFs, checkout and offers, Event overview, WhatsApp controls, and related covered surfaces use the same `DashboardAccess` grant-source rule; none retains a config-only exception.
 - BrowserAuth continues to identify the current trusted dashboard username from server configuration. No Users or Organizations system is introduced.
 - Every Event-owned operation resolves current authority at its request boundary. A stale LiveView socket cannot keep a grant after revocation.
 - Existing router authentication middleware and the route boundaries in version 1.4 remain in force.
@@ -202,7 +228,7 @@ No transaction may contain a Tickera, WhatsApp, PubSub, cache-network, or other 
 
 The Event-creation command boundary owns duplicate-submit semantics. Persist a nullable, server-generated `dashboard_creation_token` on the Event and enforce its uniqueness in Postgres. The token is generated by the server for one logical create form submission and reused for retries of that submission. A new intentional Event creation receives a new token.
 
-The token is an idempotency key only. It is not an identity, grant, capability, or authorization input. The browser cannot turn it into Event authority. Every create or replay request still revalidates the current trusted identity and creation kill switch. Before returning an existing Event for a committed token, the application also resolves current Event authority for that identity and Event.
+The token is opaque, generated by the server, and cryptographically strong, with at least 128 bits of entropy (for example, UUIDv4-equivalent entropy). The server renders it with the create form and the browser may echo it on submission. Reject malformed token values. A token is an idempotency key only: it is not an identity, grant, capability, or authorization input. Arbitrary or malformed token values cannot change the verified identity, grant target, or authorization outcome. Every create or replay request still revalidates the current trusted identity and creation kill switch. Before returning an existing Event for a committed token, the application also resolves current Event authority for that identity and Event.
 
 Concurrent requests with the same token may both finish their bounded Tickera reads, but the database uniqueness rule permits one Event commit. A losing request exits its failed transaction before recovering the Event associated with that token. It returns the existing logical result only after current authorization checks. It does not insert a second grant. If the first transaction rolls back, the same token can be retried and may commit once.
 
@@ -220,7 +246,7 @@ This matches the existing `ArchivedEventRemoval` behavior, which locks the Event
 
 ## 13. Exact authority-resolution algorithm
 
-`FastCheck.Sales.DashboardAccess` remains the authority boundary used by existing BrowserAuth callers:
+`FastCheck.Sales.DashboardAccess` remains the common authority boundary for existing BrowserAuth and P1-D Sales callers:
 
 1. Receive the identity from the authenticated server request context. Do not read identity or `allowed_event_ids` from browser parameters, session grants, or a caller actor's grant list.
 2. Revalidate the identity against the current trusted dashboard configuration. If it is no longer the configured trusted identity, return unauthorized without querying grants.
@@ -298,6 +324,7 @@ Before the relevant implementation gate can close, tests must prove:
 16. Grant history blocks permanent Event deletion, including when the grant is revoked.
 17. Existing Event and scanner isolation remains intact, including Event-ID guessing denial and manual scanner check-in.
 18. PR #513/#514 BrowserAuth, export, dashboard, scanner, occupancy, SyncAuthorityGuard, SyncRun, and ScannerAuth regression suites remain green.
+19. P1-D Sales dashboard, refund and revocation, ticket PDF, checkout, offer, Event overview, WhatsApp control, and other covered operations all use the shared `DashboardAccess` authority. Cross-Event operations remain rejected and fail closed; existing payment, refund, revocation, and inventory behavior is unchanged.
 
 Place tests beside the existing suites in `test/fastcheck/sales/dashboard_access_test.exs`, `test/fastcheck_web/live/dashboard_live_test.exs`, `test/fastcheck/integration/browserauth_event_isolation_test.exs`, `test/fastcheck/events/archived_event_removal_test.exs`, and the relevant sync authority tests. Update an existing test file only when the behavior belongs to that suite.
 
@@ -309,7 +336,7 @@ Each gate requires review, merge, successful post-merge CI, and explicit authori
 |---|---|---|
 | Gate 0 | This authority document only. | Docs-only PR merged; no code or production data changed. |
 | Gate A | Add the Postgres resource, Event relationship, constraints, and indexed bounded grant queries. | Schema and query tests prove terminal state, uniqueness, restrictive FK, and index-backed lookup behavior. |
-| Gate B | Extend `DashboardAccess` to resolve configured IDs plus active DB grants. Keep current identity revalidation and query-scoped dashboard lists. | Bootstrap, active, revoked, unrelated-identity, caller-forgery, stale-socket, and existing PR #513/#514 tests pass. |
+| Gate B | Extend `DashboardAccess` to resolve configured IDs plus active DB grants for BrowserAuth and P1-D Sales callers through the same boundary. Keep current identity revalidation, Event-ownership filters, and query-scoped dashboard lists. | Bootstrap, active, revoked, unrelated-identity, caller-forgery, stale-socket, and existing PR #513/#514 tests pass. P1-D Sales dashboards, refunds/revocations, PDFs, checkout/offers, Event overview, and WhatsApp controls prove the same union authority, fail-closed cross-Event behavior, and unchanged payment/refund/revocation/inventory semantics. |
 | Gate C | Add server-issued Event creation token and atomic Event-plus-creator-grant transaction. Keep Tickera outside the transaction. | Rollback, Tickera failure, duplicate submission, response recovery, immediate visibility, and manual-only Full Sync tests pass. |
 | Gate D | Add server-authorized revoke/regrant behavior and stale-socket regression coverage. | Revoked rows stay terminal; configuration remains additive; every protected operation resolves current authority. |
 | Gate E | Production certification of `Create → immediately visible → manual Full Sync → Scanner → check-in` with no `DASHBOARD_ALLOWED_EVENT_IDS` edit for the new Event. | Reviewed production evidence, no isolation regression, and successful post-merge CI. |
