@@ -57,6 +57,31 @@ defmodule FastCheck.Sales.DashboardAccessTest do
              [first_event.id, second_event.id, third_event.id]
   end
 
+  test "returns current effective Event IDs from the public allowed IDs boundary" do
+    first_event = create_event()
+    second_event = create_event()
+    third_event = create_event()
+    revoked_event = create_event()
+
+    configure_allowed_event_ids([third_event.id, first_event.id, first_event.id])
+    insert_active_grant!(first_event, @dashboard_username)
+    insert_active_grant!(second_event, @dashboard_username)
+    insert_revoked_grant!(revoked_event, @dashboard_username)
+
+    actor = %{
+      actor_type: :admin,
+      username: @dashboard_username,
+      user_id: @dashboard_username,
+      allowed_event_ids: [revoked_event.id, -1]
+    }
+
+    assert DashboardAccess.allowed_event_ids(actor) == [
+             first_event.id,
+             second_event.id,
+             third_event.id
+           ]
+  end
+
   test "excludes a revoked durable grant from actor allowed Event IDs" do
     event = create_event()
     configure_allowed_event_ids([])

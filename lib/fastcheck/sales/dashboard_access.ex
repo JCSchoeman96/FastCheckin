@@ -1,6 +1,8 @@
 defmodule FastCheck.Sales.DashboardAccess do
   @moduledoc """
-  Resolves authenticated dashboard identities to server-configured Sales event grants.
+  Resolves dashboard identities verified against current server configuration
+  to the union of configured bootstrap Event grants and active durable Postgres
+  grants.
 
   Dashboard adapters must use this module to construct Sales actors. Supplied
   `allowed_event_ids` values are never treated as authority by this boundary.
@@ -27,7 +29,10 @@ defmodule FastCheck.Sales.DashboardAccess do
     end
   end
 
-  @doc "Returns the current server-configured grant set for a verified dashboard actor."
+  @doc """
+  Returns the current effective union of configured and active durable Event
+  grants for an actor whose identity still matches current dashboard configuration.
+  """
   @spec allowed_event_ids(term()) :: [pos_integer()]
   def allowed_event_ids(%{actor_type: actor_type} = actor) when actor_type in [:admin, "admin"] do
     case verified_dashboard_identity(identity_username(actor)) do
@@ -38,7 +43,10 @@ defmodule FastCheck.Sales.DashboardAccess do
 
   def allowed_event_ids(_actor), do: []
 
-  @doc "Checks an event against the actor's current server-configured grants."
+  @doc """
+  Checks an Event against current configured or active durable authority for a
+  dashboard actor whose identity still matches current server configuration.
+  """
   @spec event_granted?(term(), term()) :: boolean()
   def event_granted?(%{actor_type: actor_type} = actor, event_id)
       when actor_type in [:admin, "admin"] and is_integer(event_id) and event_id > 0 do
