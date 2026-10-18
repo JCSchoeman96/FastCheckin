@@ -34,24 +34,36 @@ organization_id
 
 ## Dashboard Sales Grants
 
-The authenticated dashboard identity proves who signed in. It does not grant
-access to every Event. Sales access uses the server-owned
-`DASHBOARD_ALLOWED_EVENT_IDS` allowlist, resolved by
-`FastCheck.Sales.DashboardAccess`.
+The verified current dashboard identity proves who signed in. It does not grant
+access to every Event. Effective Event authority requires that identity and
+either a configured bootstrap grant or an active durable Postgres grant for
+that identity and Event. `FastCheck.Sales.DashboardAccess` resolves this union.
 
-- Missing or blank configuration grants no Sales Events.
+- `DASHBOARD_ALLOWED_EVENT_IDS` is the server-owned bootstrap grant source. A
+  missing or blank value grants no Events through configuration; active durable
+  grants remain effective.
 - A valid configuration is a comma-separated list of positive integer Event
   IDs. IDs are deduplicated and sorted.
 - Any nonblank malformed value is a configuration error and prevents startup.
+- A durable grant is effective only while its exact dashboard identity and
+  Event row is active. Revoked-only history grants no authority. Revoked
+  history does not cancel a configured grant for the same Event.
+- A database error denies the durable-only grant; a configured grant remains
+  effective if the durable lookup fails.
+- `DashboardAccess` revalidates the current dashboard identity when it builds
+  an actor and when a protected Event operation runs. A stale actor snapshot
+  does not preserve a revoked durable grant.
 - Browser parameters, LiveView state, and loaded records never supply or widen
-  the grant set.
+  authority. Browser or session state, Redis, ETS, and Cachex are not permission
+  sources.
 - Sales list and aggregate queries filter by the grant set in SQL/Ash. An Event
   filter can only narrow it. Entity lookups filter by grant before returning
   details; ungranted guessed IDs use the same safe not-found result as missing
   records.
 - State-changing Sales services reconstruct authority from the authenticated
-  dashboard identity and check the requested Event against its configured
-  grants before existing transition, lock, inventory, and worker logic.
+  dashboard identity and check the requested Event against the current
+  configured and durable grants before existing transition, lock, inventory,
+  and worker logic.
 - `DashboardAccess.actor_for_identity/1` is the dashboard identity-to-Sales
   actor constructor. Callers may not manufacture event grants from route or
   record IDs.
@@ -63,14 +75,14 @@ WhatsApp controls in the root dashboard.
 
 The production Sales dashboard has one configured admin identity. AdminRevocations resolves that identity through DashboardAccess and uses server-owned Event grants. No authenticated production Sales operator entry point exists. Core :operator support does not authenticate a caller or establish grant provenance. Do not treat actor maps, scanner names, or shared scanner credentials as Sales operator authority. Track trusted operator identity and Event binding as FastCheckin-iuaq.
 
-## Separate BrowserAuth Event-Isolation Work
+## BrowserAuth Event isolation
 
-P1-D does not establish application-wide event isolation. The root dashboard's
-general Event administration and sync operations, CSV attendee/check-in
-exports, browser scanner, and occupancy views remain outside the Sales grant
-boundary. Track those authenticated surfaces in a separate BrowserAuth
-event-isolation security slice. Do not describe P1-D as closing that broader
-access gap.
+P1-D covers Sales-owned consumers. The root dashboard's general Event
+administration and sync operations, CSV attendee/check-in exports, BrowserAuth
+scanner, and occupancy views use the same current dashboard Event-grant union
+through their BrowserAuth isolation checks. P1-D does not establish that
+broader boundary. ScannerAuth and the Android `/api/v1/mobile/*` contract remain
+separate and do not use dashboard Event grants.
 
 ## Future Organization Isolation
 

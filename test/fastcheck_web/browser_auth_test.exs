@@ -1,6 +1,7 @@
 defmodule FastCheckWeb.BrowserAuthTest do
   use FastCheckWeb.ConnCase, async: false
 
+  alias FastCheck.Repo
   alias FastCheckWeb.Plugs.BrowserAuth
 
   @valid_username "admin"
@@ -42,6 +43,22 @@ defmodule FastCheckWeb.BrowserAuthTest do
         |> get(~p"/")
 
       assert html_response(conn, 200)
+    end
+
+    test "valid authenticated session revalidation does not query durable Event grants" do
+      conn =
+        build_conn()
+        |> init_test_session(%{
+          dashboard_authenticated: true,
+          dashboard_username: @valid_username
+        })
+
+      {conn, grant_query_count} =
+        capture_dashboard_grant_queries(fn -> BrowserAuth.call(conn, []) end)
+
+      refute conn.halted
+      assert conn.assigns.current_user == %{id: @valid_username, username: @valid_username}
+      assert grant_query_count == 0
     end
 
     test "rejects an authenticated session whose username no longer matches configuration", %{
@@ -131,6 +148,41 @@ defmodule FastCheckWeb.BrowserAuthTest do
 
     test "returns false when length does not match configured password" do
       refute BrowserAuth.valid_admin_password?("x")
+    end
+  end
+
+  defp capture_dashboard_grant_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "browser-auth-grants-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, metadata, _config ->
+        query = metadata.query
+
+        if String.contains?(String.downcase(query), "dashboard_event_grants") do
+          send(parent, {:dashboard_grant_query, ref})
+        end
+      end,
+      nil
+    )
+
+    try do
+      result = fun.()
+      {result, drain_dashboard_grant_queries(ref, 0)}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp drain_dashboard_grant_queries(ref, count) do
+    receive do
+      {:dashboard_grant_query, ^ref} -> drain_dashboard_grant_queries(ref, count + 1)
+    after
+      0 -> count
     end
   end
 end

@@ -1,8 +1,10 @@
 defmodule FastCheck.Integration.BrowserAuthEventIsolationTest do
   use FastCheckWeb.ConnCase, async: false
 
+  import Ecto.Query, only: [from: 2]
   import Phoenix.LiveViewTest
 
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Attendees.{Attendee, CheckIn, CheckInSession}
   alias FastCheck.Fixtures
   alias FastCheck.Repo
@@ -48,6 +50,62 @@ defmodule FastCheck.Integration.BrowserAuthEventIsolationTest do
     assert_event_surfaces_grant(event_b, event_a)
   end
 
+  test "an active durable-only grant scopes dashboard, exports, scanner, and occupancy" do
+    event_a =
+      insert_event(
+        "B2_DB_ONLY_GRANTED_EVENT_A",
+        "B2_DB_ONLY_EVENT_A attendee sentinel",
+        "B2-A-TICKET-SENTINEL"
+      )
+
+    event_b =
+      insert_event(
+        "B2_DB_ONLY_UNGRANTED_EVENT_B",
+        "B2_DB_ONLY_EVENT_B attendee sentinel",
+        "B2-B-TICKET-SENTINEL"
+      )
+
+    set_grants([])
+    insert_active_grant!(event_a)
+
+    assert_event_surfaces_grant(event_a, event_b)
+  end
+
+  test "a revoked-only durable grant is denied across the four browser surfaces" do
+    event =
+      insert_event(
+        "B2_REVOKED_ONLY_EVENT",
+        "B2_REVOKED_ONLY attendee sentinel",
+        "B2-REVOKED-TICKET-SENTINEL"
+      )
+
+    set_grants([])
+    insert_revoked_grant!(event)
+
+    assert_event_surfaces_denied(event)
+  end
+
+  test "configured authority remains effective when durable history is revoked" do
+    event_a =
+      insert_event(
+        "B2_CONFIGURED_REVOKED_EVENT_A",
+        "B2_CONFIGURED_REVOKED_EVENT_A attendee sentinel",
+        "B2-CONFIGURED-A-TICKET"
+      )
+
+    event_b =
+      insert_event(
+        "B2_CONFIGURED_REVOKED_UNGRANTED_EVENT_B",
+        "B2_CONFIGURED_REVOKED_EVENT_B attendee sentinel",
+        "B2-CONFIGURED-B-TICKET"
+      )
+
+    set_grants([event_a.id])
+    insert_revoked_grant!(event_a)
+
+    assert_event_surfaces_grant(event_a, event_b)
+  end
+
   test "an empty grant set denies all existing Event data across the four surfaces", %{
     conn: _conn
   } do
@@ -60,6 +118,10 @@ defmodule FastCheck.Integration.BrowserAuthEventIsolationTest do
 
     set_grants([])
 
+    assert_event_surfaces_denied(event)
+  end
+
+  defp assert_event_surfaces_denied(event) do
     {:ok, dashboard, _html} = live(authenticated_conn(), "/dashboard")
     refute has_element?(dashboard, ".fc-card-container")
     refute render(dashboard) =~ event.name
@@ -132,6 +194,15 @@ defmodule FastCheck.Integration.BrowserAuthEventIsolationTest do
   end
 
   defp assert_scanner_denied(event) do
+    attendee_before = Repo.get!(Attendee, event.attendee_id)
+
+    check_ins_before =
+      Repo.all(
+        from check_in in CheckIn,
+          where: check_in.event_id == ^event.id,
+          order_by: [asc: check_in.id]
+      )
+
     assert_live_denial(
       "/scan/#{event.id}",
       "/scan/#{@missing_event_id}",
@@ -139,8 +210,48 @@ defmodule FastCheck.Integration.BrowserAuthEventIsolationTest do
       event.name
     )
 
-    assert is_nil(Repo.get!(Attendee, event.attendee_id).checked_in_at)
+    assert Repo.get!(Attendee, event.attendee_id) == attendee_before
+
+    assert Repo.all(
+             from check_in in CheckIn,
+               where: check_in.event_id == ^event.id,
+               order_by: [asc: check_in.id]
+           ) == check_ins_before
+
     refute Repo.get_by(CheckInSession, event_id: event.id)
+  end
+
+  defp insert_active_grant!(event) do
+    %DashboardEventGrant{}
+    |> DashboardEventGrant.changeset(%{
+      dashboard_identity: SalesWebFixtures.dashboard_username(),
+      event_id: event.id,
+      granted_at: timestamp(),
+      granted_by: "B2 integration test"
+    })
+    |> Repo.insert!()
+  end
+
+  defp insert_revoked_grant!(event) do
+    now = timestamp()
+
+    row = %{
+      dashboard_identity: SalesWebFixtures.dashboard_username(),
+      event_id: event.id,
+      state: "revoked",
+      granted_at: now,
+      revoked_at: now,
+      granted_by: "B2 integration test",
+      lock_version: 1,
+      inserted_at: now,
+      updated_at: now
+    }
+
+    {1, _rows} = Repo.insert_all(DashboardEventGrant, [row])
+  end
+
+  defp timestamp do
+    DateTime.utc_now() |> DateTime.truncate(:second)
   end
 
   defp assert_occupancy_denied(event) do

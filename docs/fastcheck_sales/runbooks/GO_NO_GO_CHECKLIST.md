@@ -16,15 +16,17 @@
 - [ ] `TICKET_TOKEN_PEPPER` is present and not logged.
 - [ ] `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` authenticate the
   configured dashboard-admin identity.
-- [ ] `DASHBOARD_ALLOWED_EVENT_IDS` is the server-owned existing-Event grant
-  for dashboard Event administration and sync, Event CSV exports, browser
-  `ScannerLive`, `OccupancyLive`, and P1-D Sales Event access. Missing or blank
-  means zero existing-Event access; a malformed nonblank value must fail
-  startup.
+- [ ] `DASHBOARD_ALLOWED_EVENT_IDS` supplies configured bootstrap grants for
+  dashboard Event administration and sync, Event CSV exports, BrowserAuth
+  `ScannerLive`, `OccupancyLive`, and P1-D Sales Event access. Active durable
+  Postgres `DashboardEventGrant` rows for the verified current dashboard
+  identity also grant their Events. Missing or blank configuration grants no
+  Events through that source; a malformed nonblank value must fail startup.
 - [ ] `DASHBOARD_EVENT_CREATION_ENABLED` is separate from existing-Event
   grants. Creation requires the currently trusted dashboard identity and this
-  flag. A created Event is not automatically granted, and creation does not
-  start sync or enable WhatsApp Sales. Operators must add the new Event ID to
+  flag. Gate B does not automatically grant a newly created Event, start sync,
+  or enable WhatsApp Sales. Until Gate C implements creator grants and Gate E
+  certifies them, operators must add the new Event ID to
   `DASHBOARD_ALLOWED_EVENT_IDS` and use the existing deployment/restart
   configuration procedure before ordinary Event operation.
 - [ ] `OPERATIONS_GLOBAL_MONITORING_USERNAMES` is configured for global worker

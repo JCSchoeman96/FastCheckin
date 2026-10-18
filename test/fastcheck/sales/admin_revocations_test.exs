@@ -31,9 +31,11 @@ defmodule FastCheck.Sales.AdminRevocationsTest do
     %{order_id: order_id, ticket_issue_ids: [ticket_issue_id | _], event: event} =
       Fixtures.issued_order_fixture()
 
+    actor = WebFixtures.dashboard_actor_with_durable_grant(event.id)
+
     assert {:ok, %{status: :revoked}} =
              AdminRevocations.revoke_ticket_issue(
-               Fixtures.admin_actor(event_id: event.id),
+               actor,
                ticket_issue_id,
                Fixtures.admin_attrs(%{"confirmed_bulk" => nil, "admin_password" => nil})
              )

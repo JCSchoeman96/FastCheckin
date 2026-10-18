@@ -1,6 +1,7 @@
 defmodule FastCheckWeb.SalesWebFixtures do
   @moduledoc false
 
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Crypto
   alias FastCheck.Events.Event
   alias FastCheck.Repo
@@ -24,6 +25,24 @@ defmodule FastCheckWeb.SalesWebFixtures do
     configure_dashboard_grants(event_ids)
     {:ok, actor} = DashboardAccess.actor_for_identity(@dashboard_username)
     actor
+  end
+
+  def dashboard_actor_with_durable_grant(event_id) when is_integer(event_id) and event_id > 0 do
+    configure_dashboard_grants([])
+    insert_dashboard_event_grant!(event_id)
+    {:ok, actor} = DashboardAccess.actor_for_identity(@dashboard_username)
+    actor
+  end
+
+  def insert_dashboard_event_grant!(event_id) when is_integer(event_id) and event_id > 0 do
+    %DashboardEventGrant{}
+    |> DashboardEventGrant.changeset(%{
+      dashboard_identity: @dashboard_username,
+      event_id: event_id,
+      granted_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      granted_by: "test fixture"
+    })
+    |> Repo.insert!()
   end
 
   def configure_dashboard_grants(event_ids) when is_list(event_ids) do

@@ -55,8 +55,8 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
     if get_session(conn, @session_key) == true do
       case get_session(conn, @session_username_key) do
         username when is_binary(username) ->
-          case DashboardAccess.actor_for_identity(username) do
-            {:ok, _actor} -> {:ok, username}
+          case DashboardAccess.revalidate_identity(username) do
+            {:ok, ^username} -> {:ok, username}
             {:error, :unauthorized} -> :error
           end
 
@@ -88,13 +88,7 @@ defmodule FastCheckWeb.Plugs.BrowserAuth do
   end
 
   defp assign_current_user(conn, username) do
-    case DashboardAccess.actor_for_identity(username) do
-      {:ok, _actor} ->
-        assign(conn, :current_user, %{id: username, username: username})
-
-      {:error, :unauthorized} ->
-        unauthorized_redirect(conn)
-    end
+    assign(conn, :current_user, %{id: username, username: username})
   end
 
   defp credentials_from_header(conn) do

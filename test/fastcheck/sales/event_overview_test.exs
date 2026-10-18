@@ -78,7 +78,7 @@ defmodule FastCheck.Sales.EventOverviewTest do
   end
 
   test "event_overview returns mixed-source aggregates for a granted event", %{event_a: event_a} do
-    actor = Fixtures.dashboard_actor([event_a.id])
+    actor = Fixtures.dashboard_actor_with_durable_grant(event_a.id)
     assert {:ok, overview} = AdminDashboard.event_overview(actor, event_a.id)
 
     assert overview.event.id == event_a.id

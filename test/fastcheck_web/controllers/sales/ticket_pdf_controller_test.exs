@@ -79,6 +79,22 @@ defmodule FastCheckWeb.Sales.TicketPdfControllerTest do
     end)
   end
 
+  test "admin with only a durable Event grant downloads a ticket PDF", %{conn: conn} do
+    %{ticket_issue_id: ticket_issue_id, event: event} = issued_ticket_fixture()
+    WebFixtures.configure_dashboard_grants([])
+    WebFixtures.insert_dashboard_event_grant!(event.id)
+
+    conn =
+      conn
+      |> WebFixtures.authenticated_conn([])
+      |> get(~p"/dashboard/sales/tickets/#{ticket_issue_id}/pdf")
+
+    assert conn.status == 200
+    assert [content_type] = get_resp_header(conn, "content-type")
+    assert content_type =~ "application/pdf"
+    assert String.starts_with?(conn.resp_body, "%PDF-")
+  end
+
   test "expired delivery link does not block admin PDF download", %{conn: conn} do
     %{ticket_issue_id: ticket_issue_id, ticket_code: ticket_code} =
       issued_ticket_fixture(expires_at: DateTime.add(DateTime.utc_now(), -3600, :second))

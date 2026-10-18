@@ -19,7 +19,7 @@ launch safety, customer trust, payment integrity, scanner validity, or privacy.
 | Agents start VS-01A before gates | P0 | Roadmap and docs must mark implementation blocked. | VS-00 |
 | Launch scope unclear | P0 | VS-00D must lock channel priority and launch scope. | VS-00D |
 | Operators see all events by default | P0 | First release must use `event_scoped_first` access, not role-only access. | VS-00B, VS-00D |
-| Dashboard identity crosses Sales Event boundaries | P0 | Resolve server-configured `DASHBOARD_ALLOWED_EVENT_IDS` and constrain every Sales query and action to that grant set. | P1-D |
+| Dashboard identity crosses Sales Event boundaries | P0 | Resolve the verified current dashboard identity with either configured bootstrap Event IDs or an active durable Postgres `DashboardEventGrant`, then constrain every Sales query and action to that effective grant set. | P1-D |
 | Global Oban backlog has no production monitoring authority | P0 | Keep global/unattributable job data out of Event-scoped Sales Ops. Production launch is NO-GO until an approved global source and rehearsed procedure expose bounded queue/backlog health without job arguments or sensitive data. | P1-F |
 | No trusted Sales operator authority | P2 | Keep dashboard revocation admin-only. Before exposing operator single-ticket revocation, add trusted operator identity, server-established Event binding, cross-Event and forged-grant denial, audit actor attribution, and an explicit production entry point. | FastCheckin-iuaq |
 | General BrowserAuth routes lack Event isolation | P0 | Separately scope root Event administration/sync, CSV exports, browser scanner, and occupancy before treating application-wide dashboard access as isolated. | BrowserAuth event-isolation follow-up |

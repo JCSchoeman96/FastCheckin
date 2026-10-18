@@ -347,8 +347,10 @@ defmodule FastCheck.Tickets.ArtifactResolverTest do
         attendee: attendee
       } = issued_ticket_fixture(expires_at: DateTime.add(DateTime.utc_now(), -3600, :second))
 
+      actor = SalesWebFixtures.dashboard_actor_with_durable_grant(event.id)
+
       assert {:ok, %Artifact{} = artifact} =
-               ArtifactResolver.resolve_for_admin_ticket_issue(admin_actor(), ticket_issue_id)
+               ArtifactResolver.resolve_for_admin_ticket_issue(actor, ticket_issue_id)
 
       assert artifact.state == :valid
       assert artifact.event_name == event.name

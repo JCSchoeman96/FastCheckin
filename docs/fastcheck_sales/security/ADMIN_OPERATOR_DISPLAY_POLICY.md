@@ -40,9 +40,10 @@ The production Sales dashboard authenticates the configured admin identity and r
 
 ## Current Dashboard Boundary
 
-P1-D enforces server-configured Event grants across dedicated Sales dashboard
-surfaces and the root dashboard's Sales-specific controls. The root dashboard's
-general Event management and sync tools, CSV exports, browser scanner, and
-occupancy views still use the broader BrowserAuth boundary. They remain a
-separate event-isolation security follow-up; P1-D does not claim those routes
-are Event-isolated.
+P1-D enforces Event grants from either the configured bootstrap IDs or active
+durable Postgres grants through `DashboardAccess` across dedicated Sales
+dashboard surfaces and the root dashboard's Sales-specific controls. The root
+dashboard's general Event management and sync tools, CSV exports, BrowserAuth
+scanner, and occupancy views use the separate BrowserAuth Event-isolation
+boundary with the same current Event-grant union. ScannerAuth and mobile
+authentication do not use dashboard Event grants.

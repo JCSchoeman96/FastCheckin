@@ -26,15 +26,20 @@ defmodule FastCheckWeb.DashboardLive do
         {:error, :unauthorized} -> nil
       end
 
-    events =
-      dashboard_actor
-      |> DashboardAccess.allowed_event_ids()
-      |> Events.list_events_by_ids()
+    granted_event_ids =
+      case dashboard_actor do
+        %{allowed_event_ids: event_ids} -> event_ids
+        _ -> []
+      end
+
+    events = Events.list_events_by_ids(granted_event_ids)
 
     {:ok,
      socket
      |> assign(:dashboard_identity, identity)
      |> assign(:dashboard_actor, dashboard_actor)
+     |> assign(:granted_event_ids, granted_event_ids)
+     |> assign(:granted_event_id_set, MapSet.new(granted_event_ids))
      |> assign(:events, events)
      |> assign(:filtered_events, events)
      |> assign(:events_tab, "active")
@@ -1203,7 +1208,7 @@ defmodule FastCheckWeb.DashboardLive do
 
                 <div class="mt-6 space-y-3">
                   <div
-                    :if={DashboardAccess.event_granted?(@dashboard_actor, event.id)}
+                    :if={MapSet.member?(@granted_event_id_set, event.id)}
                     id={"whatsapp-sales-control-#{event.id}"}
                     class="flex flex-col gap-2 rounded-xl border border-fc-border-default dark:border-glass-border p-3 sm:flex-row sm:items-center sm:justify-between"
                   >
@@ -1804,7 +1809,7 @@ defmodule FastCheckWeb.DashboardLive do
             <div
               :if={
                 @editing_event &&
-                  DashboardAccess.event_granted?(@dashboard_actor, @editing_event.id)
+                  MapSet.member?(@granted_event_id_set, @editing_event.id)
               }
               id={"edit-whatsapp-sales-section-#{@editing_event.id}"}
               class="space-y-3 rounded-xl border border-fc-border-default dark:border-glass-border p-4"
@@ -2245,7 +2250,10 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp current_creation_authority?(socket) do
-    match?({:ok, _actor}, DashboardAccess.actor_for_identity(socket.assigns.dashboard_identity)) and
+    match?(
+      {:ok, _username},
+      DashboardAccess.revalidate_identity(socket.assigns.dashboard_identity)
+    ) and
       event_creation_enabled?()
   end
 
@@ -2821,14 +2829,18 @@ defmodule FastCheckWeb.DashboardLive do
   end
 
   defp refresh_event_list(socket) do
-    refreshed_events =
-      socket.assigns.dashboard_actor
-      |> DashboardAccess.allowed_event_ids()
-      |> Events.list_events_by_ids()
+    granted_event_ids = DashboardAccess.allowed_event_ids(socket.assigns.dashboard_actor)
+    refresh_event_list(socket, granted_event_ids)
+  end
+
+  defp refresh_event_list(socket, granted_event_ids) do
+    refreshed_events = Events.list_events_by_ids(granted_event_ids)
 
     visible_event_ids = MapSet.new(refreshed_events, & &1.id)
 
     socket
+    |> assign(:granted_event_ids, granted_event_ids)
+    |> assign(:granted_event_id_set, MapSet.new(granted_event_ids))
     |> assign(:events, refreshed_events)
     |> assign(:filtered_events, filter_events(refreshed_events, socket.assigns.search_query))
     |> refresh_editing_event(refreshed_events)
@@ -2839,12 +2851,12 @@ defmodule FastCheckWeb.DashboardLive do
 
   defp refresh_if_grants_changed(socket) do
     granted_event_ids = DashboardAccess.allowed_event_ids(socket.assigns.dashboard_actor)
-    assigned_event_ids = Enum.map(socket.assigns.events, & &1.id) |> Enum.sort()
+    assigned_event_ids = socket.assigns.granted_event_ids
 
     if assigned_event_ids == granted_event_ids do
       socket
     else
-      refresh_event_list(socket)
+      refresh_event_list(socket, granted_event_ids)
     end
   end
 
