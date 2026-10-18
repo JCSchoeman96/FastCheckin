@@ -6,6 +6,8 @@ defmodule FastCheck.Sales.DashboardAccess do
   `allowed_event_ids` values are never treated as authority by this boundary.
   """
 
+  alias FastCheck.Access.DashboardEventGrants
+
   @type actor :: %{
           required(:id) => String.t(),
           required(:username) => String.t(),
@@ -16,28 +18,21 @@ defmodule FastCheck.Sales.DashboardAccess do
 
   @spec actor_for_identity(term()) :: {:ok, actor()} | {:error, :unauthorized}
   def actor_for_identity(identity) do
-    with true <- dashboard_identity?(identity),
-         username when is_binary(username) <- identity_username(identity),
-         %{username: ^username} = auth <- dashboard_auth() do
-      {:ok,
-       %{
-         id: username,
-         username: username,
-         user_id: username,
-         actor_type: :admin,
-         allowed_event_ids: configured_event_ids(auth)
-       }}
-    else
-      _ -> {:error, :unauthorized}
+    case verified_dashboard_identity(identity) do
+      {:ok, username, auth} ->
+        {:ok, build_actor(username, effective_event_ids(username, auth))}
+
+      :error ->
+        {:error, :unauthorized}
     end
   end
 
   @doc "Returns the current server-configured grant set for a verified dashboard actor."
   @spec allowed_event_ids(term()) :: [pos_integer()]
   def allowed_event_ids(%{actor_type: actor_type} = actor) when actor_type in [:admin, "admin"] do
-    case actor_for_identity(identity_username(actor)) do
-      {:ok, trusted_actor} -> trusted_actor.allowed_event_ids
-      {:error, :unauthorized} -> []
+    case verified_dashboard_identity(identity_username(actor)) do
+      {:ok, username, auth} -> effective_event_ids(username, auth)
+      :error -> []
     end
   end
 
@@ -45,8 +40,19 @@ defmodule FastCheck.Sales.DashboardAccess do
 
   @doc "Checks an event against the actor's current server-configured grants."
   @spec event_granted?(term(), term()) :: boolean()
-  def event_granted?(actor, event_id) when is_integer(event_id) and event_id > 0 do
-    event_id in allowed_event_ids(actor)
+  def event_granted?(%{actor_type: actor_type} = actor, event_id)
+      when actor_type in [:admin, "admin"] and is_integer(event_id) and event_id > 0 do
+    case verified_dashboard_identity(identity_username(actor)) do
+      {:ok, username, auth} ->
+        if event_id in configured_event_ids(auth) do
+          true
+        else
+          active_grant_exists?(username, event_id)
+        end
+
+      :error ->
+        false
+    end
   end
 
   def event_granted?(_actor, _event_id), do: false
@@ -77,6 +83,46 @@ defmodule FastCheck.Sales.DashboardAccess do
 
   defp dashboard_auth do
     Application.get_env(:fastcheck, :dashboard_auth, %{})
+  end
+
+  defp verified_dashboard_identity(identity) do
+    with true <- dashboard_identity?(identity),
+         username when is_binary(username) <- identity_username(identity),
+         %{username: ^username} = auth <- dashboard_auth() do
+      {:ok, username, auth}
+    else
+      _ -> :error
+    end
+  end
+
+  defp build_actor(username, allowed_event_ids) do
+    %{
+      id: username,
+      username: username,
+      user_id: username,
+      actor_type: :admin,
+      allowed_event_ids: allowed_event_ids
+    }
+  end
+
+  defp effective_event_ids(username, auth) do
+    (configured_event_ids(auth) ++ active_event_ids(username))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp active_event_ids(username) do
+    DashboardEventGrants.active_event_ids_for_identity(username)
+  rescue
+    DBConnection.ConnectionError -> []
+    Postgrex.Error -> []
+  end
+
+  defp active_grant_exists?(username, event_id) do
+    DashboardEventGrants.active_grant_exists?(username, event_id)
+  rescue
+    DBConnection.ConnectionError -> false
+    Postgrex.Error -> false
   end
 
   defp configured_event_ids(%{allowed_event_ids: event_ids}) when is_list(event_ids) do
