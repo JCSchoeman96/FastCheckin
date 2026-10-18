@@ -336,7 +336,7 @@ Place tests beside the existing suites in `test/fastcheck/sales/dashboard_access
 Each gate requires review, merge, successful post-merge CI, and explicit authorization before the next gate starts. Gate 0 and Gate A are accepted. Gate B implementation is merged and technically accepted; programme closure is pending current-authority document reconciliation. Gates C, D, and E are not authorized.
 
 | Gate | Current state | High-level scope | Completion evidence |
-|---|---|---|
+|---|---|---|---|
 | Gate 0 | ACCEPTED / MERGED | This authority document only. | Docs-only PR merged; no code or production data changed. |
 | Gate A | ACCEPTED / MERGED AS PR #539, merge SHA `830eb32b5dd0536351549866ffa87cae26aefd9b` | Add the Postgres resource, Event relationship, constraints, and indexed bounded grant queries. | Schema and query tests prove terminal state, uniqueness, restrictive FK, and index-backed lookup behavior. |
 | Gate B | IMPLEMENTATION MERGED AS PR #540, merge SHA `d29f337df1bfafe479f02ea4d1f6f050bcad9644`; TECHNICAL REVIEW: PASS; PROGRAMME CLOSURE: PENDING CURRENT-AUTHORITY DOCUMENT RECONCILIATION | Extend `DashboardAccess` to resolve configured IDs plus active DB grants for BrowserAuth and P1-D Sales callers through the same boundary. Keep current identity revalidation, Event-ownership filters, and query-scoped dashboard lists. | Bootstrap, active, revoked, unrelated-identity, caller-forgery, stale-socket, and existing PR #513/#514 tests pass. P1-D Sales dashboards, refunds/revocations, PDFs, checkout/offers, Event overview, and WhatsApp controls prove the same union authority, fail-closed cross-Event behavior, and unchanged payment/refund/revocation/inventory semantics. |
@@ -350,8 +350,7 @@ No gate authorizes automatic Full Sync, WhatsApp Sales enablement, global Event 
 
 Stop and return to authority review if any of these conditions occurs:
 
-- `STOP=MAIN_MOVED` if `origin/main` differs from the accepted SHA or tree before work starts.
-- `STOP=SUPERSESSION_SCOPE_AMBIGUOUS` if the exact version 1.4 clauses to supersede cannot be identified without changing unrelated authority.
+- `STOP=MAIN_MOVED` if `origin/main` differs from the explicitly accepted base SHA or tree for the currently authorized gate or corrective task before work begins.
 - `STOP=SECURITY_INVARIANT_WEAKENED` if BrowserAuth request-boundary revalidation, Event isolation, or stale-socket denial would be weakened.
 - `STOP=GLOBAL_EVENT_ACCESS_REINTRODUCED` if implementation requires unscoped Event listing or global browser authority.
 - `STOP=CALLER_SUPPLIED_GRANT_AUTHORITY` if identity, grantor, or Event authority comes from browser/session input.
@@ -359,7 +358,6 @@ Stop and return to authority review if any of these conditions occurs:
 - `STOP=EXTERNAL_CALL_INSIDE_DB_TRANSACTION` if Tickera or another external request must run inside the Event/grant transaction.
 - `STOP=IDEMPOTENCY_OWNERSHIP_UNRESOLVED` if the Event-row creation token cannot enforce one committed Event per logical submission and recover a successful retry.
 - `STOP=EVENT_DELETION_POLICY_UNRESOLVED` if restrictive grant-history retention cannot be reconciled with Event deletion.
-- `STOP=SECOND_FILE_REQUIRED` if this authority supersession cannot be completed by changing only this document.
-- `STOP=IMPLEMENTATION_STARTED` if code or migrations are changed before a separate implementation authorization.
+- `STOP=UNAUTHORIZED_GATE_IMPLEMENTATION_STARTED` if code or migrations for Gate C, D, or E are changed before that gate receives separate explicit authorization.
 
 This v1.2 authority-state reconciliation does not authorize Gate C. After opening this docs-only PR, stop for review. Do not start Gate C, D, or E without separate explicit authorization.
