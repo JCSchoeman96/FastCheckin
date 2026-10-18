@@ -9,6 +9,7 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
   import Ecto.Query, warn: false
   require Logger
 
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Attendees.{Attendee, AttendeeInvalidationEvent, CheckIn, CheckInSession}
   alias FastCheck.Cache.CacheManager
   alias FastCheck.Cache.EtsLayer
@@ -36,6 +37,7 @@ defmodule FastCheck.Events.ArchivedEventRemoval do
     {ScanAttempt, :scan_attempts},
     {MobileIdempotencyLog, :mobile_idempotency_log},
     {AttendeeInvalidationEvent, :attendee_invalidation_events},
+    {DashboardEventGrant, :dashboard_event_grants},
     {SyncLog, :sync_logs},
     {CheckInConfiguration, :check_in_configurations},
     {Gate, :gates},

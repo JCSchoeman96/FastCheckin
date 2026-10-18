@@ -3,6 +3,7 @@ defmodule FastCheck.Events.ArchivedEventRemovalTest do
 
   import Ecto.Query
 
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Events
   alias FastCheck.Events.Cache
@@ -69,6 +70,30 @@ defmodule FastCheck.Events.ArchivedEventRemovalTest do
 
     assert Repo.get!(FastCheck.Events.Event, archived.id)
     assert Repo.get!(Attendee, attendee.id)
+  end
+
+  test "active dashboard Event grants block archived Event removal and remain persisted" do
+    event = Fixtures.create_event()
+    grant = insert_active_dashboard_grant!(event)
+    archived = archive!(event)
+
+    assert {:error, {:dependencies_present, %{dashboard_event_grants: 1}}} =
+             Events.remove_archived_event(archived.id)
+
+    assert Repo.get!(DashboardEventGrant, grant.id)
+    assert Repo.get!(FastCheck.Events.Event, archived.id)
+  end
+
+  test "revoked dashboard Event grants block archived Event removal and remain persisted" do
+    event = Fixtures.create_event()
+    grant = insert_revoked_dashboard_grant!(event)
+    archived = archive!(event)
+
+    assert {:error, {:dependencies_present, %{dashboard_event_grants: 1}}} =
+             Events.remove_archived_event(archived.id)
+
+    assert Repo.get!(DashboardEventGrant, grant.id)
+    assert Repo.get!(FastCheck.Events.Event, archived.id)
   end
 
   test "blocks on scanner and history dependencies" do
@@ -259,5 +284,41 @@ defmodule FastCheck.Events.ArchivedEventRemovalTest do
       )
 
     id
+  end
+
+  defp insert_active_dashboard_grant!(event) do
+    %DashboardEventGrant{}
+    |> DashboardEventGrant.changeset(%{
+      dashboard_identity: "archived-removal-test",
+      event_id: event.id,
+      granted_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      granted_by: "archived-removal-test"
+    })
+    |> Repo.insert!()
+  end
+
+  defp insert_revoked_dashboard_grant!(event) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {1, [%{id: grant_id}]} =
+      Repo.insert_all(
+        DashboardEventGrant,
+        [
+          %{
+            dashboard_identity: "archived-removal-test",
+            event_id: event.id,
+            state: "revoked",
+            granted_at: now,
+            revoked_at: now,
+            granted_by: "archived-removal-test",
+            lock_version: 1,
+            inserted_at: now,
+            updated_at: now
+          }
+        ],
+        returning: [:id]
+      )
+
+    Repo.get!(DashboardEventGrant, grant_id)
   end
 end
