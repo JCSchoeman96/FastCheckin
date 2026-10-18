@@ -30,6 +30,18 @@ defmodule FastCheck.Sales.DashboardAccess do
   end
 
   @doc """
+  Revalidates a dashboard identity against the current server configuration
+  without resolving Event grants.
+  """
+  @spec revalidate_identity(term()) :: {:ok, String.t()} | {:error, :unauthorized}
+  def revalidate_identity(identity) do
+    case verified_dashboard_identity(identity) do
+      {:ok, username, _auth} -> {:ok, username}
+      :error -> {:error, :unauthorized}
+    end
+  end
+
+  @doc """
   Returns the current effective union of configured and active durable Event
   grants for an actor whose identity still matches current dashboard configuration.
   """

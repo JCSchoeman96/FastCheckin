@@ -30,6 +30,24 @@ defmodule FastCheck.Sales.DashboardAccessTest do
             }} = DashboardAccess.actor_for_identity(@dashboard_username)
   end
 
+  test "revalidates a current dashboard identity without querying the database" do
+    {result, queries} =
+      capture_repo_queries(fn -> DashboardAccess.revalidate_identity(@dashboard_username) end)
+
+    assert result == {:ok, @dashboard_username}
+    assert queries == []
+  end
+
+  test "revalidation rejects an identity that does not match current configuration" do
+    assert DashboardAccess.revalidate_identity("another-admin") == {:error, :unauthorized}
+  end
+
+  test "revalidation rejects a non-admin actor shape" do
+    operator = %{actor_type: :operator, username: @dashboard_username}
+
+    assert DashboardAccess.revalidate_identity(operator) == {:error, :unauthorized}
+  end
+
   test "adds an active durable grant to actor allowed Event IDs" do
     event = create_event()
     configure_allowed_event_ids([])
@@ -224,6 +242,37 @@ defmodule FastCheck.Sales.DashboardAccessTest do
 
   defp timestamp do
     DateTime.utc_now() |> DateTime.truncate(:second)
+  end
+
+  defp capture_repo_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "dashboard-access-revalidate-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, metadata, _config ->
+        send(parent, {:repo_query, ref, metadata.query})
+      end,
+      nil
+    )
+
+    try do
+      result = fun.()
+      {result, drain_repo_queries(ref, [])}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp drain_repo_queries(ref, queries) do
+    receive do
+      {:repo_query, ^ref, query} -> drain_repo_queries(ref, [query | queries])
+    after
+      0 -> Enum.reverse(queries)
+    end
   end
 
   defp restore_dashboard_auth(nil), do: Application.delete_env(:fastcheck, :dashboard_auth)

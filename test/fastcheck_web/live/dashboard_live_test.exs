@@ -4,6 +4,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
   import Ecto.Query
   import Phoenix.LiveViewTest
 
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Crypto
   alias FastCheck.Events
   alias FastCheck.Events.Cache
@@ -45,6 +46,56 @@ defmodule FastCheckWeb.DashboardLiveTest do
   end
 
   describe "dashboard Event isolation" do
+    test "durable grant query count stays bounded across dashboard mounts and refreshes", %{
+      conn: conn
+    } do
+      one_event = insert_event!(%{name: "One DB Grant Query Event"})
+
+      additional_events =
+        Enum.map(1..3, &insert_event!(%{name: "Many DB Grant Query Event #{&1}"}))
+
+      SalesWebFixtures.configure_dashboard_grants([])
+      insert_active_grant!(one_event)
+
+      {{:ok, one_event_view, _html}, one_event_query_count} =
+        capture_dashboard_grant_queries(fn -> mount_dashboard(conn, []) end)
+
+      assert has_element?(one_event_view, "#full-sync-#{one_event.id}")
+
+      Enum.each(additional_events, &insert_active_grant!(&1))
+
+      {{:ok, many_event_view, _html}, many_event_query_count} =
+        capture_dashboard_grant_queries(fn -> mount_dashboard(conn, []) end)
+
+      assert has_element?(many_event_view, "#full-sync-#{one_event.id}")
+
+      Enum.each(additional_events, fn event ->
+        assert has_element?(many_event_view, "#full-sync-#{event.id}")
+      end)
+
+      assert many_event_query_count == one_event_query_count
+
+      many_event_view
+      |> element("#show-edit-event-#{one_event.id}")
+      |> render_click()
+
+      {_html, edit_render_query_count} =
+        capture_dashboard_grant_queries(fn -> render(many_event_view) end)
+
+      assert edit_render_query_count == 0
+
+      newly_granted_event = insert_event!(%{name: "Refresh DB Grant Query Event"})
+      insert_active_grant!(newly_granted_event)
+
+      {_html, refresh_query_count} =
+        capture_dashboard_grant_queries(fn ->
+          render_click(many_event_view, "hide_new_event_form", %{})
+        end)
+
+      assert refresh_query_count == 1
+      assert has_element?(many_event_view, "#full-sync-#{newly_granted_event.id}")
+    end
+
     test "mount ignores the global Events cache and exposes scoped attendee aggregates only", %{
       conn: conn
     } do
@@ -1498,6 +1549,52 @@ defmodule FastCheckWeb.DashboardLiveTest do
     conn
     |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
     |> live(~p"/dashboard")
+  end
+
+  defp insert_active_grant!(event) do
+    %DashboardEventGrant{}
+    |> DashboardEventGrant.changeset(%{
+      dashboard_identity: SalesWebFixtures.dashboard_username(),
+      event_id: event.id,
+      granted_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      granted_by: "dashboard-live query regression"
+    })
+    |> Repo.insert!()
+  end
+
+  defp capture_dashboard_grant_queries(fun) when is_function(fun, 0) do
+    ref = make_ref()
+    handler_id = "dashboard-live-grants-#{System.unique_integer([:positive])}"
+    parent = self()
+    event_name = (Repo.config()[:telemetry_prefix] || [:fastcheck, :repo]) ++ [:query]
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, _measurements, metadata, _config ->
+        query = metadata.query
+
+        if String.contains?(String.downcase(query), "dashboard_event_grants") do
+          send(parent, {:dashboard_grant_query, ref})
+        end
+      end,
+      nil
+    )
+
+    try do
+      result = fun.()
+      {result, drain_dashboard_grant_queries(ref, 0)}
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp drain_dashboard_grant_queries(ref, count) do
+    receive do
+      {:dashboard_grant_query, ^ref} -> drain_dashboard_grant_queries(ref, count + 1)
+    after
+      0 -> count
+    end
   end
 
   defp insert_event!(attrs) do
