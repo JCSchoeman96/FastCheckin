@@ -32,17 +32,24 @@ For internal pilot and admin-assisted sales:
 
 ## Dashboard Sales Access
 
-- Configure `DASHBOARD_ALLOWED_EVENT_IDS` with the positive integer Event IDs
-  the dashboard identity may operate.
-- A missing or blank value leaves Sales access empty. A malformed nonblank value
-  prevents application startup; do not repair it by deleting invalid entries
-  from a mixed list.
-- After changing the configured allowlist, restart the release and verify the
-  intended Event A succeeds while an ungranted Event B is unavailable across
-  Sales views and actions.
-- General Event administration/sync, CSV exports, scanner, and occupancy retain
-  a separate BrowserAuth event-isolation requirement until that follow-up is
-  implemented.
+- `DASHBOARD_ALLOWED_EVENT_IDS` supplies comma-separated positive integer
+  configured/bootstrap Event grants for the dashboard identity.
+- Active durable Postgres `DashboardEventGrant` records are an additional
+  authority source. Effective access is the union of configured grants and
+  active durable grants. A revoked durable grant does not remove access supplied
+  by a configured grant, and an active durable grant can authorize an Event
+  without a configured grant.
+- A missing or blank value supplies no configured/bootstrap grants. It does not
+  erase or disable active durable Postgres grants. A malformed nonblank value
+  remains startup-invalid under the existing fail-closed configuration
+  behavior; do not repair it by deleting invalid entries from a mixed list.
+- Verify access by confirming that an authorized Event succeeds and an unrelated
+  ungranted Event fails closed.
+- Event creation does not currently create an active durable grant for the
+  creator. Until Gate C is separately authorized and implemented, use the
+  existing configured bootstrap grant workflow for the creator/operator to gain
+  ordinary dashboard access to a newly created Event. Gate C is NOT AUTHORIZED /
+  NOT STARTED.
 
 ## Ingress logging evidence (secure ticket launch gate)
 
