@@ -118,6 +118,26 @@ defmodule FastCheck.Sales.DashboardAccessTest do
     assert DashboardAccess.event_granted?(actor, event.id)
   end
 
+  test "a protected DB-only Event check issues one exact active-grant query" do
+    event = create_event()
+    configure_allowed_event_ids([])
+    insert_active_grant!(event, @dashboard_username)
+    actor = admin_actor(@dashboard_username)
+
+    {granted?, queries} =
+      capture_repo_queries(fn -> DashboardAccess.event_granted?(actor, event.id) end)
+
+    grant_queries =
+      Enum.filter(queries, &String.contains?(String.downcase(&1), "dashboard_event_grants"))
+
+    assert granted?
+    assert [query] = grant_queries
+    normalized_query = String.downcase(query)
+    assert normalized_query =~ "dashboard_identity"
+    assert normalized_query =~ "event_id"
+    assert normalized_query =~ "state"
+  end
+
   test "denies a revoked-only durable grant in an exact Event check" do
     event = create_event()
     configure_allowed_event_ids([])

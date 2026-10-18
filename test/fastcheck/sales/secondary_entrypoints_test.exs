@@ -22,6 +22,12 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
 
   test "admin-assisted checkout uses approved checkout core", %{offer: offer} do
     idem = SecondaryEntrypoints.generate_idempotency_key()
+    actor = WebFixtures.dashboard_actor_with_durable_grant(offer.event_id)
+
+    assert {:ok, offers} =
+             SecondaryEntrypoints.list_offers_for_channel(actor, offer.event_id, "admin")
+
+    assert Enum.any?(offers, &(&1.id == offer.id))
 
     params = %{
       "ticket_offer_id" => to_string(offer.id),
@@ -31,7 +37,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
 
     assert {:ok, %{order_id: order_id, public_reference: ref}} =
              SecondaryEntrypoints.start_admin_checkout(
-               actor(offer.event_id),
+               actor,
                offer.event_id,
                params,
                idem
@@ -83,6 +89,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
     on_exit(fn -> Fixtures.flush_inventory_keys(offer.id) end)
 
     idem = SecondaryEntrypoints.generate_idempotency_key()
+    actor = WebFixtures.dashboard_actor_with_durable_grant(offer.event_id)
 
     params = %{
       "ticket_offer_id" => to_string(offer.id),
@@ -91,7 +98,7 @@ defmodule FastCheck.Sales.SecondaryEntrypointsTest do
 
     assert {:ok, %{order_id: order_id}} =
              SecondaryEntrypoints.start_internal_pilot_checkout(
-               actor(offer.event_id),
+               actor,
                offer.event_id,
                params,
                idem

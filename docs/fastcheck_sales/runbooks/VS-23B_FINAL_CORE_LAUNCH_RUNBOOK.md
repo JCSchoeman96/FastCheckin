@@ -58,18 +58,21 @@ Core production secrets and runtime:
 - `REDIS_URL` points at the intended Redis instance.
 - `SALES_INTERNAL_PILOT_ENABLED` is set deliberately for launch posture.
 - `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` are configured for assigned staff using the dashboard-admin identity.
-- `DASHBOARD_ALLOWED_EVENT_IDS` is the server-owned existing-Event grant for
-  dashboard Event administration and sync, Event CSV exports, browser
-  `ScannerLive`, `OccupancyLive`, and P1-D Sales Event access. Missing or blank
-  means zero existing-Event access; a malformed nonblank value must prevent
-  the release from starting.
+- `DASHBOARD_ALLOWED_EVENT_IDS` supplies configured bootstrap grants for
+  dashboard Event administration and sync, Event CSV exports, BrowserAuth
+  `ScannerLive`, `OccupancyLive`, and P1-D Sales Event access. Active durable
+  Postgres `DashboardEventGrant` rows for the verified current dashboard
+  identity also grant their Events. Missing or blank configuration grants no
+  Events through that source; a malformed nonblank value must prevent the
+  release from starting.
 - Verify the grant list against the Events approved for dashboard operation.
   `DASHBOARD_EVENT_CREATION_ENABLED` is separate from these grants. Creation
-  requires the currently trusted dashboard identity and the enabled flag. A
-  created Event is not automatically granted, and creation does not start sync
-  or enable WhatsApp Sales. Operators must add its ID to
-  `DASHBOARD_ALLOWED_EVENT_IDS` and use the existing deployment/restart
-  configuration procedure before ordinary Event operation.
+  requires the currently trusted dashboard identity and the enabled flag. Gate
+  B does not automatically grant a newly created Event, start sync, or enable
+  WhatsApp Sales. Until Gate C implements creator grants and Gate E certifies
+  them, operators must add the Event ID to `DASHBOARD_ALLOWED_EVENT_IDS` and
+  use the existing deployment/restart configuration procedure before ordinary
+  Event operation.
 - `SENTRY_DSN` is present if Sentry is part of the release.
 
 Paystack:

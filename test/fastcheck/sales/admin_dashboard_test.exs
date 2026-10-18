@@ -151,6 +151,18 @@ defmodule FastCheck.Sales.AdminDashboardTest do
     assert summary.orders_in_window == 0
   end
 
+  test "an active durable-only Event grant authorizes Sales dashboard order reads" do
+    event = WebFixtures.insert_event!()
+    order = insert_sales_order!(event.id, "FC-DB-ONLY-DASHBOARD", "paid_verified", days_ago: 0)
+    actor = WebFixtures.dashboard_actor_with_durable_grant(event.id)
+
+    assert [%{id: order_id}] = AdminDashboard.recent_orders(actor)
+    assert order_id == order.id
+
+    assert {:ok, %{id: detail_id}} = AdminDashboard.order_detail(actor, order.id)
+    assert detail_id == order.id
+  end
+
   defp unsafe_value_present?(term) do
     encoded = inspect(term)
 

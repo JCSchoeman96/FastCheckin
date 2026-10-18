@@ -217,15 +217,16 @@ defmodule FastCheck.Sales.ManualReviewTest do
 
   test "add_note and assignment actions write manual review audit only" do
     order_id = insert_review_order!()
+    actor = WebFixtures.dashboard_actor_with_durable_grant(91_001)
 
     assert {:ok, _} =
-             ManualReview.add_note("order", order_id, actor(), %{
+             ManualReview.add_note("order", order_id, actor, %{
                "reason_code" => "operator_note",
                "note" => "Needs finance review\u0000"
              })
 
     assert {:ok, _} =
-             ManualReview.assign("order", order_id, actor(), %{
+             ManualReview.assign("order", order_id, actor, %{
                "reason_code" => "operator_assigned"
              })
 

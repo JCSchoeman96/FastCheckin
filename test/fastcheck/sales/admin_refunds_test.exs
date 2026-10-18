@@ -26,10 +26,11 @@ defmodule FastCheck.Sales.AdminRefundsTest do
   test "admin refund records provider evidence, revokes tickets, and queues inventory resolution" do
     %{order_id: order_id, event: event} = Fixtures.issued_order_fixture()
     attrs = Fixtures.admin_attrs_for_order(order_id)
+    actor = WebFixtures.dashboard_actor_with_durable_grant(event.id)
 
     assert {:ok, %{order: order, refund: refund, revoke: %{failures: []}}} =
              AdminRefunds.mark_order_refunded_manual(
-               Fixtures.admin_actor(event_id: event.id),
+               actor,
                order_id,
                attrs
              )

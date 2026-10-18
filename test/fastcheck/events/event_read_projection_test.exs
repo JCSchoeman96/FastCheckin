@@ -70,7 +70,7 @@ defmodule FastCheck.Events.EventReadProjectionTest do
   end
 
   defp assert_fallback_projection(queries, expected_fields) do
-    selects = Enum.filter(queries, &String.starts_with?(&1, "SELECT "))
+    selects = Enum.filter(queries, &String.contains?(&1, "FROM \"events\""))
     assert [fallback_select, _return_value_select] = selects
 
     selected_fields =

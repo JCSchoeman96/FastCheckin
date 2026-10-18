@@ -73,6 +73,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
         assert has_element?(many_event_view, "#full-sync-#{event.id}")
       end)
 
+      assert one_event_query_count == 2
       assert many_event_query_count == one_event_query_count
 
       many_event_view
@@ -200,6 +201,39 @@ defmodule FastCheckWeb.DashboardLiveTest do
       render_click(view, "archive_event", %{"event_id" => event.id})
 
       assert Events.get_event!(event.id).status == "active"
+      refute render(view) =~ event.name
+    end
+
+    test "revoking a durable grant after mount denies mutation and refreshes the Event list", %{
+      conn: conn
+    } do
+      event = insert_event!(%{name: "Revoked Durable Grant After Mount Event"})
+      SalesWebFixtures.configure_dashboard_grants([])
+      grant = insert_active_grant!(event)
+
+      {:ok, view, _html} = mount_dashboard(conn, [])
+
+      assert has_element?(view, "#full-sync-#{event.id}")
+
+      before = Repo.get!(Event, event.id)
+      revoked_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      assert {1, nil} =
+               Repo.update_all(
+                 from(grant_row in DashboardEventGrant,
+                   where: grant_row.id == ^grant.id and grant_row.state == "active"
+                 ),
+                 set: [state: "revoked", revoked_at: revoked_at, updated_at: revoked_at]
+               )
+
+      assert Repo.get!(DashboardEventGrant, grant.id).state == "revoked"
+
+      render_click(view, "archive_event", %{"event_id" => event.id})
+
+      after_denied_operation = Repo.get!(Event, event.id)
+      assert after_denied_operation.status == before.status
+      assert after_denied_operation.updated_at == before.updated_at
+      refute has_element?(view, "#full-sync-#{event.id}")
       refute render(view) =~ event.name
     end
 
@@ -335,6 +369,23 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert has_element?(view, "#edit-whatsapp-sales-section-#{event.id}", "Disabled")
       assert has_element?(view, "#edit-enable-whatsapp-sales-#{event.id}", "Enable")
       refute Events.get_event!(event.id).whatsapp_sales_enabled
+    end
+
+    test "durable-only Event grant authorizes WhatsApp controls", %{conn: conn} do
+      event = insert_event!(%{name: "Durable WhatsApp Gate Event"})
+      SalesWebFixtures.configure_dashboard_grants([])
+      insert_active_grant!(event)
+
+      {:ok, view, _html} = mount_dashboard(conn, [])
+
+      assert has_element?(view, "#enable-whatsapp-sales-#{event.id}")
+
+      view
+      |> element("#enable-whatsapp-sales-#{event.id}")
+      |> render_click()
+
+      assert Events.get_event!(event.id).whatsapp_sales_enabled
+      assert has_element?(view, "#disable-whatsapp-sales-#{event.id}")
     end
 
     test "ordinary update_event submission does not change WhatsApp sales gate", %{conn: conn} do

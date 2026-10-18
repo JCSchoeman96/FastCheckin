@@ -58,6 +58,15 @@ defmodule FastCheck.Sales.OfferManagementTest do
     on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
   end
 
+  test "an active durable-only Event grant authorizes offer reads", %{event: event} do
+    offer = SalesFixtures.insert_offer!(event_id: event.id, sales_channel: "whatsapp")
+    on_exit(fn -> SalesFixtures.flush_inventory_keys(offer.id) end)
+    actor = SalesWebFixtures.dashboard_actor_with_durable_grant(event.id)
+
+    assert {:ok, offers} = OfferManagement.list_offers(actor, event.id)
+    assert Enum.any?(offers, &(&1.id == offer.id))
+  end
+
   test "retry_inventory_initialization only works for safe first-time setup", %{
     event: event,
     actor: actor
