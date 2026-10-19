@@ -3,15 +3,16 @@
 | Field | Value |
 |---|---|
 | Plan ID | `DASHBOARD-EVENT-GRANT-PERSISTENCE-REMEDIATION` |
-| Version | 1.2 |
-| Status | Active governing authority. The v1.1 authority supersession is effective on current main. Gate B programme closure is pending current-authority document reconciliation. |
-| Accepted planning base | `SHA=84b968f825557078ed55e83beb9990063892665c`, `TREE=f64e8fabbef74405127da85641605bba28357310` |
+| Version | 1.3 |
+| Status | Active governing authority. Gates A, B, and C implementation are accepted on current main. **Gate C implementation:** COMPLETE. **Gate C closure reconciliation (C3-B):** IN PROGRESS pending review, merge, and post-merge verification of this document update. **Gate D authorization:** NO. **Gate E authorization:** NO. |
+| Accepted planning base | `SHA=87d2ed511e4e2fd135eb7a6bdd6c899d52d64b6b`, `TREE=68aef92f6eac17a46fb41419b6bb4fe8859f5578` |
 | Related frozen authorities | `docs/fastcheck_sales/development/BROWSERAUTH_EVENT_ISOLATION_REMEDIATION_PLAN.md`, version 1.4; `docs/fastcheck_sales/feature_packs/0057_P1-D_event-scoped-sales-dashboard-authorization/pack.json` (merged as PR #491) |
-| Implementation authorization | Gate A and Gate B implementation was separately authorized, reviewed, and merged. Gates C, D, and E are not authorized. |
-| Tracking | `FastCheckin-qb8j` remains the programme tracking identifier. Gate B programme closure is pending current-authority document reconciliation. |
+| Implementation authorization | Gates A, B, and C implementation were separately authorized, reviewed, and merged. Gate D and Gate E are not authorized. |
+| Tracking | `FastCheckin-qb8j` remains the programme tracking identifier. Gate C formal programme closure is pending C3-B document reconciliation merge and post-merge verification. |
 
 ## Revision history
 
+- `1.3` reconciles programme-state metadata for accepted Gates B (programme), C1, C2, and C3-A implementation on main. It does not change the frozen technical contract or authorize Gate D or Gate E.
 - `1.2` reconciles programme-state metadata only. It does not change the frozen technical contract.
 - `1.1` entered as a proposed authority supersession. That supersession became effective when v1.1 merged.
 
@@ -19,7 +20,9 @@
 
 Production validation confirmed that Event creation, full attendee sync, the browser scanner, and a real check-in work. Event 24 was created, synced, scanned, and used for a successful check-in.
 
-The post-create configuration step still applies to newly created Events. Gate B made active durable grants a current authority source, but it did not atomically grant the creator access to a new Event. Gate C has not started and is not authorized.
+Gate C is implemented on current main. Dashboard Event creation uses a server-generated `dashboard_creation_token`, revalidates the current trusted identity and `DASHBOARD_EVENT_CREATION_ENABLED`, performs Tickera and attribute preparation outside the PostgreSQL transaction, then atomically inserts the Event and the creator's active `DashboardEventGrant`. After commit, the creator's dashboard refreshes and the Event is immediately visible and operable. Full Sync remains manual. WhatsApp Sales enablement remains manual.
+
+The pre–Gate C operator workflow is obsolete for new dashboard-created Events:
 
 ```text
 Create Event
@@ -29,7 +32,7 @@ Create Event
 → manage or sync the Event
 ```
 
-Until Gate C is separately authorized and implemented, operators must add a newly created Event ID to `DASHBOARD_ALLOWED_EVENT_IDS` and restart the release before ordinary Event operation. Gate C specifies the future atomic creator-grant transaction that can replace this post-create configuration step.
+That workflow applied before Gates C1, C2, and C3-A merged. It is not the current creation model. `DASHBOARD_ALLOWED_EVENT_IDS` remains bootstrap, emergency, and backwards-compatible authority for configured Event IDs; it is not required to grant a newly dashboard-created Event to its creator.
 
 ## 2. Authority hierarchy
 
@@ -49,7 +52,7 @@ verified server dashboard identity
 
 There is no config-only Sales exception and no separate BrowserAuth-versus-Sales grant resolution. Gate A and Gate B implementation was separately authorized and merged under separate approvals.
 
-This document does not authorize code changes by itself. The v1.1 merge established the authority contract; Gates A and B were later authorized and merged. Gates C, D, and E each require separate authorization, review, merge, and successful post-merge CI before a later gate starts. Gate B programme closure remains pending current-authority document reconciliation.
+This document does not authorize code changes by itself. The v1.1 merge established the authority contract; Gates A, B, and C were later authorized, implemented, reviewed, and merged under separate approvals. Gate C programme closure completes when C3-B document reconciliation is reviewed, merged, and post-merge verified. Gates D and E each require separate authorization, review, merge, and successful post-merge CI before that gate starts.
 
 ## 3. Superseded BrowserAuth and P1-D clauses
 
@@ -57,7 +60,7 @@ The v1.1 authority supersession replaced these clauses only for their effect on 
 
 1. Version 1.4 §1 froze `EXISTING_EVENT_AUTHORITY=DASHBOARD_ALLOWED_EVENT_IDS` as the sole source for existing Events. The v1.1 supersession replaced it with the union authority in §5 of this document.
 2. Version 1.4 §1 forbade a DB permission table and a per-row permission query as an authority source. The v1.1 supersession replaced that prohibition with the server-owned Postgres grant resource and indexed queries in §§6, 7, 13, 14, and 16 here.
-3. Version 1.4 creation rules froze `CREATE_AUTO_GRANT=NO` and `EVENT_CREATED → CREATED_PENDING_SERVER_GRANT`. The authority contract in §10 specifies the atomic Event-plus-creator-grant behavior for Gate C; that implementation is not authorized.
+3. Version 1.4 creation rules froze `CREATE_AUTO_GRANT=NO` and `EVENT_CREATED → CREATED_PENDING_SERVER_GRANT`. The authority contract in §10 specified the atomic Event-plus-creator-grant behavior for Gate C; that behavior is implemented and accepted on current main (Gates C1, C2, and C3-A).
 4. The v1.1 supersession also replaced repeated config-only prohibitions that implement the same decision, including the matching implementation stop condition, the success criterion that excludes a permission DB or grant index, and version 1.4 §14's statement that no new permission table is authorized. Redis permission authority remains prohibited.
 5. Version 1.4's interpretation of an empty configured ID list as the complete effective grant set was superseded only for grant resolution: an empty configured list still denies access unless an active durable grant exists. If the union is empty, Event data queries remain empty and fail closed.
 
@@ -110,7 +113,7 @@ effective_event_authority(identity, event_id) =
     verified_dashboard_identity(identity) + event_id
 ```
 
-`DASHBOARD_ALLOWED_EVENT_IDS` remains supported as bootstrap authority, emergency authority, and backwards-compatible production configuration. Until Gate C implements an atomic creator grant, operators must use this configured bootstrap source to grant a newly created Event for ordinary dashboard operation. Gate B does not automatically grant the creator durable access to a new Event.
+`DASHBOARD_ALLOWED_EVENT_IDS` remains supported as bootstrap authority, emergency authority, and backwards-compatible production configuration. Dashboard Event creation on current main atomically grants the creator an active durable grant in the same transaction as the Event (§10). Configured IDs are not required for creator access to a newly dashboard-created Event.
 
 Configured and durable grants are additive. A configured ID plus a revoked DB grant remains authorized by configuration. A DB revocation must never report that effective Event access was removed while the Event ID remains configured. A revoked DB grant denies access only when no configured grant also applies.
 
@@ -231,7 +234,9 @@ No transaction may contain a Tickera, WhatsApp, PubSub, cache-network, or other 
 
 The Event-creation command boundary owns duplicate-submit semantics. Persist a nullable, server-generated `dashboard_creation_token` on the Event and enforce its uniqueness in Postgres. The token is generated by the server for one logical create form submission and reused for retries of that submission. A new intentional Event creation receives a new token.
 
-The token is opaque, generated by the server, and cryptographically strong, with at least 128 bits of entropy (for example, UUIDv4-equivalent entropy). The server renders it with the create form and the browser may echo it on submission. Reject malformed token values. A token is an idempotency key only: it is not an identity, grant, capability, or authorization input. Arbitrary or malformed token values cannot change the verified identity, grant target, or authorization outcome. Every create or replay request still revalidates the current trusted identity and creation kill switch. Before returning an existing Event for a committed token, the application also resolves current Event authority for that identity and Event.
+The token is opaque, generated by the server, and cryptographically strong, with at least 128 bits of entropy (for example, UUIDv4-equivalent entropy). The server renders it with the create form and the browser may echo it on submission. Reject missing or malformed token values before any Tickera read or database mutation. A token is an idempotency key only: it is not an identity, grant, capability, or authorization input. Arbitrary or malformed token values cannot change the verified identity, grant target, or authorization outcome. Every create or replay request still revalidates the current trusted identity and creation kill switch. Before returning an existing Event for a committed token, the application also resolves current Event authority for that identity and Event.
+
+One server-generated token applies to one logical create attempt. Validation or create failure before commit preserves the same token for retry of that attempt. Cancel or successful commit clears the token from the create flow; the next intentional create receives a new token. There is no token TTL and no Redis, ETS, or Cachex token authority.
 
 Concurrent requests with the same token may both finish their bounded Tickera reads, but the database uniqueness rule permits one Event commit. A losing request exits its failed transaction before recovering the Event associated with that token. It returns the existing logical result only after current authorization checks. It does not insert a second grant. If the first transaction rolls back, the same token can be retried and may commit once.
 
@@ -333,14 +338,17 @@ Place tests beside the existing suites in `test/fastcheck/sales/dashboard_access
 
 ## 19. Implementation gates
 
-Each gate requires review, merge, successful post-merge CI, and explicit authorization before the next gate starts. Gate 0 and Gate A are accepted. Gate B implementation is merged and technically accepted; programme closure is pending current-authority document reconciliation. Gates C, D, and E are not authorized.
+Each gate requires review, merge, successful post-merge CI, and explicit authorization before the next gate starts. Gate 0, Gate A, Gate B, and Gate C implementation are accepted on current main. Gate C formal programme closure is pending C3-B document reconciliation. Gates D and E are not authorized.
 
 | Gate | Current state | High-level scope | Completion evidence |
 |---|---|---|---|
 | Gate 0 | ACCEPTED / MERGED | This authority document only. | Docs-only PR merged; no code or production data changed. |
 | Gate A | ACCEPTED / MERGED AS PR #539, merge SHA `830eb32b5dd0536351549866ffa87cae26aefd9b` | Add the Postgres resource, Event relationship, constraints, and indexed bounded grant queries. | Schema and query tests prove terminal state, uniqueness, restrictive FK, and index-backed lookup behavior. |
-| Gate B | IMPLEMENTATION MERGED AS PR #540, merge SHA `d29f337df1bfafe479f02ea4d1f6f050bcad9644`; TECHNICAL REVIEW: PASS; PROGRAMME CLOSURE: PENDING CURRENT-AUTHORITY DOCUMENT RECONCILIATION | Extend `DashboardAccess` to resolve configured IDs plus active DB grants for BrowserAuth and P1-D Sales callers through the same boundary. Keep current identity revalidation, Event-ownership filters, and query-scoped dashboard lists. | Bootstrap, active, revoked, unrelated-identity, caller-forgery, stale-socket, and existing PR #513/#514 tests pass. P1-D Sales dashboards, refunds/revocations, PDFs, checkout/offers, Event overview, and WhatsApp controls prove the same union authority, fail-closed cross-Event behavior, and unchanged payment/refund/revocation/inventory semantics. |
-| Gate C | NOT AUTHORIZED / NOT STARTED | Add server-issued Event creation token and atomic Event-plus-creator-grant transaction. Keep Tickera outside the transaction. | Rollback, Tickera failure, duplicate submission, response recovery, immediate visibility, and manual-only Full Sync tests pass. |
+| Gate B | ACCEPTED / MERGED AS PR #540, merge SHA `d29f337df1bfafe479f02ea4d1f6f050bcad9644`; programme authority reconciliation PR #543, merge SHA `d45e33bed5a5f9bdf7713c61bbda33d21a8e1b30` | Extend `DashboardAccess` to resolve configured IDs plus active DB grants for BrowserAuth and P1-D Sales callers through the same boundary. Keep current identity revalidation, Event-ownership filters, and query-scoped dashboard lists. | Bootstrap, active, revoked, unrelated-identity, caller-forgery, stale-socket, and existing PR #513/#514 tests pass. P1-D Sales dashboards, refunds/revocations, PDFs, checkout/offers, Event overview, and WhatsApp controls prove the same union authority, fail-closed cross-Event behavior, and unchanged payment/refund/revocation/inventory semantics. |
+| Gate C1 | ACCEPTED / MERGED AS PR #544, merge SHA `79b694650252a621f71479c1d7b3ada723c3d28f` | Persist nullable server-generated `dashboard_creation_token` on Event with partial unique index where non-null. | Token validation, uniqueness, and idempotency contract tests pass. |
+| Gate C2 | ACCEPTED / MERGED AS PR #545, merge SHA `8b2c75187796bfd222db902fa75949290b4d0ce8` | Atomic Event-plus-creator-grant transaction; Tickera and preparation outside the transaction. | Rollback, Tickera failure, duplicate submission, and transaction-boundary tests pass. |
+| Gate C3-A | ACCEPTED / MERGED AS PR #546, approved head SHA `57d2cbf229db601feab3d40d30e63ebf0afb7498`, merge SHA `87d2ed511e4e2fd135eb7a6bdd6c899d52d64b6b`, tree `68aef92f6eac17a46fb41419b6bb4fe8859f5578`; post-merge CI workflow run `39301897012` (`2317 tests, 0 failures, 4 skipped`) | Wire `DashboardLive` to the authorized creation command; immediate post-commit visibility and manual Full Sync only. | Dashboard creation integration, committed-token replay, immediate visibility, and manual-only Full Sync tests pass. |
+| Gate C (programme) | **Implementation:** COMPLETE AND ACCEPTED. **Closure reconciliation (C3-B):** IN PROGRESS pending merge of this v1.3 update. | Gates C1, C2, and C3-A deliver §§10–11 on current main. | Evidence in Gate C1–C3-A rows; formal Gate C programme closure completes when C3-B is reviewed, merged, and post-merge verified. |
 | Gate D | NOT AUTHORIZED | Add server-authorized revoke/regrant behavior and stale-socket regression coverage. | Revoked rows stay terminal; configuration remains additive; every protected operation resolves current authority. |
 | Gate E | NOT AUTHORIZED | Production certification of `Create → immediately visible → manual Full Sync → Scanner → check-in` with no `DASHBOARD_ALLOWED_EVENT_IDS` edit for the new Event. | Reviewed production evidence, no isolation regression, and successful post-merge CI. |
 
@@ -358,6 +366,6 @@ Stop and return to authority review if any of these conditions occurs:
 - `STOP=EXTERNAL_CALL_INSIDE_DB_TRANSACTION` if Tickera or another external request must run inside the Event/grant transaction.
 - `STOP=IDEMPOTENCY_OWNERSHIP_UNRESOLVED` if the Event-row creation token cannot enforce one committed Event per logical submission and recover a successful retry.
 - `STOP=EVENT_DELETION_POLICY_UNRESOLVED` if restrictive grant-history retention cannot be reconciled with Event deletion.
-- `STOP=UNAUTHORIZED_GATE_IMPLEMENTATION_STARTED` if code or migrations for Gate C, D, or E are changed before that gate receives separate explicit authorization.
+- `STOP=UNAUTHORIZED_GATE_IMPLEMENTATION_STARTED` if code or migrations for Gate D or E are changed before that gate receives separate explicit authorization.
 
-This v1.2 authority-state reconciliation does not authorize Gate C. After opening this docs-only PR, stop for review. Do not start Gate C, D, or E without separate explicit authorization.
+This v1.3 authority-state reconciliation records accepted Gate C implementation and proposes Gate C programme closure when C3-B is merged and post-merge verified. It does not authorize Gate D or Gate E. After opening this docs-only PR, stop for C3-B review. Do not start Gate D or Gate E without separate explicit authorization.
