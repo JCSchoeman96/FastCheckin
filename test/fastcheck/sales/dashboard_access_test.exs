@@ -13,7 +13,8 @@ defmodule FastCheck.Sales.DashboardAccessTest do
     Application.put_env(:fastcheck, :dashboard_auth, %{
       username: @dashboard_username,
       password: "test-password",
-      allowed_event_ids: [12, 14]
+      allowed_event_ids: [12, 14],
+      event_creation_enabled: true
     })
 
     on_exit(fn -> restore_dashboard_auth(previous_auth) end)
@@ -46,6 +47,24 @@ defmodule FastCheck.Sales.DashboardAccessTest do
     operator = %{actor_type: :operator, username: @dashboard_username}
 
     assert DashboardAccess.revalidate_identity(operator) == {:error, :unauthorized}
+  end
+
+  test "creation authority requires the current identity and enabled creation flag" do
+    {result, queries} =
+      capture_repo_queries(fn ->
+        DashboardAccess.revalidate_event_creation_authority(@dashboard_username)
+      end)
+
+    assert result == {:ok, @dashboard_username}
+    assert queries == []
+
+    configure_auth(%{event_creation_enabled: false})
+
+    assert DashboardAccess.revalidate_event_creation_authority(@dashboard_username) ==
+             {:error, :event_creation_disabled}
+
+    assert DashboardAccess.revalidate_event_creation_authority("another-admin") ==
+             {:error, :unauthorized}
   end
 
   test "adds an active durable grant to actor allowed Event IDs" do
@@ -116,6 +135,40 @@ defmodule FastCheck.Sales.DashboardAccessTest do
     actor = admin_actor(@dashboard_username)
 
     assert DashboardAccess.event_granted?(actor, event.id)
+  end
+
+  test "exact identity authority short-circuits config or makes one indexed grant query" do
+    event = create_event()
+    configure_allowed_event_ids([event.id])
+
+    {configured?, configured_queries} =
+      capture_repo_queries(fn ->
+        DashboardAccess.event_granted_for_identity?(@dashboard_username, event.id)
+      end)
+
+    assert configured?
+    assert configured_queries == []
+
+    configure_allowed_event_ids([])
+    insert_active_grant!(event, @dashboard_username)
+
+    {durable?, durable_queries} =
+      capture_repo_queries(fn ->
+        DashboardAccess.event_granted_for_identity?(@dashboard_username, event.id)
+      end)
+
+    grant_queries =
+      Enum.filter(
+        durable_queries,
+        &String.contains?(String.downcase(&1), "dashboard_event_grants")
+      )
+
+    assert durable?
+    assert [query] = grant_queries
+    assert String.downcase(query) =~ "dashboard_identity"
+    assert String.downcase(query) =~ "event_id"
+    assert String.downcase(query) =~ "state"
+    refute DashboardAccess.event_granted_for_identity?("another-admin", event.id)
   end
 
   test "a protected DB-only Event check issues one exact active-grant query" do

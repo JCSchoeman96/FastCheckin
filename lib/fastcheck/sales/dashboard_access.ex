@@ -42,6 +42,19 @@ defmodule FastCheck.Sales.DashboardAccess do
   end
 
   @doc """
+  Revalidates a current dashboard identity and its Event-creation capability.
+  """
+  @spec revalidate_event_creation_authority(term()) ::
+          {:ok, String.t()} | {:error, :unauthorized | :event_creation_disabled}
+  def revalidate_event_creation_authority(identity) do
+    case verified_dashboard_identity(identity) do
+      {:ok, username, %{event_creation_enabled: true}} -> {:ok, username}
+      {:ok, _username, _auth} -> {:error, :event_creation_disabled}
+      :error -> {:error, :unauthorized}
+    end
+  end
+
+  @doc """
   Returns the current effective union of configured and active durable Event
   grants for an actor whose identity still matches current dashboard configuration.
   """
@@ -76,6 +89,30 @@ defmodule FastCheck.Sales.DashboardAccess do
   end
 
   def event_granted?(_actor, _event_id), do: false
+
+  @doc """
+  Checks current exact Event authority for a verified dashboard identity.
+
+  Configured Event IDs short-circuit the check. DB-only authority uses one exact
+  indexed active-grant existence query.
+  """
+  @spec event_granted_for_identity?(term(), term()) :: boolean()
+  def event_granted_for_identity?(identity, event_id)
+      when is_integer(event_id) and event_id > 0 do
+    case verified_dashboard_identity(identity) do
+      {:ok, username, auth} ->
+        if event_id in configured_event_ids(auth) do
+          true
+        else
+          active_grant_exists?(username, event_id)
+        end
+
+      :error ->
+        false
+    end
+  end
+
+  def event_granted_for_identity?(_identity, _event_id), do: false
 
   defp identity_username(username) when is_binary(username), do: username
 

@@ -8,6 +8,7 @@ defmodule FastCheck.Events do
   require Logger
 
   alias Ecto.Changeset
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Attendees.{Attendee, CheckIn}
   alias FastCheck.Cache.EtsLayer
   alias FastCheck.Repo
@@ -30,6 +31,8 @@ defmodule FastCheck.Events do
   @whatsapp_sales_status_fields [:id, :status, :whatsapp_sales_enabled]
   @whatsapp_sales_enabled_fields [:id, :whatsapp_sales_enabled]
   @whatsapp_quantity_cap_fields [:id, :status, :whatsapp_max_tickets_per_order]
+  @dashboard_creation_token_regex ~r/\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z/
+  @dashboard_creation_token_index "events_dashboard_creation_token_uidx"
 
   @attr_atom_lookup %{
     "site_url" => :site_url,
@@ -623,6 +626,57 @@ defmodule FastCheck.Events do
   """
   @spec create_event(map()) :: {:ok, Event.t()} | {:error, String.t() | Changeset.t()}
   def create_event(attrs) when is_map(attrs) do
+    case prepare_event_creation_attrs(attrs) do
+      {:ok, {_site_url, event_attrs}} ->
+        case %Event{} |> Event.changeset(event_attrs) |> Repo.insert() do
+          {:ok, %Event{} = event} ->
+            Logger.info("Created event #{event.id}")
+            _ = Cache.persist_event_cache(event)
+            Cache.invalidate_events_list_cache()
+            {:ok, event}
+
+          {:error, %Changeset{} = changeset} ->
+            {:error, changeset}
+
+          {:error, reason} ->
+            Logger.error("Unable to persist Event")
+            {:error, credential_error_message(reason)}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  def create_event(_), do: {:error, "Invalid attributes"}
+
+  @doc "Returns a server-generated UUID for one dashboard Event creation attempt."
+  @spec new_dashboard_creation_token() :: String.t()
+  def new_dashboard_creation_token, do: Ecto.UUID.generate()
+
+  @doc """
+  Creates a dashboard Event and its creator grant in one PostgreSQL transaction.
+
+  Tickera requests and credential preparation run before the transaction. The
+  supplied identity and creation token are revalidated at this command boundary.
+  """
+  @spec create_event_for_dashboard(term(), term(), term()) ::
+          {:ok, Event.t()} | {:error, term()}
+  def create_event_for_dashboard(identity, creation_token, attrs) do
+    with {:ok, _username} <- DashboardAccess.revalidate_event_creation_authority(identity),
+         {:ok, token} <- validate_dashboard_creation_token(creation_token),
+         true <- is_map(attrs) do
+      case get_event_by_dashboard_creation_token(token) do
+        %Event{} = event -> authorize_dashboard_event_replay(identity, event)
+        nil -> create_dashboard_event(identity, token, attrs)
+      end
+    else
+      false -> {:error, "Invalid attributes"}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp prepare_event_creation_attrs(attrs) do
     site_url =
       attrs
       |> fetch_attr("tickera_site_url")
@@ -652,34 +706,149 @@ defmodule FastCheck.Events do
          {:ok, credential_struct} <-
            set_mobile_access_secret(credential_struct, mobile_access_code),
          credential_attrs <- credential_attrs_from_struct(credential_struct),
-         event_attrs <- credential_attrs |> Map.merge(build_event_attrs(attrs, essentials)),
-         {:ok, %Event{} = event} <- %Event{} |> Event.changeset(event_attrs) |> Repo.insert() do
-      Logger.info("Created event #{event.id} for site #{site_url}")
-      _ = Cache.persist_event_cache(event)
-      Cache.invalidate_events_list_cache()
-      {:ok, event}
+         event_attrs <- credential_attrs |> Map.merge(build_event_attrs(attrs, essentials)) do
+      {:ok, {site_url, event_attrs}}
     else
       {:error, :invalid_credentials} ->
-        Logger.error("Failed to validate credentials for #{site_url}")
+        Logger.error("Failed to validate Tickera credentials")
         {:error, "Invalid API key or site URL mismatch"}
 
       {:error, %Changeset{} = changeset} ->
         {:error, changeset}
 
       {:error, :encryption_failed} ->
-        Logger.error("Unable to store credentials for #{site_url}: encryption failed")
+        Logger.error("Unable to encrypt Tickera credentials")
         {:error, "Unable to store Tickera credentials"}
 
       {:error, :invalid_mobile_secret} ->
         {:error, "Mobile access code can't be blank"}
 
       {:error, reason} ->
-        Logger.error("Unable to create event: #{inspect(reason)}")
+        Logger.error("Unable to prepare Event from Tickera data")
         {:error, credential_error_message(reason)}
     end
   end
 
-  def create_event(_), do: {:error, "Invalid attributes"}
+  defp create_dashboard_event(identity, token, attrs) do
+    with {:ok, {_site_url, event_attrs}} <- prepare_event_creation_attrs(attrs) do
+      event_changeset =
+        %Event{}
+        |> Event.changeset(event_attrs)
+        |> Changeset.put_change(:dashboard_creation_token, token)
+        |> Changeset.unique_constraint(:dashboard_creation_token,
+          name: @dashboard_creation_token_index
+        )
+
+      with {:ok, username} <- DashboardAccess.revalidate_event_creation_authority(identity) do
+        case insert_dashboard_event_and_grant(event_changeset, username) do
+          {:ok, %Event{} = event} ->
+            persist_dashboard_event_cache(event)
+            {:ok, event}
+
+          {:error, {:event, %Changeset{} = changeset}} ->
+            if duplicate_dashboard_creation_token?(changeset) do
+              recover_dashboard_event(identity, token)
+            else
+              {:error, changeset}
+            end
+
+          {:error, {:grant, %Changeset{} = changeset}} ->
+            {:error, changeset}
+
+          {:error, :database_error} = error ->
+            error
+        end
+      end
+    end
+  end
+
+  defp insert_dashboard_event_and_grant(event_changeset, username) do
+    Repo.transaction(fn ->
+      case Repo.insert(event_changeset) do
+        {:ok, %Event{} = event} ->
+          grant_changeset =
+            %DashboardEventGrant{}
+            |> DashboardEventGrant.changeset(%{
+              dashboard_identity: username,
+              event_id: event.id,
+              granted_at: DateTime.utc_now() |> DateTime.truncate(:second),
+              granted_by: username
+            })
+
+          case Repo.insert(grant_changeset) do
+            {:ok, _grant} -> event
+            {:error, changeset} -> Repo.rollback({:grant, changeset})
+          end
+
+        {:error, changeset} ->
+          Repo.rollback({:event, changeset})
+      end
+    end)
+  rescue
+    Ecto.ConstraintError -> {:error, :database_error}
+    Postgrex.Error -> {:error, :database_error}
+    DBConnection.ConnectionError -> {:error, :database_error}
+  end
+
+  defp authorize_dashboard_event_replay(identity, %Event{} = event) do
+    with {:ok, _username} <- DashboardAccess.revalidate_event_creation_authority(identity),
+         true <- DashboardAccess.event_granted_for_identity?(identity, event.id) do
+      {:ok, event}
+    else
+      false -> {:error, :unauthorized}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp recover_dashboard_event(identity, token) do
+    case get_event_by_dashboard_creation_token(token) do
+      %Event{} = event -> authorize_dashboard_event_replay(identity, event)
+      nil -> {:error, :dashboard_creation_conflict}
+    end
+  end
+
+  defp get_event_by_dashboard_creation_token(token) do
+    Repo.one(
+      from event in Event,
+        where:
+          not is_nil(event.dashboard_creation_token) and
+            event.dashboard_creation_token == ^token
+    )
+  end
+
+  defp validate_dashboard_creation_token(token) when is_binary(token) do
+    if String.valid?(token) and Regex.match?(@dashboard_creation_token_regex, token) do
+      case Ecto.UUID.cast(token) do
+        {:ok, normalized} -> {:ok, normalized}
+        :error -> {:error, :invalid_dashboard_creation_token}
+      end
+    else
+      {:error, :invalid_dashboard_creation_token}
+    end
+  end
+
+  defp validate_dashboard_creation_token(_token),
+    do: {:error, :invalid_dashboard_creation_token}
+
+  defp duplicate_dashboard_creation_token?(%Changeset{errors: errors}) do
+    Enum.any?(Keyword.get_values(errors, :dashboard_creation_token), fn
+      {_message, options} ->
+        Keyword.get(options, :constraint_name) == @dashboard_creation_token_index
+
+      _error ->
+        false
+    end)
+  end
+
+  defp persist_dashboard_event_cache(%Event{} = event) do
+    _ = Cache.persist_event_cache(event)
+    _ = Cache.invalidate_events_list_cache()
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    :exit, _reason -> :ok
+  end
 
   @doc """
   Archives an event by setting its status to "archived".
