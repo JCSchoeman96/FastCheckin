@@ -50,6 +50,7 @@ defmodule FastCheck.Events.Event do
           last_checked_at: DateTime.t() | nil,
           last_config_sync: DateTime.t() | nil,
           event_sync_version: integer() | nil,
+          dashboard_creation_token: Ecto.UUID.t() | nil,
           attendees: [FastCheck.Attendees.Attendee.t()] | Ecto.Association.NotLoaded.t(),
           dashboard_event_grants:
             [FastCheck.Access.DashboardEventGrant.t()] | Ecto.Association.NotLoaded.t(),
@@ -107,6 +108,7 @@ defmodule FastCheck.Events.Event do
 
     # Monotonic version for mobile attendee/invalidation sync (bumped once per export-affecting txn)
     field :event_sync_version, :integer, default: 0
+    field :dashboard_creation_token, Ecto.UUID
 
     # Relationship to all attendees belonging to the event
     has_many :attendees, FastCheck.Attendees.Attendee
