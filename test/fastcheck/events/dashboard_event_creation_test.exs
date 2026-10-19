@@ -308,42 +308,53 @@ defmodule FastCheck.Events.DashboardEventCreationTest do
     assert events_for_token(second_token) == []
   end
 
-  test "concurrent requests with one token resolve to one Event and one creator grant" do
+  test "concurrent requests with one token recover the committed Event across independent sessions" do
     token = Ecto.UUID.generate()
     parent = self()
     install_concurrent_tickera_mock(parent)
 
+    on_exit(fn -> delete_committed_dashboard_event!(token) end)
+
+    assert committed_events_for_token(token) == []
+
     tasks =
       for _ <- 1..2 do
         Task.async(fn ->
-          receive do
-            :start ->
-              Events.create_event_for_dashboard(@dashboard_username, token, create_attrs())
-          end
+          Sandbox.unboxed_run(Repo, fn ->
+            Events.create_event_for_dashboard(@dashboard_username, token, create_attrs())
+          end)
         end)
       end
 
-    Enum.each(tasks, &Sandbox.allow(Repo, self(), &1.pid))
-    Enum.each(tasks, &send(&1.pid, :start))
+    try do
+      barrier_pids =
+        Enum.map(1..2, fn _request ->
+          assert_receive {:tickera_essentials_waiting, pid}, 5_000
+          pid
+        end)
 
-    assert_receive {:tickera_essentials_waiting, first_pid}, 5_000
-    assert_receive {:tickera_essentials_waiting, second_pid}, 5_000
-    refute first_pid == second_pid
+      assert length(Enum.uniq(barrier_pids)) == 2
+      Enum.each(barrier_pids, &send(&1, :continue))
 
-    send(first_pid, :continue)
-    send(second_pid, :continue)
+      assert [{:ok, first}, {:ok, second}] = Task.await_many(tasks, 15_000)
+      assert first.id == second.id
 
-    results = Enum.map(tasks, &Task.await(&1, 10_000))
-    assert [{:ok, first}, {:ok, second}] = results
-    assert first.id == second.id
+      assert [stored_event] = committed_events_for_token(token)
+      assert stored_event.id == first.id
 
-    assert [stored_event] = events_for_token(token)
-    assert stored_event.id == first.id
-    assert [%DashboardEventGrant{state: "active"} = grant] = grants_for_event(first.id)
-    assert grant.dashboard_identity == @dashboard_username
-    assert grant.granted_by == @dashboard_username
+      assert [%DashboardEventGrant{state: "active"} = grant] =
+               committed_grants_for_event(first.id)
 
-    assert %{rows: [[1]]} = Repo.query!("SELECT 1")
+      assert grant.dashboard_identity == @dashboard_username
+      assert grant.granted_by == @dashboard_username
+      assert grant.event_id == first.id
+
+      assert %{rows: [[1]]} =
+               Sandbox.unboxed_run(Repo, fn -> Repo.query!("SELECT 1") end)
+    after
+      Enum.each(tasks, fn task -> send(task.pid, :continue) end)
+      Enum.each(tasks, &stop_task_if_alive/1)
+    end
   end
 
   defp create_attrs do
@@ -413,12 +424,49 @@ defmodule FastCheck.Events.DashboardEventCreationTest do
     Repo.all(from event in Event, where: event.dashboard_creation_token == ^token)
   end
 
+  defp committed_events_for_token(token) do
+    Sandbox.unboxed_run(Repo, fn ->
+      Repo.all(from event in Event, where: event.dashboard_creation_token == ^token)
+    end)
+  end
+
   defp database_counts do
     {Repo.aggregate(Event, :count), Repo.aggregate(DashboardEventGrant, :count)}
   end
 
   defp grants_for_event(event_id) do
     Repo.all(from grant in DashboardEventGrant, where: grant.event_id == ^event_id)
+  end
+
+  defp committed_grants_for_event(event_id) do
+    Sandbox.unboxed_run(Repo, fn ->
+      Repo.all(from grant in DashboardEventGrant, where: grant.event_id == ^event_id)
+    end)
+  end
+
+  defp delete_committed_dashboard_event!(token) do
+    Sandbox.unboxed_run(Repo, fn ->
+      Repo.transaction(fn ->
+        event_ids =
+          Repo.all(
+            from event in Event,
+              where: event.dashboard_creation_token == ^token,
+              select: event.id
+          )
+
+        Repo.delete_all(from grant in DashboardEventGrant, where: grant.event_id in ^event_ids)
+        Repo.delete_all(from event in Event, where: event.id in ^event_ids)
+      end)
+    end)
+  end
+
+  defp stop_task_if_alive(%Task{pid: pid} = task) do
+    if Process.alive?(pid) do
+      case Task.yield(task, 5_000) do
+        nil -> Task.shutdown(task, :brutal_kill)
+        _result -> :ok
+      end
+    end
   end
 
   defp revoke_creator_grant!(event_id) do
