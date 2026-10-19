@@ -617,7 +617,7 @@ defmodule FastCheck.AttendeesTest do
       assert_in_delta breakdown.occupancy_percentage, 33.33, 0.1
     end
 
-    test "caches occupancy breakdown for two seconds" do
+    test "uses the default occupancy TTL and refreshes after a cache miss" do
       event = insert_event!("Cached occupancy")
       attendee = create_attendee_record(event, %{allowed_checkins: 1, checkins_remaining: 1})
 
@@ -625,6 +625,7 @@ defmodule FastCheck.AttendeesTest do
       assert initial.currently_inside == 0
 
       cache_key = "occupancy:event:#{event.id}:breakdown"
+      on_exit(fn -> Cachex.del(:fastcheck_cache, cache_key) end)
 
       assert {:ok, %{} = cached} = Cachex.get(:fastcheck_cache, cache_key)
       assert cached == initial
@@ -632,6 +633,8 @@ defmodule FastCheck.AttendeesTest do
       assert {:ok, ttl} = Cachex.ttl(:fastcheck_cache, cache_key)
       assert ttl <= 2_000
       assert ttl > 0
+
+      assert {:ok, true} = Cachex.put(:fastcheck_cache, cache_key, cached, ttl: 30_000)
 
       assert {:ok, %Attendee{}, "SUCCESS"} =
                Attendees.check_in_advanced(
@@ -645,7 +648,7 @@ defmodule FastCheck.AttendeesTest do
       cached_breakdown = Attendees.get_occupancy_breakdown(event.id)
       assert cached_breakdown.currently_inside == 0
 
-      Process.sleep(2_100)
+      assert {:ok, true} = Cachex.del(:fastcheck_cache, cache_key)
 
       refreshed = Attendees.get_occupancy_breakdown(event.id)
       assert refreshed.currently_inside == 1
