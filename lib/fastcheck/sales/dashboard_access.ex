@@ -8,6 +8,7 @@ defmodule FastCheck.Sales.DashboardAccess do
   `allowed_event_ids` values are never treated as authority by this boundary.
   """
 
+  alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Access.DashboardEventGrants
 
   @type actor :: %{
@@ -114,6 +115,55 @@ defmodule FastCheck.Sales.DashboardAccess do
 
   def event_granted_for_identity?(_identity, _event_id), do: false
 
+  @doc """
+  Server-authorized durable grant revocation for the current trusted identity.
+
+  Resolves effective access after commit using configured bootstrap grants plus
+  any remaining active durable grant.
+  """
+  @spec revoke_event_grant(term(), pos_integer()) ::
+          {:ok, %{status: :revoked | :already_revoked, effective_access: :granted | :denied}}
+          | {:error, :unauthorized}
+          | {:error, :not_found}
+  def revoke_event_grant(identity, event_id) when is_integer(event_id) and event_id > 0 do
+    with {:ok, username, auth} <- verified_dashboard_identity(identity),
+         {:ok, status, _grant} <-
+           DashboardEventGrants.revoke_active_for_verified_identity(username, event_id) do
+      {:ok,
+       %{
+         status: status,
+         effective_access: effective_access_for_event(username, auth, event_id)
+       }}
+    else
+      :error -> {:error, :unauthorized}
+      {:error, :not_found} -> {:error, :not_found}
+    end
+  end
+
+  def revoke_event_grant(_identity, _event_id), do: {:error, :not_found}
+
+  @doc """
+  Server-authorized durable grant regrant for the current trusted identity.
+
+  Inserts a new active row only when revoked history exists for the identity and
+  Event; it cannot create the first-ever grant for an arbitrary Event ID.
+  """
+  @spec regrant_event_grant(term(), pos_integer()) ::
+          {:ok, DashboardEventGrant.t()}
+          | {:error, :unauthorized}
+          | {:error, :not_found}
+  def regrant_event_grant(identity, event_id) when is_integer(event_id) and event_id > 0 do
+    with {:ok, username, _auth} <- verified_dashboard_identity(identity),
+         {:ok, grant} <- DashboardEventGrants.regrant_for_verified_identity(username, event_id) do
+      {:ok, grant}
+    else
+      :error -> {:error, :unauthorized}
+      {:error, :not_found} -> {:error, :not_found}
+    end
+  end
+
+  def regrant_event_grant(_identity, _event_id), do: {:error, :not_found}
+
   defp identity_username(username) when is_binary(username), do: username
 
   defp identity_username(%{username: username}) when is_binary(username), do: username
@@ -190,4 +240,12 @@ defmodule FastCheck.Sales.DashboardAccess do
   end
 
   defp configured_event_ids(_auth), do: []
+
+  defp effective_access_for_event(username, auth, event_id) do
+    if event_id in configured_event_ids(auth) or active_grant_exists?(username, event_id) do
+      :granted
+    else
+      :denied
+    end
+  end
 end
