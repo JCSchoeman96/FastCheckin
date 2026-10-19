@@ -984,6 +984,9 @@ defmodule FastCheckWeb.DashboardLiveTest do
                "#create-event-form input[name='event[tickera_api_key_encrypted]']"
              )
 
+      creation_token = dashboard_creation_token(view)
+      assert {:ok, _uuid} = Ecto.UUID.cast(creation_token)
+
       assert has_element?(view, "#create-event-form input[name='event[mobile_access_code]']")
       refute has_element?(view, "#create-event-form input[name='event[name]']")
       assert has_element?(view, "#create-event-advanced")
@@ -992,6 +995,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute has_element?(view, "#create-event-enable-whatsapp-sales")
 
       html = render(view)
+      refute html =~ ~r/>#{Regex.escape(creation_token)}\s*</
       refute html =~ "Enable WhatsApp sales for this event"
 
       site_url_input_html =
@@ -1005,7 +1009,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute html =~ "6-character event code"
     end
 
-    test "successful creation stays pending grant and does not auto-sync", %{conn: conn} do
+    test "successful creation is immediately visible through its creator grant and stays manual",
+         %{conn: conn} do
       configure_dashboard_creation(true)
       test_pid = self()
 
@@ -1029,6 +1034,8 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> element("#show-new-event-form-button")
       |> render_click()
 
+      creation_token = dashboard_creation_token(view)
+
       view
       |> form("#create-event-form", %{
         "event" => %{
@@ -1045,20 +1052,29 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert %Event{} = created
       assert created.entrance_name == "Main Gate"
+      assert created.dashboard_creation_token == creation_token
+
+      [creator_grant] = active_dashboard_grants(created.id)
+      assert creator_grant.dashboard_identity == "admin"
+      assert creator_grant.granted_by == "admin"
 
       html = render(view)
 
-      assert html =~
-               "CREATED_PENDING_SERVER_GRANT: Event created with ID #{created.id}."
-
+      assert html =~ "Auto Sync Event"
+      assert html =~ "Event created successfully with ID #{created.id}. Full Sync remains manual."
+      refute html =~ "CREATED_PENDING_SERVER_GRANT"
+      refute html =~ "DASHBOARD_ALLOWED_EVENT_IDS"
       refute html =~ "Starting full attendee sync"
-      refute has_element?(view, "#full-sync-#{created.id}")
+      assert has_element?(view, "#full-sync-#{created.id}")
       refute has_element?(view, "#create-event-form")
       assert Repo.aggregate(SyncLog, :count) == 0
       refute Events.get_event!(created.id).whatsapp_sales_enabled
       {:ok, actor} = DashboardAccess.actor_for_identity("admin")
-      refute created.id in DashboardAccess.allowed_event_ids(actor)
+      assert created.id in DashboardAccess.allowed_event_ids(actor)
       refute_receive :create_started_sync, 100
+
+      view |> element("#show-new-event-form-button") |> render_click()
+      assert dashboard_creation_token(view) != creation_token
     end
 
     test "forged create payload cannot enable WhatsApp sales", %{
@@ -1087,9 +1103,12 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> element("#show-new-event-form-button")
       |> render_click()
 
+      creation_token = dashboard_creation_token(view)
+
       refute has_element?(view, "#create-event-enable-whatsapp-sales")
 
       render_click(view, "create_event", %{
+        "dashboard_creation_token" => creation_token,
         "event" => %{
           "tickera_api_key_encrypted" => "live-api-key-whatsapp",
           "mobile_access_code" => "door-secret-wa",
@@ -1100,15 +1119,90 @@ defmodule FastCheckWeb.DashboardLiveTest do
         }
       })
 
-      created =
-        Events.list_events()
-        |> Enum.find(&(&1.name == "WhatsApp Enabled Create Event"))
-
-      assert %Event{} = created
+      created = Repo.get_by!(Event, name: "WhatsApp Enabled Create Event")
+      [creator_grant] = active_dashboard_grants(created.id)
+      assert creator_grant.granted_by == "admin"
+      assert has_element?(view, "#full-sync-#{created.id}")
+      assert render(view) =~ "WhatsApp Enabled Create Event"
       refute Events.get_event!(created.id).whatsapp_sales_enabled
-      assert render(view) =~ "CREATED_PENDING_SERVER_GRANT"
-      refute has_element?(view, "#full-sync-#{created.id}")
+      assert render(view) =~ "Event created successfully"
+      refute render(view) =~ "CREATED_PENDING_SERVER_GRANT"
+      refute render(view) =~ "Starting full attendee sync"
       refute_receive :create_started_sync, 100
+      assert Repo.aggregate(SyncLog, :count) == 0
+    end
+
+    test "replaying a committed token returns the original Event without another Tickera call",
+         %{conn: conn} do
+      configure_dashboard_creation(true)
+      requests = :counters.new(1, [])
+
+      mock_tickera_requests(
+        %{
+          "event_name" => "Original Replay Event",
+          "event_date_time" => "2026-02-19T19:00:00Z",
+          "event_location" => "Original Venue",
+          "sold_tickets" => 12,
+          "checked_tickets" => 0,
+          "pass" => true
+        },
+        on_request: fn _path -> :counters.add(requests, 1, 1) end
+      )
+
+      {:ok, view, _html} = mount_dashboard(conn, [])
+
+      render_click(view, "show_new_event_form", %{})
+      creation_token = dashboard_creation_token(view)
+
+      view
+      |> form("#create-event-form", %{
+        "event" => %{
+          "tickera_api_key_encrypted" => "replay-api-key",
+          "mobile_access_code" => "replay-door-secret",
+          "tickera_site_url" => "https://voelgoed.co.za"
+        }
+      })
+      |> render_submit()
+
+      created = Repo.get_by!(Event, name: "Original Replay Event")
+      initial_tickera_requests = :counters.get(requests, 1)
+      assert initial_tickera_requests > 0
+
+      render_click(view, "show_new_event_form", %{})
+      second_token = dashboard_creation_token(view)
+      refute second_token == creation_token
+
+      render_click(view, "create_event", %{
+        "dashboard_creation_token" => creation_token,
+        "event" => %{
+          "name" => "Changed Replay Name",
+          "location" => "Changed Replay Venue",
+          "tickera_api_key_encrypted" => "changed-replay-api-key",
+          "mobile_access_code" => "changed-door-secret",
+          "tickera_site_url" => "https://invalid.example"
+        }
+      })
+
+      replayed = Repo.get!(Event, created.id)
+      assert replayed.name == "Original Replay Event"
+      assert replayed.location == "Original Venue"
+      assert replayed.dashboard_creation_token == creation_token
+
+      assert Repo.aggregate(
+               from(event in Event, where: event.dashboard_creation_token == ^creation_token),
+               :count
+             ) == 1
+
+      assert length(active_dashboard_grants(created.id)) == 1
+      assert :counters.get(requests, 1) == initial_tickera_requests
+      assert has_element?(view, "#full-sync-#{created.id}")
+
+      assert render(view) =~
+               "Event created successfully with ID #{created.id}. Full Sync remains manual."
+
+      refute has_element?(view, "#create-event-form")
+      refute has_element?(view, "input[name='dashboard_creation_token']")
+      refute Events.get_event!(created.id).whatsapp_sales_enabled
       assert Repo.aggregate(SyncLog, :count) == 0
     end
 
@@ -1152,7 +1246,10 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> element("#show-new-event-form-button")
       |> render_click()
 
+      submitted_token = dashboard_creation_token(view)
+
       event_count_before = Repo.aggregate(Event, :count)
+      grant_count_before = Repo.aggregate(DashboardEventGrant, :count)
       sync_log_count_before = Repo.aggregate(SyncLog, :count)
 
       Application.put_env(
@@ -1172,6 +1269,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       end)
 
       render_click(view, "create_event", %{
+        "dashboard_creation_token" => submitted_token,
         "event" => %{
           "name" => "Stale Identity Event Must Not Exist",
           "tickera_api_key_encrypted" => "stale-identity-api-key",
@@ -1183,16 +1281,25 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert Repo.get_by(Event, name: "Stale Identity Event Must Not Exist") == nil
       assert Repo.aggregate(Event, :count) == event_count_before
+      assert Repo.aggregate(DashboardEventGrant, :count) == grant_count_before
       assert Repo.aggregate(SyncLog, :count) == sync_log_count_before
       assert render(view) =~ "Event creation is unavailable"
       refute has_element?(view, "#create-event-form")
+      refute has_element?(view, "input[name='dashboard_creation_token']")
       refute_receive :stale_identity_tickera_request, 100
     end
 
-    test "failed create keeps the form open without creation-only WhatsApp controls", %{
-      conn: conn
-    } do
+    test "failed create keeps the token stable for a corrected retry", %{conn: conn} do
       configure_dashboard_creation(true)
+
+      event_essentials = %{
+        "event_name" => "Retry After Failure Event",
+        "event_date_time" => "2026-02-19T19:00:00Z",
+        "event_location" => "Retry Venue",
+        "sold_tickets" => 75,
+        "checked_tickets" => 3,
+        "pass" => true
+      }
 
       Application.put_env(:fastcheck, :tickera_request_fun, fn _req ->
         {:ok, %Response{status: 200, body: %{"pass" => false}}}
@@ -1203,6 +1310,10 @@ defmodule FastCheckWeb.DashboardLiveTest do
       view
       |> element("#show-new-event-form-button")
       |> render_click()
+
+      creation_token = dashboard_creation_token(view)
+      event_count_before = Repo.aggregate(Event, :count)
+      grant_count_before = Repo.aggregate(DashboardEventGrant, :count)
 
       view
       |> form("#create-event-form", %{
@@ -1216,7 +1327,55 @@ defmodule FastCheckWeb.DashboardLiveTest do
 
       assert render(view) =~ "Unable to create event"
       assert has_element?(view, "#create-event-form")
+      assert dashboard_creation_token(view) == creation_token
       refute has_element?(view, "#create-event-enable-whatsapp-sales")
+      assert Repo.aggregate(Event, :count) == event_count_before
+      assert Repo.aggregate(DashboardEventGrant, :count) == grant_count_before
+
+      mock_tickera_requests(event_essentials, [])
+
+      view
+      |> form("#create-event-form", %{
+        "event" => %{
+          "tickera_api_key_encrypted" => "corrected-key",
+          "mobile_access_code" => "door-secret",
+          "tickera_site_url" => "https://voelgoed.co.za"
+        }
+      })
+      |> render_submit()
+
+      created = Repo.get_by!(Event, name: "Retry After Failure Event")
+      assert created.dashboard_creation_token == creation_token
+      assert length(active_dashboard_grants(created.id)) == 1
+    end
+
+    test "cancelling and reopening the create form starts a new token attempt", %{conn: conn} do
+      configure_dashboard_creation(true)
+      {:ok, view, _html} = mount_dashboard(conn, [])
+
+      render_click(view, "show_new_event_form", %{})
+      first_token = dashboard_creation_token(view)
+
+      render_click(view, "show_new_event_form", %{})
+      assert dashboard_creation_token(view) == first_token
+
+      render_click(view, "hide_new_event_form", %{})
+      refute has_element?(view, "#create-event-form")
+      refute has_element?(view, "input[name='dashboard_creation_token']")
+
+      render_click(view, "show_new_event_form", %{})
+      second_token = dashboard_creation_token(view)
+
+      assert {:ok, _uuid} = Ecto.UUID.cast(second_token)
+      refute second_token == first_token
+    end
+
+    test "malformed creation token fails closed before Tickera", %{conn: conn} do
+      assert_invalid_creation_token_rejected(conn, "not-a-uuid")
+    end
+
+    test "missing creation token fails closed before Tickera", %{conn: conn} do
+      assert_invalid_creation_token_rejected(conn, nil)
     end
 
     test "creation does not start another sync while an existing sync is running", %{conn: conn} do
@@ -1242,6 +1401,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> render_click()
 
       assert render(view) =~ "Starting full attendee sync..."
+      sync_logs_before_create = Repo.aggregate(SyncLog, :count)
 
       view
       |> element("#show-new-event-form-button")
@@ -1260,9 +1420,13 @@ defmodule FastCheckWeb.DashboardLiveTest do
       |> render_submit()
 
       created = Repo.get_by!(Event, name: "Second Event")
-      assert render(view) =~ "CREATED_PENDING_SERVER_GRANT"
+      assert render(view) =~ "Event created successfully"
       refute render(view) =~ "Auto full sync not started"
-      refute has_element?(view, "#full-sync-#{created.id}")
+      assert has_element?(view, "#full-sync-#{created.id}")
+      assert Repo.get!(Event, created.id).dashboard_creation_token
+      assert length(active_dashboard_grants(created.id)) == 1
+      refute Repo.get!(Event, created.id).whatsapp_sales_enabled
+      assert Repo.aggregate(SyncLog, :count) == sync_logs_before_create
 
       assert_sync_finishes(view)
     end
@@ -1308,7 +1472,7 @@ defmodule FastCheckWeb.DashboardLiveTest do
       assert created.name == "Prelisted Future Event"
       assert has_element?(view, "#full-sync-#{future_event_id}")
       refute created.whatsapp_sales_enabled
-      assert render(view) =~ "CREATED_PENDING_SERVER_GRANT"
+      assert render(view) =~ "Event created successfully"
       refute render(view) =~ "Starting full attendee sync"
       refute_receive :future_create_started_sync, 100
     end
@@ -1600,6 +1764,66 @@ defmodule FastCheckWeb.DashboardLiveTest do
     conn
     |> init_test_session(%{dashboard_authenticated: true, dashboard_username: "admin"})
     |> live(~p"/dashboard")
+  end
+
+  defp dashboard_creation_token(view) do
+    input_html =
+      view
+      |> element("#create-event-form input[type='hidden'][name='dashboard_creation_token']")
+      |> render()
+
+    assert [_, token] = Regex.run(~r/\bvalue="([^"]+)"/, input_html)
+    token
+  end
+
+  defp active_dashboard_grants(event_id) do
+    Repo.all(
+      from grant in DashboardEventGrant,
+        where:
+          grant.dashboard_identity == "admin" and grant.event_id == ^event_id and
+            grant.state == "active"
+    )
+  end
+
+  defp assert_invalid_creation_token_rejected(conn, submitted_token) do
+    configure_dashboard_creation(true)
+    event_count_before = Repo.aggregate(Event, :count)
+    grant_count_before = Repo.aggregate(DashboardEventGrant, :count)
+    sync_log_count_before = Repo.aggregate(SyncLog, :count)
+    test_pid = self()
+
+    Application.put_env(:fastcheck, :tickera_request_fun, fn _req ->
+      send(test_pid, :invalid_creation_token_tickera_request)
+      {:ok, %Response{status: 200, body: %{"pass" => true}}}
+    end)
+
+    {:ok, view, _html} = mount_dashboard(conn, [])
+    render_click(view, "show_new_event_form", %{})
+    server_token = dashboard_creation_token(view)
+
+    params = %{
+      "event" => %{
+        "tickera_api_key_encrypted" => "invalid-token-api-key",
+        "mobile_access_code" => "invalid-token-door-secret",
+        "tickera_site_url" => "https://voelgoed.co.za"
+      }
+    }
+
+    params =
+      if is_nil(submitted_token),
+        do: params,
+        else: Map.put(params, "dashboard_creation_token", submitted_token)
+
+    render_click(view, "create_event", params)
+
+    assert render(view) =~ "Unable to create event"
+    assert has_element?(view, "#create-event-form")
+    assert dashboard_creation_token(view) == server_token
+    assert Repo.aggregate(Event, :count) == event_count_before
+    assert Repo.aggregate(DashboardEventGrant, :count) == grant_count_before
+    assert Repo.aggregate(SyncLog, :count) == sync_log_count_before
+    assert Process.alive?(view.pid)
+    refute_receive :invalid_creation_token_tickera_request, 100
   end
 
   defp insert_active_grant!(event) do

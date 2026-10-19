@@ -46,6 +46,7 @@ defmodule FastCheckWeb.DashboardLive do
      |> assign(:search_query, "")
      |> assign(:selected_event_id, nil)
      |> assign(:show_new_event_form, false)
+     |> assign(:dashboard_creation_token, nil)
      |> assign(:editing_event_id, nil)
      |> assign(:editing_event, nil)
      |> assign(:edit_form, nil)
@@ -77,11 +78,19 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_event("show_new_event_form", _params, socket) do
     if current_creation_authority?(socket) do
-      {:noreply, socket |> assign(:show_new_event_form, true) |> refresh_if_grants_changed()}
+      creation_token =
+        socket.assigns.dashboard_creation_token || Events.new_dashboard_creation_token()
+
+      {:noreply,
+       socket
+       |> assign(:dashboard_creation_token, creation_token)
+       |> assign(:show_new_event_form, true)
+       |> refresh_if_grants_changed()}
     else
       {:noreply,
        socket
        |> assign(:show_new_event_form, false)
+       |> assign(:dashboard_creation_token, nil)
        |> refresh_if_grants_changed()
        |> assign(:sync_status, creation_unavailable_message())}
     end
@@ -89,19 +98,26 @@ defmodule FastCheckWeb.DashboardLive do
 
   @impl true
   def handle_event("hide_new_event_form", _params, socket) do
-    {:noreply, socket |> assign(:show_new_event_form, false) |> refresh_if_grants_changed()}
+    {:noreply,
+     socket
+     |> assign(:show_new_event_form, false)
+     |> assign(:dashboard_creation_token, nil)
+     |> refresh_if_grants_changed()}
   end
 
   @impl true
-  def handle_event("create_event", %{"event" => event_params}, socket) do
+  def handle_event("create_event", %{"event" => event_params} = params, socket) do
     if current_creation_authority?(socket) do
-      case Events.create_event(
+      case Events.create_event_for_dashboard(
+             socket.assigns.dashboard_identity,
+             Map.get(params, "dashboard_creation_token"),
              Map.drop(event_params, ["enable_whatsapp_sales", :enable_whatsapp_sales])
            ) do
         {:ok, %Event{} = event} ->
           socket =
             socket
             |> assign(:show_new_event_form, false)
+            |> assign(:dashboard_creation_token, nil)
             |> assign(:form, empty_event_form(socket.assigns.default_tickera_site_url))
             |> refresh_event_list()
 
@@ -109,7 +125,7 @@ defmodule FastCheckWeb.DashboardLive do
            assign(
              socket,
              :sync_status,
-             "CREATED_PENDING_SERVER_GRANT: Event created with ID #{event.id}."
+             "Event created successfully with ID #{event.id}. Full Sync remains manual."
            )}
 
         {:error, %Changeset{} = changeset} ->
@@ -133,6 +149,7 @@ defmodule FastCheckWeb.DashboardLive do
       {:noreply,
        socket
        |> assign(:show_new_event_form, false)
+       |> assign(:dashboard_creation_token, nil)
        |> refresh_if_grants_changed()
        |> assign(:sync_status, creation_unavailable_message())}
     end
@@ -958,6 +975,12 @@ defmodule FastCheckWeb.DashboardLive do
               phx-submit="create_event"
               class="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2"
             >
+              <input
+                type="hidden"
+                name="dashboard_creation_token"
+                value={@dashboard_creation_token}
+              />
+
               <.input
                 field={@form[:tickera_api_key_encrypted]}
                 type="password"
@@ -2252,9 +2275,8 @@ defmodule FastCheckWeb.DashboardLive do
   defp current_creation_authority?(socket) do
     match?(
       {:ok, _username},
-      DashboardAccess.revalidate_identity(socket.assigns.dashboard_identity)
-    ) and
-      event_creation_enabled?()
+      DashboardAccess.revalidate_event_creation_authority(socket.assigns.dashboard_identity)
+    )
   end
 
   defp creation_unavailable_message do
