@@ -6,6 +6,7 @@ defmodule FastCheck.Access.DashboardEventGrantTransitionsTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias FastCheck.Access.DashboardEventGrant
   alias FastCheck.Access.DashboardEventGrants
+  alias FastCheck.Events.Event
   alias FastCheck.Sales.DashboardAccess
 
   @dashboard_username "admin"
@@ -74,30 +75,74 @@ defmodule FastCheck.Access.DashboardEventGrantTransitionsTest do
              ) == {:error, :not_found}
     end
 
-    test "concurrent revoke performs one transition and converges on already_revoked" do
+    test "supports revoke, regrant, and revoke again across multiple historical rows" do
       event = create_event()
-      insert_active_grant!(event, @dashboard_username)
-      parent = self()
+      grant_a = insert_active_grant!(event, @dashboard_username)
 
-      tasks =
-        for _ <- 1..2 do
-          Task.async(fn ->
-            Sandbox.allow(Repo, parent, self())
+      assert {:ok, :revoked, revoked_a} =
+               DashboardEventGrants.revoke_active_for_verified_identity(
+                 @dashboard_username,
+                 event.id
+               )
 
-            DashboardEventGrants.revoke_active_for_verified_identity(
-              @dashboard_username,
-              event.id
-            )
-          end)
-        end
+      assert revoked_a.id == grant_a.id
 
-      results = Task.await_many(tasks, 5_000)
+      assert {:ok, grant_b} =
+               DashboardEventGrants.regrant_for_verified_identity(@dashboard_username, event.id)
+
+      refute grant_b.id == grant_a.id
+      assert grant_b.state == "active"
+
+      assert {:ok, :revoked, revoked_b} =
+               DashboardEventGrants.revoke_active_for_verified_identity(
+                 @dashboard_username,
+                 event.id
+               )
+
+      assert revoked_b.id == grant_b.id
+      assert revoked_b.lock_version == 2
+
+      grants = grants_for_event(event.id)
+      assert Enum.count(grants, &(&1.state == "revoked")) == 2
+      refute Enum.any?(grants, &(&1.state == "active"))
+
+      revoked_a_after = Repo.get!(DashboardEventGrant, grant_a.id)
+      assert revoked_a_after.state == "revoked"
+      assert revoked_a_after.lock_version == 2
+
+      revoked_b_after = Repo.get!(DashboardEventGrant, grant_b.id)
+      revoked_at_b = revoked_b_after.revoked_at
+      lock_b = revoked_b_after.lock_version
+
+      assert {:ok, :already_revoked, already} =
+               DashboardEventGrants.revoke_active_for_verified_identity(
+                 @dashboard_username,
+                 event.id
+               )
+
+      assert already.id == grant_b.id
+      assert already.revoked_at == revoked_at_b
+      assert already.lock_version == lock_b
+      assert Repo.get!(DashboardEventGrant, grant_b.id).lock_version == lock_b
+    end
+
+    test "concurrent revoke performs one transition and converges on already_revoked" do
+      {event_id, _grant_id} = committed_active_grant!(@dashboard_username)
+      register_committed_event_cleanup!(event_id)
+
+      results =
+        concurrent_barrier_run(2, fn ->
+          DashboardEventGrants.revoke_active_for_verified_identity(
+            @dashboard_username,
+            event_id
+          )
+        end)
+
       statuses = Enum.map(results, &elem(&1, 1))
-
       assert Enum.sort(statuses) == [:already_revoked, :revoked]
 
       assert [%DashboardEventGrant{state: "revoked", lock_version: 2}] =
-               grants_for_event(event.id)
+               committed_grants_for_event(event_id)
     end
   end
 
@@ -145,28 +190,65 @@ defmodule FastCheck.Access.DashboardEventGrantTransitionsTest do
     end
 
     test "concurrent regrant converges on one active grant id" do
-      event = create_event()
-      insert_revoked_grant!(event, @dashboard_username)
-      parent = self()
+      {event_id, _revoked_id} = committed_revoked_history!(@dashboard_username)
+      register_committed_event_cleanup!(event_id)
 
-      tasks =
-        for _ <- 1..2 do
-          Task.async(fn ->
-            Sandbox.allow(Repo, parent, self())
+      assert [{:ok, first}, {:ok, second}] =
+               concurrent_barrier_run(2, fn ->
+                 DashboardEventGrants.regrant_for_verified_identity(@dashboard_username, event_id)
+               end)
 
-            DashboardEventGrants.regrant_for_verified_identity(@dashboard_username, event.id)
-          end)
-        end
-
-      assert [{:ok, first}, {:ok, second}] = Task.await_many(tasks, 5_000)
       assert first.id == second.id
       assert first.state == "active"
 
-      grants = grants_for_event(event.id)
+      grants = committed_grants_for_event(event_id)
       assert length(grants) == 2
       assert Enum.count(grants, &(&1.state == "revoked")) == 1
       assert Enum.count(grants, &(&1.state == "active")) == 1
       assert Enum.find(grants, &(&1.state == "active")).id == first.id
+    end
+  end
+
+  describe "revoke vs regrant concurrency" do
+    test "independent connections never crash and preserve terminal history" do
+      {event_id, _grant_id} = committed_active_grant!(@dashboard_username)
+      register_committed_event_cleanup!(event_id)
+
+      results =
+        concurrent_barrier_run(
+          [{:revoke, :revoke}, {:regrant, :regrant}],
+          fn
+            {:revoke, _} ->
+              DashboardEventGrants.revoke_active_for_verified_identity(
+                @dashboard_username,
+                event_id
+              )
+
+            {:regrant, _} ->
+              DashboardEventGrants.regrant_for_verified_identity(@dashboard_username, event_id)
+          end
+        )
+
+      revoke_results =
+        Enum.filter(results, fn
+          {:ok, :revoked, _} -> true
+          {:ok, :already_revoked, _} -> true
+          _ -> false
+        end)
+
+      regrant_results = Enum.filter(results, &match?({:ok, %DashboardEventGrant{}}, &1))
+
+      assert revoke_results != []
+      assert regrant_results != []
+      refute Enum.any?(results, &match?({:error, :not_found}, &1))
+
+      grants = committed_grants_for_event(event_id)
+      active_grants = Enum.filter(grants, &(&1.state == "active"))
+      assert length(active_grants) <= 1
+
+      revoked_grants = Enum.filter(grants, &(&1.state == "revoked"))
+      assert Enum.all?(revoked_grants, &(&1.revoked_at != nil))
+      assert Enum.all?(revoked_grants, &(&1.state == "revoked"))
     end
   end
 
@@ -221,6 +303,70 @@ defmodule FastCheck.Access.DashboardEventGrantTransitionsTest do
 
       assert grants_for_event(event.id) == []
     end
+  end
+
+  defp concurrent_barrier_run(competitors, fun)
+       when is_integer(competitors) and is_function(fun, 0) do
+    concurrent_barrier_run(Enum.to_list(1..competitors), fn _n -> fun.() end)
+  end
+
+  defp concurrent_barrier_run(competitors, fun) when is_function(fun, 1) do
+    parent = self()
+
+    tasks =
+      Enum.map(competitors, fn label ->
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            send(parent, {:barrier_waiting, self()})
+
+            receive do
+              :continue -> :ok
+            end
+
+            fun.(label)
+          end)
+        end)
+      end)
+
+    barrier_pids =
+      for _ <- competitors do
+        assert_receive {:barrier_waiting, pid}, 5_000
+        pid
+      end
+
+    assert length(Enum.uniq(barrier_pids)) == length(competitors)
+    Enum.each(barrier_pids, &send(&1, :continue))
+
+    Task.await_many(tasks, 10_000)
+  end
+
+  defp committed_active_grant!(identity) do
+    Sandbox.unboxed_run(Repo, fn ->
+      event = create_event()
+      grant = insert_active_grant!(event, identity)
+      {event.id, grant.id}
+    end)
+  end
+
+  defp committed_revoked_history!(identity) do
+    Sandbox.unboxed_run(Repo, fn ->
+      event = create_event()
+      revoked = insert_revoked_grant!(event, identity)
+      {event.id, revoked.id}
+    end)
+  end
+
+  defp committed_grants_for_event(event_id) do
+    Sandbox.unboxed_run(Repo, fn -> grants_for_event(event_id) end)
+  end
+
+  defp register_committed_event_cleanup!(event_id) do
+    on_exit(fn ->
+      Sandbox.unboxed_run(Repo, fn ->
+        Repo.delete_all(from grant in DashboardEventGrant, where: grant.event_id == ^event_id)
+        Repo.delete_all(from event in Event, where: event.id == ^event_id)
+      end)
+    end)
   end
 
   defp configure_allowed_event_ids(event_ids) do

@@ -126,14 +126,13 @@ defmodule FastCheck.Sales.DashboardAccess do
           | {:error, :unauthorized}
           | {:error, :not_found}
   def revoke_event_grant(identity, event_id) when is_integer(event_id) and event_id > 0 do
-    with {:ok, username, auth} <- verified_dashboard_identity(identity),
+    with {:ok, username, _auth} <- verified_dashboard_identity(identity),
          {:ok, status, _grant} <-
            DashboardEventGrants.revoke_active_for_verified_identity(username, event_id) do
-      {:ok,
-       %{
-         status: status,
-         effective_access: effective_access_for_event(username, auth, event_id)
-       }}
+      effective_access =
+        if event_granted_for_identity?(identity, event_id), do: :granted, else: :denied
+
+      {:ok, %{status: status, effective_access: effective_access}}
     else
       :error -> {:error, :unauthorized}
       {:error, :not_found} -> {:error, :not_found}
@@ -240,12 +239,4 @@ defmodule FastCheck.Sales.DashboardAccess do
   end
 
   defp configured_event_ids(_auth), do: []
-
-  defp effective_access_for_event(username, auth, event_id) do
-    if event_id in configured_event_ids(auth) or active_grant_exists?(username, event_id) do
-      :granted
-    else
-      :denied
-    end
-  end
 end
