@@ -23,8 +23,8 @@ defmodule FastCheck.Events.SyncRunHeartbeatTest do
     assert_receive {:sync_run_heartbeat, :renewed, "paused"}, 1_000
     renewed = Repo.get!(SyncLog, paused.id)
     assert renewed.status == "paused"
-    assert renewed.heartbeat_at > paused.heartbeat_at
-    assert renewed.lease_expires_at > paused.lease_expires_at
+    assert DateTime.compare(renewed.heartbeat_at, paused.heartbeat_at) == :gt
+    assert DateTime.compare(renewed.lease_expires_at, paused.lease_expires_at) == :gt
     assert Repo.get!(SyncLog, run.id).sync_run_id == run.sync_run_id
 
     SyncRunHeartbeat.stop(heartbeat)
