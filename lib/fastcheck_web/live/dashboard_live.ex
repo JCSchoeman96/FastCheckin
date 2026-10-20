@@ -817,14 +817,18 @@ defmodule FastCheckWeb.DashboardLive do
   @impl true
   def handle_info({:sync_complete, run_ref, message}, socket)
       when run_ref == socket.assigns.sync_run_ref do
-    final_status =
-      case socket.assigns.sync_status do
-        nil -> message || "Sync complete!"
-        "Sync failed" <> _rest -> socket.assigns.sync_status
-        _ -> message || "Sync complete!"
-      end
+    if current_sync_event_granted?(socket) do
+      final_status =
+        case socket.assigns.sync_status do
+          nil -> message || "Sync complete!"
+          "Sync failed" <> _rest -> socket.assigns.sync_status
+          _ -> message || "Sync complete!"
+        end
 
-    {:noreply, finish_sync(socket, final_status)}
+      {:noreply, finish_sync(socket, final_status)}
+    else
+      {:noreply, hide_revoked_sync(socket)}
+    end
   end
 
   @impl true

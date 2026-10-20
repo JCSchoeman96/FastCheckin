@@ -326,6 +326,72 @@ defmodule FastCheckWeb.DashboardLiveTest do
       refute_receive {:tickera_sync_request, _path}, 500
       refute render(view) =~ event.name
     end
+
+    test "durable-only grant revoked on a live socket denies a matching sync_complete", %{
+      conn: conn
+    } do
+      event = insert_event!(%{name: "Revoked Matching Sync Complete Event"})
+      insert_active_grant!(event)
+
+      {:ok, view, _html} = mount_dashboard(conn, [])
+      assert has_element?(view, "#full-sync-#{event.id}")
+
+      {request_pid, run_ref} = start_blocked_full_sync(view, event)
+      revoke_durable_grant!(event, :denied)
+
+      send(view.pid, {:sync_complete, run_ref, "Sync complete!"})
+
+      refute has_element?(view, "#full-sync-#{event.id}")
+      refute render(view) =~ event.name
+      refute render(view) =~ "Sync complete!"
+      assert render(view) =~ "Event is unavailable."
+      assert_sync_runtime_retained(view, run_ref)
+
+      release_blocked_full_sync(request_pid)
+    end
+
+    test "two-element sync_complete cannot bypass a revoked durable-only grant", %{conn: conn} do
+      event = insert_event!(%{name: "Revoked Two Element Sync Complete Event"})
+      insert_active_grant!(event)
+
+      {:ok, view, _html} = mount_dashboard(conn, [])
+      assert has_element?(view, "#full-sync-#{event.id}")
+
+      {request_pid, run_ref} = start_blocked_full_sync(view, event)
+      revoke_durable_grant!(event, :denied)
+
+      send(view.pid, {:sync_complete, run_ref})
+
+      refute has_element?(view, "#full-sync-#{event.id}")
+      refute render(view) =~ event.name
+      refute render(view) =~ "Sync complete!"
+      assert render(view) =~ "Event is unavailable."
+      assert_sync_runtime_retained(view, run_ref)
+
+      release_blocked_full_sync(request_pid)
+    end
+
+    test "configured grant keeps a matching sync_complete authorized after durable revoke", %{
+      conn: conn
+    } do
+      event = insert_event!(%{name: "Configured Matching Sync Complete Event"})
+      insert_active_grant!(event)
+
+      {:ok, view, _html} = mount_dashboard(conn, [event.id])
+      assert has_element?(view, "#full-sync-#{event.id}")
+
+      {request_pid, run_ref} = start_blocked_full_sync(view, event)
+      revoke_durable_grant!(event, :granted)
+
+      refute render(view) =~ "Sync complete!"
+      send(view.pid, {:sync_complete, run_ref, "Sync complete!"})
+
+      assert has_element?(view, "#full-sync-#{event.id}")
+      assert render(view) =~ "Sync complete!"
+      assert_sync_runtime_completed(view)
+
+      release_blocked_full_sync(request_pid)
+    end
   end
 
   describe "edit event modal WhatsApp sales" do
@@ -1835,6 +1901,78 @@ defmodule FastCheckWeb.DashboardLiveTest do
       granted_by: "dashboard-live query regression"
     })
     |> Repo.insert!()
+  end
+
+  # Starts a real full sync on the live dashboard socket and parks the worker
+  # inside its first Tickera request. Returns the blocked worker pid and the
+  # socket's current run ref so tests can deliver a matching completion message.
+  defp start_blocked_full_sync(view, event) do
+    test_pid = self()
+
+    mock_tickera_requests(
+      %{
+        "event_name" => event.name,
+        "event_date_time" => "2026-02-20T20:00:00Z",
+        "event_location" => "Test Venue",
+        "sold_tickets" => 20,
+        "checked_tickets" => 0,
+        "pass" => true
+      },
+      ticket_request_fun: fn _path ->
+        if is_nil(Process.put(:blocked_sync_request_sent, true)) do
+          send(test_pid, {:blocked_sync_request, self()})
+
+          receive do
+            :release_sync_request -> :ok
+          after
+            5_000 -> :ok
+          end
+        end
+
+        {:ok,
+         %Response{status: 200, body: %{"data" => [], "additional" => %{"results_count" => 0}}}}
+      end
+    )
+
+    view |> element("#full-sync-#{event.id}") |> render_click()
+    assert_receive {:blocked_sync_request, request_pid}, 1_000
+
+    %{socket: socket} = :sys.get_state(view.pid)
+    run_ref = socket.assigns.sync_run_ref
+    assert is_reference(run_ref)
+
+    {request_pid, run_ref}
+  end
+
+  # A denied completion must not tear down the runtime of the still-running worker:
+  # the run ref and worker monitor stay so its later authority-denied messages and
+  # DOWN are handled by the same current-authority checks.
+  defp assert_sync_runtime_retained(view, run_ref) do
+    %{socket: socket} = :sys.get_state(view.pid)
+    assert socket.assigns.sync_run_ref == run_ref
+    assert is_reference(socket.assigns.sync_task_ref)
+  end
+
+  # An authorized completion goes through finish_sync/2 and clears the runtime.
+  defp assert_sync_runtime_completed(view) do
+    %{socket: socket} = :sys.get_state(view.pid)
+    assert socket.assigns.sync_run_ref == nil
+    assert socket.assigns.sync_task_ref == nil
+  end
+
+  defp release_blocked_full_sync(request_pid) do
+    monitor_ref = Process.monitor(request_pid)
+    send(request_pid, :release_sync_request)
+    assert_receive {:DOWN, ^monitor_ref, :process, ^request_pid, _reason}, 5_000
+  end
+
+  # Revokes the durable grant through the server-owned command and asserts the
+  # resulting effective access (configured grants keep access after a DB revoke).
+  defp revoke_durable_grant!(event, expected_effective_access) do
+    assert {:ok, %{status: :revoked, effective_access: effective_access}} =
+             DashboardAccess.revoke_event_grant(SalesWebFixtures.dashboard_username(), event.id)
+
+    assert effective_access == expected_effective_access
   end
 
   defp capture_dashboard_grant_queries(fun) when is_function(fun, 0) do
