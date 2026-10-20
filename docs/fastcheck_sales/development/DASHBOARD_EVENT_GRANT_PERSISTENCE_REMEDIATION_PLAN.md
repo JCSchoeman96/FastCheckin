@@ -3,15 +3,23 @@
 | Field | Value |
 |---|---|
 | Plan ID | `DASHBOARD-EVENT-GRANT-PERSISTENCE-REMEDIATION` |
-| Version | 1.3 |
-| Status | Active governing authority. Gates A, B, and C implementation are accepted on current main. **Gate C implementation:** COMPLETE. **Gate C closure reconciliation (C3-B):** IN PROGRESS pending review, merge, and post-merge verification of this document update. **Gate D authorization:** NO. **Gate E authorization:** NO. |
-| Accepted planning base | `SHA=87d2ed511e4e2fd135eb7a6bdd6c899d52d64b6b`, `TREE=68aef92f6eac17a46fb41419b6bb4fe8859f5578` |
+| Version | 1.4 |
+| Status | Active governing authority. **Gate A:** accepted. **Gate B:** accepted. **Gate C:** formally closed (C3-B, PR #549). **Gate D implementation:** complete and accepted (D1 PR #550; D2 PR #551). **Gate D closure reconciliation (v1.4):** IN PROGRESS pending review, merge, and post-merge verification of this document update; Gate D is not formally programme-closed until then. **Gate E authorization:** NO. |
+| Accepted planning base | `SHA=b619d369920e8a94ee0b2380efcdcd120607cc7a`, `TREE=71a2fc61444dae4d3849d0459dea16bf3904681a` (accepted Gate D2 merge) |
 | Related frozen authorities | `docs/fastcheck_sales/development/BROWSERAUTH_EVENT_ISOLATION_REMEDIATION_PLAN.md`, version 1.4; `docs/fastcheck_sales/feature_packs/0057_P1-D_event-scoped-sales-dashboard-authorization/pack.json` (merged as PR #491) |
-| Implementation authorization | Gates A, B, and C implementation were separately authorized, reviewed, and merged. Gate D and Gate E are not authorized. |
-| Tracking | `FastCheckin-qb8j` remains the programme tracking identifier. Gate C formal programme closure is pending C3-B document reconciliation merge and post-merge verification. |
+| Implementation authorization | Gates A, B, C, and D implementation were each separately authorized, reviewed, merged, and post-merge verified. Gate E is not authorized. |
+| Tracking | `FastCheckin-qb8j` remains the programme tracking identifier. Gate C formal programme closure is complete (C3-B). Gate D formal programme closure is pending review, merge, and post-merge CI of v1.4; this reconciliation is tracked as `FastCheckin-r0yf`. |
 
 ## Revision history
 
+- `1.4` reconciles programme-state evidence only. It does not reinterpret or rewrite the technical authorization contract.
+  - Accepted Gate C3-B closure (PR #549, merge SHA `64f37bad1eb1a0cd1b3fed9c246e0044cb4ed994`).
+  - Accepted Gate D1 implementation (PR #550, merge SHA `99205de00fe69cba74aa63b994a83e8fcdbde0cf`).
+  - Accepted Gate D2 implementation (PR #551, merge SHA `b619d369920e8a94ee0b2380efcdcd120607cc7a`).
+  - Gate D implementation is complete and accepted.
+  - Gate D formal programme closure is pending review, merge, and successful post-merge CI of this v1.4 reconciliation. This version cannot certify its own merge.
+  - `TECHNICAL_CONTRACT_CHANGED=NO`
+  - `GATE_E_AUTHORIZED=NO`
 - `1.3` reconciles programme-state metadata for accepted Gates B (programme), C1, C2, and C3-A implementation on main. It does not change the frozen technical contract or authorize Gate D or Gate E.
 - `1.2` reconciles programme-state metadata only. It does not change the frozen technical contract.
 - `1.1` entered as a proposed authority supersession. That supersession became effective when v1.1 merged.
@@ -52,7 +60,7 @@ verified server dashboard identity
 
 There is no config-only Sales exception and no separate BrowserAuth-versus-Sales grant resolution. Gate A and Gate B implementation was separately authorized and merged under separate approvals.
 
-This document does not authorize code changes by itself. The v1.1 merge established the authority contract; Gates A, B, and C were later authorized, implemented, reviewed, and merged under separate approvals. Gate C programme closure completes when C3-B document reconciliation is reviewed, merged, and post-merge verified. Gates D and E each require separate authorization, review, merge, and successful post-merge CI before that gate starts.
+This document does not authorize code changes by itself. The v1.1 merge established the authority contract; Gates A, B, C, and D were later authorized, implemented, reviewed, and merged under separate approvals. Gate C programme closure completed with C3-B (PR #549). Gate D implementation is complete and accepted (PRs #550 and #551); Gate D formal programme closure completes only when this v1.4 reconciliation is reviewed, merged, and post-merge verified. Gate E requires separate authorization, review, merge, and successful post-merge CI before it starts.
 
 ## 3. Superseded BrowserAuth and P1-D clauses
 
@@ -338,7 +346,7 @@ Place tests beside the existing suites in `test/fastcheck/sales/dashboard_access
 
 ## 19. Implementation gates
 
-Each gate requires review, merge, successful post-merge CI, and explicit authorization before the next gate starts. Gate 0, Gate A, Gate B, and Gate C implementation are accepted on current main. Gate C formal programme closure is pending C3-B document reconciliation. Gates D and E are not authorized.
+Each gate requires review, merge, successful post-merge CI, and explicit authorization before the next gate starts. Gate 0, Gate A, Gate B, Gate C, and Gate D implementation are accepted on current main. Gate C formal programme closure is complete (C3-B, PR #549). Gate D formal programme closure is pending review, merge, and post-merge CI of v1.4. Gate E is not authorized.
 
 | Gate | Current state | High-level scope | Completion evidence |
 |---|---|---|---|
@@ -348,8 +356,11 @@ Each gate requires review, merge, successful post-merge CI, and explicit authori
 | Gate C1 | ACCEPTED / MERGED AS PR #544, merge SHA `79b694650252a621f71479c1d7b3ada723c3d28f` | Persist nullable server-generated `dashboard_creation_token` on Event with partial unique index where non-null. | Token validation, uniqueness, and idempotency contract tests pass. |
 | Gate C2 | ACCEPTED / MERGED AS PR #545, merge SHA `8b2c75187796bfd222db902fa75949290b4d0ce8` | Atomic Event-plus-creator-grant transaction; Tickera and preparation outside the transaction. | Rollback, Tickera failure, duplicate submission, and transaction-boundary tests pass. |
 | Gate C3-A | ACCEPTED / MERGED AS PR #546, approved head SHA `57d2cbf229db601feab3d40d30e63ebf0afb7498`, merge SHA `87d2ed511e4e2fd135eb7a6bdd6c899d52d64b6b`, tree `68aef92f6eac17a46fb41419b6bb4fe8859f5578`; post-merge CI workflow run `39301897012` (`2317 tests, 0 failures, 4 skipped`) | Wire `DashboardLive` to the authorized creation command; immediate post-commit visibility and manual Full Sync only. | Dashboard creation integration, committed-token replay, immediate visibility, and manual-only Full Sync tests pass. |
-| Gate C (programme) | **Implementation:** COMPLETE AND ACCEPTED. **Closure reconciliation (C3-B):** IN PROGRESS pending merge of this v1.3 update. | Gates C1, C2, and C3-A deliver §§10–11 on current main. | Evidence in Gate C1–C3-A rows; formal Gate C programme closure completes when C3-B is reviewed, merged, and post-merge verified. |
-| Gate D | NOT AUTHORIZED | Add server-authorized revoke/regrant behavior and stale-socket regression coverage. | Revoked rows stay terminal; configuration remains additive; every protected operation resolves current authority. |
+| Gate C3-B (closure reconciliation) | ACCEPTED / MERGED AS PR #549, approved head SHA `ca7092fdee3309bac5a1035427219838c69290d5`, head tree `1609295c2f8d8991e451d9d85daf63eee3b4348b`, merge SHA `64f37bad1eb1a0cd1b3fed9c246e0044cb4ed994`; post-merge CI run `39305551994` (`2317 tests, 0 failures, 4 skipped`) | Docs-only reconciliation of Gate C programme-state prose after C3-A. | Gate C programme-state reconciliation recorded on main; no technical contract change. |
+| Gate C (programme) | **FORMALLY CLOSED.** Implementation (C1, C2, C3-A): COMPLETE AND ACCEPTED. Closure reconciliation (C3-B): ACCEPTED / MERGED AS PR #549. | Gates C1, C2, and C3-A deliver §§10–11 on current main. | Evidence in Gate C1–C3-A and C3-B rows. Gate C programme closure completed with C3-B. |
+| Gate D1 | ACCEPTED / MERGED AS PR #550, approved head SHA `27d61f60d9ec94b3a65bb9c1ac9eb896d942d483`, merge SHA `99205de00fe69cba74aa63b994a83e8fcdbde0cf`, tree `796b7c91c1f96c7c73c7675de30f44ec5597ffca`; post-merge CI run `39371913522` (`2332 tests, 0 failures, 4 skipped`) | Server-authorized revoke and regrant commands on the existing grant resource; `DashboardAccess` remains the trusted authorization boundary; Postgres durable transitions. | Revoked row remains terminal; regrant inserts a new row; arbitrary Event ID cannot manufacture a first-ever grant; partial unique active-grant index is the concurrency arbiter; deterministic concurrent revoke/regrant regression coverage; `lock_version` advances on revoke; configured grant remains additive; Redis/ETS/Cachex remain non-authoritative. |
+| Gate D2 | ACCEPTED / MERGED AS PR #551, approved head SHA `aa94308cfa8c3d5473d00c2516a95693924a05ff`, merge SHA `b619d369920e8a94ee0b2380efcdcd120607cc7a`, tree `71a2fc61444dae4d3849d0459dea16bf3904681a`; post-merge CI run `39374319026` (`2335 tests, 0 failures, 4 skipped`) | Matching current-run `sync_complete` re-checks fresh current Event authority; two-element `sync_complete` delegates through the protected path. No SyncRunner or authorization redesign. | Denied DB-only revoked stale socket; denied stale completion does not falsely tear down the still-running sync runtime; configured Event authority remains additive after durable revoke; live-socket durable-revocation regressions prove the behavior. |
+| Gate D (programme) | **IMPLEMENTATION COMPLETE AND ACCEPTED; CLOSURE RECONCILIATION IN PROGRESS.** `IMPLEMENTATION=COMPLETE_AND_ACCEPTED`; `FORMAL_PROGRAMME_CLOSURE=PENDING_REVIEW_MERGE_AND_POSTMERGE_CI_OF_V1_4`. | Gates D1 and D2 deliver server-authorized revoke/regrant behavior and stale-socket regression coverage on current main. | Revoked rows stay terminal; configuration remains additive; every protected operation resolves current authority. Formal Gate D programme closure requires v1.4 review, merge, and successful post-merge CI. |
 | Gate E | NOT AUTHORIZED | Production certification of `Create → immediately visible → manual Full Sync → Scanner → check-in` with no `DASHBOARD_ALLOWED_EVENT_IDS` edit for the new Event. | Reviewed production evidence, no isolation regression, and successful post-merge CI. |
 
 No gate authorizes automatic Full Sync, WhatsApp Sales enablement, global Event access, or a broader authentication rewrite.
@@ -366,6 +377,6 @@ Stop and return to authority review if any of these conditions occurs:
 - `STOP=EXTERNAL_CALL_INSIDE_DB_TRANSACTION` if Tickera or another external request must run inside the Event/grant transaction.
 - `STOP=IDEMPOTENCY_OWNERSHIP_UNRESOLVED` if the Event-row creation token cannot enforce one committed Event per logical submission and recover a successful retry.
 - `STOP=EVENT_DELETION_POLICY_UNRESOLVED` if restrictive grant-history retention cannot be reconciled with Event deletion.
-- `STOP=UNAUTHORIZED_GATE_IMPLEMENTATION_STARTED` if code or migrations for Gate D or E are changed before that gate receives separate explicit authorization.
+- `STOP=UNAUTHORIZED_GATE_IMPLEMENTATION_STARTED` if code or migrations for Gate E are changed before Gate E receives separate explicit authorization. Gate D implementation is complete and accepted (PRs #550 and #551); any later Gate D change requires its own explicit authorization.
 
-This v1.3 authority-state reconciliation records accepted Gate C implementation and proposes Gate C programme closure when C3-B is merged and post-merge verified. It does not authorize Gate D or Gate E. After opening this docs-only PR, stop for C3-B review. Do not start Gate D or Gate E without separate explicit authorization.
+This v1.4 docs-only authority-state reconciliation records accepted Gate C3-B closure (PR #549) and accepted Gate D1 (PR #550) and Gate D2 (PR #551) history. Gate D implementation is complete and accepted. Gate D formal programme closure occurs only after this docs-only reconciliation is reviewed, merged, and post-merge verified; this branch does not claim that closure. This document update does not authorize Gate E. After opening this docs-only PR, stop for human review. Do not start Gate E without separate explicit authorization.
